@@ -1,0 +1,48 @@
+# beets config — edit paths to taste
+directory: ~/media/audio/music/library
+
+import:
+  copy: yes
+  move: no
+  write: yes
+  timid: no
+  resume: ask
+  incremental: yes
+  quiet_fallback: skip
+  default_action: apply
+
+plugins: fetchart embedart lastgenre replaygain scrub zero musicbrainz
+
+# built-in, enabled by default — configure here to set preferences
+musicbrainz:
+  host: musicbrainz.org
+  ratelimit_interval: 1.0
+
+fetchart:
+  auto: yes
+  minwidth: 300
+
+embedart:
+  auto: yes
+  maxwidth: 600
+
+lastgenre:
+  count: 3
+  separator: "; "
+
+replaygain:
+  auto: yes
+  backend: gstreamer
+
+zero:
+  fields:
+    - comments
+    - lyrics
+    - albumstatus
+    - albumtype
+    - label
+    - language
+    - country
+    - catalognum
+    - media
+    - script
