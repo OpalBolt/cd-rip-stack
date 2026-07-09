@@ -50,12 +50,13 @@ trap finish EXIT
 
 case "$engine" in
   whipper)
-    # -O sets the output directory.
-    whipper cd rip -O "$out_dir" --offset="$offset"
+    # whipper's MusicBrainz lookup is unconditional (no skip flag); -U keeps
+    # it from aborting when the lookup finds nothing, since beets re-tags later.
+    whipper cd rip -O "$out_dir" --offset="$offset" -U
     ;;
   cyanrip)
     # cyanrip has no output-dir flag; it writes under the current directory.
-    # -s is the (required) drive offset; -D sets the album subfolder scheme.
-    ( cd "$out_dir" && cyanrip -s "$offset" )
+    # -s is the (required) drive offset; -N skips MusicBrainz lookup (beets tags later).
+    ( cd "$out_dir" && cyanrip -s "$offset" -N )
     ;;
 esac
