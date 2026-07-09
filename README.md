@@ -12,11 +12,13 @@ metadata — two commands.
 
 - A CD drive
 - [Nix](https://nixos.org) with flakes enabled
+
 ## Drives
 
 | Drive | Offset |
 |-------|--------|
 | Black Blu-ray drive | 103 |
+| Sandberg | 6 |
 
 ## Setup (one-time)
 
