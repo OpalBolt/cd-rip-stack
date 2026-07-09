@@ -1,5 +1,22 @@
-# beets config — edit paths to taste
+# beets config — edit directory/paths to taste
 directory: ~/media/audio/music/library
+
+plugins: fetchart embedart lastgenre ftintitle replaygain scrub the zero musicbrainz bandcamp
+
+# "The Beatles" sorts under B. Required for %the{} used in paths below.
+the:
+  a: yes
+  the: yes
+
+# Filesystem layout. Multidisc albums get a Disc N/ subfolder so track numbers
+# don't collide across discs (double albums, soundtrack sets). Year prefixes
+# each segment so folders sort chronologically. (No custom `replace` — beets'
+# built-in default strips only illegal chars and keeps spaces.)
+paths:
+  default: %the{$albumartist}/$year $album%aunique{}/%if{$multidisc,Disc $disc/}$track - $title
+  singleton: _Singles/%the{$artist}/$year $title
+  albumtype:soundtrack: _Soundtracks/$year $album%aunique{}/%if{$multidisc,Disc $disc/}$track - %the{$artist} - $title
+  comp: _Compilations/$year $album%aunique{}/%if{$multidisc,Disc $disc/}$track - %the{$artist} - $title
 
 import:
   copy: yes
@@ -10,39 +27,59 @@ import:
   incremental: yes
   quiet_fallback: skip
   default_action: apply
-
-plugins: fetchart embedart lastgenre replaygain scrub zero musicbrainz
+  log: import.txt
 
 # built-in, enabled by default — configure here to set preferences
 musicbrainz:
   host: musicbrainz.org
   ratelimit_interval: 1.0
 
+bandcamp:
+  search_max: 5
+  genre:
+    mode: progressive   # classical | progressive | psychedelic (looser = more genres)
+
 fetchart:
   auto: yes
-  minwidth: 300
+  cover_format: JPEG
+  enforce_ratio: yes
+  minwidth: 500
+  maxwidth: 1000
+  sources:
+    - filesystem
+    - coverart
+    - itunes
+    - amazon
+    - albumart
+    - cover_art_url   # bandcamp: beetcamp supplies the URL, fetchart downloads it
 
 embedart:
   auto: yes
-  maxwidth: 600
+  maxwidth: 500
 
 lastgenre:
+  auto: yes
   count: 3
   separator: "; "
+  source: track
+  title_case: yes
+
+ftintitle:
+  auto: yes
+  format: feat. {0}
 
 replaygain:
   auto: yes
   backend: gstreamer
+  overwrite: yes
 
+scrub:
+  auto: yes
+
+# Removes the listed fields unconditionally (not just when empty).
+# Trimmed: beetcamp (bandcamp) fills comments/lyrics/albumstatus/label/
+# country/catalognum/media, so those are kept. albumtype also kept (soundtrack path).
 zero:
   fields:
-    - comments
-    - lyrics
-    - albumstatus
-    - albumtype
-    - label
     - language
-    - country
-    - catalognum
-    - media
     - script

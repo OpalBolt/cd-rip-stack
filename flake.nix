@@ -9,10 +9,14 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       beets = pkgs.beets.overridePythonAttrs (old: {
-        buildInputs = (old.buildInputs or [ ]) ++ [
+        # propagatedBuildInputs (NOT buildInputs): these must be on beets'
+        # runtime PYTHONPATH so plugins import and the `beetsplug` namespace
+        # (PEP 420) resolves across store paths.
+        propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [
           pkgs.python3.pkgs.pylast # lastgenre
-          pkgs.python3.pkgs.pillow # embedart
-          pkgs.python3.pkgs.pygobject3 # replaygain
+          pkgs.python3.pkgs.pillow # embedart / fetchart image ops
+          pkgs.python3.pkgs.pygobject3 # replaygain (gstreamer)
+          pkgs.python3.pkgs.beetcamp # bandcamp
         ];
       });
     in
