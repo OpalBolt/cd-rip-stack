@@ -1,5 +1,5 @@
 {
-  description = "CD ripping environment with whipper + beets";
+  description = "CD ripping environment with whipper + cyanrip + beets";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -19,10 +19,17 @@
           pkgs.python3.pkgs.beetcamp # bandcamp
         ];
       });
+      # rip = standalone script (rip.sh), installed as a `rip` command in the
+      # devshell. Copied verbatim so rip.sh stays a directly-runnable script.
+      rip = pkgs.runCommandLocal "rip" { } ''
+        install -Dm755 ${./rip.sh} "$out/bin/rip"
+      '';
     in
     {
       devShells.${system}.default = pkgs.mkShell {
         packages = [
+          rip
+          pkgs.cyanrip
           pkgs.whipper
           pkgs.python3.pkgs.pycdio
           pkgs.vlc
@@ -34,17 +41,10 @@
         ];
 
         shellHook = ''
-          echo "whipper $(whipper --version 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
-          rip() {
-            if [ -z "$1" ]; then
-              echo "usage: rip <offset>  (see drive table in README)"
-              return 1
-            fi
-            whipper cd rip -O ~/media/audio/music/rip --offset="$1"
-          }
+          echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
           alias tag='beet -c beets-config.yaml import ~/media/audio/music/rip/'
-          echo "rip <offset>  —  rip CD to FLAC with AccurateRip verification"
-          echo "tag           —  fetch metadata, cover art, genres, replaygain + sort"
+          echo "rip <offset> [whipper|cyanrip]  —  rip CD to FLAC, log elapsed time to ~/media/audio/music/rip.log"
+          echo "tag                            —  fetch metadata, cover art, genres, replaygain + sort"
         '';
       };
     };
