@@ -29,6 +29,9 @@ import:
   default_action: apply
   log: import.txt
 
+match:
+  strong_rec_thresh: 0.1 # auto-apply >=85% (default 0.04 = 96%; tune to 0.10 = 90%)
+
 # built-in, enabled by default — configure here to set preferences
 musicbrainz:
   host: musicbrainz.org
@@ -37,7 +40,7 @@ musicbrainz:
 bandcamp:
   search_max: 5
   genre:
-    mode: progressive   # classical | progressive | psychedelic (looser = more genres)
+    mode: progressive # classical | progressive | psychedelic (looser = more genres)
 
 fetchart:
   auto: yes
@@ -51,7 +54,7 @@ fetchart:
     - itunes
     - amazon
     - albumart
-    - cover_art_url   # bandcamp: beetcamp supplies the URL, fetchart downloads it
+    - cover_art_url # bandcamp: beetcamp supplies the URL, fetchart downloads it
 
 embedart:
   auto: yes
