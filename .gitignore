@@ -13,3 +13,11 @@ whipper/
 
 # beets state
 .beetsstate
+
+# rip-video accidental direct-run output (the wrapper cd's into ~/media,
+# so these only appear if HandBrakeCLI runs in the repo).
+*.mkv
+*.mp4
+
+# scratch logs from manual makemkvcon / rip debugging
+*.log

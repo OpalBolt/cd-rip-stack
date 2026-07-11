@@ -1,5 +1,5 @@
 {
-  description = "CD ripping environment with whipper + cyanrip + beets";
+  description = "Disc ripping environment — CD (whipper/cyanrip/beets) + DVD/Blu-ray (makemkv/handbrake)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -7,7 +7,12 @@
     { self, nixpkgs }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
+      # import (not legacyPackages) so config.allowUnfree applies — makemkv
+      # is unfree. the free packages (whipper/cyanrip/beets/handbrake) are unaffected.
+      pkgs = import nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+      };
       beets = pkgs.beets.overridePythonAttrs (old: {
         # propagatedBuildInputs (NOT buildInputs): these must be on beets'
         # runtime PYTHONPATH so plugins import and the `beetsplug` namespace
@@ -24,11 +29,21 @@
       rip = pkgs.runCommandLocal "rip" { } ''
         install -Dm755 ${./rip.sh} "$out/bin/rip"
       '';
+      # rip-video = standalone video script, installed like `rip` above.
+      rip-video = pkgs.runCommandLocal "rip-video" { } ''
+        install -Dm755 ${./rip-video.sh} "$out/bin/rip-video"
+      '';
+      # titles = readable view over makemkvcon's verbose `info` output.
+      titles = pkgs.runCommandLocal "titles" { } ''
+        install -Dm755 ${./titles.sh} "$out/bin/titles"
+      '';
     in
     {
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           rip
+          rip-video
+          titles
           pkgs.cyanrip
           pkgs.whipper
           pkgs.python3.pkgs.pycdio
@@ -38,6 +53,9 @@
           pkgs.gst_all_1.gstreamer
           pkgs.gst_all_1.gst-plugins-good
           pkgs.gst_all_1.gst-plugins-ugly
+          # dvd/blu-ray
+          pkgs.makemkv
+          pkgs.handbrake
         ];
 
         shellHook = ''
@@ -47,6 +65,10 @@
           echo "  engine optional: 'rip 6 -R x' works without naming it"
           echo "  flags pass through: cyanrip -N skips MusicBrainz, -R x force-re-rip; whipper runs -U by default"
           echo "tag                            —  fetch metadata, cover art, genres, replaygain + sort"
+          echo
+          echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')  —  DVD/Blu-ray"
+          echo "titles [disc:N]            —  list DVD/BR titles, longest-first (pick the main feature)"
+          echo "rip-video [title]          —  makemkvcon → HandBrakeCLI @ 1080p (all titles default)"
         '';
       };
     };
