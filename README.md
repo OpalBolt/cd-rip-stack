@@ -29,10 +29,16 @@ nix develop
 ## Workflow (per CD)
 
 ```sh
-rip 103            # rip CD to FLAC (default engine: whipper)
-rip 103 cyanrip    # same, using cyanrip
-tag                # metadata + sort into library
+rip 6                # rip CD to FLAC (default engine: cyanrip)
+rip 6 whipper        # same, using whipper (runs -U by default)
+rip 6 cyanrip -N     # cyanrip: skip MusicBrainz lookup (beets tags later)
+tag                  # metadata + sort into library
 ```
+
+Skipping metadata: cyanrip's `-N` skips its MusicBrainz lookup. whipper has no
+skip flag — it always looks up, but `rip` passes `-U` by default so a disc not in
+MusicBrainz still rips instead of aborting (beets tags it later). Any args after
+the engine pass through to the ripper, e.g. `rip 6 cyanrip -N`.
 
 whipper/cyanrip output under `~/media/audio/music/rip/`. `beet import` tags
 the files then moves them into `~/media/audio/music/library/` (set in

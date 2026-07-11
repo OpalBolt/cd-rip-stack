@@ -9,14 +9,15 @@ log=~/media/audio/music/rip.log
 
 usage() {
   cat <<EOF
-usage: rip <offset> [whipper|cyanrip]
-  offset  drive sample offset (see drive table in README)
-  engine  whipper (default) | cyanrip
+usage: rip <offset> [whipper|cyanrip] [extra-flags...]
+  offset       drive sample offset (see drive table in README)
+  engine       cyanrip (default) | whipper
+  extra-flags  passed through to the ripper (e.g. -N to skip MusicBrainz)
 EOF
 }
 
 offset="${1:-}"
-engine="${2:-whipper}"
+engine="${2:-cyanrip}"
 
 if [ -z "$offset" ]; then
   usage
@@ -52,11 +53,12 @@ case "$engine" in
   whipper)
     # whipper's MusicBrainz lookup is unconditional (no skip flag); -U keeps
     # it from aborting when the lookup finds nothing, since beets re-tags later.
-    whipper cd rip -O "$out_dir" --offset="$offset" -U
+    whipper cd rip -O "$out_dir" --offset="$offset" -U "${@:3}"
     ;;
   cyanrip)
     # cyanrip has no output-dir flag; it writes under the current directory.
-    # -s is the (required) drive offset; -N skips MusicBrainz lookup (beets tags later).
-    ( cd "$out_dir" && cyanrip -s "$offset" -N )
+    # -s is the (required) drive offset; extra flags (e.g. -N to skip
+    # MusicBrainz, since beets tags later) pass through from the command line.
+    ( cd "$out_dir" && cyanrip -s "$offset" "${@:3}" )
     ;;
 esac
