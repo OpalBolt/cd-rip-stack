@@ -44,7 +44,8 @@
           echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
           alias tag='beet -c beets-config.yaml import ~/media/audio/music/rip/'
           echo "rip <offset> [whipper|cyanrip] [flags...]  —  rip to FLAC (default: cyanrip), log elapsed time"
-          echo "  flags pass through: cyanrip -N skips MusicBrainz; whipper runs -U by default"
+          echo "  engine optional: 'rip 6 -R x' works without naming it"
+          echo "  flags pass through: cyanrip -N skips MusicBrainz, -R x force-re-rip; whipper runs -U by default"
           echo "tag                            —  fetch metadata, cover art, genres, replaygain + sort"
         '';
       };
