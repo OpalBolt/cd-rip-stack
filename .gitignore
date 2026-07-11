@@ -1,4 +1,15 @@
 whipper/
 
+# cyanrip output dirs (*[FORMAT]/) when the ripper runs in the repo by mistake.
+# the wrapper cd's into ~/media/audio/music/rip, so these only appear on
+# accidental direct runs. Brackets escaped — [FLAC] is a gitignore char-class otherwise.
+*\[FLAC]/
+*\[MP3]/
+*\[OPUS]/
+*\[OGG]/
+*\[WavPack]/
+*.cue
+*.m3u
+
 # beets state
 .beetsstate
