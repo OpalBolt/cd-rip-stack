@@ -7,6 +7,20 @@ source "$(dirname "$0")/rip-common.sh"
 
 out_dir=~/media/audio/music/rip
 
+# read ALBUM/ARTIST off the newest produced FLAC — both cyanrip and whipper
+# write them on a MusicBrainz match. engine-agnostic: metaflac reads the tag
+# the ripper already wrote, so no parsing of per-engine stdout.
+# ponytail: - when -N skipped the lookup (no ALBUM tag to read).
+rip_album_name() {
+  local f album artist
+  f=$(find "$out_dir" -name '*.flac' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  [ -z "$f" ] && { echo -; return; }
+  album=$(metaflac --show-tag=ALBUM  "$f" 2>/dev/null | cut -d= -f2-)
+  artist=$(metaflac --show-tag=ARTIST "$f" 2>/dev/null | cut -d= -f2-)
+  [ -z "$album" ] && { echo -; return; }
+  [ -n "$artist" ] && echo "$artist - $album" || echo "$album"
+}
+
 usage() {
   cat <<EOF
 usage: rip <offset> [whipper|cyanrip] [extra-flags...]
@@ -45,7 +59,7 @@ mkdir -p "$out_dir"
 
 RIP_SCRIPT=rip.sh
 RIP_SW="$engine offset=$offset"
-# ponytail: album name isn't known at rip time (beets assigns it later, separately).
+# ponytail: name is read from the ripped FLAC's tags after the rip (below); - until then.
 RIP_NAME=-
 rip_log_start
 rip_phase rip
@@ -80,4 +94,5 @@ case "$engine" in
     ;;
 esac
 
+RIP_NAME=$(rip_album_name)
 rip_phase_end

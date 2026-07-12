@@ -67,11 +67,11 @@ Both `rip` and `rip-video` append to `./rip.log` in the directory you run them f
 2026-07-12 14:00:00  14:30:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  rip     30m00  ok
 2026-07-12 14:30:00  16:45:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  encode  135m00 ok
 2026-07-12 14:00:00  16:45:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  total   165m00 ok
-2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      -                             rip     8m05   ok
-2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      -                             total   8m05   ok
+2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      Radiohead - OK Computer       rip     8m05   ok
+2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      Radiohead - OK Computer       total   8m05   ok
 ```
 
-Video logs each phase (`rip`, `encode`) plus the `total`; CD logs `rip` and `total` (identical — one phase). The `name` comes from the exported MKV filename for video; CD leaves it `-` since the album isn't known at rip time. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by both scripts.
+Video logs each phase (`rip`, `encode`) plus the `total`; CD logs `rip` and `total` (identical — one phase). The `name` comes from the exported MKV filename for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by both scripts.
 
 ## Drive access
 

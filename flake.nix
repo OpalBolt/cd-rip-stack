@@ -48,6 +48,8 @@
           rip-video
           titles
           pkgs.cyanrip
+          # metaflac: read album/artist tags off ripped FLACs for rip.log
+          pkgs.flac
           pkgs.whipper
           pkgs.python3.pkgs.pycdio
           pkgs.vlc
