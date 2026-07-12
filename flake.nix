@@ -63,15 +63,18 @@
 
         shellHook = ''
           echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
+          echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')"
           alias tag='beet -c beets-config.yaml import ~/media/audio/music/rip/'
-          echo "rip <offset> [whipper|cyanrip] [flags...]  —  rip to FLAC (default: cyanrip), log elapsed time"
-          echo "  engine optional: 'rip 6 -R x' works without naming it"
-          echo "  flags pass through: cyanrip -N skips MusicBrainz, -R x force-re-rip; whipper runs -U by default"
-          echo "tag                            —  fetch metadata, cover art, genres, replaygain + sort"
           echo
-          echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')  —  DVD/Blu-ray"
-          echo "titles [disc:N]            —  list DVD/BR titles, longest-first (pick the main feature)"
-          echo "rip-video [title]          —  makemkvcon → HandBrakeCLI @ 1080p (all titles default)"
+          echo "CD — rip <offset> [cyanrip|whipper] [flags]  →  FLAC (default cyanrip)"
+          echo "     flags pass through: cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U"
+          echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
+          echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
+          echo
+          echo "DVD/Blu-ray — titles [disc:N]  →  title list, longest-first (S = scrambled/decoy)"
+          echo "             rip-video [title]  →  makemkvcon → HandBrakeCLI @ 1080p (all titles default)"
+          echo
+          echo "rip and rip-video log each phase + total to ./rip.log"
         '';
       };
     };
