@@ -60,7 +60,23 @@ case "$engine" in
     # cyanrip has no output-dir flag; it writes under the current directory.
     # -s is the (required) drive offset; extra flags (e.g. -N to skip
     # MusicBrainz, -R x, since beets tags later) pass through from the command line.
-    ( cd "$out_dir" && cyanrip -s "$offset" "${@}" )
+    #
+    # cyanrip exits 1 when a DiscID matches several MusicBrainz releases and
+    # asks for -R <n> — that is not a rip failure. tee captures its output
+    # (live progress still shows), and on that message we prompt, then re-run
+    # with the picked release instead of bailing out.
+    cap=$(mktemp)
+    cyan_run() { ( cd "$out_dir" && cyanrip -s "$offset" "$@" 2>&1 ) | tee "$cap"; }
+    if cyan_run "${@}"; then
+      :
+    elif grep -q "Multiple releases found" "$cap"; then
+      printf '\nMultiple MusicBrainz releases — pick one (blank to abort): ' >&2
+      read -r choice || choice=
+      [ -n "$choice" ] && cyan_run -R "$choice" "${@}" || { rm -f "$cap"; exit 1; }
+    else
+      rm -f "$cap"; exit 1
+    fi
+    rm -f "$cap"
     ;;
 esac
 
