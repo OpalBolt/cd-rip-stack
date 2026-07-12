@@ -3,9 +3,9 @@
 # run inside the nix devshell (whipper/cyanrip/date/tee come from PATH).
 # ponytail: manual arg parsing — no getopts for a couple of positional args.
 set -euo pipefail
+source "$(dirname "$0")/rip-common.sh"
 
 out_dir=~/media/audio/music/rip
-log=~/media/audio/music/rip.log
 
 usage() {
   cat <<EOF
@@ -43,19 +43,12 @@ esac
 
 mkdir -p "$out_dir"
 
-start=$(date +%s)
-# log elapsed time on success OR failure (EXIT trap fires either way)
-finish() {
-  local rc=$?
-  local elapsed=$(( $(date +%s) - start ))
-  local mm=$(( elapsed / 60 ))
-  local ss=$(( elapsed % 60 ))
-  local status=ok
-  [ "$rc" -ne 0 ] && status="FAIL($rc)"
-  printf '[%s] %-8s offset=%-5s %dm%02d  %s\n' \
-    "$(date '+%F %T')" "$engine" "$offset" "$mm" "$ss" "$status" | tee -a "$log"
-}
-trap finish EXIT
+RIP_SCRIPT=rip.sh
+RIP_SW="$engine offset=$offset"
+# ponytail: album name isn't known at rip time (beets assigns it later, separately).
+RIP_NAME=-
+rip_log_start
+rip_phase rip
 
 case "$engine" in
   whipper)
@@ -70,3 +63,5 @@ case "$engine" in
     ( cd "$out_dir" && cyanrip -s "$offset" "${@}" )
     ;;
 esac
+
+rip_phase_end

@@ -42,7 +42,7 @@ tag                  # tag + sort into the library
 
 `rip <offset>` is required; the engine (`cyanrip` or `whipper`) is optional and defaults to cyanrip, so flags pass straight through — `rip 6 -R x` works without naming the engine. Any args after the engine go to the ripper.
 
-Rips land in `~/media/audio/music/rip/`. `tag` runs beets, which tags the files and **copies** them into `~/media/audio/music/library/` (it does not delete the originals — clean `rip/` when done). Each run logs engine, offset, elapsed time, and status to `~/media/audio/music/rip.log`.
+Rips land in `~/media/audio/music/rip/`. `tag` runs beets, which tags the files and **copies** them into `~/media/audio/music/library/` (it does not delete the originals — clean `rip/` when done).
 
 ## Ripping a DVD / Blu-ray
 
@@ -56,6 +56,20 @@ rip-video 1-3        # rip titles 1 through 3
 Two phases: **makemkvcon** decrypts and remuxes each title to a large lossless MKV in `~/media/video/rip/`, then **HandBrakeCLI** transcodes each to 1080p H.265 in `~/media/video/library/` and deletes the intermediate. The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `rip-video.sh` if encoding is too slow.
 
 Pick the main feature with `titles`. When two titles share a length (Rogue One ships the movie as both title 0 and 1), `titles` flags a non-sequential segment order with `S` — that's the alternate/decoy cut. Rip the clean one, not `all`.
+
+## Logging
+
+Both `rip` and `rip-video` append to `./rip.log` in the directory you run them from. Each line records start, end, script, software, name, phase, elapsed, status:
+
+```
+2026-07-12 14:00:00  14:30:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  rip     30m00  ok
+2026-07-12 14:30:00  16:45:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  encode  135m00 ok
+2026-07-12 14:00:00  16:45:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  total   165m00 ok
+2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      -                             rip     8m05   ok
+2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      -                             total   8m05   ok
+```
+
+Video logs each phase (`rip`, `encode`) plus the `total`; CD logs `rip` and `total` (identical — one phase). The `name` comes from the exported MKV filename for video; CD leaves it `-` since the album isn't known at rip time. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by both scripts.
 
 ## Drive access
 
@@ -94,8 +108,9 @@ Key plugins:
 
 ```
 flake.nix          devShell: makemkv, handbrake, whipper, cyanrip, beets (+ plugin deps)
-rip.sh             CD rip — engine choice, timing, log
-rip-video.sh       DVD/Blu-ray rip — makemkvcon → HandBrakeCLI @ 1080p, log
+rip.sh             CD rip — engine choice, phase timing, log
+rip-video.sh       DVD/Blu-ray rip — makemkvcon → HandBrakeCLI @ 1080p, phase timing, log
+rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh and rip-video.sh
 titles.sh          makemkvcon info → readable title list with scramble flag
 beets-config.yaml  beets config: tagging, art, genres, replaygain, paths
 README.md          this file

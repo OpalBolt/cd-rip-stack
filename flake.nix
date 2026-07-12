@@ -25,13 +25,16 @@
         ];
       });
       # rip = standalone script (rip.sh), installed as a `rip` command in the
-      # devshell. Copied verbatim so rip.sh stays a directly-runnable script.
+      # devshell. Copied verbatim so rip.sh stays a directly-runnable script;
+      # rip-common.sh is installed alongside as the sourced timing/log helper.
       rip = pkgs.runCommandLocal "rip" { } ''
         install -Dm755 ${./rip.sh} "$out/bin/rip"
+        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # rip-video = standalone video script, installed like `rip` above.
       rip-video = pkgs.runCommandLocal "rip-video" { } ''
         install -Dm755 ${./rip-video.sh} "$out/bin/rip-video"
+        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # titles = readable view over makemkvcon's verbose `info` output.
       titles = pkgs.runCommandLocal "titles" { } ''
