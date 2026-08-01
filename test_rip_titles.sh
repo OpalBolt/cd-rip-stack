@@ -9,7 +9,7 @@ cd "$(mktemp -d)"
 vid=$PWD/nas; mkdir -p "$vid/rip"
 bin=$PWD/bin; mkdir -p "$bin"
 
-cat > "$bin/mountpoint" <<'EOF'
+cat > "$bin/mount-nfs" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF

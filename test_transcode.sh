@@ -11,9 +11,9 @@ cd "$(mktemp -d)"
 vid=$PWD/nas; rip=$vid/rip; lib=$vid/library; work=$PWD/work
 mkdir -p "$rip" "$lib" "$work"
 
-# fake binaries — mountpoint always "mounted"; HandBrakeCLI just copies in -> out.
+# fake binary — mount-nfs always claims the share is up.
 bin=$PWD/bin; mkdir -p "$bin"
-cat > "$bin/mountpoint" <<'EOF'
+cat > "$bin/mount-nfs" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF

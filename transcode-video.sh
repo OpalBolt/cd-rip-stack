@@ -30,12 +30,8 @@ case "${1:-}" in
   *) echo "transcode-video takes no arguments" >&2; usage; exit 1 ;;
 esac
 
-# ponytail: inline mount check — Task 2 will extract a shared mount-nfs helper.
-if ! mountpoint -q "$vid"; then
-  [ -n "${NFS_VIDEOS:-}" ] || { echo "$vid not mounted and \$NFS_VIDEOS unset" >&2; exit 1; }
-  mkdir -p "$vid"
-  sudo mount -t nfs "$NFS_VIDEOS" "$vid" || { echo "mount $NFS_VIDEOS -> $vid failed" >&2; exit 1; }
-fi
+# ponytail: shared mount helper (Task 2) — the same one sync-music uses for /mnt/music.
+mount-nfs "$vid" "${NFS_VIDEOS:-}"
 
 mkdir -p "$tmp_dir"
 
