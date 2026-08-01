@@ -44,3 +44,13 @@ _rip_emit() {
     "$1" "$2" "$RIP_SCRIPT" "$RIP_SW" "${RIP_NAME:-}" "$3" "$4" "$5" "$6" \
     | tee -a "$rip_log"
 }
+
+# rip_note <phase> <text>: log an untimed note line (e.g. "audio kept=eng detected=eng")
+# to stderr (visible live) AND rip.log. same 8 columns as a phase line, with "-"
+# in the end-time and m:ss slots so it reads as a note, not a timed phase. used by
+# rip-video to record which audio language was kept (Task 3).
+rip_note() {
+  printf '%s  -  %s  %s  %s  %s  -  %s\n' \
+    "$(date '+%F %T')" "${RIP_SCRIPT:-}" "${RIP_SW:-}" "${RIP_NAME:-}" "$1" "$2" \
+    | tee -a "$rip_log" >&2
+}

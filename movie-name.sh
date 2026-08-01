@@ -11,6 +11,10 @@
 #   movie-name --rename <dir|file>     resolve, then rename every still-junk-labeled
 #                                     MKV in that dir to "<Title> (Year)_tNN.mkv"
 #                                     (main + extras); prints the new base name
+#   movie-name --rename-as <name> <dir>
+#                                     rename using an already-resolved name (no
+#                                     resolve, no prompt) — rip-video resolves the
+#                                     name + lang before rip, then calls this after.
 #
 # Name source, first real hit wins:
 #   1. an already-named "Title (Year)_tNN.mkv" in the dir (cache) — used as-is.
@@ -19,19 +23,27 @@
 # No $TMDB_API_KEY / quit -> hard error (a DVD must not file as B1 unnoticed).
 # No network / skip -> fall back to the label and warn. Reads $TMDB_API_KEY from
 # the process env; never opens .env.
-# ponytail: one resolver; rip-video calls `--rename`, and you can re-run it by hand.
+# ponytail: one resolver; rip-video calls print (pre-rip, for the lang) then
+# --rename-as (post-rip) so TMDB is prompted exactly once.
 set -euo pipefail
 shopt -s nullglob
 
 mode=print
+ra_name=; ra_dir=
 case "${1:-}" in
   --rename) mode=rename; shift ;;
+  --rename-as)
+    mode=rename-as; shift
+    ra_name="${1:?--rename-as needs <name>}"; ra_dir="${2:?--rename-as needs <dir>}"; shift 2 ;;
   -h|--help)
     cat <<EOF
-usage: movie-name [--rename] [disc:N | file.mkv | rip-dir]
+usage: movie-name [--rename | --rename-as <name> <dir>] [disc:N | file.mkv | rip-dir]
   resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
-  --rename: also rename every still-junk-labeled MKV in the dir to
-            "<Title> (Year)_tNN.mkv" (main + extras); prints the new base name.
+  --rename <dir|file>: resolve, then rename every still-junk-labeled MKV in the
+                       dir to "<Title> (Year)_tNN.mkv" (main + extras); prints
+                       the base name.
+  --rename-as <name> <dir>: rename the dir's junk-labeled MKVs to "<name>_tNN.mkv"
+                       using an already-resolved name (no resolve, no prompt).
   Blu-ray metadata is used directly; a DVD label code (B1) prompts a TMDB search
   (pick prompt: Enter=1, s=skip, q=quit). No \$TMDB_API_KEY -> error; other TMDB
   failures fall back to the label. Reads \$TMDB_API_KEY from the env.
@@ -158,29 +170,12 @@ resolve() {
   fi
 }
 
-# do_rename: resolve the name for a rip dir (or a file in it), then rename every
-# still-junk-labeled MKV there to "<Title> (Year)_tNN.mkv". an already-named file
-# sets the name (cache); per-title junk labels (B1/C2/D1…) from one disc all map to
-# it. prints the new base name to stdout, the rename map to stderr.
-# ponytail: one rip = one movie, so all junk labels in the dir map to one name;
-# genuinely-named files (another movie left staged) are left alone.
-do_rename() {
-  local dir sample f b cur n display
-  if [ -d "$arg" ]; then dir=$arg; else dir=$(dirname "$arg"); fi
-  # sample = an already-named MKV if any (its name wins), else the first MKV.
-  sample=
-  for f in "$dir"/*.mkv; do
-    b=$(basename "$f" .mkv); b=${b%_t*}
-    if [[ $b =~ ^(.+)\ \((19[0-9]{2}|20[0-9]{2})\)$ ]]; then sample=$f; break; fi
-    [ -z "$sample" ] && sample=$f
-  done
-  if [ -z "$sample" ]; then warn "no MKVs in $dir"; printf '%s\n' -; return 0; fi
-
-  arg=$sample
-  resolve || return 1
-  display=$TITLE; [ "$YEAR" != - ] && display="$TITLE ($YEAR)"
-  display=${display//\//-}     # '/' would split the path; transcode sanitizes the rest
-
+# rename_to <dir> <display>: rename every still-junk-labeled MKV in <dir> to
+# "<display>_tNN.mkv" (preserving _tNN); leave genuinely-named files alone.
+# prints the display name to stdout, the rename map to stderr.
+# ponytail: shared by --rename (after resolve) and --rename-as (name already known).
+rename_to() {
+  local dir=$1 display=$2 f b cur n
   for f in "$dir"/*.mkv; do
     b=$(basename "$f" .mkv)
     case "$b" in *_t*) n=${b##*_t};; *) n=;; esac
@@ -193,7 +188,45 @@ do_rename() {
   printf '%s\n' "$display"
 }
 
+# do_rename: resolve the name for a rip dir (or a file in it), then rename every
+# still-junk-labeled MKV there to "<Title> (Year)_tNN.mkv". an already-named file
+# sets the name (cache); per-title junk labels (B1/C2/D1…) from one disc all map to
+# it. prints the new base name to stdout, the rename map to stderr.
+# ponytail: one rip = one movie, so all junk labels in the dir map to one name;
+# genuinely-named files (another movie left staged) are left alone.
+do_rename() {
+  local dir sample f b
+  if [ -d "$arg" ]; then dir=$arg; else dir=$(dirname "$arg"); fi
+  # sample = an already-named MKV if any (its name wins), else the first MKV.
+  sample=
+  for f in "$dir"/*.mkv; do
+    b=$(basename "$f" .mkv); b=${b%_t*}
+    if [[ $b =~ ^(.+)\ \((19[0-9]{2}|20[0-9]{2})\)$ ]]; then sample=$f; break; fi
+    [ -z "$sample" ] && sample=$f
+  done
+  if [ -z "$sample" ]; then warn "no MKVs in $dir"; printf '%s\n' -; return 0; fi
+
+  arg=$sample
+  resolve || return 1
+  local display=$TITLE; [ "$YEAR" != - ] && display="$TITLE ($YEAR)"
+  display=${display//\//-}     # '/' would split the path; transcode sanitizes the rest
+  rename_to "$dir" "$display"
+}
+
+# do_rename_as: rename a rip dir's junk-labeled MKVs to "<name>_tNN.mkv" using an
+# already-resolved display name (no resolve, no TMDB prompt). rip-video calls this
+# after ripping, with the name it resolved before the rip.
+do_rename_as() {  # $1 = display, $2 = dir
+  local display=$1 dir=$2 f sample
+  if [ ! -d "$dir" ]; then warn "not a dir: $dir"; return 1; fi
+  sample=
+  for f in "$dir"/*.mkv; do [ -z "$sample" ] && sample=$f; done
+  if [ -z "$sample" ]; then warn "no MKVs in $dir"; printf '%s\n' -; return 0; fi
+  rename_to "$dir" "$display"
+}
+
 case "$mode" in
-  rename) do_rename || exit 1 ;;
-  *)      resolve || exit 1; emit ;;
+  rename)    do_rename || exit 1 ;;
+  rename-as) do_rename_as "$ra_name" "$ra_dir" || exit 1 ;;
+  *)         resolve || exit 1; emit ;;
 esac
