@@ -65,7 +65,6 @@ RIP_SW="$engine offset=$offset"
 # ponytail: name is read from the ripped FLAC's tags after the rip (below); - until then.
 RIP_NAME=-
 rip_log_start
-rip_phase rip
 
 case "$engine" in
   whipper)
@@ -98,4 +97,3 @@ case "$engine" in
 esac
 
 RIP_NAME=$(rip_album_name)
-rip_phase_end

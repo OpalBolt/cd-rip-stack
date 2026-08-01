@@ -97,16 +97,16 @@ Blu-rays carry their title in disc metadata, so `rip-video` names them straight 
 
 ## Logging
 
-`rip`, `rip-video`, `transcode-video`, `titles`, and `sync-music` each append to `./rip.log` in the directory you run them from. A run logs a `started` line first (so a long rip shows up immediately), then one line per phase. A single-phase run (CD, `rip-video`, `titles`) skips the `total` — it would just repeat the phase line; a multi-phase run (`transcode-video`, `sync-music`) adds a `total`. Each line records start, end, script, software, name, phase, elapsed, status:
+`rip`, `rip-video`, `transcode-video`, `titles`, and `sync-music` each append to `./rip.log` in the directory you run them from. A run logs a `started` line first (so a long rip shows up immediately), then one line per phase. A CD rip logs only the `total` — one summary line per disc, so `grep total rip.log` lists every CD rip. `rip-video` and `titles` log one phase line (their `total` is skipped as redundant); `transcode-video` and `sync-music` log each phase plus a `total`. Each line records start, end, script, software, name, phase, elapsed, status:
 
 ```
 2026-07-12 14:00:00  14:30:00  rip-video.sh        makemkvcon  Rogue One: A Star Wars Story  rip     30m00  ok
 2026-07-12 14:30:00  16:45:00  transcode-video.sh  handbrake   Rogue One: A Star Wars Story  encode  135m00 ok
 2026-07-12 14:30:00  16:45:00  transcode-video.sh  handbrake   Rogue One: A Star Wars Story  total   135m00 ok
-2026-07-12 17:00:00  17:08:05  rip.sh              cyanrip offset=6  Radiohead - OK Computer    rip     8m05   ok
+2026-07-12 17:00:00  17:08:05  rip.sh              cyanrip offset=6  Radiohead - OK Computer    total  8m05   ok
 ```
 
-`transcode-video` logs one `encode` line per file plus the `total`; `rip-video` logs just `rip` (its `total` is skipped — one phase); CD logs just `rip`. The `name` comes from the resolved movie name for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by all the scripts.
+`transcode-video` logs one `encode` line per file plus the `total`; `rip-video` logs just `rip` (its `total` is skipped — one phase) plus `audio`/`subtitle` notes recording which tracks it kept; CD logs just `total`. The `name` comes from the resolved movie name for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by all the scripts.
 
 Since ripping and transcoding now run on different machines, `./rip.log` is per-machine (whichever cwd you ran the command in) — video history is split across two files. Kept simple for now; point both steps at a shared path on the NAS (e.g. `/mnt/videos/rip.log`) only if the split becomes annoying.
 
