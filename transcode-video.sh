@@ -44,15 +44,18 @@ fi
 # ponytail: strip filesystem-hostile chars; keeps ( ) for "Title (Year)".
 sanitize() { printf '%s' "$1" | tr -d '/:*?"<>|'; }
 
-# main feature per movie = lowest _tNN present. compute before deleting anything.
+# main feature per movie = lowest _tNN present (_eNN are extras-disc titles, never
+# main — rip-video --extras stages them). compute before deleting anything.
 declare -A main_num
 for f in "${files[@]}"; do
   b=$(basename "$f" .mkv)
   if [[ $b =~ ^(.*)_t([0-9]+)$ ]]; then
     name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}
     if (( 10#$num < 10#${main_num[$name]:-999} )); then main_num[$name]=$num; fi
+  elif [[ $b =~ ^(.*)_e([0-9]+)$ ]]; then
+    :   # extras-disc title — filed as extras below, never main
   else
-    echo "skip (no _tNN suffix): $f" >&2
+    echo "skip (no _tNN/_eNN suffix): $f" >&2
   fi
 done
 
@@ -64,15 +67,16 @@ rip_log_start
 failed=0
 for f in "${files[@]}"; do
   b=$(basename "$f" .mkv)
-  [[ $b =~ ^(.*)_t([0-9]+)$ ]] || continue
-  name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}
+  if   [[ $b =~ ^(.*)_t([0-9]+)$ ]]; then sfx=t; name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}
+  elif [[ $b =~ ^(.*)_e([0-9]+)$ ]]; then sfx=e; name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}
+  else echo "skip (no _tNN/_eNN suffix): $f" >&2; continue; fi
   RIP_NAME=$name
 
   safe=$(sanitize "$name")
-  if [ "$num" = "${main_num[$name]}" ]; then
+  if [ "$sfx" = t ] && [ "$num" = "${main_num[$name]}" ]; then
     dest_dir="$lib_dir/$safe"; dest="$dest_dir/$safe.mkv"
   else
-    dest_dir="$lib_dir/$safe/extras"; dest="$dest_dir/${safe}_t${num}.mkv"
+    dest_dir="$lib_dir/$safe/extras"; dest="$dest_dir/${safe}_${sfx}${num}.mkv"
   fi
   mkdir -p "$dest_dir"
 

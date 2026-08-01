@@ -63,7 +63,10 @@ minlen="${RIP_MINLENGTH:-120}"
 
 usage() {
   cat <<EOF
-usage: rip-video [title]   (disc is always disc:0)
+usage: rip-video [--extras] [title]   (disc is always disc:0)
+  --extras  rip this disc's titles as extras for the movie (staged as
+            <Movie (Year)>_eNN.mkv; transcode files them under extras/,
+            never as the main feature). use for a set's extras disc.
   title   which disc titles to rip: "all" (default), a number, a range (N-M),
           or a comma list (e.g. 0,5-7). list them first with: titles.
           asks for the movie title (TMDB), rips lossless MKVs with the original-
@@ -71,8 +74,10 @@ usage: rip-video [title]   (disc is always disc:0)
 EOF
 }
 
+extras=0
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
+  --extras) extras=1; shift ;;
 esac
 title="${1:-all}"
 
@@ -147,9 +152,11 @@ for t in "${titles_to_rip[@]}"; do
   makemkvcon mkv -r --profile="$TMP_PROFILE" --minlength="$minlen" disc:0 "$t" "$rip_dir/"
 done
 
-# rename staged MKVs to "<Title (Year)>_tNN.mkv" using the name resolved above
-# (no re-prompt). the disc is ejected by hand; transcode-video finishes on the desktop.
-movie-name --rename-as "$display" "$rip_dir" \
+# rename staged MKVs to "<Title (Year)>_tNN.mkv" — or _eNN.mkv with --extras, so a
+# set's extras disc never collides with the movie's _tNN files; transcode files
+# _eNN as extras. the disc is ejected by hand; transcode-video finishes on the desktop.
+ra=(--rename-as); [ "$extras" = 1 ] && ra+=(--extras); ra+=("$display" "$rip_dir")
+movie-name "${ra[@]}" \
   || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
 
 # Task 4: log which subtitle languages landed in the staged MKVs (ffprobe). Danish

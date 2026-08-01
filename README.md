@@ -69,6 +69,7 @@ titles               # list titles, longest-first (S = scrambled/decoy cut)
 rip-video 0          # rip title 0 → lossless MKV in /mnt/videos/rip/
 rip-video            # rip all titles (default)
 rip-video 0,5-7      # main feature + extras 5-7 (skip a decoy title)
+rip-video --extras    # 2nd disc of a set: rip as extras (_eNN, never the main feature)
 transcode-video      # on the desktop: encode every staged MKV → /mnt/videos/library/
 ```
 
@@ -76,15 +77,15 @@ Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it
 
 `titles` and `rip-video` both scan with `--minlength=$RIP_MINLENGTH` (default 120s = 2 min): drops logos and FBI warnings, keeps extras like deleted scenes. They must share the value — makemkv renumbers titles by what survives the scan, so a different `titles` and `rip-video` make the numbers point at different titles. Set `RIP_MINLENGTH` lower to catch shorter extras.
 
-```
 /mnt/videos/
 ├── rip/                          ← lossless staging (ripped here)
-│   └── <Movie (Year)>_tNN.mkv
+│   ├── <Movie (Year)>_tNN.mkv       ← movie disc (title 0 = main)
+│   └── <Movie (Year)>_eNN.mkv       ← extras disc (rip-video --extras)
 └── library/                      ← point Jellyfin here
     └── <Movie (Year)>/
         ├── <Movie (Year)>.mkv        ← title 0 (lowest _tNN)
         └── extras/
-            └── <Movie (Year)>_tNN.mkv ← every other title
+            └── <Movie (Year)>_{t,e}NN.mkv ← other titles + the extras disc
 ```
 
 The transcode is a dumb pass-through re-encode: video → H.265 1080p, every audio and subtitle track kept as-is and soft (never burned in; selection already happened at rip). The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `transcode-video.sh` if encoding is too slow.
@@ -93,6 +94,7 @@ Set the NFS export before ripping (the scripts read the process environment, nev
 
 Pick the main feature with `titles`. When two titles share a length (Rogue One ships the movie as both title 0 and 1), `titles` flags a non-sequential segment order with `S` — that's the alternate/decoy cut. Rip the clean one, not `all`.
 
+Two-disc sets (movie + extras disc): rip the movie disc normally, swap in the extras disc, and run `rip-video --extras` — pick the same movie at the TMDB prompt. Its titles stage as `<Movie (Year)>_eNN.mkv` (never colliding with the movie's `_tNN`), and `transcode-video` files them under `<Movie (Year)>/extras/`. A second extras disc is safe too: the rename rolls past any `_eNN` already staged instead of clobbering it.
 Blu-rays carry their title in disc metadata, so `rip-video` names them straight away (e.g. `Rogue One- A Star Wars Story_t00.mkv`) — no prompt, no network. DVDs have only a label code (`B1`, or per-title codes for extras), so `rip-video` resolves the real name at rip time via `movie-name --rename`: it prompts for a TMDB search, you pick a result (Enter = top match, `s` = skip, `q` = quit), and every staged MKV — main and extras alike — is renamed to `<Title> (Year)_tNN.mkv`; `transcode-video` then files them under `<Title> (Year)/` for free. Export `TMDB_API_KEY` first (read from the process env, never `.env`). Botched the pick? Re-run `movie-name --rename /mnt/videos/rip` — already-named files set the name, only the junk-labelled ones get renamed. With no key (or `q`) the rip errors out after staging; a network failure, blank search, or `s` falls back to the raw label with a warning.
 
 ## Logging
