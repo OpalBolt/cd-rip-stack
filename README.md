@@ -60,6 +60,8 @@ transcode-video      # on the desktop: encode every staged MKV → /mnt/videos/l
 
 Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it). Track selection happens at rip via a MakeMKV profile (`custom.mmcp.xml`): English + Danish audio and subtitles today, narrowed later. `transcode-video` pulls each file to a local temp dir to encode off NFS, then uploads the result to its final home and deletes the lossless source — re-run it for newly ripped discs.
 
+`titles` and `rip-video` both scan with `--minlength=$RIP_MINLENGTH` (default 120s = 2 min): drops logos and FBI warnings, keeps extras like deleted scenes. They must share the value — makemkv renumbers titles by what survives the scan, so a different `titles` and `rip-video` make the numbers point at different titles. Set `RIP_MINLENGTH` lower to catch shorter extras.
+
 ```
 /mnt/videos/
 ├── rip/                          ← lossless staging (ripped here)

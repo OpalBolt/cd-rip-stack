@@ -64,13 +64,14 @@ RIP_SW=makemkvcon
 RIP_NAME=-
 rip_log_start
 
-# decrypt + remux to lossless MKV. --profile picks tracks at rip (see
-# custom.mmcp.xml); --minlength=600 drops titles under 10 min (FBI warnings,
-# logos, menus — and, accepted tradeoff, short extras).
+# decrypt + remux to lossless MKV. --profile picks tracks at rip (see custom.mmcp.xml).
+# --minlength=$RIP_MINLENGTH (default 120s = 2 min) drops logos/FBI warnings but keeps
+# extras like deleted scenes. must match titles.sh: makemkv renumbers titles by what
+# survives the scan, so a different value here makes the title numbers point elsewhere.
 # ponytail: makemkvcon arg order is source title output — verify if it rejects this.
 rip_phase rip
 for t in "${titles_to_rip[@]}"; do
-  makemkvcon mkv -r --profile="$(dirname "$0")/custom.mmcp.xml" --minlength=600 \
+  makemkvcon mkv -r --profile="$(dirname "$0")/custom.mmcp.xml" --minlength="${RIP_MINLENGTH:-120}" \
     disc:0 "$t" "$rip_dir/"
 done
 # name the rip after makemkvcon's output ("<title>_tNN.mkv" -> "<title>")
