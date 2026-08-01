@@ -1,44 +1,53 @@
 #!/usr/bin/env bash
-# movie-name — resolve a real movie name for a DVD/Blu-ray disc or a lossless
-# MKV. makemkvcon names DVD rips after a useless label code (B1_t00.mkv); this
-# returns "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-" if unknown) so
-# rip/transcode/move name files, folders, and logs, and Task 3 picks audio by
-# original_language.
+# movie-name — resolve a real movie name for a DVD/Blu-ray disc or a lossless MKV,
+# and (with --rename) rename a rip dir's junk-labeled MKVs to "<Title> (Year)_tNN.mkv".
+# makemkvcon names DVD rips after a useless label code (B1_t00.mkv, or per-title
+# codes like C2/D1 for extras); this returns "<Title>\t<Year>\t<Lang>" (Lang =
+# ISO 639-1, or "-") so rip/transcode/move name files, folders, and logs, and Task 3
+# picks audio by original_language.
 #
-# Two-tier, first real hit wins:
-#   1. metadata name — makemkvcon's own title name. For a disc, scan `info` and
-#      read CINFO:2 / TINFO:0,2 (like titles.sh); for an MKV path, read the
-#      file's base — that base IS makemkvcon's output name (TINFO code 27), so
-#      it carries the same metadata a scan would, already on disk. Used only if
-#      it "looks real": Blu-ray titles pass, DVD label codes (B1) fail.
-#   2. TMDB search — prompt for a query, show the top matches, pick one.
-# No $TMDB_API_KEY -> hard error (you forgot to export it; a DVD must not file
-# as B1 unnoticed). No network / cancel / no match -> fall back to the label and warn.
-# Reads $TMDB_API_KEY from the process environment; never opens .env.
-# ponytail: one resolver, called by rip-video (and usable by transcode/move/audio).
+# Modes:
+#   movie-name <disc:N | file.mkv>     resolve + print "Title\tYear\tLang"
+#   movie-name --rename <dir|file>     resolve, then rename every still-junk-labeled
+#                                     MKV in that dir to "<Title> (Year)_tNN.mkv"
+#                                     (main + extras); prints the new base name
+#
+# Name source, first real hit wins:
+#   1. an already-named "Title (Year)_tNN.mkv" in the dir (cache) — used as-is.
+#   2. disc/MKV metadata if it "looks real" (Blu-ray titles pass; DVD labels fail).
+#   3. TMDB search — pick prompt (Enter=1, s=skip, q=quit).
+# No $TMDB_API_KEY / quit -> hard error (a DVD must not file as B1 unnoticed).
+# No network / skip -> fall back to the label and warn. Reads $TMDB_API_KEY from
+# the process env; never opens .env.
+# ponytail: one resolver; rip-video calls `--rename`, and you can re-run it by hand.
 set -euo pipefail
+shopt -s nullglob
 
+mode=print
+case "${1:-}" in
+  --rename) mode=rename; shift ;;
+  -h|--help)
+    cat <<EOF
+usage: movie-name [--rename] [disc:N | file.mkv | rip-dir]
+  resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
+  --rename: also rename every still-junk-labeled MKV in the dir to
+            "<Title> (Year)_tNN.mkv" (main + extras); prints the new base name.
+  Blu-ray metadata is used directly; a DVD label code (B1) prompts a TMDB search
+  (pick prompt: Enter=1, s=skip, q=quit). No \$TMDB_API_KEY -> error; other TMDB
+  failures fall back to the label. Reads \$TMDB_API_KEY from the env.
+EOF
+    exit 0 ;;
+esac
 arg=${1:-disc:0}
 
-usage() {
-  cat <<EOF
-usage: movie-name [disc:N | /path/to/Movie_tNN.mkv]
-  prints "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
-  Blu-ray metadata is used directly (no prompt); a DVD label code (B1) prompts a
-  TMDB search. Reads \$TMDB_API_KEY from the env. No key -> error; other TMDB
-  failures (no network, cancel, no match) fall back to the label with a warning.
-EOF
-}
-
-case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-
+TITLE=-; YEAR=-; LANG=-
 warn() { echo "movie-name: $*" >&2; }
-emit() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:--}"; }   # title year lang (- if empty)
+emit() { printf '%s\t%s\t%s\n' "$TITLE" "$YEAR" "${LANG:--}"; }
+setlabel() { TITLE=${1:--}; YEAR=-; LANG=-; }   # fall back to the raw disc label
 
-# looks_real: a makemkvcon name is a real title if it has a space, is longer
-# than 3, isn't the DVD file-label pattern ^[A-Z][0-9]+ (B1, C2), and isn't a
-# short all-caps generic label. Blu-ray titles ("Rogue One- A Star Wars Story")
-# pass; DVD labels ("B1"; "DIE_HARD_4_0_SE_DISC_1" — no space) fail.
+# looks_real: a makemkvcon name is a real title if it has a space, is longer than
+# 3, isn't the DVD file-label pattern ^[A-Z][0-9]+ (B1, C2), and isn't a short
+# all-caps generic label. Blu-ray titles pass; DVD labels fail.
 # ponytail: heuristic — real titles carry lowercase + spaces; label codes don't.
 looks_real() {
   local n=$1
@@ -49,19 +58,18 @@ looks_real() {
   return 0
 }
 
-# cache_hit <path>: a re-run over an already-named "<Title> (Year)_tNN.mkv" must
-# not re-prompt. If the base matches "Title (19xx/20xx)", emit and return 0.
+# cache_hit <path>: an already-named "<Title> (Year)_tNN.mkv" sets TITLE/YEAR.
 cache_hit() {
   local b
   b=$(basename "$1" .mkv); b=${b%_t*}
   if [[ $b =~ ^(.+)\ \((19[0-9]{2}|20[0-9]{2})\)$ ]]; then
-    emit "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" -
+    TITLE=${BASH_REMATCH[1]}; YEAR=${BASH_REMATCH[2]}; LANG=-
     return 0
   fi
   return 1
 }
 
-# path_raw <path>: makemkvcon's output name = file base minus trailing "_tNN".
+# makemkvcon's output name = file base minus trailing "_tNN".
 path_raw() { local b; b=$(basename "$1" .mkv); printf '%s' "${b%_t*}"; }
 
 # disc_raw <disc>: scan makemkvcon info, prefer title 0's name (TINFO:0,2), fall
@@ -79,26 +87,30 @@ disc_raw() {
   '
 }
 
-# tmdb_resolve <fallback>: prompt -> search -> pick. Always emits one line (the
-# pick, or the fallback on any failure/cancel) and returns 0 — never blocks.
+# tmdb_resolve <fallback>: prompt -> search -> pick. Sets TITLE/YEAR/LANG and
+# returns 0 on a pick or soft fallback, 1 on no-key or quit (hard error).
+# pick UX: Enter=1 (top match), s=skip (use label), q=quit (abort).
 tmdb_resolve() {
   local fallback=${1:-}
 
   if [ -z "${TMDB_API_KEY:-}" ]; then
     warn "no \$TMDB_API_KEY in env — cannot resolve via TMDB. set it and re-run."
-    return 1            # hard error, no silent fallback to a junk label
+    return 1
   fi
 
-  printf '\nTMDB search (blank to skip): ' >&2
-  local query; read -r query || query=
-  [ -n "$query" ] || { warn "no query — using disc label '${fallback:--}'"; emit "${fallback:--}" - -; return 0; }
+  printf '\nTMDB search (blank=skip, q=quit): ' >&2
+  local query; read -r query || query=q
+  case "$query" in
+    q|Q) warn "quit — re-run movie-name to rename later"; return 1 ;;
+    '') warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
+  esac
 
   local q_enc url json
   q_enc=$(jq -nr --arg q "$query" '$q|@uri')
   url="https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${q_enc}"
   if ! json=$(curl -fsS --max-time 15 "$url"); then
     warn "TMDB request failed (no network?) — using disc label '${fallback:--}'"
-    emit "${fallback:--}" - -; return 0
+    setlabel "$fallback"; return 0
   fi
 
   # top 10 results: title \t year (release_date[0:4]) \t original_language
@@ -106,7 +118,7 @@ tmdb_resolve() {
   mapfile -t picks < <(printf '%s' "$json" | jq -r \
       '.results[0:10][] | [ .title, (.release_date[0:4] // "-"), (.original_language // "-") ] | @tsv')
   local n=${#picks[@]}
-  [ "$n" -gt 0 ] || { warn "no TMDB matches for '$query' — using disc label '${fallback:--}'"; emit "${fallback:--}" - -; return 0; }
+  [ "$n" -gt 0 ] || { warn "no TMDB matches for '$query' — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0; }
 
   local i t y l
   for i in "${!picks[@]}"; do
@@ -114,26 +126,74 @@ tmdb_resolve() {
     printf '%d. %s  (%s)  [%s]\n' "$((i+1))" "$t" "$y" "$l" >&2
   done
 
-  printf 'pick one (1-%s, blank to skip): ' "$n" >&2
-  local pick; read -r pick || pick=
-  if [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$n" ]; then
-    IFS=$'\t' read -r t y l <<< "${picks[$((pick-1))]}"
-    emit "$t" "$y" "${l:--}"
+  local pick
+  while true; do
+    printf 'pick 1-%s (Enter=1, s=skip, q=quit): ' "$n" >&2
+    read -r pick || pick=q
+    case "$pick" in
+      ''|1) IFS=$'\t' read -r t y l <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0 ;;
+      s|S) warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
+      q|Q) warn "quit — re-run movie-name to rename later"; return 1 ;;
+    esac
+    if [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$n" ]; then
+      IFS=$'\t' read -r t y l <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0
+    fi
+    warn "invalid choice '$pick'" >&2
+  done
+}
+
+# resolve: set TITLE/YEAR/LANG for $arg (disc or file). returns 1 on hard error.
+resolve() {
+  local raw
+  if [[ $arg == disc:* ]]; then
+    raw=$(disc_raw "$arg")
   else
-    warn "cancelled — using disc label '${fallback:--}'"; emit "${fallback:--}" - -
+    cache_hit "$arg" && return 0
+    raw=$(path_raw "$arg")
+  fi
+  if [ -n "$raw" ] && looks_real "$raw"; then
+    TITLE=$raw; YEAR=-; LANG=-          # Blu-ray: real title, no year/lang in metadata
+  else
+    tmdb_resolve "$raw" || return 1     # DVD junk label -> TMDB; no-key/quit -> error
   fi
 }
 
-# --- main --------------------------------------------------------------------
-if [[ $arg == disc:* ]]; then
-  raw=$(disc_raw "$arg")
-else
-  if cache_hit "$arg"; then exit 0; fi
-  raw=$(path_raw "$arg")
-fi
+# do_rename: resolve the name for a rip dir (or a file in it), then rename every
+# still-junk-labeled MKV there to "<Title> (Year)_tNN.mkv". an already-named file
+# sets the name (cache); per-title junk labels (B1/C2/D1…) from one disc all map to
+# it. prints the new base name to stdout, the rename map to stderr.
+# ponytail: one rip = one movie, so all junk labels in the dir map to one name;
+# genuinely-named files (another movie left staged) are left alone.
+do_rename() {
+  local dir sample f b cur n display
+  if [ -d "$arg" ]; then dir=$arg; else dir=$(dirname "$arg"); fi
+  # sample = an already-named MKV if any (its name wins), else the first MKV.
+  sample=
+  for f in "$dir"/*.mkv; do
+    b=$(basename "$f" .mkv); b=${b%_t*}
+    if [[ $b =~ ^(.+)\ \((19[0-9]{2}|20[0-9]{2})\)$ ]]; then sample=$f; break; fi
+    [ -z "$sample" ] && sample=$f
+  done
+  if [ -z "$sample" ]; then warn "no MKVs in $dir"; printf '%s\n' -; return 0; fi
 
-if [ -n "$raw" ] && looks_real "$raw"; then
-  emit "$raw" - -          # Blu-ray: real title, no year/lang in metadata
-else
-  tmdb_resolve "$raw"      # DVD junk label -> TMDB, or fallback
-fi
+  arg=$sample
+  resolve || return 1
+  display=$TITLE; [ "$YEAR" != - ] && display="$TITLE ($YEAR)"
+  display=${display//\//-}     # '/' would split the path; transcode sanitizes the rest
+
+  for f in "$dir"/*.mkv; do
+    b=$(basename "$f" .mkv)
+    case "$b" in *_t*) n=${b##*_t};; *) n=;; esac
+    cur=${b%_t*}
+    [ "$cur" = "$display" ] && continue          # already this name
+    looks_real "$cur" && continue                # a genuinely-named file (another movie) — leave it
+    mv -- "$f" "$dir/${display}${n:+_t$n}.mkv"
+    echo "movie-name: $cur → ${display}${n:+_t$n}" >&2
+  done
+  printf '%s\n' "$display"
+}
+
+case "$mode" in
+  rename) do_rename || exit 1 ;;
+  *)      resolve || exit 1; emit ;;
+esac

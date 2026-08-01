@@ -93,21 +93,20 @@ Set the NFS export before ripping (the scripts read the process environment, nev
 
 Pick the main feature with `titles`. When two titles share a length (Rogue One ships the movie as both title 0 and 1), `titles` flags a non-sequential segment order with `S` — that's the alternate/decoy cut. Rip the clean one, not `all`.
 
-Blu-rays carry their title in disc metadata, so `rip-video` names them straight away (e.g. `Rogue One- A Star Wars Story_t00.mkv`) — no prompt, no network. DVDs have only a label code (`B1`), so `rip-video` resolves the real name at rip time via the `movie-name` helper: it prompts for a search, queries TMDB, and you pick a result; the staged files are renamed to `<Title> (Year)_tNN.mkv` and `transcode-video` then files them under `<Title> (Year)/` for free. Export `TMDB_API_KEY` first (read from the process env, never `.env`). Re-running over an already-named file skips the prompt. Run `movie-name <file.mkv>` by hand to re-resolve, or `movie-name disc:0` to preview a disc. With no key the rip errors out after staging (the MKV keeps the raw label) — export the key and re-run; a network failure, blank search, or cancelled pick falls back to the raw label with a warning.
+Blu-rays carry their title in disc metadata, so `rip-video` names them straight away (e.g. `Rogue One- A Star Wars Story_t00.mkv`) — no prompt, no network. DVDs have only a label code (`B1`, or per-title codes for extras), so `rip-video` resolves the real name at rip time via `movie-name --rename`: it prompts for a TMDB search, you pick a result (Enter = top match, `s` = skip, `q` = quit), and every staged MKV — main and extras alike — is renamed to `<Title> (Year)_tNN.mkv`; `transcode-video` then files them under `<Title> (Year)/` for free. Export `TMDB_API_KEY` first (read from the process env, never `.env`). Botched the pick? Re-run `movie-name --rename /mnt/videos/rip` — already-named files set the name, only the junk-labelled ones get renamed. With no key (or `q`) the rip errors out after staging; a network failure, blank search, or `s` falls back to the raw label with a warning.
 
 ## Logging
 
-`rip`, `rip-video`, `transcode-video`, `titles`, and `sync-music` each append to `./rip.log` in the directory you run them from. A run logs a `started` line first (so a long rip shows up immediately), then one line per phase, then a `total`; each line records start, end, script, software, name, phase, elapsed, status:
+`rip`, `rip-video`, `transcode-video`, `titles`, and `sync-music` each append to `./rip.log` in the directory you run them from. A run logs a `started` line first (so a long rip shows up immediately), then one line per phase. A single-phase run (CD, `rip-video`, `titles`) skips the `total` — it would just repeat the phase line; a multi-phase run (`transcode-video`, `sync-music`) adds a `total`. Each line records start, end, script, software, name, phase, elapsed, status:
 
 ```
 2026-07-12 14:00:00  14:30:00  rip-video.sh        makemkvcon  Rogue One: A Star Wars Story  rip     30m00  ok
 2026-07-12 14:30:00  16:45:00  transcode-video.sh  handbrake   Rogue One: A Star Wars Story  encode  135m00 ok
 2026-07-12 14:30:00  16:45:00  transcode-video.sh  handbrake   Rogue One: A Star Wars Story  total   135m00 ok
 2026-07-12 17:00:00  17:08:05  rip.sh              cyanrip offset=6  Radiohead - OK Computer    rip     8m05   ok
-2026-07-12 17:00:00  17:08:05  rip.sh              cyanrip offset=6  Radiohead - OK Computer    total   8m05   ok
 ```
 
-`transcode-video` logs one `encode` line per file plus the `total`; `rip-video` logs `rip` + `total`; CD logs `rip` and `total`. The `name` comes from the exported MKV filename for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by all three scripts.
+`transcode-video` logs one `encode` line per file plus the `total`; `rip-video` logs just `rip` (its `total` is skipped — one phase); CD logs just `rip`. The `name` comes from the resolved movie name for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by all the scripts.
 
 Since ripping and transcoding now run on different machines, `./rip.log` is per-machine (whichever cwd you ran the command in) — video history is split across two files. Kept simple for now; point both steps at a shared path on the NAS (e.g. `/mnt/videos/rip.log`) only if the split becomes annoying.
 

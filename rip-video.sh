@@ -70,34 +70,19 @@ for t in "${titles_to_rip[@]}"; do
   makemkvcon mkv -r --profile="$(dirname "$0")/custom.mmcp.xml" --minlength="${RIP_MINLENGTH:-120}" \
     disc:0 "$t" "$rip_dir/"
 done
-# resolve the real movie name and rename the staged MKVs so downstream
-# (transcode/move) sees "<Title> (Year)_tNN.mkv". Blu-rays carry the name in
-# disc metadata (no prompt, no network); DVDs rip as a label code (B1) and
-# prompt a TMDB search. an already-named file (cache) is left untouched.
-# ponytail: rename over sidecar — transcode derives its name via ${b%_t*}, so a
-# rip-time rename makes it pick the real name up for free.
+# resolve the real movie name and rename ALL staged MKVs (main + extras) so
+# downstream (transcode/move) sees "<Title> (Year)_tNN.mkv". Blu-rays carry the
+# name in disc metadata (no prompt, no network); DVDs rip as a label code (B1, or
+# per-title C2/D1…) and prompt a TMDB search. re-run `movie-name --rename $rip_dir`
+# by hand to fix a botched pick without re-ripping.
+# ponytail: the rename lives in movie-name --rename so the rip and a manual re-name
+# share one code path; transcode derives its name via ${b%_t*}, so it picks the
+# real name up for free.
 mkvs=("$rip_dir"/*.mkv)
 if [ "${#mkvs[@]}" -gt 0 ]; then
-  b=$(basename "${mkvs[0]}" .mkv); orig=${b%_t*}
-  new=$orig
-  # movie-name prints Title\tYear\tLang, or exits non-zero if a DVD needs TMDB
-  # but $TMDB_API_KEY is unset — surface that instead of filing under the junk
-  # label. the staged MKVs keep the label; set the key and re-run to rename.
-  if ! resolved=$(movie-name "${mkvs[0]}"); then
-    echo "rip-video: movie-name failed — staged as '${orig}_t*.mkv'; set \$TMDB_API_KEY and re-run" >&2
+  if ! new=$(movie-name --rename "$rip_dir"); then
+    echo "rip-video: naming failed — MKVs keep their labels; set \$TMDB_API_KEY and re-run: movie-name --rename $rip_dir" >&2
     exit 1
-  fi
-  if IFS=$'\t' read -r title year lang <<< "$resolved" && [ -n "$title" ]; then
-    new=$title
-    [ "$year" != - ] && new="$title ($year)"
-    new=${new//\//-}
-  fi
-  if [ "$new" != "$orig" ]; then
-    for f in "$rip_dir/${orig}_t"*.mkv; do
-      n=$(basename "$f" .mkv); n=${n##*_t}
-      mv -- "$f" "$rip_dir/${new}_t${n}.mkv"
-    done
-    echo "rip-video: ${orig} → ${new}" >&2   # keep the original label visible
   fi
   RIP_NAME=$new
 fi

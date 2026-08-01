@@ -1,7 +1,9 @@
-# rip-common.sh — sourced by rip.sh and rip-video.sh. unified timing + logging
-# to ./rip.log in the cwd. the caller sets RIP_SCRIPT, RIP_SW, and RIP_NAME,
-# then calls rip_log_start; each rip_phase <name> ... rip_phase_end pair logs
-# one line and an EXIT trap logs the total. one phase (CD) or several (video).
+# rip-common.sh — sourced by rip.sh, rip-video.sh, transcode-video.sh, titles.sh,
+# sync-music.sh. unified timing + logging to ./rip.log in the cwd. the caller sets
+# RIP_SCRIPT, RIP_SW, and RIP_NAME, then calls rip_log_start (logs a `started`
+# marker so a long rip shows up at once); each rip_phase <name> ... rip_phase_end
+# pair logs one line. the EXIT trap logs a `total`, skipped when a single phase
+# succeeded (it would just duplicate that phase line). one phase (CD/video) or many.
 # ponytail: shared helper from the 2nd caller on. installed as a sibling next
 # to each script and sourced via $(dirname "$0").
 
@@ -20,12 +22,16 @@ rip_phase() {                              # begin a named phase
 
 rip_phase_end() {                          # log the just-finished phase
   local elapsed=$(( $(date +%s) - RIP_PHASE_START ))
+  RIP_PHASES=$(( ${RIP_PHASES:-0} + 1 ))
   _rip_emit "$RIP_PHASE_START_TS" "$(date '+%F %T')" "$RIP_PHASE_NAME" \
             $(( elapsed / 60 )) $(( elapsed % 60 )) ok
 }
 
 rip_log_finish() {                         # EXIT trap: log the total
   local rc=$? elapsed status
+  # one phase that succeeded already logged start..end..status — the total would
+  # duplicate it. skip it. (multi-phase runs, or any failure, still get a total.)
+  [ "$rc" -eq 0 ] && [ "${RIP_PHASES:-0}" -eq 1 ] && return
   elapsed=$(( $(date +%s) - RIP_START ))
   status=ok; [ "$rc" -ne 0 ] && status="FAIL($rc)"
   _rip_emit "$RIP_START_TS" "$(date '+%F %T')" total \
