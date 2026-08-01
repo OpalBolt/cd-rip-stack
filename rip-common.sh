@@ -54,3 +54,11 @@ rip_note() {
     "$(date '+%F %T')" "${RIP_SCRIPT:-}" "${RIP_SW:-}" "${RIP_NAME:-}" "$1" "$2" \
     | tee -a "$rip_log" >&2
 }
+
+# require_online <url> <label>: refuse to start if <url> is unreachable. both
+# rippers depend on a metadata lookup (TMDB for video, MusicBrainz for music), so
+# an offline rip would name/tag wrong. 5s cap so a dead link fails fast.
+require_online() {
+  curl -fsS --max-time 5 -o /dev/null "$1" \
+    || { echo "$(basename "$0"): offline or $2 unreachable — connect and re-run." >&2; exit 1; }
+}

@@ -54,6 +54,9 @@ case "${1:-}" in
     exit 1
     ;;
 esac
+# MusicBrainz lookup needs the network; cyanrip -N skips it (beets tags
+# later), so only gate the path that actually looks up metadata.
+case " $* " in *" -N "*) ;; *) require_online "https://musicbrainz.org/" "MusicBrainz" ;; esac
 
 mkdir -p "$out_dir"
 

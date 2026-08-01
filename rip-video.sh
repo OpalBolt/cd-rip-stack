@@ -47,15 +47,9 @@ build_selection() {  # $1 = keep-lang (2/B) or ""
 # custom.mmcp.xml — it is both the substitution target and the manual-use default.
 BASELINE='-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
 
-# refuse to start without network + a working TMDB key: the title and the audio
-# language both come from TMDB, so an offline rip would guess both wrong.
-require_online() {
-  [ -n "${TMDB_API_KEY:-}" ] \
-    || { echo "rip-video: no \$TMDB_API_KEY in env — set it and re-run." >&2; exit 1; }
-  curl -fsS --max-time 5 -o /dev/null \
-      "https://api.themoviedb.org/3/configuration?api_key=${TMDB_API_KEY}" \
-    || { echo "rip-video: offline or TMDB_API_KEY rejected — fix and re-run." >&2; exit 1; }
-}
+# require_online is shared (rip-common): it probes a URL and bails if offline.
+# rip-video checks TMDB_API_KEY inline first (clear message), then probes the TMDB
+# API — the title + audio language both come from TMDB, so an offline rip is wrong.
 
 # ── main ──
 
@@ -105,7 +99,8 @@ else
   done
 fi
 
-require_online
+[ -n "${TMDB_API_KEY:-}" ] || { echo "rip-video: no \$TMDB_API_KEY in env — set it and re-run." >&2; exit 1; }
+require_online "https://api.themoviedb.org/3/configuration?api_key=${TMDB_API_KEY}" "TMDB"
 
 # ponytail: shared mount helper (Task 2) — the same one sync-music uses for /mnt/music.
 mount-nfs "$vid" "${NFS_VIDEOS:-}"
