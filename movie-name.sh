@@ -65,8 +65,8 @@ cache_hit() {
 path_raw() { local b; b=$(basename "$1" .mkv); printf '%s' "${b%_t*}"; }
 
 # disc_raw <disc>: scan makemkvcon info, prefer title 0's name (TINFO:0,2), fall
-# back to the disc volume label (CINFO:2). MAKEMKV_INFO feeds a captured dump in
-# the self-test — the same override titles.sh uses.
+# back to the disc volume label (CINFO:2). MAKEMKV_INFO replays a captured dump
+# instead of hitting the drive — the same override titles.sh uses.
 disc_raw() {
   local disc=$1 info
   if [ -n "${MAKEMKV_INFO:-}" ]; then info=$("$MAKEMKV_INFO" "$disc")

@@ -8,7 +8,8 @@
 set -euo pipefail
 disc="${1:-disc:0}"
 
-# MAKEMKV_INFO overrides the info source (the self-test feeds a captured dump).
+# MAKEMKV_INFO overrides the info source (point it at a script that replays a
+# captured `makemkvcon info` dump — inspect a scan without touching the drive).
 # RIP_MINLENGTH must match rip-video.sh: makemkv renumbers titles by what survives the
 # minlength scan, so a different value here makes the title numbers point elsewhere.
 minlen="${RIP_MINLENGTH:-120}"
