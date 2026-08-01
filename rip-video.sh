@@ -13,9 +13,9 @@ rip_dir="$vid/rip"
 
 usage() {
   cat <<EOF
-usage: rip-video [title]
-  title   makemkvcon title spec for disc:0: "all" (default), a single number, or N-M.
-          list titles first with: titles
+usage: rip-video [title]   (disc is always disc:0)
+  title   which titles to rip: "all" (default), a number, a range (N-M),
+          or a comma list (e.g. 0,5-7). list them first with: titles.
           rips lossless MKVs to $rip_dir; run transcode-video on the desktop to finish.
 EOF
 }
@@ -24,6 +24,31 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 title="${1:-all}"
+
+# expand the title spec into individual title numbers. makemkvcon rips one title
+# per call ("saves a single title"), so a list or range becomes a loop. the disc
+# is fixed at disc:0, so a stray "disc:N" here would otherwise make makemkvcon
+# dump its usage and exit 1 — validate before touching the drive.
+titles_to_rip=()
+if [ "$title" = all ]; then
+  titles_to_rip=(all)
+else
+  IFS=, read -ra tokens <<< "$title"
+  for tok in "${tokens[@]}"; do
+    if [[ $tok =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      lo=${BASH_REMATCH[1]}; hi=${BASH_REMATCH[2]}
+      if (( 10#$lo > 10#$hi )); then
+        echo "rip-video: bad range '$tok' (start greater than end)" >&2; exit 1
+      fi
+      for (( n=10#$lo; n<=10#$hi; n++ )); do titles_to_rip+=("$n"); done
+    elif [[ $tok =~ ^[0-9]+$ ]]; then
+      titles_to_rip+=("$tok")
+    else
+      echo "rip-video: invalid title '$tok' — use 'all', a number, N-M, or a comma list" >&2
+      usage; exit 1
+    fi
+  done
+fi
 
 # ponytail: inline mount check — Task 2 will extract a shared mount-nfs helper.
 if ! mountpoint -q "$vid"; then
@@ -44,8 +69,10 @@ rip_log_start
 # logos, menus — and, accepted tradeoff, short extras).
 # ponytail: makemkvcon arg order is source title output — verify if it rejects this.
 rip_phase rip
-makemkvcon mkv -r --profile="$(dirname "$0")/custom.mmcp.xml" --minlength=600 \
-  disc:0 "$title" "$rip_dir/"
+for t in "${titles_to_rip[@]}"; do
+  makemkvcon mkv -r --profile="$(dirname "$0")/custom.mmcp.xml" --minlength=600 \
+    disc:0 "$t" "$rip_dir/"
+done
 # name the rip after makemkvcon's output ("<title>_tNN.mkv" -> "<title>")
 mkvs=("$rip_dir"/*.mkv)
 [ "${#mkvs[@]}" -gt 0 ] && { b=$(basename "${mkvs[0]}" .mkv); RIP_NAME=${b%_t*}; }

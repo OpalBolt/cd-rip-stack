@@ -54,7 +54,7 @@ Two commands, two machines. Rip on the laptop (whatever has a drive), transcode 
 titles               # list titles, longest-first (S = scrambled/decoy cut)
 rip-video 0          # rip title 0 → lossless MKV in /mnt/videos/rip/
 rip-video            # rip all titles (default)
-rip-video 1-3        # rip titles 1 through 3
+rip-video 0,5-7      # main feature + extras 5-7 (skip a decoy title)
 transcode-video      # on the desktop: encode every staged MKV → /mnt/videos/library/
 ```
 
