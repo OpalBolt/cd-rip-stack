@@ -5,7 +5,7 @@ Rip CDs to tagged FLAC and DVDs/Blu-rays to 1080p H.265. Each pipeline is two co
 ## What you get
 
 - **CDs** — AccurateRip-verified FLAC, tagged from MusicBrainz with cover art, Last.fm genres, ReplayGain normalization, and sorted into a library.
-- **DVD/Blu-ray** — decrypted MKV transcoded to 1080p H.265. UHD is downscaled (no 4K TV here); DVD and Blu-ray stay at native resolution.
+- **DVD/Blu-ray** — ripped to a lossless MKV on the NAS, then transcoded to 1080p H.265. UHD is downscaled (no 4K TV here); DVD and Blu-ray stay at native resolution. Rip on whatever machine has a drive; transcode later on the desktop.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ CD sample offset (samples) for AccurateRip verification:
 nix develop
 ```
 
-Provides `rip`, `tag`, `rip-video`, `titles`, plus makemkv, handbrake, whipper, cyanrip, and beets.
+Provides `rip`, `tag`, `rip-video`, `transcode-video`, `titles`, plus makemkv, handbrake, whipper, cyanrip, and beets.
 
 ## Ripping a CD
 
@@ -48,30 +48,50 @@ Rips land in `~/media/audio/music/rip/`. `tag` runs beets, which tags the files 
 
 ## Ripping a DVD / Blu-ray
 
+Two commands, two machines. Rip on the laptop (whatever has a drive), transcode on the desktop. Both mount the same NAS export (`192.168.103.4:/export/movies`) at `/mnt/videos`; that mount is the hand-off.
+
 ```sh
 titles               # list titles, longest-first (S = scrambled/decoy cut)
-rip-video 0          # rip title 0 → 1080p H.265
-rip-video            # rip all titles
+rip-video 0          # rip title 0 → lossless MKV in /mnt/videos/rip/
+rip-video            # rip all titles (default)
 rip-video 1-3        # rip titles 1 through 3
+transcode-video      # on the desktop: encode every staged MKV → /mnt/videos/library/
 ```
 
-Two phases: **makemkvcon** decrypts and remuxes each title to a large lossless MKV in `~/media/video/rip/`, then **HandBrakeCLI** transcodes each to 1080p H.265 in `~/media/video/library/` and deletes the intermediate. The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `rip-video.sh` if encoding is too slow.
+Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it). Track selection happens at rip via a MakeMKV profile (`custom.mmcp.xml`): English + Danish audio and subtitles today, narrowed later. `transcode-video` pulls each file to a local temp dir to encode off NFS, then uploads the result to its final home and deletes the lossless source — re-run it for newly ripped discs.
+
+```
+/mnt/videos/
+├── rip/                          ← lossless staging (ripped here)
+│   └── <Movie (Year)>_tNN.mkv
+└── library/                      ← point Jellyfin here
+    └── <Movie (Year)>/
+        ├── <Movie (Year)>.mkv        ← title 0 (lowest _tNN)
+        └── extras/
+            └── <Movie (Year)>_tNN.mkv ← every other title
+```
+
+The transcode is a dumb pass-through re-encode: video → H.265 1080p, every audio and subtitle track kept as-is (selection already happened at rip). The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `transcode-video.sh` if encoding is too slow.
+
+Set the NFS export before ripping (the scripts read the process environment, never `.env`): `export NFS_VIDEOS=192.168.103.4:/export/movies`. Both `rip-video` and `transcode-video` mount `/mnt/videos` on demand if it isn't already.
 
 Pick the main feature with `titles`. When two titles share a length (Rogue One ships the movie as both title 0 and 1), `titles` flags a non-sequential segment order with `S` — that's the alternate/decoy cut. Rip the clean one, not `all`.
 
 ## Logging
 
-Both `rip` and `rip-video` append to `./rip.log` in the directory you run them from. Each line records start, end, script, software, name, phase, elapsed, status:
+`rip`, `rip-video`, and `transcode-video` each append to `./rip.log` in the directory you run them from. Each line records start, end, script, software, name, phase, elapsed, status:
 
 ```
-2026-07-12 14:00:00  14:30:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  rip     30m00  ok
-2026-07-12 14:30:00  16:45:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  encode  135m00 ok
-2026-07-12 14:00:00  16:45:00  rip-video.sh  makemkvcon+handbrake  Rogue One: A Star Wars Story  total   165m00 ok
-2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      Radiohead - OK Computer       rip     8m05   ok
-2026-07-12 17:00:00  17:08:05  rip.sh        cyanrip offset=6      Radiohead - OK Computer       total   8m05   ok
+2026-07-12 14:00:00  14:30:00  rip-video.sh        makemkvcon  Rogue One: A Star Wars Story  rip     30m00  ok
+2026-07-12 14:30:00  16:45:00  transcode-video.sh  handbrake   Rogue One: A Star Wars Story  encode  135m00 ok
+2026-07-12 14:30:00  16:45:00  transcode-video.sh  handbrake   Rogue One: A Star Wars Story  total   135m00 ok
+2026-07-12 17:00:00  17:08:05  rip.sh              cyanrip offset=6  Radiohead - OK Computer    rip     8m05   ok
+2026-07-12 17:00:00  17:08:05  rip.sh              cyanrip offset=6  Radiohead - OK Computer    total   8m05   ok
 ```
 
-Video logs each phase (`rip`, `encode`) plus the `total`; CD logs `rip` and `total` (identical — one phase). The `name` comes from the exported MKV filename for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by both scripts.
+`transcode-video` logs one `encode` line per file plus the `total`; `rip-video` logs `rip` + `total`; CD logs `rip` and `total`. The `name` comes from the exported MKV filename for video; for CD it's `Artist - Album`, read from the ripped FLAC's tags after the rip — so `-N`, which skips the MusicBrainz lookup, logs `-`. (`tag`, the beets step, is separate and not logged.) Timing logic lives in `rip-common.sh`, sourced by all three scripts.
+
+Since ripping and transcoding now run on different machines, `./rip.log` is per-machine (whichever cwd you ran the command in) — video history is split across two files. Kept simple for now; point both steps at a shared path on the NAS (e.g. `/mnt/videos/rip.log`) only if the split becomes annoying.
 
 ## Drive access
 
@@ -111,8 +131,10 @@ Key plugins:
 ```
 flake.nix          devShell: makemkv, handbrake, whipper, cyanrip, beets (+ plugin deps)
 rip.sh             CD rip — engine choice, phase timing, log
-rip-video.sh       DVD/Blu-ray rip — makemkvcon → HandBrakeCLI @ 1080p, phase timing, log
-rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh and rip-video.sh
+rip-video.sh       DVD/Blu-ray rip — makemkvcon → lossless MKV in /mnt/videos/rip/, phase timing, log
+transcode-video.sh batch transcode — HandBrakeCLI @ 1080p off NFS → /mnt/videos/library/, per-file log
+custom.mmcp.xml    MakeMKV selection profile — picks audio + subtitle tracks at rip (Tasks 3 & 4 narrow it)
+rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh, rip-video.sh, transcode-video.sh
 titles.sh          makemkvcon info → readable title list with scramble flag
 beets-config.yaml  beets config: tagging, art, genres, replaygain, paths
 README.md          this file
