@@ -53,6 +53,7 @@
       # titles = readable view over makemkvcon's verbose `info` output.
       titles = pkgs.runCommandLocal "titles" { } ''
         install -Dm755 ${./titles.sh} "$out/bin/titles"
+        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # mount-nfs = shared mount-on-demand helper for the NFS shares; called by
       # sync-music (NFS_MUSIC) and rip-video/transcode-video (NFS_VIDEOS).

@@ -9,6 +9,7 @@ rip_log=rip.log
 
 rip_log_start() {                          # begin global timer + EXIT trap
   RIP_START=$(date +%s); RIP_START_TS=$(date '+%F %T')
+  _rip_emit "$RIP_START_TS" "-" "-" 0 0 started   # log at once, not only at first phase end
   trap rip_log_finish EXIT
 }
 

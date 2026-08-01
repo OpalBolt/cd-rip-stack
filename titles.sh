@@ -6,6 +6,7 @@
 # thin awk filter over makemkvcon's robotic `info`. run inside the nix devshell.
 # ponytail: awk over stdlib tools — no python dependency for a log parse.
 set -euo pipefail
+source "$(dirname "$0")/rip-common.sh"
 disc="${1:-disc:0}"
 
 # MAKEMKV_INFO overrides the info source (point it at a script that replays a
@@ -13,6 +14,13 @@ disc="${1:-disc:0}"
 # RIP_MINLENGTH must match rip-video.sh: makemkv renumbers titles by what survives the
 # minlength scan, so a different value here makes the title numbers point elsewhere.
 minlen="${RIP_MINLENGTH:-120}"
+
+RIP_SCRIPT=titles.sh
+RIP_SW=makemkvcon
+RIP_NAME=$disc
+rip_log_start
+rip_phase titles
+
 if [ -n "${MAKEMKV_INFO:-}" ]; then
   ${MAKEMKV_INFO} "$disc"
 else
@@ -61,3 +69,5 @@ END {
     split("",acnt); split("",sseen)
   }
 }' | sort -t$'\t' -k1,1rn | awk -F'\t' '{printf "title %-3s %-8s %-10s %-2s A:%-14s subs:%s %s\n",$2,$3,$4,$5,$7,$8,$6}'
+
+rip_phase_end

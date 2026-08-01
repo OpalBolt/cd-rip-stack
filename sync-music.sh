@@ -53,7 +53,9 @@ rip_log_start
 for d in "${entries[@]}"; do
   RIP_NAME=$(basename "$d")
   rip_phase move
-  if rsync -a --remove-source-files "$d" "$dst/"; then
+  # ponytail: -rl not -a — NFS rejects setting owner/group/perms/times on this
+  # share (spurious "Operation not permitted"); music only needs its bytes copied.
+  if rsync -rl --remove-source-files "$d" "$dst/"; then
     # --remove-source-files leaves the now-empty source dirs behind — sweep them.
     find "$d" -depth -type d -empty -delete 2>/dev/null || true
     rip_phase_end

@@ -12,8 +12,8 @@
 #      it carries the same metadata a scan would, already on disk. Used only if
 #      it "looks real": Blu-ray titles pass, DVD label codes (B1) fail.
 #   2. TMDB search — prompt for a query, show the top matches, pick one.
-# On no $TMDB_API_KEY / no network / cancel / no match: fall back to the label
-# and warn — naming must never block a rip.
+# No $TMDB_API_KEY -> hard error (you forgot to export it; a DVD must not file
+# as B1 unnoticed). No network / cancel / no match -> fall back to the label and warn.
 # Reads $TMDB_API_KEY from the process environment; never opens .env.
 # ponytail: one resolver, called by rip-video (and usable by transcode/move/audio).
 set -euo pipefail
@@ -25,8 +25,8 @@ usage() {
 usage: movie-name [disc:N | /path/to/Movie_tNN.mkv]
   prints "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
   Blu-ray metadata is used directly (no prompt); a DVD label code (B1) prompts a
-  TMDB search. Reads \$TMDB_API_KEY from the env. Falls back to the label with a
-  warning if TMDB is unavailable or cancelled — never blocks.
+  TMDB search. Reads \$TMDB_API_KEY from the env. No key -> error; other TMDB
+  failures (no network, cancel, no match) fall back to the label with a warning.
 EOF
 }
 
@@ -85,8 +85,8 @@ tmdb_resolve() {
   local fallback=${1:-}
 
   if [ -z "${TMDB_API_KEY:-}" ]; then
-    warn "no \$TMDB_API_KEY in env — using disc label '${fallback:--}'"
-    emit "${fallback:--}" - -; return 0
+    warn "no \$TMDB_API_KEY in env — cannot resolve via TMDB. set it and re-run."
+    return 1            # hard error, no silent fallback to a junk label
   fi
 
   printf '\nTMDB search (blank to skip): ' >&2

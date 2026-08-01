@@ -80,13 +80,16 @@ mkvs=("$rip_dir"/*.mkv)
 if [ "${#mkvs[@]}" -gt 0 ]; then
   b=$(basename "${mkvs[0]}" .mkv); orig=${b%_t*}
   new=$orig
-  # movie-name always prints Title\tYear\tLang; if it's missing/empty, keep
-  # the label so the rip still completes (naming never blocks).
-  if IFS=$'\t' read -r title year lang < <(movie-name "${mkvs[0]}"); then
+  # movie-name prints Title\tYear\tLang, or exits non-zero if a DVD needs TMDB
+  # but $TMDB_API_KEY is unset — surface that instead of filing under the junk
+  # label. the staged MKVs keep the label; set the key and re-run to rename.
+  if ! resolved=$(movie-name "${mkvs[0]}"); then
+    echo "rip-video: movie-name failed — staged as '${orig}_t*.mkv'; set \$TMDB_API_KEY and re-run" >&2
+    exit 1
+  fi
+  if IFS=$'\t' read -r title year lang <<< "$resolved" && [ -n "$title" ]; then
     new=$title
-    if [ "$year" != - ]; then new="$title ($year)"; fi
-    # ponytail: strip only '/' here — it would split the path at rename time
-    # and mis-file the MKV (transcode's sanitize() does the full pass at placement).
+    [ "$year" != - ] && new="$title ($year)"
     new=${new//\//-}
   fi
   if [ "$new" != "$orig" ]; then

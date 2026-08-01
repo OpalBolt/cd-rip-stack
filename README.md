@@ -12,7 +12,7 @@ Rip CDs to tagged FLAC and DVDs/Blu-rays to 1080p H.265. Each pipeline is two co
 - A CD drive, and/or an optical drive that reads DVD/Blu-ray
 - [Nix](https://nixos.org) with flakes enabled
 - For Blu-ray: a [MakeMKV key](https://forum.makemkv.com/forum/) in `~/.MakeMKV/settings.conf` as `app_Key = "..."`. The free beta key rotates every 30 days.
-- For DVD naming: a [TMDB API key](https://www.themoviedb.org/settings/api) exported as `TMDB_API_KEY`. Blu-rays are named from disc metadata (no key needed); a DVD rips as a label code (`B1`) and prompts a TMDB search at rip time. No key → the rip still completes, filed under the raw label.
+- For DVD naming: a [TMDB API key](https://www.themoviedb.org/settings/api) exported as `TMDB_API_KEY`. Blu-rays are named from disc metadata (no key needed); a DVD rips as a label code (`B1`) and prompts a TMDB search at rip time. No key → the rip errors out after staging (export it first).
 
 ## Drives
 
@@ -93,11 +93,11 @@ Set the NFS export before ripping (the scripts read the process environment, nev
 
 Pick the main feature with `titles`. When two titles share a length (Rogue One ships the movie as both title 0 and 1), `titles` flags a non-sequential segment order with `S` — that's the alternate/decoy cut. Rip the clean one, not `all`.
 
-Blu-rays carry their title in disc metadata, so `rip-video` names them straight away (e.g. `Rogue One- A Star Wars Story_t00.mkv`) — no prompt, no network. DVDs have only a label code (`B1`), so `rip-video` resolves the real name at rip time via the `movie-name` helper: it prompts for a search, queries TMDB, and you pick a result; the staged files are renamed to `<Title> (Year)_tNN.mkv` and `transcode-video` then files them under `<Title> (Year)/` for free. Export `TMDB_API_KEY` first (read from the process env, never `.env`). Re-running over an already-named file skips the prompt. Run `movie-name <file.mkv>` by hand to re-resolve, or `movie-name disc:0` to preview a disc. If the key is unset, the network is down, or you cancel, `rip-video` keeps the raw label and warns — the rip always completes.
+Blu-rays carry their title in disc metadata, so `rip-video` names them straight away (e.g. `Rogue One- A Star Wars Story_t00.mkv`) — no prompt, no network. DVDs have only a label code (`B1`), so `rip-video` resolves the real name at rip time via the `movie-name` helper: it prompts for a search, queries TMDB, and you pick a result; the staged files are renamed to `<Title> (Year)_tNN.mkv` and `transcode-video` then files them under `<Title> (Year)/` for free. Export `TMDB_API_KEY` first (read from the process env, never `.env`). Re-running over an already-named file skips the prompt. Run `movie-name <file.mkv>` by hand to re-resolve, or `movie-name disc:0` to preview a disc. With no key the rip errors out after staging (the MKV keeps the raw label) — export the key and re-run; a network failure, blank search, or cancelled pick falls back to the raw label with a warning.
 
 ## Logging
 
-`rip`, `rip-video`, and `transcode-video` each append to `./rip.log` in the directory you run them from. Each line records start, end, script, software, name, phase, elapsed, status:
+`rip`, `rip-video`, `transcode-video`, `titles`, and `sync-music` each append to `./rip.log` in the directory you run them from. A run logs a `started` line first (so a long rip shows up immediately), then one line per phase, then a `total`; each line records start, end, script, software, name, phase, elapsed, status:
 
 ```
 2026-07-12 14:00:00  14:30:00  rip-video.sh        makemkvcon  Rogue One: A Star Wars Story  rip     30m00  ok
@@ -153,7 +153,7 @@ rip-video.sh       DVD/Blu-ray rip — makemkvcon → lossless MKV in /mnt/video
 transcode-video.sh batch transcode — HandBrakeCLI @ 1080p off NFS → /mnt/videos/library/, per-file log
 movie-name.sh      resolve a real movie name (Title, Year, Lang) for a disc or lossless MKV — Blu-ray metadata, else TMDB
 custom.mmcp.xml    MakeMKV selection profile — picks audio + subtitle tracks at rip (Tasks 3 & 4 narrow it)
-rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh, rip-video.sh, transcode-video.sh, sync-music.sh
+rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh, rip-video.sh, transcode-video.sh, titles.sh, sync-music.sh
 mount-nfs.sh       mount-on-demand helper for the NFS shares (called by sync-music + the video scripts)
 sync-music.sh      move finished, beets-tagged music to /mnt/music/library/ (rsync --remove-source-files, per-folder log)
 titles.sh          makemkvcon info → readable title list with scramble flag
