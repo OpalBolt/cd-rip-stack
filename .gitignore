@@ -21,3 +21,9 @@ whipper/
 
 # scratch logs from manual makemkvcon / rip debugging
 *.log
+
+# Task files
+tasks
+
+# HandBrakeCLI --help dump (reference for the transcode flags)
+HandBreakCLI-help.txt
