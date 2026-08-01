@@ -28,7 +28,7 @@ CD sample offset (samples) for AccurateRip verification:
 nix develop
 ```
 
-Provides `rip`, `tag`, `rip-video`, `transcode-video`, `titles`, plus makemkv, handbrake, whipper, cyanrip, and beets.
+Provides `rip`, `tag`, `rip-video`, `transcode-video`, `sync-music`, `mount-nfs`, `titles`, plus makemkv, handbrake, whipper, cyanrip, and beets.
 
 ## Ripping a CD
 
@@ -45,6 +45,19 @@ tag                  # tag + sort into the library
 If cyanrip's MusicBrainz lookup matches several releases for the disc, `rip` shows the list, prompts for a number, and re-runs with `-R <n>` — no need to retype the command. Pass `-N` to skip the lookup entirely (beets tags later).
 
 Rips land in `~/media/audio/music/rip/`. `tag` runs beets, which tags the files and **copies** them into `~/media/audio/music/library/` (it does not delete the originals — clean `rip/` when done).
+
+## Moving music to the NAS
+
+After `tag` sorts FLACs into `~/media/audio/music/library/`, move them to the NAS so Jellyfin sees them:
+
+```sh
+export NFS_MUSIC=192.168.103.4:/export/music
+sync-music          # mount /mnt/music on demand, then move the library → /mnt/music/library/
+```
+
+`sync-music` mounts `NFS_MUSIC` at `${MUSIC_MOUNT:-/mnt/music}` via the shared `mount-nfs` helper (the same helper `rip-video`/`transcode-video` use for `NFS_VIDEOS`), then `rsync --remove-source-files` each top-level folder across and sweeps the now-empty source dirs. One log line per folder; on any failure it stops and leaves the source in place — re-run picks up where it stopped.
+
+The `mount-nfs` helper runs `sudo mount -t nfs`, which resolves through sudo's `secure_path`, not the devshell — so the host needs an NFS client installed (`nfs-utils`; on NixOS add it to `environment.systemPackages`).
 
 ## Ripping a DVD / Blu-ray
 
@@ -75,7 +88,7 @@ Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it
 
 The transcode is a dumb pass-through re-encode: video → H.265 1080p, every audio and subtitle track kept as-is (selection already happened at rip). The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `transcode-video.sh` if encoding is too slow.
 
-Set the NFS export before ripping (the scripts read the process environment, never `.env`): `export NFS_VIDEOS=192.168.103.4:/export/movies`. Both `rip-video` and `transcode-video` mount `/mnt/videos` on demand if it isn't already.
+Set the NFS export before ripping (the scripts read the process environment, never `.env`): `export NFS_VIDEOS=192.168.103.4:/export/movies`. Both `rip-video` and `transcode-video` mount `/mnt/videos` on demand via `mount-nfs` if it isn't already — the same helper `sync-music` uses for `/mnt/music`.
 
 Pick the main feature with `titles`. When two titles share a length (Rogue One ships the movie as both title 0 and 1), `titles` flags a non-sequential segment order with `S` — that's the alternate/decoy cut. Rip the clean one, not `all`.
 
@@ -136,7 +149,9 @@ rip.sh             CD rip — engine choice, phase timing, log
 rip-video.sh       DVD/Blu-ray rip — makemkvcon → lossless MKV in /mnt/videos/rip/, phase timing, log
 transcode-video.sh batch transcode — HandBrakeCLI @ 1080p off NFS → /mnt/videos/library/, per-file log
 custom.mmcp.xml    MakeMKV selection profile — picks audio + subtitle tracks at rip (Tasks 3 & 4 narrow it)
-rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh, rip-video.sh, transcode-video.sh
+rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh, rip-video.sh, transcode-video.sh, sync-music.sh
+mount-nfs.sh       mount-on-demand helper for the NFS shares (called by sync-music + the video scripts)
+sync-music.sh      move finished, beets-tagged music to /mnt/music/library/ (rsync --remove-source-files, per-folder log)
 titles.sh          makemkvcon info → readable title list with scramble flag
 beets-config.yaml  beets config: tagging, art, genres, replaygain, paths
 README.md          this file

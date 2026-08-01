@@ -47,6 +47,16 @@
       titles = pkgs.runCommandLocal "titles" { } ''
         install -Dm755 ${./titles.sh} "$out/bin/titles"
       '';
+      # mount-nfs = shared mount-on-demand helper for the NFS shares; called by
+      # sync-music (NFS_MUSIC) and rip-video/transcode-video (NFS_VIDEOS).
+      mount-nfs = pkgs.runCommandLocal "mount-nfs" { } ''
+        install -Dm755 ${./mount-nfs.sh} "$out/bin/mount-nfs"
+      '';
+      # sync-music = move finished, beets-tagged music to the NAS library.
+      sync-music = pkgs.runCommandLocal "sync-music" { } ''
+        install -Dm755 ${./sync-music.sh} "$out/bin/sync-music"
+        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+      '';
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -55,6 +65,9 @@
           rip-video
           transcode-video
           titles
+          mount-nfs
+          sync-music
+          pkgs.rsync
           pkgs.cyanrip
           # metaflac: read album/artist tags off ripped FLACs for rip.log
           pkgs.flac
@@ -80,6 +93,7 @@
           echo "     flags pass through: cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U"
           echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
           echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
+          echo "     sync-music                  →  mount /mnt/music + move the library to the NAS (needs NFS_MUSIC)"
           echo
           echo "DVD/Blu-ray — titles [disc:N]            →  title list, longest-first (S = scrambled/decoy)"
           echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/"
