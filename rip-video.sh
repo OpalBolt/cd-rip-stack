@@ -70,7 +70,32 @@ for t in "${titles_to_rip[@]}"; do
   makemkvcon mkv -r --profile="$(dirname "$0")/custom.mmcp.xml" --minlength="${RIP_MINLENGTH:-120}" \
     disc:0 "$t" "$rip_dir/"
 done
-# name the rip after makemkvcon's output ("<title>_tNN.mkv" -> "<title>")
+# resolve the real movie name and rename the staged MKVs so downstream
+# (transcode/move) sees "<Title> (Year)_tNN.mkv". Blu-rays carry the name in
+# disc metadata (no prompt, no network); DVDs rip as a label code (B1) and
+# prompt a TMDB search. an already-named file (cache) is left untouched.
+# ponytail: rename over sidecar — transcode derives its name via ${b%_t*}, so a
+# rip-time rename makes it pick the real name up for free.
 mkvs=("$rip_dir"/*.mkv)
-[ "${#mkvs[@]}" -gt 0 ] && { b=$(basename "${mkvs[0]}" .mkv); RIP_NAME=${b%_t*}; }
+if [ "${#mkvs[@]}" -gt 0 ]; then
+  b=$(basename "${mkvs[0]}" .mkv); orig=${b%_t*}
+  new=$orig
+  # movie-name always prints Title\tYear\tLang; if it's missing/empty, keep
+  # the label so the rip still completes (naming never blocks).
+  if IFS=$'\t' read -r title year lang < <(movie-name "${mkvs[0]}"); then
+    new=$title
+    if [ "$year" != - ]; then new="$title ($year)"; fi
+    # ponytail: strip only '/' here — it would split the path at rename time
+    # and mis-file the MKV (transcode's sanitize() does the full pass at placement).
+    new=${new//\//-}
+  fi
+  if [ "$new" != "$orig" ]; then
+    for f in "$rip_dir/${orig}_t"*.mkv; do
+      n=$(basename "$f" .mkv); n=${n##*_t}
+      mv -- "$f" "$rip_dir/${new}_t${n}.mkv"
+    done
+    echo "rip-video: ${orig} → ${new}" >&2   # keep the original label visible
+  fi
+  RIP_NAME=$new
+fi
 rip_phase_end

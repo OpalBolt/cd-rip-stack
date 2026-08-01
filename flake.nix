@@ -43,6 +43,13 @@
         install -Dm755 ${./transcode-video.sh} "$out/bin/transcode-video"
         install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
+      # movie-name = resolve a real movie name (Title, Year, Lang) for a disc or
+      # lossless MKV; DVDs rip as a label code (B1), so rip-video calls this to
+      # rename staged MKVs to "<Title> (Year)_tNN.mkv". standalone helper (like
+      # titles/mount-nfs) — it warns to stderr, so it does not source rip-common.
+      movie-name = pkgs.runCommandLocal "movie-name" { } ''
+        install -Dm755 ${./movie-name.sh} "$out/bin/movie-name"
+      '';
       # titles = readable view over makemkvcon's verbose `info` output.
       titles = pkgs.runCommandLocal "titles" { } ''
         install -Dm755 ${./titles.sh} "$out/bin/titles"
@@ -64,6 +71,7 @@
           rip
           rip-video
           transcode-video
+          movie-name
           titles
           mount-nfs
           sync-music
@@ -82,6 +90,9 @@
           # dvd/blu-ray
           pkgs.makemkv
           pkgs.handbrake
+          # movie-name: TMDB lookup for DVD label codes (B1) — curl + jq
+          pkgs.curl
+          pkgs.jq
         ];
 
         shellHook = ''
@@ -94,10 +105,10 @@
           echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
           echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
           echo "     sync-music                  →  mount /mnt/music + move the library to the NAS (needs NFS_MUSIC)"
-          echo
           echo "DVD/Blu-ray — titles [disc:N]            →  title list, longest-first (S = scrambled/decoy)"
-          echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/"
+          echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/ (DVDs prompt for a TMDB name)"
           echo "             transcode-video              →  HandBrakeCLI @ 1080p → /mnt/videos/library/ (rip then transcode)"
+          echo "             movie-name [disc:N|file.mkv]  →  resolve Title (Year) [Lang]; Blu-ray from metadata, DVD via TMDB"
           echo
           echo "rip, rip-video and transcode-video log each phase + total to ./rip.log"
         '';
