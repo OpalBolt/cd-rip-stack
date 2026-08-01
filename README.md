@@ -72,7 +72,7 @@ rip-video 0,5-7      # main feature + extras 5-7 (skip a decoy title)
 transcode-video      # on the desktop: encode every staged MKV → /mnt/videos/library/
 ```
 
-Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it). Track selection happens at rip via a MakeMKV profile (`custom.mmcp.xml`): English + Danish audio and subtitles today, narrowed later. `transcode-video` pulls each file to a local temp dir to encode off NFS, then uploads the result to its final home and deletes the lossless source — re-run it for newly ripped discs.
+Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it). Track selection happens at rip via a MakeMKV profile (`custom.mmcp.xml`): audio is the film's original language (from TMDB), subtitles keep Danish when present and fall back to English, plus any untagged tracks. `transcode-video` pulls each file to a local temp dir to encode off NFS, then uploads the result to its final home and deletes the lossless source — re-run it for newly ripped discs.
 
 `titles` and `rip-video` both scan with `--minlength=$RIP_MINLENGTH` (default 120s = 2 min): drops logos and FBI warnings, keeps extras like deleted scenes. They must share the value — makemkv renumbers titles by what survives the scan, so a different `titles` and `rip-video` make the numbers point at different titles. Set `RIP_MINLENGTH` lower to catch shorter extras.
 
@@ -87,7 +87,7 @@ Rip writes lossless MKVs straight to `/mnt/videos/rip/` (Jellyfin never scans it
             └── <Movie (Year)>_tNN.mkv ← every other title
 ```
 
-The transcode is a dumb pass-through re-encode: video → H.265 1080p, every audio and subtitle track kept as-is (selection already happened at rip). The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `transcode-video.sh` if encoding is too slow.
+The transcode is a dumb pass-through re-encode: video → H.265 1080p, every audio and subtitle track kept as-is and soft (never burned in; selection already happened at rip). The `H.265 MKV 1080p30` preset caps at 1080p; swap it for an x264 preset in `transcode-video.sh` if encoding is too slow.
 
 Set the NFS export before ripping (the scripts read the process environment, never `.env`): `export NFS_VIDEOS=192.168.103.4:/export/movies`. Both `rip-video` and `transcode-video` mount `/mnt/videos` on demand via `mount-nfs` if it isn't already — the same helper `sync-music` uses for `/mnt/music`.
 

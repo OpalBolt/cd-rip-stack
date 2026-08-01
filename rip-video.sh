@@ -30,16 +30,18 @@ iso2b() {
 
 # build the MakeMKV selection string. keep-lang = ISO 639-2/B to keep as the
 # original-language audio; "" = keep-all fallback (TMDB had no original_language).
-# type qualifiers audio(...)/subtitle(...) drop a dub-language AUDIO while keeping
-# same-language SUBTITLES; video survives via the nolang catch (docker-ripper's
-# trick). subtitle clause is a permissive baseline — Task 4 narrows it to dan.
-# ponytail: verify the audio(...)/subtitle(...) qualifier syntax empirically on
-# the first real disc (MakeMKV apdefs.h is truth); this is one tunable string.
+# MakeMKV's selection string is type-AGNOSTIC — audio(<lang>)/subtitle(<lang>)
+# qualifiers are INVALID tokens (confirmed on a real disc), so one language list
+# applies to every track type. we keep the UNION of what each needs: the film's
+# original-language audio (Task 3) + Danish/English subtitles (Task 4) + the
+# nolang/single safety nets. cost: a few harmless extras (dan/eng audio dubs,
+# origlang subs); the player picks defaults. strict dub-dropping needs a post-rip
+# re-mux, not this string. video survives via the nolang catch (no language tag).
 build_selection() {  # $1 = keep-lang (2/B) or ""
-  local k=$1 aud sub
-  if [ -n "$k" ]; then aud="audio(${k}|nolang|single)";   sub="subtitle(${k}|dan|nolang|single)"
-  else               aud="audio(eng|dan|nolang|single)";  sub="subtitle(eng|dan|nolang|single)"; fi
-  printf '%s' "-sel:all,+sel:${aud},-sel:audio(havemulti|havecore),+sel:${sub},+sel:(nolang|single),-sel:mvcvideo"
+  local k=$1 langs="dan|eng|nolang|single"
+  # prepend the film's original language unless it's already dan/eng (dup guard)
+  case "$k" in ''|dan|eng) ;; *) langs="${k}|${langs}" ;; esac
+  printf '%s' "-sel:all,+sel:(${langs}),-sel:(havemulti|havecore),-sel:mvcvideo"
 }
 
 # the selection string baked into custom.mmcp.xml; rip-video sed-replaces it with
@@ -149,5 +151,18 @@ done
 # (no re-prompt). the disc is ejected by hand; transcode-video finishes on the desktop.
 movie-name --rename-as "$display" "$rip_dir" \
   || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
+
+# Task 4: log which subtitle languages landed in the staged MKVs (ffprobe). Danish
+# preferred, English fallback; the note records the outcome so a missing-da disc is
+# visible without opening the file. (a disc with only non-da/non-eng tagged subs
+# and none untagged yields none — re-rip permissively if you need them.)
+# glob the whole rip dir (not ${display}*) so this still reports even if rename failed.
+sub_langs=$(for mk in "$rip_dir"/*.mkv; do
+  ffprobe -v error -select_streams s -show_entries stream_tags=language -of csv=p=0 "$mk" 2>/dev/null
+done | sed 's/^$/und/' | sort -u | paste -sd, -)
+sub_langs=${sub_langs:-none}
+if   [[ $sub_langs == *dan* ]]; then rip_note subtitle "subs=dan langs=$sub_langs"
+elif [[ $sub_langs == *eng* ]]; then rip_note subtitle "subs=eng langs=$sub_langs (no dan)"
+else                                 rip_note subtitle "subs=$sub_langs (no dan/eng)"; fi
 
 rip_phase_end

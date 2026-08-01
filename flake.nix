@@ -91,6 +91,8 @@
           # dvd/blu-ray
           pkgs.makemkv
           pkgs.handbrake
+          # ffprobe: read subtitle languages off ripped MKVs (Task 4 logging)
+          pkgs.ffmpeg
           # movie-name: TMDB lookup for DVD label codes (B1) — curl + jq
           pkgs.curl
           pkgs.jq

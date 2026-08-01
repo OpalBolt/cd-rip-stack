@@ -85,7 +85,7 @@ for f in "${files[@]}"; do
         --all-audio --aencoder copy \
         --audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm \
         --audio-fallback ac3 \
-        --all-subtitles ; then
+        --all-subtitles --subtitle-burned=none ; then   # keep all subs, burn none (soft, Task 4)
     mv "$local_out" "$dest"
     rm -f "$local_src" "$f"        # local temp + lossless source on the NAS
     rip_phase_end
