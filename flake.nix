@@ -31,9 +31,16 @@
         install -Dm755 ${./rip.sh} "$out/bin/rip"
         install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
-      # rip-video = standalone video script, installed like `rip` above.
+      # rip-video = rip only (makemkvcon -> lossless MKV on the NAS). installed
+      # like `rip` above; ships custom.mmcp.xml next to it (selection profile).
       rip-video = pkgs.runCommandLocal "rip-video" { } ''
         install -Dm755 ${./rip-video.sh} "$out/bin/rip-video"
+        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./custom.mmcp.xml} "$out/bin/custom.mmcp.xml"
+      '';
+      # transcode-video = batch transcode of the NAS rip/ folder to the library.
+      transcode-video = pkgs.runCommandLocal "transcode-video" { } ''
+        install -Dm755 ${./transcode-video.sh} "$out/bin/transcode-video"
         install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # titles = readable view over makemkvcon's verbose `info` output.
@@ -46,6 +53,7 @@
         packages = [
           rip
           rip-video
+          transcode-video
           titles
           pkgs.cyanrip
           # metaflac: read album/artist tags off ripped FLACs for rip.log
@@ -73,10 +81,11 @@
           echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
           echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
           echo
-          echo "DVD/Blu-ray — titles [disc:N]  →  title list, longest-first (S = scrambled/decoy)"
-          echo "             rip-video [title]  →  makemkvcon → HandBrakeCLI @ 1080p (all titles default)"
+          echo "DVD/Blu-ray — titles [disc:N]            →  title list, longest-first (S = scrambled/decoy)"
+          echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/"
+          echo "             transcode-video              →  HandBrakeCLI @ 1080p → /mnt/videos/library/ (rip then transcode)"
           echo
-          echo "rip and rip-video log each phase + total to ./rip.log"
+          echo "rip, rip-video and transcode-video log each phase + total to ./rip.log"
         '';
       };
     };
