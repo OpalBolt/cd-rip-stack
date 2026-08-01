@@ -7,24 +7,28 @@
 # picks audio by original_language.
 #
 # Modes:
+#   movie-name --tmdb                  skip the disc/file; prompt for a title and
+#                                      TMDB-resolve it (rip-video uses this — it
+#                                      asks for the title instead of scanning the
+#                                      disc). no match / skip / quit -> error.
 #   movie-name <disc:N | file.mkv>     resolve + print "Title\tYear\tLang"
 #   movie-name --rename <dir|file>     resolve, then rename every still-junk-labeled
 #                                     MKV in that dir to "<Title> (Year)_tNN.mkv"
 #                                     (main + extras); prints the new base name
 #   movie-name --rename-as <name> <dir>
 #                                     rename using an already-resolved name (no
-#                                     resolve, no prompt) — rip-video resolves the
-#                                     name + lang before rip, then calls this after.
+#                                     resolve, no prompt) — rip-video calls this
+#                                     after rip with the name it resolved before.
 #
 # Name source, first real hit wins:
 #   1. an already-named "Title (Year)_tNN.mkv" in the dir (cache) — used as-is.
 #   2. disc/MKV metadata if it "looks real" (Blu-ray titles pass; DVD labels fail).
 #   3. TMDB search — pick prompt (Enter=1, s=skip, q=quit).
 # No $TMDB_API_KEY / quit -> hard error (a DVD must not file as B1 unnoticed).
-# No network / skip -> fall back to the label and warn. Reads $TMDB_API_KEY from
-# the process env; never opens .env.
-# ponytail: one resolver; rip-video calls print (pre-rip, for the lang) then
-# --rename-as (post-rip) so TMDB is prompted exactly once.
+# No network / skip -> fall back to the label and warn (unless --tmdb, a hard
+# error). Reads $TMDB_API_KEY from the process env; never opens .env.
+# ponytail: one resolver; rip-video calls --tmdb (pre-rip) then --rename-as
+# (post-rip) so TMDB is hit exactly once.
 set -euo pipefail
 shopt -s nullglob
 
@@ -35,18 +39,22 @@ case "${1:-}" in
   --rename-as)
     mode=rename-as; shift
     ra_name="${1:?--rename-as needs <name>}"; ra_dir="${2:?--rename-as needs <dir>}"; shift 2 ;;
+  --tmdb) mode=tmdb; shift ;;
   -h|--help)
     cat <<EOF
-usage: movie-name [--rename | --rename-as <name> <dir>] [disc:N | file.mkv | rip-dir]
+usage: movie-name [--rename | --rename-as <name> <dir> | --tmdb] [disc:N | file.mkv | rip-dir]
   resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
-  --rename <dir|file>: resolve, then rename every still-junk-labeled MKV in the
-                       dir to "<Title> (Year)_tNN.mkv" (main + extras); prints
-                       the base name.
+  --tmdb:                   skip the disc/file, go straight to a TMDB search prompt
+                            (rip-video uses this — it asks for the title instead of
+                            scanning the disc). no match / skip / quit -> error.
+  --rename <dir|file>:      resolve, then rename every still-junk-labeled MKV in
+                            the dir to "<Title> (Year)_tNN.mkv" (main + extras).
   --rename-as <name> <dir>: rename the dir's junk-labeled MKVs to "<name>_tNN.mkv"
-                       using an already-resolved name (no resolve, no prompt).
-  Blu-ray metadata is used directly; a DVD label code (B1) prompts a TMDB search
-  (pick prompt: Enter=1, s=skip, q=quit). No \$TMDB_API_KEY -> error; other TMDB
-  failures fall back to the label. Reads \$TMDB_API_KEY from the env.
+                            using an already-resolved name (no resolve, no prompt).
+  <disc:N | file>:          Blu-ray metadata is used directly; a DVD label code (B1)
+                            prompts a TMDB search (pick: Enter=1, s=skip, q=quit).
+  No \$TMDB_API_KEY -> error; other TMDB failures fall back to the label (unless
+  --tmdb, where they are hard errors). Reads \$TMDB_API_KEY from the env.
 EOF
     exit 0 ;;
 esac
@@ -99,11 +107,13 @@ disc_raw() {
   '
 }
 
-# tmdb_resolve <fallback>: prompt -> search -> pick. Sets TITLE/YEAR/LANG and
-# returns 0 on a pick or soft fallback, 1 on no-key or quit (hard error).
-# pick UX: Enter=1 (top match), s=skip (use label), q=quit (abort).
+# tmdb_resolve <fallback> [required=0|1]: prompt -> search -> pick. Sets
+# TITLE/YEAR/LANG. returns 0 on a pick (or, when required=0, a soft fallback to
+# the label); returns 1 on no-key/quit, and on every soft-fallback when
+# required=1 (--tmdb: a name MUST be resolved, so skip/no-match/offline abort).
+# pick UX: Enter=1 (top match), s=skip (use label unless required), q=quit.
 tmdb_resolve() {
-  local fallback=${1:-}
+  local fallback=${1:-} required=${2:-0}
 
   if [ -z "${TMDB_API_KEY:-}" ]; then
     warn "no \$TMDB_API_KEY in env — cannot resolve via TMDB. set it and re-run."
@@ -113,14 +123,16 @@ tmdb_resolve() {
   printf '\nTMDB search (blank=skip, q=quit): ' >&2
   local query; read -r query || query=q
   case "$query" in
-    q|Q) warn "quit — re-run movie-name to rename later"; return 1 ;;
-    '') warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
+    q|Q) warn "quit — re-run movie-name later"; return 1 ;;
+    '') if [ "$required" = 1 ]; then warn "no title entered — aborting"; return 1; fi
+         warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
   esac
 
   local q_enc url json
   q_enc=$(jq -nr --arg q "$query" '$q|@uri')
   url="https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${q_enc}"
   if ! json=$(curl -fsS --max-time 15 "$url"); then
+    if [ "$required" = 1 ]; then warn "TMDB request failed (offline or bad key) — aborting"; return 1; fi
     warn "TMDB request failed (no network?) — using disc label '${fallback:--}'"
     setlabel "$fallback"; return 0
   fi
@@ -130,7 +142,10 @@ tmdb_resolve() {
   mapfile -t picks < <(printf '%s' "$json" | jq -r \
       '.results[0:10][] | [ .title, (.release_date[0:4] // "-"), (.original_language // "-") ] | @tsv')
   local n=${#picks[@]}
-  [ "$n" -gt 0 ] || { warn "no TMDB matches for '$query' — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0; }
+  if [ "$n" -eq 0 ]; then
+    if [ "$required" = 1 ]; then warn "no TMDB matches for '$query' — aborting"; return 1; fi
+    warn "no TMDB matches for '$query' — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0
+  fi
 
   local i t y l
   for i in "${!picks[@]}"; do
@@ -144,8 +159,9 @@ tmdb_resolve() {
     read -r pick || pick=q
     case "$pick" in
       ''|1) IFS=$'\t' read -r t y l <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0 ;;
-      s|S) warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
-      q|Q) warn "quit — re-run movie-name to rename later"; return 1 ;;
+      s|S) if [ "$required" = 1 ]; then warn "skipped — aborting"; return 1; fi
+            warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
+      q|Q) warn "quit — re-run movie-name later"; return 1 ;;
     esac
     if [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$n" ]; then
       IFS=$'\t' read -r t y l <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0
@@ -228,5 +244,6 @@ do_rename_as() {  # $1 = display, $2 = dir
 case "$mode" in
   rename)    do_rename || exit 1 ;;
   rename-as) do_rename_as "$ra_name" "$ra_dir" || exit 1 ;;
+  tmdb)      tmdb_resolve "" 1 || exit 1; emit ;;
   *)         resolve || exit 1; emit ;;
 esac

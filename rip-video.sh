@@ -5,16 +5,17 @@
 # is then a dumb pass-through re-encode (video only). no transcode, no delete —
 # run transcode-video on the desktop later. run inside the nix devshell.
 #
-# Task 3 audio flow: scan the disc once → detect audio languages → resolve the
-# movie name + original_language (movie-name, replaying the scan so the drive is
-# not read twice) → decide which audio to keep → inject it into a temp copy of
-# custom.mmcp.xml → rip → rename staged MKVs with the already-known name.
+# Task 3 audio flow — the title and audio come from a TMDB lookup the user drives,
+# NOT from scanning the disc (the scan is slower than typing the title):
+#   refuse if offline -> movie-name --tmdb (user types the title, picks a result)
+#   -> original_language from TMDB -> build a selection string -> sed it into a
+#   temp custom.mmcp.xml -> rip -> rename staged MKVs with the resolved name.
 # ponytail: manual arg parsing — one optional positional, no getopts.
 set -euo pipefail
 source "$(dirname "$0")/rip-common.sh"
 shopt -s nullglob
 
-# ── Task 3: audio selection. pure helpers (sourced by test_audio_select.sh) ──
+# ── Task 3: audio selection ──
 
 # ISO 639-1 (TMDB original_language) → ISO 639-2/B (MakeMKV). unknown codes pass
 # through unchanged (MakeMKV won't match them; the nolang/single nets catch all).
@@ -27,25 +28,8 @@ iso2b() {
   esac
 }
 
-# distinct audio languages of title 0 (the main feature) from a `makemkvcon -r
-# info` dump, space-separated, first-seen order. mirrors titles.sh's SINFO parse
-# (attr 1 = stream type, attr 3 = language code).
-audio_langs() {  # $1 = info dump file
-  awk -F, '
-  function strip(s){ sub(/^[^"]*"/,"",s); sub(/"$/,"",s); return s }
-  /^SINFO:0,/ { st=$2+0; attr=$3+0; v=strip($0)
-    if (attr==1) typ[st]=v
-    if (attr==3) lng[st]=v
-    if (st>smax) smax=st
-  }
-  END { for (st=0; st<=smax; st++)
-          if (typ[st]=="Audio" && lng[st]!="" && !(lng[st] in seen)) { seen[lng[st]]=1; printf "%s%s",(o?" ":""),lng[st]; o=1 }
-        print ""
-      }' "$1"
-}
-
 # build the MakeMKV selection string. keep-lang = ISO 639-2/B to keep as the
-# original-language audio; "" = keep-all fallback (TMDB unknown + user skipped).
+# original-language audio; "" = keep-all fallback (TMDB had no original_language).
 # type qualifiers audio(...)/subtitle(...) drop a dub-language AUDIO while keeping
 # same-language SUBTITLES; video survives via the nolang catch (docker-ripper's
 # trick). subtitle clause is a permissive baseline — Task 4 narrows it to dan.
@@ -58,39 +42,22 @@ build_selection() {  # $1 = keep-lang (2/B) or ""
   printf '%s' "-sel:all,+sel:${aud},-sel:audio(havemulti|havecore),+sel:${sub},+sel:(nolang|single),-sel:mvcvideo"
 }
 
-# decide which audio language to keep (ISO 639-2/B), or "" for keep-all fallback.
-# tiers, first that fires wins:
-#   1. TMDB original_language, if the disc actually carries it (drops the dub)
-#   3. the only audio language on the disc (MakeMKV `single` covers one-track discs)
-#   2. interactive prompt — list langs, user picks one (safety net)
-#   4. keep all (TMDB unknown + user skipped/no-tty) — reversible, logged as "all"
-decide_keep() {  # $1 = origlang (ISO 639-1 or "-"), $2 = disc audio langs (space-sep 2/B)
-  local orig=$1 langs=$2 k pick w
-  k=$(iso2b "$orig")
-  if [ "$k" != "-" ] && [ -n "$k" ] && grep -qw -- "$k" <<<"$langs"; then printf '%s' "$k"; return 0; fi
-  # shellcheck disable=SC2086  # word-split langs into positional params on purpose
-  set -- $langs
-  [ "$#" -eq 1 ] && { printf '%s' "$1"; return 0; }
-  if [ -t 0 ]; then
-    printf '\naudio languages on title 0: %s\n' "$*" >&2
-    while true; do
-      printf 'keep which audio? (Enter or q = keep all): ' >&2
-      read -r pick || pick=''
-      [[ $pick =~ ^(q|Q|)$ ]] && return 0          # keep all
-      for w in "$@"; do [ "$w" = "$pick" ] && { printf '%s' "$pick"; return 0; }; done
-      printf 'rip-video: %s not in [%s]\n' "$pick" "$*" >&2
-    done
-  fi
-  return 0            # tier 4: keep all (empty stdout)
-}
-
 # the selection string baked into custom.mmcp.xml; rip-video sed-replaces it with
 # build_selection's output at rip time. MUST stay byte-identical to the string in
 # custom.mmcp.xml — it is both the substitution target and the manual-use default.
 BASELINE='-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
 
-# ── main (runs only when executed directly; skipped when sourced by the test) ──
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# refuse to start without network + a working TMDB key: the title and the audio
+# language both come from TMDB, so an offline rip would guess both wrong.
+require_online() {
+  [ -n "${TMDB_API_KEY:-}" ] \
+    || { echo "rip-video: no \$TMDB_API_KEY in env — set it and re-run." >&2; exit 1; }
+  curl -fsS --max-time 5 -o /dev/null \
+      "https://api.themoviedb.org/3/configuration?api_key=${TMDB_API_KEY}" \
+    || { echo "rip-video: offline or TMDB_API_KEY rejected — fix and re-run." >&2; exit 1; }
+}
+
+# ── main ──
 
 vid="${VIDEOS_MOUNT:-/mnt/videos}"
 rip_dir="$vid/rip"
@@ -101,10 +68,10 @@ minlen="${RIP_MINLENGTH:-120}"
 usage() {
   cat <<EOF
 usage: rip-video [title]   (disc is always disc:0)
-  title   which titles to rip: "all" (default), a number, a range (N-M),
+  title   which disc titles to rip: "all" (default), a number, a range (N-M),
           or a comma list (e.g. 0,5-7). list them first with: titles.
-          rips lossless MKVs to $rip_dir with original-language audio; run
-          transcode-video on the desktop to finish.
+          asks for the movie title (TMDB), rips lossless MKVs with the original-
+          language audio to $rip_dir; run transcode-video on the desktop to finish.
 EOF
 }
 
@@ -138,6 +105,8 @@ else
   done
 fi
 
+require_online
+
 # ponytail: shared mount helper (Task 2) — the same one sync-music uses for /mnt/music.
 mount-nfs "$vid" "${NFS_VIDEOS:-}"
 mkdir -p "$rip_dir"
@@ -147,39 +116,25 @@ RIP_SW=makemkvcon
 RIP_NAME=-
 rip_log_start
 # layer temp cleanup onto the EXIT trap rip_log_start set (it still logs the total).
-TMP_DUMP=; TMP_REPLAY=; TMP_PROFILE=
-rip_video_cleanup() {
-  [ -n "$TMP_DUMP" ]    && rm -f "$TMP_DUMP"
-  [ -n "$TMP_REPLAY" ]  && rm -f "$TMP_REPLAY"
-  [ -n "$TMP_PROFILE" ] && rm -f "$TMP_PROFILE"
-}
+TMP_PROFILE=
+rip_video_cleanup() { [ -n "$TMP_PROFILE" ] && rm -f "$TMP_PROFILE"; }
 trap 'rip_video_cleanup; rip_log_finish' EXIT
 
-# ── Task 3: resolve audio + name BEFORE rip (the profile is baked at rip time) ──
-TMP_DUMP=$(mktemp)
-if [ -n "${MAKEMKV_INFO:-}" ]; then ${MAKEMKV_INFO} disc:0 > "$TMP_DUMP"
-else                                makemkvcon -r info --minlength="$minlen" disc:0 > "$TMP_DUMP"; fi
-langs=$(audio_langs "$TMP_DUMP")            # space-separated distinct audio langs
-detected=${langs// /,}                      # comma-separated for the log
-
-# replay the captured scan into movie-name so the drive is NOT read a second time.
-TMP_REPLAY=$(mktemp)
-printf '#!/usr/bin/env bash\ncat "%s"\n' "$TMP_DUMP" > "$TMP_REPLAY"
-chmod +x "$TMP_REPLAY"
-
-TITLE=-; YEAR=-; origlang=-
-if line=$(MAKEMKV_INFO="$TMP_REPLAY" movie-name disc:0); then
+# ── Task 3: ask for the title, TMDB-resolve it (no disc scan before rip) ──
+if line=$(movie-name --tmdb); then
   IFS=$'\t' read -r TITLE YEAR origlang <<< "$line"
 else
-  echo "rip-video: name not resolved (no \$TMDB_API_KEY? skipped?) — ripping with fallback audio; MKVs keep labels" >&2
+  echo "rip-video: title not resolved — aborting (re-run to retry)." >&2
+  exit 1
 fi
 display=$TITLE; [ "$YEAR" != - ] && display="$TITLE ($YEAR)"
 display=${display//\//-}     # a '/' would split the path; transcode sanitizes the rest
 RIP_NAME=$display
 
-keep=$(decide_keep "$origlang" "$langs")     # "" = keep all (tier 4)
+if [ "$origlang" != "-" ] && [ -n "$origlang" ]; then keep=$(iso2b "$origlang")
+else                                                      keep=""; fi
 sel=$(build_selection "$keep")
-rip_note audio "kept=${keep:-all} detected=${detected:-none}"
+rip_note audio "kept=${keep:-all} origlang=${origlang:-?}"
 
 # inject the selection string into a temp copy of the profile. BASELINE is the
 # literal substitution target (see custom.mmcp.xml); '#' delimiter because neither
@@ -196,14 +151,8 @@ for t in "${titles_to_rip[@]}"; do
 done
 
 # rename staged MKVs to "<Title (Year)>_tNN.mkv" using the name resolved above
-# (no re-prompt). if unresolved, leave labels — re-run: movie-name --rename $rip_dir.
-if [ "$display" != "-" ]; then
-  movie-name --rename-as "$display" "$rip_dir" \
-    || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
-else
-  echo "rip-video: name unresolved — MKVs keep labels; set \$TMDB_API_KEY and re-run: movie-name --rename $rip_dir" >&2
-fi
+# (no re-prompt). the disc is ejected by hand; transcode-video finishes on the desktop.
+movie-name --rename-as "$display" "$rip_dir" \
+  || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
 
 rip_phase_end
-
-fi   # end main guard
