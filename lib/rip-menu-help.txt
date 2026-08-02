@@ -1,0 +1,186 @@
+## index
+index — Workflow overview
+
+Two pipelines: audio (CD to FLAC) and
+video (disc to MKV to H.265).
+
+AUDIO
+  rip         CD to FLAC in ~/.../rip/
+  tag         sort tagged FLAC into library
+  sync-music  move the library to the NAS
+  sync-sd     copy the library to an SD card
+
+  Rip several discs, then tag in a batch.
+  sync-music ships finished albums to the
+  NAS; sync-sd copies them to a player.
+
+VIDEO  (two machines)
+  rip-video        disc to lossless MKV
+  transcode-video  MKV to 1080p H.265
+
+  Rip on the machine with a drive; transcode
+  later on the desktop. Both use the same NAS
+  share (NFS_VIDEOS) as the hand-off.
+
+TOOLS
+  titles      inspect a disc before ripping
+  movie-name  fix a disc's name (advanced)
+
+This overview is the default view. Move the
+cursor to any command for its full help;
+Enter runs it.
+
+## rip
+rip — Rip a CD to FLAC
+
+Rips an audio CD to AccurateRip-verified
+FLAC. A new drive needs its sample offset
+for verification.
+
+Usage:  rip <offset> [engine] [flags]
+
+  offset   drive's CD sample offset
+           Black Blu-ray drive: 103
+           Sandberg: 6
+  engine   cyanrip (default) or whipper
+  flags    pass through to the ripper
+           cyanrip -N  skips MusicBrainz
+           cyanrip -R x  re-rips track x
+           whipper   runs -U
+
+What happens:
+  Reads the disc, verifies against
+  AccurateRip, and writes FLAC into
+  ~/media/audio/music/rip/.
+
+Next: run tag to sort it into the library.
+
+## tag
+tag — Tag and sort music into the library
+
+Runs beets over the rip dir: fetches
+MusicBrainz metadata, cover art, Last.fm
+genres, and ReplayGain, then copies the
+FLAC into ~/media/audio/music/library/.
+
+Usage:  tag   (no arguments)
+
+What happens:
+  Imports everything in ~/.../rip/, tags
+  it, and copies (not moves) into the
+  library. The originals stay in rip/ —
+  clean rip/ by hand when done.
+
+  Batch-friendly: rip many discs, then
+  run tag once over the whole pile.
+
+## sync-music
+sync-music — Move the library to the NAS
+
+Moves every tagged folder under
+~/media/audio/music/library/ onto the NAS
+so Jellyfin sees it.
+
+Usage:  sync-music   (needs NFS_MUSIC)
+
+What happens:
+  Mounts /mnt/music on demand, then
+  rsync --remove-source-files each folder
+  across (a move, not a copy). One log line
+  per folder; on failure it stops and leaves
+  the source — re-run resumes.
+
+Next: run sync-sd to copy onto a player.
+
+## sync-sd
+sync-sd — Copy the library to an SD card
+
+Copies the NAS library onto an inserted SD
+card for a music player.
+
+Usage:  sync-sd [card]
+
+  card   optional mountpoint to override
+         the auto-detected card
+
+What happens:
+  Mounts /mnt/music, then rsync --size-only
+  from the NAS library onto the card (source
+  kept). Auto-detects a mounted card; if none,
+  lists removable disks, mounts your pick,
+  and unmounts it again on exit.
+
+## rip-video
+rip-video — Rip a disc to lossless MKV
+
+Rips a DVD or Blu-ray to a lossless MKV on
+the NAS via makemkvcon. Audio and subtitles
+are selected at rip time (original language,
+plus Danish/English subs).
+
+Usage:  rip-video [titles]   (NFS_VIDEOS)
+
+  titles   all (default), a number, a range
+           like 1,3-4, or --extras for the
+           2nd disc of a set
+
+What happens:
+  Scans the disc and rips the chosen titles
+  to /mnt/videos/rip/ as <Name>_tNN.mkv.
+  Blu-rays name from metadata; DVDs prompt
+  for a TMDB lookup (needs TMDB_API_KEY).
+
+Next: run transcode-video on the desktop.
+
+## transcode-video
+transcode-video — Encode MKVs to the library
+
+Batch-encodes every staged MKV in
+/mnt/videos/rip/ to 1080p H.265 and files
+it under /mnt/videos/library/.
+
+Usage:  transcode-video   (no arguments)
+
+What happens:
+  For each staged MKV: pulls it to a local
+  temp dir (encodes off NFS), encodes to
+  H.265 1080p keeping all audio and subtitle
+  tracks, uploads the result to the library,
+  and deletes the lossless source.
+
+  Run this on the desktop. Re-run for newly
+  ripped discs.
+
+## titles
+titles — List a disc's titles
+
+Shows a readable list of a disc's titles,
+longest first. Use it before rip-video to
+pick the main feature and avoid decoy cuts.
+
+Usage:  titles [disc:N]   (default disc:0)
+
+What happens:
+  Scans the disc with makemkvcon and prints
+  each title's length. An S marks a scrambled
+  or decoy cut (non-sequential order) — rip
+  the clean title, not all.
+
+  Shares RIP_MINLENGTH with rip-video so the
+  title numbers line up.
+
+## movie-name
+movie-name — Resolve a movie's name
+
+Resolves a real name (Title, Year, Language)
+for a disc or MKV. Usually called inside
+rip-video; rarely run by hand.
+
+Usage:  movie-name [--rename DIR | disc:N | file]
+
+What happens:
+  Blu-rays: name read from disc metadata.
+  DVDs:     TMDB search (needs TMDB_API_KEY),
+            you pick a result.
+  Re-run with --rename <dir> to fix a botched
+  pick across already-staged MKVs.

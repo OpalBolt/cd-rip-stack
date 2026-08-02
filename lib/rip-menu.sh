@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # rip-menu — guided entry surface for the ripping toolkit. run inside the nix
 # devshell so fzf + every command is on PATH. lists the commands grouped by
-# workflow with a one-line description; the focused item shows its full
-# description in a preview pane, then runs the pick.
+# workflow with a one-line description; the focused item shows its full help
+# section in a preview pane, then runs the pick.
 set -euo pipefail
 
 # kanagawa palette for fzf. exported so the read-prompt below (and any nested
@@ -13,6 +13,7 @@ set -euo pipefail
 export FZF_DEFAULT_OPTS="--color=fg:#DCD7BA,bg:#1F1F28,bg+:#2D4F67,hl:#7FB4CA,hl+:#7E9CD8,info:#727169,prompt:#957FB8,header:#7E9CD8,pointer:#C34043,marker:#76946A,spinner:#957FB8,border:#54546D,gutter:#1F1F28"
 
 entries=(
+  "index — Workflow overview"
   # CD
   "rip — Rip a CD to FLAC"
   "tag — Tag ripped music and sort into the library"
@@ -24,19 +25,6 @@ entries=(
   "titles — List a disc's titles, longest first"
   # Tools
   "movie-name — Resolve a movie name (metadata or TMDB)"
-)
-
-# full descriptions for the hover-preview pane. keyed by the command (first
-# token of each entry); fzf shows field 1 in the list and field 2 on focus.
-declare -A detail=(
-  [rip]="Rip a CD to AccurateRip-verified FLAC. <offset> is the drive's CD sample offset (Black Blu-ray drive: 103, Sandberg: 6). Optional engine cyanrip (default) or whipper; flags pass through (cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U). Output lands in ~/media/audio/music/rip/."
-  [tag]="Run beets on the rip dir: MusicBrainz tags, cover art, Last.fm genres, ReplayGain, then copy into ~/media/audio/music/library/ (originals kept — clean rip/ after). Batch-friendly: rip many discs, then tag once."
-  [sync-music]="Move the tagged library from ~/media/audio/music/library/ to the NAS (needs NFS_MUSIC). rsync --remove-source-files per folder; re-run resumes where it stopped. Mounts /mnt/music on demand."
-  [sync-sd]="Copy the NAS library onto an inserted SD card (rsync --size-only; source kept). Auto-detects a mounted card, or lists removable disks to mount and unmounts on exit. Optional arg: a card mountpoint to override."
-  [rip-video]="Rip a DVD/Blu-ray to a lossless MKV in /mnt/videos/rip/ via makemkvcon (needs NFS_VIDEOS). Default all titles; pass a spec like 1,3-4, or --extras for the 2nd disc of a set. DVDs prompt for a TMDB name; Blu-rays name from metadata."
-  [transcode-video]="Batch-encode every staged MKV in /mnt/videos/rip/ to 1080p H.265 in /mnt/videos/library/ — run this on the desktop. Pulls each file locally to encode off NFS, uploads the result, deletes the lossless source."
-  [titles]="List a disc's titles via makemkvcon, longest-first (S = scrambled/decoy cut). Run before rip-video to pick the main feature. Optional arg disc:N (default disc:0)."
-  [movie-name]="Resolve a real movie name (Title, Year, Lang) for a disc or MKV — Blu-ray from disc metadata, DVD via TMDB. Usually called by rip-video; re-run with --rename <dir> to fix a botched pick."
 )
 
 # stateless: computed on open, nothing stored. pending counts watch the same
@@ -69,23 +57,25 @@ if [ "${#pending[@]}" -gt 0 ]; then
   header="Pending: $joined"$'\n'"$header"
 fi
 
-# feed fzf "display<TAB>detail" lines: --with-nth=1 hides the detail from the
-# list (only the one-liner shows), while {2} in --preview prints the focused
-# row's full description. fzf returns the full line on Enter, so ${pick_line%% *}
-# still yields the command.
-lines=$(
-  for e in "${entries[@]}"; do
-    printf '%s\t%s\n' "$e" "${detail[${e%% *}]}"
-  done
-)
+# help file ships next to rip-menu (flake installs it as a sibling); in the
+# nix store $0 is /nix/store/.../bin/rip-menu, so the help sits in that bin dir.
+help_file="$(dirname "$0")/rip-menu-help.txt"
 
-pick_line=$(printf '%s' "$lines" \
-  | fzf --ansi \
-        --delimiter='\t' --with-nth=1 \
-        --header="$header" \
-        --preview 'echo {2}' \
-        --preview-window='right:60%:wrap' \
-        --height=70% --reverse --cycle)
+# loop so selecting `index` (the overview) re-shows the menu instead of running
+# anything; Esc / Ctrl-C on fzf aborts the whole menu. --preview runs in a
+# subshell with no $0, so the absolute help path is baked in here. awk prints
+# the body of `## {1}` (the focused command's first token), `##` markers
+# stripped; {1} is fzf's first space-delimited field, --delimiter=' '.
+while true; do
+  pick_line=$(printf '%s\n' "${entries[@]}" \
+    | fzf --ansi --delimiter=' ' --header="$header" \
+          --preview="awk -v c={1} '\$1==\"##\"{s=(\$2==c);next} s' \"$help_file\"" \
+          --preview-window='right:60%:wrap' --height=80% --reverse --cycle \
+    ) || exit 0
+  cmd="${pick_line%% *}"
+  [ "$cmd" = "index" ] && continue
+  break
+done
 
 # per-command arg hints: a non-empty hint earns a read prompt after pick; an
 # empty hint runs the command immediately. the description after the em-dash is

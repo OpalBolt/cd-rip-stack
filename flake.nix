@@ -86,6 +86,7 @@
       # on PATH.
       rip-menu = pkgs.runCommandLocal "rip-menu" { } ''
         install -Dm755 ${./lib/rip-menu.sh} "$out/bin/rip-menu"
+        install -Dm644 ${./lib/rip-menu-help.txt} "$out/bin/rip-menu-help.txt"
       '';
 
     in
