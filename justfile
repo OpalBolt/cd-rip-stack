@@ -1,14 +1,14 @@
 # just recipes hide `nix develop` — the user never types it.
 # the first recipe is the default, so bare `just` opens the menu.
 
-# guided menu over the ripping toolkit.
+# guided menu (fzf) over the toolkit — the default entry.
 run:
     nix develop -c rip-menu
 
-# fast path: rip a CD (whipper/cyanrip) → FLAC.
-rip:
-    nix develop -c rip
+# rip a CD to FLAC. e.g.  just rip 6   |   just rip 6 whipper
+rip *args:
+    nix develop -c rip {{args}}
 
-# fast path: rip a DVD/Blu-ray → lossless MKV on the NAS.
-rip-video:
-    nix develop -c rip-video
+# rip a DVD/Blu-ray to lossless MKV. e.g.  just rip-video 0,5-7
+rip-video *args:
+    nix develop -c rip-video {{args}}
