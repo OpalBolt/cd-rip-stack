@@ -18,7 +18,35 @@ entries=(
   "movie-name — Resolve a movie name (metadata or TMDB)"
 )
 
-pick=$(printf '%s\n' "${entries[@]}" | gum choose --header "CD · Video · Tools — pick an action")
+# stateless: computed on open, nothing stored. pending counts watch the same
+# dirs the commands operate on.
+mounted() { grep -q " $1 " /proc/mounts; }   # portable — no util-linux dep
+
+audio_rip="$HOME/media/audio/music/rip"
+vid="${VIDEOS_MOUNT:-/mnt/videos}"
+
+pending=()
+if [ -d "$audio_rip" ]; then
+  n=$(find "$audio_rip" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+  [ "$n" -gt 0 ] && pending+=("$n in ~/media/audio/music/rip — awaiting tag")
+fi
+# ponytail: mount guard BEFORE any access — a stale/unmounted NFS share would
+# hang find; skip the video count entirely rather than risk a hang or show "0".
+if mounted "$vid" && [ -d "$vid/rip" ]; then
+  n=$(find "$vid/rip" -name '*.mkv' 2>/dev/null | wc -l)
+  [ "$n" -gt 0 ] && pending+=("$n staged MKVs — transcode on desktop")
+fi
+
+header="CD · Video · Tools — pick an action"
+if [ "${#pending[@]}" -gt 0 ]; then
+  # join with " · ": ${pending[*]} only uses the first char of IFS, so build
+  # the join by hand rather than rely on IFS trickery.
+  joined=""
+  for p in "${pending[@]}"; do joined+="${joined:+ · }$p"; done
+  header="Pending: $joined"$'\n'"$header"
+fi
+
+pick=$(printf '%s\n' "${entries[@]}" | gum choose --header "$header")
 
 # per-command arg hints: a non-empty hint earns a gum input prompt after pick;
 # an empty hint runs the command immediately. the description after the em-dash
