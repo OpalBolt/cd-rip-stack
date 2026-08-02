@@ -80,9 +80,10 @@
         install -Dm755 ${./lib/sync-sd.sh} "$out/bin/sync-sd"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
-      # rip-menu = gum-based guided entry surface; lists the toolkit commands
-      # and runs the pick. installed like `rip` above; runs in the devshell so
-      # gum (added to packages below) is on PATH.
+      # rip-menu = fzf-based guided entry surface; lists the toolkit commands,
+      # shows the focused item's full description in a preview pane, and runs
+      # the pick. installed like `rip` above; runs in the devshell so fzf is
+      # on PATH.
       rip-menu = pkgs.runCommandLocal "rip-menu" { } ''
         install -Dm755 ${./lib/rip-menu.sh} "$out/bin/rip-menu"
       '';
@@ -95,8 +96,8 @@
           tag
           rip-video
           rip-menu
-          # gum: rip-menu's interactive picker (runs inside the devshell)
-          pkgs.gum
+          # fzf: rip-menu's interactive picker + hover preview (runs inside the devshell)
+          pkgs.fzf
           transcode-video
           movie-name
           titles
@@ -126,21 +127,25 @@
         ];
 
         shellHook = ''
-          echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
-          echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')"
-          echo
-          echo "CD — rip <offset> [cyanrip|whipper] [flags]  →  FLAC (default cyanrip)"
-          echo "     flags pass through: cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U"
-          echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
-          echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
-          echo "     sync-music                  →  mount /mnt/music + move the library to the NAS (needs NFS_MUSIC)"
-          echo "     sync-sd [card]              →  mount /mnt/music + copy the library to the SD card (mounts/unmounts the card if needed; needs NFS_MUSIC)"
-          echo "DVD/Blu-ray — titles [disc:N]            →  title list, longest-first (S = scrambled/decoy)"
-          echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/ (DVDs prompt for a TMDB name)"
-          echo "             transcode-video              →  HandBrakeCLI @ 1080p → /mnt/videos/library/ (rip then transcode)"
-          echo "             movie-name [disc:N|file.mkv]  →  resolve Title (Year) [Lang]; Blu-ray from metadata, DVD via TMDB"
-          echo
-          echo "rip, rip-video and transcode-video log each phase + total to ./rip.log"
+          # nix develop -c runs bash non-interactively ($- has no i); gate
+          # the banner so only a real interactive `nix develop` prints it.
+          if [[ $- == *i* ]]; then
+            echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
+            echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')"
+            echo
+            echo "CD — rip <offset> [cyanrip|whipper] [flags]  →  FLAC (default cyanrip)"
+            echo "     flags pass through: cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U"
+            echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
+            echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
+            echo "     sync-music                  →  mount /mnt/music + move the library to the NAS (needs NFS_MUSIC)"
+            echo "     sync-sd [card]              →  mount /mnt/music + copy the library to the SD card (mounts/unmounts the card if needed; needs NFS_MUSIC)"
+            echo "DVD/Blu-ray — titles [disc:N]            →  title list, longest-first (S = scrambled/decoy)"
+            echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/ (DVDs prompt for a TMDB name)"
+            echo "             transcode-video              →  HandBrakeCLI @ 1080p → /mnt/videos/library/ (rip then transcode)"
+            echo "             movie-name [disc:N|file.mkv]  →  resolve Title (Year) [Lang]; Blu-ray from metadata, DVD via TMDB"
+            echo
+            echo "rip, rip-video and transcode-video log each phase + total to ./rip.log"
+          fi
         '';
       };
     };
