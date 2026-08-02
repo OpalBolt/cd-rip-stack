@@ -72,6 +72,12 @@
         install -Dm755 ${./sync-sd.sh} "$out/bin/sync-sd"
         install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
+      # rip-menu = gum-based guided entry surface; lists the toolkit commands
+      # and runs the pick. installed like `rip` above; runs in the devshell so
+      # gum (added to packages below) is on PATH.
+      rip-menu = pkgs.runCommandLocal "rip-menu" { } ''
+        install -Dm755 ${./rip-menu.sh} "$out/bin/rip-menu"
+      '';
 
     in
     {
@@ -79,6 +85,9 @@
         packages = [
           rip
           rip-video
+          rip-menu
+          # gum: rip-menu's interactive picker (runs inside the devshell)
+          pkgs.gum
           transcode-video
           movie-name
           titles
