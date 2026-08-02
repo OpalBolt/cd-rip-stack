@@ -29,7 +29,7 @@ CD sample offset (samples) for AccurateRip verification:
 nix develop
 ```
 
-Provides `rip`, `tag`, `rip-video`, `transcode-video`, `movie-name`, `sync-music`, `mount-nfs`, `titles`, plus makemkv, handbrake, whipper, cyanrip, beets, curl, and jq.
+Provides `rip`, `tag`, `rip-video`, `transcode-video`, `movie-name`, `sync-music`, `sync-sd`, `mount-nfs`, `titles`, plus makemkv, handbrake, whipper, cyanrip, beets, curl, and jq.
 
 ## Ripping a CD
 
@@ -59,6 +59,19 @@ sync-music          # mount /mnt/music on demand, then move the library → /mnt
 `sync-music` mounts `NFS_MUSIC` at `${MUSIC_MOUNT:-/mnt/music}` via the shared `mount-nfs` helper (the same helper `rip-video`/`transcode-video` use for `NFS_VIDEOS`), then `rsync --remove-source-files` each top-level folder across and sweeps the now-empty source dirs. One log line per folder; on any failure it stops and leaves the source in place — re-run picks up where it stopped.
 
 The `mount-nfs` helper runs `sudo mount -t nfs`, which resolves through sudo's `secure_path`, not the devshell — so the host needs an NFS client installed (`nfs-utils`; on NixOS add it to `environment.systemPackages`).
+
+## Copying music to an SD card
+
+Once the library is on the NAS, copy it onto a music player's SD card:
+
+```sh
+export NFS_MUSIC=192.168.103.4:/export/music
+sync-sd            # mount /mnt/music on demand, then copy the library → the inserted SD card
+```
+
+`sync-sd` mounts `NFS_MUSIC` at `${MUSIC_MOUNT:-/mnt/music}` via `mount-nfs`, then `rsync -r --size-only` from `/mnt/music/library/` onto the card — the source is kept, so unlike `sync-music` this is a copy, not a move. A mounted card is auto-detected: any filesystem on a removable device, or one auto-mounted under `/media` or `/run/media/$USER` (the second clause catches internal SD readers whose `mmcblk` device doesn't report removable). If none is mounted, `sync-sd` lists the unmounted removable disks (`sdx`/`mmcblk`) and mounts the one you pick, then unmounts it again on exit — success, Ctrl-C, or any failure (a card that was already mounted is left mounted). When several removable devices are plugged in it lists them and asks which. Pass a path to override or disambiguate: `sync-sd /run/media/$USER/CARD`.
+
+`--size-only` skips files already on the card by size, so re-runs after adding albums only copy the new ones — and it works on any card filesystem (FAT/exFAT choke on the timestamps and permissions that `-a` would try to set).
 
 ## Ripping a DVD / Blu-ray
 
@@ -157,6 +170,7 @@ custom.mmcp.xml    MakeMKV selection profile — picks audio + subtitle tracks a
 rip-common.sh      shared timing + ./rip.log helper, sourced by rip.sh, rip-video.sh, transcode-video.sh, titles.sh, sync-music.sh
 mount-nfs.sh       mount-on-demand helper for the NFS shares (called by sync-music + the video scripts)
 sync-music.sh      move finished, beets-tagged music to /mnt/music/library/ (rsync --remove-source-files, per-folder log)
+sync-sd.sh         copy the NAS music library onto the inserted SD card (rsync -r --size-only, auto-detects the card)
 titles.sh          makemkvcon info → readable title list with scramble flag
 beets-config.yaml  beets config: tagging, art, genres, replaygain, paths
 README.md          this file

@@ -65,6 +65,14 @@
         install -Dm755 ${./sync-music.sh} "$out/bin/sync-music"
         install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
       '';
+      # sync-sd = copy the NAS music library onto the inserted SD card (source
+      # kept, unlike sync-music's move). auto-detects the card via lsblk, mounts
+      # /mnt/music via mount-nfs; standalone like sync-music.
+      sync-sd = pkgs.runCommandLocal "sync-sd" { } ''
+        install -Dm755 ${./sync-sd.sh} "$out/bin/sync-sd"
+        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+      '';
+
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -76,6 +84,7 @@
           titles
           mount-nfs
           sync-music
+          sync-sd
           pkgs.rsync
           pkgs.cyanrip
           # metaflac: read album/artist tags off ripped FLACs for rip.log
@@ -108,6 +117,7 @@
           echo "     cyanrip prompts to pick a release if MusicBrainz matches several"
           echo "     tag  →  metadata, cover art, genres, replaygain, sort into the library"
           echo "     sync-music                  →  mount /mnt/music + move the library to the NAS (needs NFS_MUSIC)"
+          echo "     sync-sd [card]              →  mount /mnt/music + copy the library to the SD card (mounts/unmounts the card if needed; needs NFS_MUSIC)"
           echo "DVD/Blu-ray — titles [disc:N]            →  title list, longest-first (S = scrambled/decoy)"
           echo "             rip-video [title]            →  makemkvcon → lossless MKV in /mnt/videos/rip/ (DVDs prompt for a TMDB name)"
           echo "             transcode-video              →  HandBrakeCLI @ 1080p → /mnt/videos/library/ (rip then transcode)"
