@@ -20,7 +20,30 @@ entries=(
 
 pick=$(printf '%s\n' "${entries[@]}" | gum choose --header "CD · Video · Tools — pick an action")
 
-# exec the command (first token); the description after the em-dash is ignored.
-# commands that take args print their own usage when run bare — the menu is a
-# launcher, not an argument-gatherer.
-exec "${pick%% *}"
+# per-command arg hints: a non-empty hint earns a gum input prompt after pick;
+# an empty hint runs the command immediately. the description after the em-dash
+# is ignored — only the first token (the command) matters.
+declare -A arg_hint=(
+  [rip]="offset (required) + optional engine/flags — e.g. 6  or  6 whipper"
+  [rip-video]="titles — e.g. 1,3-4  or  --extras  (blank = all)"
+  [titles]="disc — e.g. disc:1 (blank = disc:0)"
+  [movie-name]="args — e.g. --rename /mnt/videos/rip"
+  [sync-sd]="card mountpoint (blank = auto-detect)"
+  [tag]=""
+  [sync-music]=""
+  [transcode-video]=""
+)
+
+cmd="${pick%% *}"
+hint="${arg_hint[$cmd]:-}"
+
+if [ -n "$hint" ]; then
+  # ponytail: intentional word-splitting on $args so "1,3-4" → one arg and
+  # "--rename /path" → two. disable shellcheck SC2086 accordingly. globbing is
+  # left on intentionally (a "*.mkv" arg is occasionally useful); set -f if it bites.
+  # shellcheck disable=SC2086
+  args=$(gum input --placeholder "$hint" --char-limit=0)
+  exec "$cmd" $args
+else
+  exec "$cmd"
+fi
