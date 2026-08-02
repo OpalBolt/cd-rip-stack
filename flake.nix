@@ -28,19 +28,19 @@
       # devshell. Copied verbatim so rip.sh stays a directly-runnable script;
       # rip-common.sh is installed alongside as the sourced timing/log helper.
       rip = pkgs.runCommandLocal "rip" { } ''
-        install -Dm755 ${./rip.sh} "$out/bin/rip"
+        install -Dm755 ${./lib/rip.sh} "$out/bin/rip"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # rip-video = rip only (makemkvcon -> lossless MKV on the NAS). installed
       # like `rip` above; ships custom.mmcp.xml next to it (selection profile).
       rip-video = pkgs.runCommandLocal "rip-video" { } ''
-        install -Dm755 ${./rip-video.sh} "$out/bin/rip-video"
+        install -Dm755 ${./lib/rip-video.sh} "$out/bin/rip-video"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
         install -Dm644 ${./lib/custom.mmcp.xml} "$out/bin/custom.mmcp.xml"
       '';
       # transcode-video = batch transcode of the NAS rip/ folder to the library.
       transcode-video = pkgs.runCommandLocal "transcode-video" { } ''
-        install -Dm755 ${./transcode-video.sh} "$out/bin/transcode-video"
+        install -Dm755 ${./lib/transcode-video.sh} "$out/bin/transcode-video"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # movie-name = resolve a real movie name (Title, Year, Lang) for a disc or
@@ -48,11 +48,11 @@
       # rename staged MKVs to "<Title> (Year)_tNN.mkv". standalone helper (like
       # titles/mount-nfs) — it warns to stderr, so it does not source rip-common.
       movie-name = pkgs.runCommandLocal "movie-name" { } ''
-        install -Dm755 ${./movie-name.sh} "$out/bin/movie-name"
+        install -Dm755 ${./lib/movie-name.sh} "$out/bin/movie-name"
       '';
       # titles = readable view over makemkvcon's verbose `info` output.
       titles = pkgs.runCommandLocal "titles" { } ''
-        install -Dm755 ${./titles.sh} "$out/bin/titles"
+        install -Dm755 ${./lib/titles.sh} "$out/bin/titles"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # mount-nfs = shared mount-on-demand helper for the NFS shares; called by
@@ -62,21 +62,21 @@
       '';
       # sync-music = move finished, beets-tagged music to the NAS library.
       sync-music = pkgs.runCommandLocal "sync-music" { } ''
-        install -Dm755 ${./sync-music.sh} "$out/bin/sync-music"
+        install -Dm755 ${./lib/sync-music.sh} "$out/bin/sync-music"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # sync-sd = copy the NAS music library onto the inserted SD card (source
       # kept, unlike sync-music's move). auto-detects the card via lsblk, mounts
       # /mnt/music via mount-nfs; standalone like sync-music.
       sync-sd = pkgs.runCommandLocal "sync-sd" { } ''
-        install -Dm755 ${./sync-sd.sh} "$out/bin/sync-sd"
+        install -Dm755 ${./lib/sync-sd.sh} "$out/bin/sync-sd"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # rip-menu = gum-based guided entry surface; lists the toolkit commands
       # and runs the pick. installed like `rip` above; runs in the devshell so
       # gum (added to packages below) is on PATH.
       rip-menu = pkgs.runCommandLocal "rip-menu" { } ''
-        install -Dm755 ${./rip-menu.sh} "$out/bin/rip-menu"
+        install -Dm755 ${./lib/rip-menu.sh} "$out/bin/rip-menu"
       '';
 
     in
