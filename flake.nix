@@ -29,19 +29,19 @@
       # rip-common.sh is installed alongside as the sourced timing/log helper.
       rip = pkgs.runCommandLocal "rip" { } ''
         install -Dm755 ${./rip.sh} "$out/bin/rip"
-        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # rip-video = rip only (makemkvcon -> lossless MKV on the NAS). installed
       # like `rip` above; ships custom.mmcp.xml next to it (selection profile).
       rip-video = pkgs.runCommandLocal "rip-video" { } ''
         install -Dm755 ${./rip-video.sh} "$out/bin/rip-video"
-        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
-        install -Dm644 ${./custom.mmcp.xml} "$out/bin/custom.mmcp.xml"
+        install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./lib/custom.mmcp.xml} "$out/bin/custom.mmcp.xml"
       '';
       # transcode-video = batch transcode of the NAS rip/ folder to the library.
       transcode-video = pkgs.runCommandLocal "transcode-video" { } ''
         install -Dm755 ${./transcode-video.sh} "$out/bin/transcode-video"
-        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # movie-name = resolve a real movie name (Title, Year, Lang) for a disc or
       # lossless MKV; DVDs rip as a label code (B1), so rip-video calls this to
@@ -53,24 +53,24 @@
       # titles = readable view over makemkvcon's verbose `info` output.
       titles = pkgs.runCommandLocal "titles" { } ''
         install -Dm755 ${./titles.sh} "$out/bin/titles"
-        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # mount-nfs = shared mount-on-demand helper for the NFS shares; called by
       # sync-music (NFS_MUSIC) and rip-video/transcode-video (NFS_VIDEOS).
       mount-nfs = pkgs.runCommandLocal "mount-nfs" { } ''
-        install -Dm755 ${./mount-nfs.sh} "$out/bin/mount-nfs"
+        install -Dm755 ${./lib/mount-nfs.sh} "$out/bin/mount-nfs"
       '';
       # sync-music = move finished, beets-tagged music to the NAS library.
       sync-music = pkgs.runCommandLocal "sync-music" { } ''
         install -Dm755 ${./sync-music.sh} "$out/bin/sync-music"
-        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # sync-sd = copy the NAS music library onto the inserted SD card (source
       # kept, unlike sync-music's move). auto-detects the card via lsblk, mounts
       # /mnt/music via mount-nfs; standalone like sync-music.
       sync-sd = pkgs.runCommandLocal "sync-sd" { } ''
         install -Dm755 ${./sync-sd.sh} "$out/bin/sync-sd"
-        install -Dm644 ${./rip-common.sh} "$out/bin/rip-common.sh"
+        install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
       # rip-menu = gum-based guided entry surface; lists the toolkit commands
       # and runs the pick. installed like `rip` above; runs in the devshell so
@@ -119,7 +119,7 @@
         shellHook = ''
           echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
           echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')"
-          alias tag='beet -c beets-config.yaml import ~/media/audio/music/rip/'
+          alias tag='beet -c lib/beets-config.yaml import ~/media/audio/music/rip/'
           echo
           echo "CD — rip <offset> [cyanrip|whipper] [flags]  →  FLAC (default cyanrip)"
           echo "     flags pass through: cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U"
