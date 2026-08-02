@@ -31,6 +31,14 @@
         install -Dm755 ${./lib/rip.sh} "$out/bin/rip"
         install -Dm644 ${./lib/rip-common.sh} "$out/bin/rip-common.sh"
       '';
+      # tag = beets import on the rip dir, sorting into the library. promoted
+      # from a shellHook alias to a binary so `nix develop -c tag` (and rip-menu's
+      # exec) can run it. standalone wrapper like movie-name; ships beets-config.yaml
+      # next to it (config path resolved from the binary's dir, not cwd).
+      tag = pkgs.runCommandLocal "tag" { } ''
+        install -Dm755 ${./lib/tag.sh} "$out/bin/tag"
+        install -Dm644 ${./lib/beets-config.yaml} "$out/bin/beets-config.yaml"
+      '';
       # rip-video = rip only (makemkvcon -> lossless MKV on the NAS). installed
       # like `rip` above; ships custom.mmcp.xml next to it (selection profile).
       rip-video = pkgs.runCommandLocal "rip-video" { } ''
@@ -84,6 +92,7 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           rip
+          tag
           rip-video
           rip-menu
           # gum: rip-menu's interactive picker (runs inside the devshell)
@@ -119,7 +128,6 @@
         shellHook = ''
           echo "whipper $(whipper --version 2>/dev/null || echo '?') | cyanrip $(cyanrip -V 2>/dev/null || echo '?') | beets $(beet version 2>/dev/null || echo '?')"
           echo "makemkv + handbrake $(HandBrakeCLI --version 2>&1 | head -1 || echo '?')"
-          alias tag='beet -c lib/beets-config.yaml import ~/media/audio/music/rip/'
           echo
           echo "CD — rip <offset> [cyanrip|whipper] [flags]  →  FLAC (default cyanrip)"
           echo "     flags pass through: cyanrip -N skips MusicBrainz, -R x re-rips; whipper runs -U"

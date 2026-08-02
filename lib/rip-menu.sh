@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # rip-menu — guided entry surface for the ripping toolkit. run inside the nix
-# devshell so gum + every command is on PATH. shows the toolkit commands via
-# gum choose and runs the pick.
-# ponytail: plain list for now — grouping, one-line descriptions, and live
-# counts arrive in slices 3 and 4.
+# devshell so gum + every command is on PATH. lists the commands grouped by
+# workflow with a one-line description, then runs the pick.
 set -euo pipefail
 
-commands=(
-  rip
-  rip-video
-  transcode-video
-  movie-name
-  titles
-  sync-music
-  sync-sd
+entries=(
+  # CD
+  "rip — Rip a CD to FLAC"
+  "tag — Tag ripped music and sort into the library"
+  "sync-music — Move the library to the NAS"
+  "sync-sd — Copy the library to an SD card"
+  # Video
+  "rip-video — Rip a disc to a lossless MKV"
+  "transcode-video — Encode staged MKVs into the library"
+  "titles — List a disc's titles, longest first"
+  # Tools
+  "movie-name — Resolve a movie name (metadata or TMDB)"
 )
 
-# `tag` is a shell alias, not a binary, so nix develop -c can't see it — left out.
-choice=$(printf '%s\n' "${commands[@]}" | gum choose)
+pick=$(printf '%s\n' "${entries[@]}" | gum choose --header "CD · Video · Tools — pick an action")
 
-exec "$choice"
+# exec the command (first token); the description after the em-dash is ignored.
+# commands that take args print their own usage when run bare — the menu is a
+# launcher, not an argument-gatherer.
+exec "${pick%% *}"
