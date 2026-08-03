@@ -120,6 +120,8 @@
           # dvd/blu-ray
           pkgs.makemkv
           pkgs.handbrake
+          # mkvmerge: join a film split across discs (rip-video --part) before transcode
+          pkgs.mkvtoolnix
           # ffprobe: read subtitle languages off ripped MKVs (Task 4 logging)
           pkgs.ffmpeg
           # movie-name: TMDB lookup for DVD label codes (B1) — curl + jq

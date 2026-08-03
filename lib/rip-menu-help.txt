@@ -118,11 +118,13 @@ the NAS via makemkvcon. Audio and subtitles
 are selected at rip time (original language,
 plus Danish/English subs).
 
-Usage:  rip-video [titles]   (NFS_VIDEOS)
+Usage:  rip-video [titles|--extras|--part N]  (NFS_VIDEOS)
 
   titles   all (default), a number, a range
-           like 1,3-4, or --extras for the
-           2nd disc of a set
+           like 1,3-4. --extras = 2nd disc of
+           a set; --part N = part N of a film
+           split across discs (same movie at
+           each prompt; merged at transcode)
 
 What happens:
   Scans the disc and rips the chosen titles
@@ -147,6 +149,10 @@ What happens:
   H.265 1080p keeping all audio and subtitle
   tracks, uploads the result to the library,
   and deletes the lossless source.
+  A film ripped in parts (_tNN.pN.mkv) has
+  its main feature merged in part order
+  (p1, p2, ...) before encoding. Extras never
+  merge — only the main feature does.
 
   Run this on the desktop. Re-run for newly
   ripped discs.

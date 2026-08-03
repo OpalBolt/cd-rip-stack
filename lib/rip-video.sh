@@ -63,10 +63,15 @@ minlen="${RIP_MINLENGTH:-120}"
 
 usage() {
   cat <<EOF
-usage: rip-video [--extras] [title]   (disc is always disc:0)
+usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
   --extras  rip this disc's titles as extras for the movie (staged as
             <Movie (Year)>_eNN.mkv; transcode files them under extras/,
             never as the main feature). use for a set's extras disc.
+  --part N  this disc holds part N of a film split across multiple discs.
+            stages titles as <Movie (Year)>_tNN.pN.mkv; transcode merges the
+            main feature's parts in order (p1, p2, ...). pick the same movie
+            title at the prompt for every disc. only the main feature merges —
+            extras stay separate, filed under extras/.
   title   which disc titles to rip: "all" (default), a number, a range (N-M),
           or a comma list (e.g. 0,5-7). list them first with: titles.
           asks for the movie title (TMDB), rips lossless MKVs with the original-
@@ -75,10 +80,18 @@ EOF
 }
 
 extras=0
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-  --extras) extras=1; shift ;;
-esac
+part=
+# ponytail: manual arg parsing — two optional flags then one positional.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --extras) extras=1; shift ;;
+    --part)
+      [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "rip-video: --part needs a number, got '${2:-}'" >&2; exit 1; }
+      part=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
 title="${1:-all}"
 
 # expand the title spec into individual title numbers. makemkvcon rips one title
@@ -155,7 +168,7 @@ done
 # rename staged MKVs to "<Title (Year)>_tNN.mkv" — or _eNN.mkv with --extras, so a
 # set's extras disc never collides with the movie's _tNN files; transcode files
 # _eNN as extras. the disc is ejected by hand; transcode-video finishes on the desktop.
-ra=(--rename-as); [ "$extras" = 1 ] && ra+=(--extras); ra+=("$display" "$rip_dir")
+ra=(--rename-as); [ "$extras" = 1 ] && ra+=(--extras); [ -n "$part" ] && ra+=(--part "$part"); ra+=("$display" "$rip_dir")
 movie-name "${ra[@]}" \
   || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
 

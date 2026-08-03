@@ -15,12 +15,14 @@
 #   movie-name --rename <dir|file>     resolve, then rename every still-junk-labeled
 #                                      MKV in that dir to "<Title> (Year)_tNN.mkv"
 #                                      (main + extras); prints the new base name
-#   movie-name --rename-as [--extras] <name> <dir>
+#   movie-name --rename-as [--extras] [--part N] <name> <dir>
 #                                     rename using an already-resolved name (no
 #                                     resolve, no prompt) — rip-video calls this
 #                                     after rip with the name it resolved before.
 #                                     --extras uses "_eNN" so a set's extras disc
 #                                     never collides with the movie's "_tNN" files.
+#                                     --part N stamps ".pN" (a split-film half;
+#                                     transcode merges the main feature's parts).
 #
 # Name source, first real hit wins:
 #   1. an already-named "Title (Year)_tNN.mkv" in the dir (cache) — used as-is.
@@ -33,19 +35,22 @@
 # (post-rip) so TMDB is hit exactly once.
 set -euo pipefail
 shopt -s nullglob
-
 mode=print
-ra_name=; ra_dir=; ra_sfx=t
+ra_name=; ra_dir=; ra_sfx=t; ra_part=
 case "${1:-}" in
   --rename) mode=rename; shift ;;
   --rename-as)
     mode=rename-as; shift
     [ "${1:-}" = "--extras" ] && { ra_sfx=e; shift; }
+    if [ "${1:-}" = "--part" ]; then
+      [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "movie-name: --part needs a number, got '${2:-}'" >&2; exit 1; }
+      ra_part=".p$2"; shift 2
+    fi
     ra_name="${1:?--rename-as needs <name>}"; ra_dir="${2:?--rename-as needs <dir>}"; shift 2 ;;
   --tmdb) mode=tmdb; shift ;;
   -h|--help)
     cat <<EOF
-usage: movie-name [--rename | --rename-as [--extras] <name> <dir> | --tmdb] [disc:N | file.mkv | rip-dir]
+usage: movie-name [--rename | --rename-as [--extras] [--part N] <name> <dir> | --tmdb] [disc:N | file.mkv | rip-dir]
   resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
   --tmdb:                   skip the disc/file, go straight to a TMDB search prompt
                             (rip-video uses this — it asks for the title instead of
@@ -56,6 +61,8 @@ usage: movie-name [--rename | --rename-as [--extras] <name> <dir> | --tmdb] [dis
                             using an already-resolved name (no resolve, no prompt).
                             add --extras to use "<name>_eNN.mkv" (a set's extras
                             disc — transcode files these as extras, never main).
+                            add --part N to stamp "<name>_tNN.pN.mkv" (a split-film
+                            half; transcode merges the main feature's parts).
   <disc:N | file>:          Blu-ray metadata is used directly; a DVD label code (B1)
                             prompts a TMDB search (pick: Enter=1, s=skip, q=quit).
   No \$TMDB_API_KEY -> error; other TMDB failures fall back to the label (unless
@@ -198,7 +205,7 @@ resolve() {
 # file is never clobbered. prints the display name to stdout, the rename map to stderr.
 # ponytail: shared by --rename (after resolve) and --rename-as (name already known).
 rename_to() {
-  local dir=$1 display=$2 sfx=${3:-t} f b cur n m target
+  local dir=$1 display=$2 sfx=${3:-t} part=${4:-} f b cur n m target
   for f in "$dir"/*.mkv; do
     b=$(basename "$f" .mkv)
     case "$b" in *_t*) n=${b##*_t};; *) n=;; esac     # source is always makemkvcon's _tNN
@@ -206,10 +213,11 @@ rename_to() {
     [ "$cur" = "$display" ] && continue          # already this name
     looks_real "$cur" && continue                # a genuinely-named file (another movie) — leave it
     # roll past an existing same-named file (a 2nd extras disc for this movie) so we
-    # never clobber a staged file; n is always set from makemkvcon's _tNN.
+    # never clobber a staged file; n is always set from makemkvcon's _tNN. part (.pN,
+    # a split-film half) is part of the name, so p1/p2 of the same title coexist.
     m=$n
-    while [ -n "$m" ] && [ -e "$dir/${display}_${sfx}${m}.mkv" ]; do m=$((m+1)); done
-    if [ -n "$m" ]; then target="$dir/${display}_${sfx}${m}.mkv"; else target="$dir/${display}.mkv"; fi
+    while [ -n "$m" ] && [ -e "$dir/${display}_${sfx}${m}${part}.mkv" ]; do m=$((m+1)); done
+    if [ -n "$m" ]; then target="$dir/${display}_${sfx}${m}${part}.mkv"; else target="$dir/${display}${part}.mkv"; fi
     mv -- "$f" "$target"
     echo "movie-name: $cur → $(basename "$target" .mkv)" >&2
   done
@@ -250,7 +258,7 @@ do_rename_as() {  # $1 = display, $2 = dir
   sample=
   for f in "$dir"/*.mkv; do [ -z "$sample" ] && sample=$f; done
   if [ -z "$sample" ]; then warn "no MKVs in $dir"; printf '%s\n' -; return 0; fi
-  rename_to "$dir" "$display" "$ra_sfx"
+  rename_to "$dir" "$display" "$ra_sfx" "$ra_part"
 }
 
 case "$mode" in
