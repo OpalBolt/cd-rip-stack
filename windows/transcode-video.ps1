@@ -3,28 +3,28 @@
   Batch-transcode staged lossless MKVs to 1080p H.265 for the Jellyfin library.
 
 .DESCRIPTION
-  Standalone Windows port of lib/transcode-video.sh — this one file is all you
+  Standalone Windows port of lib/transcode-video.sh -- this one file is all you
   need from the repo (see README_WINDOWS.md for setup).
 
   Transcodes every lossless MKV in <VIDEOS>\rip\ to 1080p H.265 and files it in
   <VIDEOS>\library\<Movie (Year)>\[extras\]. Pulls each file to a local temp dir
   to encode off the network share, uploads the result, then deletes the lossless
-  source (-Keep: moves it to rip-DONE instead — verify the encodes, then clean
+  source (-Keep: moves it to rip-DONE instead -- verify the encodes, then clean
   by hand). Track selection happened at rip time, so this is a pass-through
   re-encode: every audio + subtitle track kept, video only re-encoded, nothing
   burned in.
 
   A film ripped in parts (<Movie (Year)>_tNN.pN.mkv) has its main feature (the
-  biggest _tNN group by bytes — tie goes to the lowest number) merged in part
+  biggest _tNN group by bytes -- tie goes to the lowest number) merged in part
   order with mkvmerge, then transcoded as one movie. Every other title is an
-  independent extra, kept unique by its .pN suffix — only the main feature
+  independent extra, kept unique by its .pN suffix -- only the main feature
   merges, so same-index extras are never joined.
 
-  Junk-labelled files (no "(Year)" — a rip in progress or a failed rename on
+  Junk-labelled files (no "(Year)" -- a rip in progress or a failed rename on
   the Linux box) are always skipped, so transcode never races a running rip.
 
   Defaults to Z:\; set $env:VIDEOS to override (drive letter or UNC both work).
-  Needs HandBrakeCLI.exe and mkvmerge.exe — on PATH or in their default install
+  Needs HandBrakeCLI.exe and mkvmerge.exe -- on PATH or in their default install
   dirs. Appends to .\rip.log in the same format as the Linux scripts.
 
 .PARAMETER Keep
@@ -32,7 +32,7 @@
   the encodes, then clean rip-DONE by hand.
 
 .PARAMETER Encoder
-  Video encoder: x265 (default — software, identical output to the Linux
+  Video encoder: x265 (default -- software, identical output to the Linux
   transcode machine), nvenc (NVIDIA GPU), qsv (Intel Quick Sync) or vce (AMD).
   GPU encoders are much faster but slightly worse quality per bit.
 
@@ -60,14 +60,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ── config ───────────────────────────────────────────────────────────────────
+# -- config -------------------------------------------------------------------
 # Z:\ by default; $env:VIDEOS overrides (drive letter or UNC both work).
 # reachability check: an SSH session is a fresh logon session and does NOT
-# inherit the desktop's drive mappings — without this guard a missing Z: would
+# inherit the desktop's drive mappings -- without this guard a missing Z: would
 # scan as "no MKVs" and exit 0, a silent no-op.
 $vid = if ($env:VIDEOS) { $env:VIDEOS } else { 'Z:\' }
 if (-not (Test-Path -LiteralPath $vid)) {
-  [Console]::Error.WriteLine("transcode-video.ps1: $vid is not reachable. An SSH session doesn't inherit desktop drive mappings — run 'net use Z: \\nas\\videos' first, or set `$env:VIDEOS to the UNC path.")
+  [Console]::Error.WriteLine("transcode-video.ps1: $vid is not reachable. An SSH session doesn't inherit desktop drive mappings -- run 'net use Z: \\nas\\videos' first, or set `$env:VIDEOS to the UNC path.")
   exit 1
 }
 $ripDir  = Join-Path $vid 'rip'
@@ -79,7 +79,7 @@ function Find-Tool([string]$exe, [string]$fallback) {
   $c = Get-Command $exe -ErrorAction SilentlyContinue
   if ($c) { return $c.Source }
   if ($fallback -and (Test-Path -LiteralPath $fallback)) { return (Resolve-Path -LiteralPath $fallback).Path }
-  [Console]::Error.WriteLine("$exe not found on PATH nor at $fallback — see README_WINDOWS.md (Installing the tools).")
+  [Console]::Error.WriteLine("$exe not found on PATH nor at $fallback -- see README_WINDOWS.md (Installing the tools).")
   exit 1
 }
 # ponytail: ProgramFiles always exists on Windows; extra fallbacks just keep the probe null-safe elsewhere.
@@ -90,7 +90,7 @@ $mkvExe = Find-Tool 'mkvmerge.exe'     (Join-Path $pf 'MKVToolNix\mkvmerge.exe')
 New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 if ($Keep) { New-Item -ItemType Directory -Force -Path $doneDir | Out-Null }
 
-# ── logging: same 8-column line format as the Linux rip-common.sh ────────────
+# -- logging: same 8-column line format as the Linux rip-common.sh ------------
 $tsf = 'yyyy-MM-dd HH:mm:ss'
 $script:LogPath = 'rip.log'
 $script:RipName = '-'
@@ -119,7 +119,7 @@ function End-Phase {
       ([int][math]::Floor($el / 60)) ([int][math]::Floor($el % 60)) 'ok'
 }
 function End-Log([int]$rc) {
-  # one phase that succeeded already logged start..end..status — a total would
+  # one phase that succeeded already logged start..end..status -- a total would
   # just duplicate it (mirrors rip-common.sh). failures still get a total.
   if ($rc -eq 0 -and $script:Phases -eq 1) { return }
   $now = Get-Date
@@ -137,19 +137,19 @@ function Sanitize([string]$s) { return ($s -replace '[/:*?"<>|]', '') }
 # deleting it (verify-then-clean). never clobbers an existing file there.
 function Archive([string]$src) {
   $d = Join-Path $doneDir (Split-Path -Leaf $src)
-  if (Test-Path -LiteralPath $d) { Warn "--keep: $d already exists — source left in $ripDir" }
+  if (Test-Path -LiteralPath $d) { Warn "--keep: $d already exists -- source left in $ripDir" }
   else { Move-Item -LiteralPath $src -Destination $d }
 }
 
-# HandBrake pass-through re-encode — keep every audio + subtitle track,
+# HandBrake pass-through re-encode -- keep every audio + subtitle track,
 # re-encode video only. identical for a merged main feature and an extra.
 function Invoke-Encode([string]$src, [string]$out) {
-  # GPU (non-x265): override the preset's encoder — explicit --quality so we
+  # GPU (non-x265): override the preset's encoder -- explicit --quality so we
   # don't depend on the preset's RF carrying over to ICQ. if the GPU/encoder
   # isn't usable HandBrake errors, the phase logs FAILED, the source stays.
   $gpu = if ($Encoder -eq 'x265') { @() } else { @('--encoder', "${Encoder}_h265", '--quality', '28') }
   # | Out-Host: keep HandBrake's progress on the console but OUT of this
-  # function's output stream — a bare call would prepend its stdout lines to the
+  # function's output stream -- a bare call would prepend its stdout lines to the
   # return value, making the boolean always truthy and failed encodes "succeed".
   & $hbExe -i $src -o $out @gpu `
     --preset 'H.265 MKV 1080p30' `
@@ -160,21 +160,21 @@ function Invoke-Encode([string]$src, [string]$out) {
   return ($LASTEXITCODE -eq 0)
 }
 
-# ── scan + filter staged files ────────────────────────────────────────────────
+# -- scan + filter staged files ------------------------------------------------
 # staged layout: <Movie (Year)>_tNN[.pN].mkv (titles), _eNN[.pN].mkv (extras disc).
 # junk guard: a name without a "(YYYY)" tail is a rip in progress or a failed
-# rename — never encode those (a half-written source would encode "fine", land
+# rename -- never encode those (a half-written source would encode "fine", land
 # in the library, and the cleanup would delete the file out from under the ripper).
 $rx = '^(?<movie>.+)_(?<sfx>[te])(?<num>\d+)(?<part>\.p(?<pn>\d+))?\.mkv$'
 $want = @($Name)
 $wantHit = @{}
 $items = New-Object System.Collections.Generic.List[object]
 foreach ($f in @(Get-ChildItem -LiteralPath $ripDir -Recurse -Filter '*.mkv' -File -ErrorAction SilentlyContinue)) {
-  if (-not ($f.Name -cmatch $rx)) { Warn "skip (junk label — mid-rip or failed rename): $($f.FullName)"; continue }
-  # grab every group at once — any later -match clobbers $Matches.
+  if (-not ($f.Name -cmatch $rx)) { Warn "skip (junk label -- mid-rip or failed rename): $($f.FullName)"; continue }
+  # grab every group at once -- any later -match clobbers $Matches.
   $movie = $Matches['movie']; $sfx = $Matches['sfx']; $numStr = $Matches['num']; $num = [int]$numStr
   $part = if ($Matches['part']) { [int]$Matches['pn'] } else { -1 }
-  if ($movie -cnotmatch '\(\d{4}\)$') { Warn "skip (junk label — mid-rip or failed rename): $($f.FullName)"; continue }
+  if ($movie -cnotmatch '\(\d{4}\)$') { Warn "skip (junk label -- mid-rip or failed rename): $($f.FullName)"; continue }
   if ($want.Count -gt 0) {
     $hit = $false
     foreach ($w in $want) { if ($f.Name.StartsWith($w, [System.StringComparison]::Ordinal)) { $hit = $true; $wantHit[$w] = $true } }
@@ -193,7 +193,7 @@ if ($items.Count -eq 0) {
   exit 0
 }
 
-# ── main feature per movie = the _tNN group with the most bytes (a split ──────
+# -- main feature per movie = the _tNN group with the most bytes (a split ------
 # main's .pN halves sum). tie -> lowest number. "lowest _tNN" alone picked
 # menu/decoy titles on real rips, so size decides. _eNN are never main.
 $grp = @{}
@@ -209,7 +209,7 @@ foreach ($g in $grp.Values) {
   if ($null -eq $best -or $g.Sz -gt $best.Sz -or ($g.Sz -eq $best.Sz -and $g.Num -lt $best.Num)) { $mainNum[$g.Movie] = $g }
 }
 
-# ── the loop ──────────────────────────────────────────────────────────────────
+# -- the loop ------------------------------------------------------------------
 $failed = 0
 $handled = @{}
 Start-Log
@@ -219,10 +219,10 @@ try {
     $script:RipName = $i.Movie
     $safe = Sanitize $i.Movie
 
-    # ── main feature: merge its .pN parts (if any), transcode as one movie ──
+    # -- main feature: merge its .pN parts (if any), transcode as one movie --
     if ($i.Sfx -eq 't' -and $null -ne $mainNum[$i.Movie] -and $mainNum[$i.Movie].Num -eq $i.Num) {
       # every staged file for this (movie, title): the split main feature.
-      # part order: no-suffix first (-1 — rescues a forgotten --part on disc 1),
+      # part order: no-suffix first (-1 -- rescues a forgotten --part on disc 1),
       # then .pN ascending.
       $siblings = @($items | Where-Object { $_.Movie -eq $i.Movie -and $_.Sfx -eq 't' -and $_.Num -eq $i.Num } | Sort-Object Part)
       $destDir = Join-Path $libDir $safe
@@ -245,7 +245,7 @@ try {
         & $mkvExe -o $localSrc @margs
         if ($LASTEXITCODE -le 1) { $cleanup.Add($localSrc) }
         else {
-          Warn "FAILED mkvmerge ($LASTEXITCODE): $(($siblings.Name -join ' ')) — sources left in place (see mkvmerge output above)"
+          Warn "FAILED mkvmerge ($LASTEXITCODE): $(($siblings.Name -join ' ')) -- sources left in place (see mkvmerge output above)"
           Remove-Item -LiteralPath $cleanup.ToArray() -Force -ErrorAction SilentlyContinue
           foreach ($s in $siblings) { $handled[$s.Path] = $true }
           $failed = 1; End-Phase; continue
@@ -266,14 +266,14 @@ try {
         End-Phase
       } else {
         Remove-Item -LiteralPath (@($cleanup.ToArray()) + @($localOut)) -Force -ErrorAction SilentlyContinue
-        Warn "FAILED (handbrake): $($i.Name) — sources left in place"
+        Warn "FAILED (handbrake): $($i.Name) -- sources left in place"
         foreach ($s in $siblings) { $handled[$s.Path] = $true }
         $failed = 1; End-Phase
       }
       continue
     }
 
-    # ── extras (non-main _t title, or an _e extras-disc title): transcode as-is.
+    # -- extras (non-main _t title, or an _e extras-disc title): transcode as-is.
     # the .pN suffix is kept so split-disc extras never collide.
     $ext    = if ($i.Part -ge 0) { '.p' + $i.Part } else { '' }
     $destDir = Join-Path (Join-Path $libDir $safe) 'extras'
@@ -291,7 +291,7 @@ try {
     } else {
       # leave the lossless source so a re-run retries; the total logs FAIL.
       Remove-Item -LiteralPath @($localSrc, $localOut) -Force -ErrorAction SilentlyContinue
-      Warn "FAILED (handbrake): $($i.Name) — source left in place"
+      Warn "FAILED (handbrake): $($i.Name) -- source left in place"
       $failed = 1; End-Phase
     }
   }
@@ -302,5 +302,5 @@ try {
   End-Log $failed
 }
 
-if ($Keep) { Write-Host "--keep: lossless sources moved to $doneDir — verify, then clean by hand" }
+if ($Keep) { Write-Host "--keep: lossless sources moved to $doneDir -- verify, then clean by hand" }
 exit $failed
