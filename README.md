@@ -110,8 +110,9 @@ Layout on the NAS:
 
 ```text
 /mnt/videos/
-  rip/      lossless staging: <Movie (Year)>_tNN.mkv (movie), _tNN.pN.mkv (split-film half), _eNN.mkv (extras)
+  rip/      lossless staging: <Movie (Year)>_tNN.mkv (movie), _tNN.pN.mkv (split-film half), _eNN[.pN].mkv (extras)
   library/  point Jellyfin here: <Movie (Year)>/<Movie (Year)>.mkv + extras/
+  rip-DONE/ where transcode-video --keep parks lossless sources after encoding (verify, then delete)
 ```
 
 ### titles
@@ -153,10 +154,16 @@ Two kinds of multi-disc sets, handled separately. A **film split across discs** 
 Batch-encode every staged MKV in `/mnt/videos/rip/` to 1080p H.265 and file it under `/mnt/videos/library/`.
 
 ```text
-transcode-video
+transcode-video [--keep] [name ...]
 ```
 
 For each staged MKV, it pulls the file to a local temp dir so it encodes off NFS. It encodes to H.265 1080p and keeps every audio and subtitle track, then uploads the result and deletes the lossless source. The transcode is a pass-through: all tracks stay soft, never burned in. A film ripped in parts has its main feature merged with `mkvmerge` (in part order) before encoding, so it lands as one movie. Run this on the desktop. Re-run for newly ripped discs.
+
+Positional `name`s run only the movies whose staged filenames start with them — `transcode-video "X2 (2003)"` transcodes one movie, `"The Godfather"` grabs the whole trilogy. Use it to try the pipeline on a single film.
+
+`--keep` moves the lossless sources to `rip-DONE/` instead of deleting them. Verify the encodes in the library, then clean `rip-DONE/` by hand.
+
+Files still carrying a junk disc label — a rip in progress, or one whose rename failed (no `(Year)` in the name) — are always skipped, so a running `rip-video` and `transcode-video` never race.
 
 ### movie-name
 
