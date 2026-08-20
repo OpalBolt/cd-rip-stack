@@ -236,6 +236,7 @@ try {
         # the merged file. mkvmerge: 0 ok, 1 warning (still usable), 2+ failure.
         foreach ($s in $siblings) {
           $lb = Join-Path $tmpDir $s.Name
+          Write-Host "copying $($s.Name) to local temp..."
           Copy-Item -LiteralPath $s.Path -Destination $lb -Force
           $localParts += $lb; $cleanup.Add($lb)
         }
@@ -252,6 +253,7 @@ try {
         }
       } else {
         $localSrc = Join-Path $tmpDir $i.Name
+        Write-Host "copying $($i.Name) to local temp..."
         Copy-Item -LiteralPath $i.Path -Destination $localSrc -Force
         $cleanup.Add($localSrc)
       }
@@ -282,6 +284,7 @@ try {
     $localSrc = Join-Path $tmpDir $i.Name
     $localOut = Join-Path $tmpDir ($i.BaseName + '.h265.mkv')
     Start-Phase 'encode'
+    Write-Host "copying $($i.Name) to local temp..."
     Copy-Item -LiteralPath $i.Path -Destination $localSrc -Force
     if (Invoke-Encode $localSrc $localOut) {
       Move-Item -LiteralPath $localOut -Destination $dest -Force
