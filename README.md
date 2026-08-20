@@ -161,6 +161,8 @@ For each staged MKV, it pulls the file to a local temp dir so it encodes off NFS
 
 Positional `name`s run only the movies whose staged filenames start with them — `transcode-video "X2 (2003)"` transcodes one movie, `"The Godfather"` grabs the whole trilogy. Use it to try the pipeline on a single film.
 
+On a Windows transcode box (ripping stays on Linux), use the standalone PowerShell port instead — see [README_WINDOWS.md](README_WINDOWS.md).
+
 `--keep` moves the lossless sources to `rip-DONE/` instead of deleting them. Verify the encodes in the library, then clean `rip-DONE/` by hand.
 
 Files still carrying a junk disc label — a rip in progress, or one whose rename failed (no `(Year)` in the name) — are always skipped, so a running `rip-video` and `transcode-video` never race.
@@ -228,4 +230,7 @@ lib/
   rip-common.sh  mount-nfs.sh          (sourced helpers)
   rip-menu-help.txt                    (the menu's per-command help)
   custom.mmcp.xml  beets-config.yaml   (configs)
+
+windows/
+  transcode-video.ps1                  (standalone Windows port — see README_WINDOWS.md)
 ```
