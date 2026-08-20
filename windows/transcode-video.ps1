@@ -23,7 +23,7 @@
   Junk-labelled files (no "(Year)" — a rip in progress or a failed rename on
   the Linux box) are always skipped, so transcode never races a running rip.
 
-  Set $env:VIDEOS to the NAS videos share root (drive letter or UNC path).
+  Defaults to Z:\; set $env:VIDEOS to override (drive letter or UNC both work).
   Needs HandBrakeCLI.exe and mkvmerge.exe — on PATH or in their default install
   dirs. Appends to .\rip.log in the same format as the Linux scripts.
 
@@ -61,9 +61,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # ── config ───────────────────────────────────────────────────────────────────
-$vid = $env:VIDEOS
-if (-not $vid) {
-  [Console]::Error.WriteLine('transcode-video.ps1: set $env:VIDEOS to the NAS videos root (e.g. Z:\ or \\nas\videos), then re-run.')
+# Z:\ by default; $env:VIDEOS overrides (drive letter or UNC both work).
+# reachability check: an SSH session is a fresh logon session and does NOT
+# inherit the desktop's drive mappings — without this guard a missing Z: would
+# scan as "no MKVs" and exit 0, a silent no-op.
+$vid = if ($env:VIDEOS) { $env:VIDEOS } else { 'Z:\' }
+if (-not (Test-Path -LiteralPath $vid)) {
+  [Console]::Error.WriteLine("transcode-video.ps1: $vid is not reachable. An SSH session doesn't inherit desktop drive mappings — run 'net use Z: \\nas\\videos' first, or set `$env:VIDEOS to the UNC path.")
   exit 1
 }
 $ripDir  = Join-Path $vid 'rip'

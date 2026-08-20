@@ -23,11 +23,23 @@ net use Z: \\nas\videos /persistent:yes
 
 Windows Pro/Enterprise can also mount NFS directly: `mount -o anon nas:/export/videos Z:`. Either way, the script only needs a path it can read and write.
 
-Then set `VIDEOS` permanently (new terminals pick it up):
+With the mapping above you're done — the script defaults to `Z:\`. Only if you use
+a different root, set `VIDEOS` permanently (new terminals pick it up):
 
 ```powershell
-[Environment]::SetEnvironmentVariable('VIDEOS', 'Z:\', 'User')
+[Environment]::SetEnvironmentVariable('VIDEOS', '\\nas\videos', 'User')
 ```
+
+**SSH sessions don't see the mapping.** Drive letters are per logon session, so
+a shell opened over OpenSSH doesn't inherit the desktop's `Z:` (`cd Z:\` fails
+even though Explorer shows it). Per SSH session, either map it again:
+
+```powershell
+net use Z: \\nas\videos   # add /user:nas\you if it asks for credentials
+```
+
+or point `VIDEOS` at the UNC path — and note `cd \\nas\videos\rip` works in
+PowerShell but not cmd (there use `pushd`).
 
 Layout under it is the same as on Linux:
 
