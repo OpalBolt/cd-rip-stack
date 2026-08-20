@@ -215,9 +215,13 @@ rename_to() {
     # roll past an existing same-named file (a 2nd extras disc for this movie) so we
     # never clobber a staged file; n is always set from makemkvcon's _tNN. part (.pN,
     # a split-film half) is part of the name, so p1/p2 of the same title coexist.
+    # printf %02d: makemkvcon pads (_t01); an unpadded roll (_t1) would miss it on
+    # the existence check and then stage a file transcode sorts before _t02.
     m=$n
-    while [ -n "$m" ] && [ -e "$dir/${display}_${sfx}${m}${part}.mkv" ]; do m=$((m+1)); done
-    if [ -n "$m" ]; then target="$dir/${display}_${sfx}${m}${part}.mkv"; else target="$dir/${display}${part}.mkv"; fi
+    while [ -n "$m" ] && [ -e "$(printf '%s/%s_%s%02d%s.mkv' "$dir" "$display" "$sfx" "$m" "$part")" ]; do
+      m=$((m+1))
+    done
+    if [ -n "$m" ]; then target=$(printf '%s/%s_%s%02d%s.mkv' "$dir" "$display" "$sfx" "$m" "$part"); else target="$dir/${display}${part}.mkv"; fi
     mv -- "$f" "$target"
     echo "movie-name: $cur → $(basename "$target" .mkv)" >&2
   done

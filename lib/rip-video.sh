@@ -49,6 +49,29 @@ build_selection() {  # $1 = keep-lang (2/B) or ""
 # custom.mmcp.xml — it is both the substitution target and the manual-use default.
 BASELINE='-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
 
+# ── burned-media gate (Task: no bootleg burns from the thrift store) ──
+# makemkvcon prefixes the DRV drive name with the media type: "DVD+R-DL hp
+# CDDVDW TS-L633R …" for a burn vs "DVD-ROM hp CDDVDW …" for a pressed disc.
+drive_media() {  # print disc:0's media-type token ("" = no disc / not reported)
+  local drv
+  drv=$({ if [ -n "${MAKEMKV_INFO:-}" ]; then "$MAKEMKV_INFO" disc:0
+          else makemkvcon -r info disc:0; fi } 2>/dev/null \
+        | sed -n 's/^DRV:0,2,[0-9]*,[0-9]*,"\([^"]*\)".*/\1/p')
+  printf '%s' "${drv%% *}"
+}
+is_recordable() {  # $1 = media token; returns 0 when it is a burnable type
+  case "$1" in
+    # pressed or unknown — the gate fails OPEN: an unrecognized token never
+    # blocks a rip (only known-recordable families are refused).
+    DVD-ROM|BD-ROM|CD-ROM|HD-DVD|"CD"|"DVD"|"BD"|"") return 1 ;;
+    # recordable families. beware globs: "DVD-R*"/"BD-R*"/"CD-R*" all swallow
+    # *-ROM too, so the colliding bases are exact + explicit trailing variants.
+    DVD+R*|DVD+RW*|DVD-RW*|DVD-RAM*|BD-RE*|CD-RW*) return 0 ;;
+    DVD-R|CD-R|BD-R|"DVD-R "*|"DVD-R-"*|"BD-R "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # require_online is shared (rip-common): it probes a URL and bails if offline.
 # rip-video checks TMDB_API_KEY inline first (clear message), then probes the TMDB
 # API — the title + audio language both come from TMDB, so an offline rip is wrong.
@@ -72,6 +95,11 @@ usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
             main feature's parts in order (p1, p2, ...). pick the same movie
             title at the prompt for every disc. only the main feature merges —
             extras stay separate, filed under extras/.
+  --verified  override the burned-media gate: the rip REFUSES recordable media
+            (DVD+R/±RW/BD-R/… — thrift-store discs are often bootleg burns).
+            pass this only after physically verifying the disc is an original;
+            genuinely-original recordable releases exist (e.g. Warner Archive
+            DVD-R), so the escape hatch is manual, never automatic.
   title   which disc titles to rip: "all" (default), a number, a range (N-M),
           or a comma list (e.g. 0,5-7). list them first with: titles.
           asks for the movie title (TMDB), rips lossless MKVs with the original-
@@ -81,11 +109,13 @@ EOF
 
 extras=0
 part=
-# ponytail: manual arg parsing — two optional flags then one positional.
+verified=0
+# ponytail: manual arg parsing — optional flags then one positional.
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --extras) extras=1; shift ;;
+    --verified) verified=1; shift ;;
     --part)
       [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "rip-video: --part needs a number, got '${2:-}'" >&2; exit 1; }
       part=$2; shift 2 ;;
@@ -135,6 +165,38 @@ TMP_PROFILE=
 rip_video_cleanup() { [ -n "$TMP_PROFILE" ] && rm -f "$TMP_PROFILE"; }
 trap 'rip_video_cleanup; rip_log_finish' EXIT
 
+# ── burned-media gate ──
+media=$(drive_media)
+[ -n "$media" ] || { echo "rip-video: no disc detected in the drive — insert one and re-run." >&2; exit 1; }
+if is_recordable "$media"; then
+  if [ "$verified" = 1 ]; then
+    rip_note media "recordable media ($media) — override by --verified"
+  else
+    {
+      echo "rip-video: RECORDABLE media in the drive ($media) — this looks like a burned copy, not a"
+      echo "  pressed original (thrift-store discs are often bootlegs). check the disc by eye: burns"
+      echo "  have purple/green/blue dye and often a stick-on or inkjet label; originals are silver"
+      echo "  with printed artwork. genuinely-original recordable releases exist (e.g. Warner Archive"
+      echo "  DVD-R) — if you verify it is one, re-run with --verified."
+    } >&2
+    exit 1
+  fi
+else
+  rip_note media "media=$media"
+fi
+
+# purge junk-labeled leftovers (B1_t00.mkv …) from a failed/interrupted earlier
+# session: makemkvcon always stages under an ^[A-Z][0-9]+ label, and the post-rip
+# rename would adopt any leftover into THIS movie (that is how Watchmen disc
+# content ended up filed as "Triple Cross (1966)_t1.mkv"). a fresh session starts
+# from an empty staging dir.
+for f in "$rip_dir"/*.mkv; do
+  b=$(basename "$f" .mkv)
+  [[ $b =~ ^[A-Z][0-9]+_t[0-9]+$ ]] || continue
+  echo "rip-video: removing stale staged file from an earlier session: $b" >&2
+  rm -f "$f"
+done
+
 # ── Task 3: ask for the title, TMDB-resolve it (no disc scan before rip) ──
 if line=$(movie-name --tmdb); then
   IFS=$'\t' read -r TITLE YEAR origlang <<< "$line"
@@ -160,10 +222,15 @@ sed "s#${BASELINE}#${sel}#g" "$(dirname "$0")/custom.mmcp.xml" > "$TMP_PROFILE"
 # decrypt + remux to lossless MKV with the per-movie profile. --minlength drops
 # short junk (logos/FBI warnings) but keeps extras. must match titles.sh: makemkv
 # renumbers titles by what survives the scan, so a different value moves them.
+# a failed title must not kill the script mid-loop (set -e) — a flaky disc would
+# then skip the rename below and strand everything under junk labels. collect
+# the worst rc, always rename, and exit with it at the end.
 rip_phase rip
+rip_rc=0
 for t in "${titles_to_rip[@]}"; do
-  makemkvcon mkv -r --profile="$TMP_PROFILE" --minlength="$minlen" disc:0 "$t" "$rip_dir/"
+  makemkvcon mkv -r --profile="$TMP_PROFILE" --minlength="$minlen" disc:0 "$t" "$rip_dir/" || rip_rc=$?
 done
+[ "$rip_rc" -eq 0 ] || rip_note rip "makemkvcon rc=$rip_rc — partial rip, renaming what completed"
 
 # rename staged MKVs to "<Title (Year)>_tNN.mkv" — or _eNN.mkv with --extras, so a
 # set's extras disc never collides with the movie's _tNN files; transcode files
@@ -186,3 +253,4 @@ elif [[ $sub_langs == *eng* ]]; then rip_note subtitle "subs=eng langs=$sub_lang
 else                                 rip_note subtitle "subs=$sub_langs (no dan/eng)"; fi
 
 rip_phase_end
+exit "$rip_rc"

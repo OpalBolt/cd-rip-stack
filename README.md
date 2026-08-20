@@ -130,10 +130,12 @@ An `S` marks a scrambled or decoy cut (non-sequential order). Rip the clean titl
 Rip a DVD or Blu-ray to lossless MKV on the NAS through `makemkvcon`. At rip time it picks the film's original-language audio, plus Danish subtitles when present (else English).
 
 ```text
-rip-video [--extras] [--part N] [titles]   (NFS_VIDEOS)
+rip-video [--extras] [--part N] [--verified] [titles]   (NFS_VIDEOS)
 ```
 
 `titles` selects what to rip: `all` (the default), a single number, or a range like `1,3-4`. `--extras` rips the second disc of a set as extras; `--part N` rips a film split across discs as part `N` (use it on every disc of the split).
+
+Before the prompt, the disc's **media type** is checked (MakeMKV reports it in the drive line: `DVD+R-DL hp CDDVDW …`). Recordable media — a burned copy — refuses the rip; thrift-store discs are often bootlegs. If you physically verify a disc is an original (genuinely-original recordable releases exist, e.g. Warner Archive DVD-R), re-run with `--verified`.
 
 Examples:
 
@@ -142,6 +144,7 @@ Examples:
 - `just rip-video 0,5-7` — rip a spec.
 - `just rip-video --extras` — rip the 2nd disc of a set as extras.
 - `just rip-video --part 1` then `--part 2` — rip a film split across two discs (same movie at each prompt).
+- `just rip-video --verified` — override the burned-disc refusal after checking the disc by eye.
 
 It scans the disc and rips the chosen titles to `/mnt/videos/rip/` as `<Name>_tNN.mkv`. Blu-rays name from metadata with no prompt. DVDs rip as a label code like `B1` and prompt a TMDB search at rip time. With no key, the DVD rip errors after staging. It renames every staged MKV to `<Title> (Year)_tNN.mkv`.
 
