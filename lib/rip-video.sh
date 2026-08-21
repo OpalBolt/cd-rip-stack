@@ -95,6 +95,10 @@ usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
             main feature's parts in order (p1, p2, ...). pick the same movie
             title at the prompt for every disc. only the main feature merges —
             extras stay separate, filed under extras/.
+  --tmdbid N
+          use this TMDB movie id directly instead of the title-search prompt
+          — for discs whose title the search can't find. N is the number in
+          a themoviedb.org/m/movie/<id> URL.
   --verified  override the burned-media gate: the rip REFUSES recordable media
             (DVD+R/±RW/BD-R/… — thrift-store discs are often bootleg burns).
             pass this only after physically verifying the disc is an original;
@@ -110,12 +114,16 @@ EOF
 extras=0
 part=
 verified=0
+tmdbid=
 # ponytail: manual arg parsing — optional flags then one positional.
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --extras) extras=1; shift ;;
     --verified) verified=1; shift ;;
+    --tmdbid)
+      [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "rip-video: --tmdbid needs a numeric TMDB id, got '${2:-}'" >&2; exit 1; }
+      tmdbid=$2; shift 2 ;;
     --part)
       [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "rip-video: --part needs a number, got '${2:-}'" >&2; exit 1; }
       part=$2; shift 2 ;;
@@ -198,7 +206,9 @@ for f in "$rip_dir"/*.mkv; do
 done
 
 # ── Task 3: ask for the title, TMDB-resolve it (no disc scan before rip) ──
-if line=$(movie-name --tmdb); then
+# --tmdbid skips the search prompt entirely (exact /movie/<id> fetch).
+mn=(--tmdb); [ -n "$tmdbid" ] && mn=(--tmdbid "$tmdbid")
+if line=$(movie-name "${mn[@]}"); then
   IFS=$'\t' read -r TITLE YEAR origlang <<< "$line"
 else
   echo "rip-video: title not resolved — aborting (re-run to retry)." >&2

@@ -130,7 +130,7 @@ An `S` marks a scrambled or decoy cut (non-sequential order). Rip the clean titl
 Rip a DVD or Blu-ray to lossless MKV on the NAS through `makemkvcon`. At rip time it picks the film's original-language audio, plus Danish subtitles when present (else English).
 
 ```text
-rip-video [--extras] [--part N] [--verified] [titles]   (NFS_VIDEOS)
+rip-video [--extras] [--part N] [--verified] [--tmdbid N] [titles]   (NFS_VIDEOS)
 ```
 
 `titles` selects what to rip: `all` (the default), a single number, or a range like `1,3-4`. `--extras` rips the second disc of a set as extras; `--part N` rips a film split across discs as part `N` (use it on every disc of the split).
@@ -179,7 +179,7 @@ movie-name [--rename DIR | disc:N | file]
 ```
 
 - Blu-rays: the name comes from disc metadata.
-- DVDs: a TMDB search (needs `TMDB_API_KEY`). You pick a result.
+- DVDs: a TMDB search (needs `TMDB_API_KEY`). You pick a result. When the search can't find the title, `rip-video --tmdbid N` (the number in a themoviedb.org/m/movie/N URL) resolves it exactly, no prompt.
 
 Re-run with `--rename <dir>` to fix a botched pick across already-staged MKVs. Files that already have a real name set the pattern. It renames only the junk-labelled ones.
 

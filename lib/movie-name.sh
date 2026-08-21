@@ -7,6 +7,10 @@
 # picks audio by original_language.
 #
 # Modes:
+#   movie-name --tmdbid <id>           fetch TMDB movie <id> directly (no search,
+#                                      no prompt) and print the TSV — for titles
+#                                      the search prompt can't find. failures are
+#                                      hard errors.
 #   movie-name --tmdb                  skip the disc/file; prompt for a title and
 #                                      TMDB-resolve it (rip-video uses this — it
 #                                      asks for the title instead of scanning the
@@ -47,11 +51,19 @@ case "${1:-}" in
       ra_part=".p$2"; shift 2
     fi
     ra_name="${1:?--rename-as needs <name>}"; ra_dir="${2:?--rename-as needs <dir>}"; shift 2 ;;
+  --tmdbid)
+    mode=tmdbid; shift
+    [[ ${1:-} =~ ^[0-9]+$ ]] || { echo "movie-name: --tmdbid needs a numeric TMDB id, got '${1:-}'" >&2; exit 1; }
+    tmdb_id=$1; shift ;;
   --tmdb) mode=tmdb; shift ;;
   -h|--help)
     cat <<EOF
-usage: movie-name [--rename | --rename-as [--extras] [--part N] <name> <dir> | --tmdb] [disc:N | file.mkv | rip-dir]
+usage: movie-name [--rename | --rename-as [--extras] [--part N] <name> <dir> | --tmdbid <id> | --tmdb] [disc:N | file.mkv | rip-dir]
   resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
+  --tmdbid <id>:            fetch TMDB movie <id> directly (no search prompt) —
+                            for titles the search can't find (the id is the
+                            number in themoviedb.org/m/movie/<id> URLs).
+                            any failure -> error.
   --tmdb:                   skip the disc/file, go straight to a TMDB search prompt
                             (rip-video uses this — it asks for the title instead of
                             scanning the disc). no match / skip / quit -> error.
@@ -117,6 +129,20 @@ disc_raw() {
     /^TINFO:0,2,/{ v=$0; sub(/^[^"]*"/,"",v); sub(/"$/,"",v); title=v }
     END { print (title != "") ? title : disc }
   '
+}
+
+# tmdb_by_id <id>: fetch /movie/<id> directly — exact match, no search, no
+# prompt. sets TITLE/YEAR/LANG; returns 1 on no-key / offline / bad id.
+tmdb_by_id() {
+  local json
+  if [ -z "${TMDB_API_KEY:-}" ]; then
+    warn "no \$TMDB_API_KEY in env — cannot resolve via TMDB. set it and re-run."; return 1
+  fi
+  if ! json=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/movie/${1}?api_key=${TMDB_API_KEY}"); then
+    warn "TMDB fetch of id ${1} failed (offline, bad key, or no such id)"; return 1
+  fi
+  IFS=$'\t' read -r TITLE YEAR LANG < <(printf '%s' "$json" | jq -r \
+      '[ .title, (.release_date[0:4] // "-"), (.original_language // "-") ] | @tsv')
 }
 
 # tmdb_resolve <fallback> [required=0|1]: prompt -> search -> pick. Sets
@@ -268,6 +294,7 @@ do_rename_as() {  # $1 = display, $2 = dir
 case "$mode" in
   rename)    do_rename || exit 1 ;;
   rename-as) do_rename_as "$ra_name" "$ra_dir" || exit 1 ;;
+  tmdbid)    tmdb_by_id "$tmdb_id" || exit 1; emit ;;
   tmdb)      tmdb_resolve "" 1 || exit 1; emit ;;
   *)         resolve || exit 1; emit ;;
 esac
