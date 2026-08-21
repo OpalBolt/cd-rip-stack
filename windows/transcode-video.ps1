@@ -7,7 +7,11 @@
   need from the repo (see README_WINDOWS.md for setup).
 
   Transcodes every lossless MKV in <VIDEOS>\rip\ to 1080p H.265 and files it in
-  <VIDEOS>\library\<Movie (Year)>\[extras\]. Pulls each file to a local temp dir
+  <VIDEOS>\library\<Movie (Year)>\[extras\]. TV discs (staged under
+  <VIDEOS>\rip\TV\) file under <VIDEOS>\library\TV\<Show (Year)>\Season NN\ as
+  "<Show> - S01E02.mkv" (season 00 as "Specials"), TV extras under extras\.
+  The subdirectory is the type: TV gets no main-feature pick and no merging.
+  Pulls each file to a local temp dir
   to encode off the network share, uploads the result, then deletes the lossless
   source (-Keep: moves it to rip-DONE instead -- verify the encodes, then clean
   by hand). Track selection happened at rip time, so this is a pass-through
@@ -161,19 +165,32 @@ function Invoke-Encode([string]$src, [string]$out) {
 }
 
 # -- scan + filter staged files ------------------------------------------------
-# staged layout: <Movie (Year)>_tNN[.pN].mkv (titles), _eNN[.pN].mkv (extras disc).
+# staged layout: <Movie (Year)>_tNN[.pN].mkv (titles), _eNN[.pN].mkv (extras disc),
+# and under rip\TV\: <Show (Year)>_S01E02.mkv / _S01E01-E02.mkv (a double).
 # junk guard: a name without a "(YYYY)" tail is a rip in progress or a failed
 # rename -- never encode those (a half-written source would encode "fine", land
 # in the library, and the cleanup would delete the file out from under the ripper).
-$rx = '^(?<movie>.+)_(?<sfx>[te])(?<num>\d+)(?<part>\.p(?<pn>\d+))?\.mkv$'
+$rx    = '^(?<movie>.+)_(?<sfx>[te])(?<num>\d+)(?<part>\.p(?<pn>\d+))?\.mkv$'
+$rxEp  = '^(?<movie>.+)_S(?<sn>\d{2})E(?<en>\d{2})(?<tail>-E\d{2})?\.mkv$'
+$tvRoot = Join-Path $ripDir 'TV'
+$tvSep  = [IO.Path]::DirectorySeparatorChar
 $want = @($Name)
 $wantHit = @{}
 $items = New-Object System.Collections.Generic.List[object]
 foreach ($f in @(Get-ChildItem -LiteralPath $ripDir -Recurse -Filter '*.mkv' -File -ErrorAction SilentlyContinue)) {
-  if (-not ($f.Name -cmatch $rx)) { Warn "skip (junk label -- mid-rip or failed rename): $($f.FullName)"; continue }
-  # grab every group at once -- any later -match clobbers $Matches.
-  $movie = $Matches['movie']; $sfx = $Matches['sfx']; $numStr = $Matches['num']; $num = [int]$numStr
-  $part = if ($Matches['part']) { [int]$Matches['pn'] } else { -1 }
+  # the subdirectory is the type (settled): anything under rip\TV\ is TV.
+  $isTv = $f.FullName.StartsWith($tvRoot + $tvSep, [System.StringComparison]::Ordinal)
+  $sn = $null; $en = $null; $tail = ''
+  if ($f.Name -cmatch $rx) {
+    # grab every group at once -- any later -match clobbers $Matches.
+    $movie = $Matches['movie']; $sfx = $Matches['sfx']; $numStr = $Matches['num']; $num = [int]$numStr
+    $part = if ($Matches['part']) { [int]$Matches['pn'] } else { -1 }
+  } elseif ($isTv -and ($f.Name -cmatch $rxEp)) {
+    $movie = $Matches['movie']; $sfx = 'S'; $numStr = $Matches['en']; $num = [int]$Matches['en']
+    $part = -1; $sn = $Matches['sn']; $en = $Matches['en']; $tail = $Matches['tail']
+  } else {
+    Warn "skip (junk label -- mid-rip or failed rename): $($f.FullName)"; continue
+  }
   if ($movie -cnotmatch '\(\d{4}\)$') { Warn "skip (junk label -- mid-rip or failed rename): $($f.FullName)"; continue }
   if ($want.Count -gt 0) {
     $hit = $false
@@ -184,6 +201,7 @@ foreach ($f in @(Get-ChildItem -LiteralPath $ripDir -Recurse -Filter '*.mkv' -Fi
   $items.Add([pscustomobject]@{
     Path = $f.FullName; Name = $f.Name; BaseName = $f.BaseName
     Movie = $movie; Sfx = $sfx; Num = $num; NumStr = $numStr; Part = $part; Size = $f.Length
+    IsTv = $isTv; Sn = $sn; En = $en; Tail = $tail
   })
 }
 foreach ($w in $want) { if (-not $wantHit.ContainsKey($w)) { Warn "no staged MKVs match: $w" } }
@@ -198,7 +216,7 @@ if ($items.Count -eq 0) {
 # menu/decoy titles on real rips, so size decides. _eNN are never main.
 $grp = @{}
 foreach ($i in $items) {
-  if ($i.Sfx -ne 't') { continue }
+  if ($i.Sfx -ne 't' -or $i.IsTv) { continue }   # TV never has a main feature
   $k = '{0}|{1}' -f $i.Movie, $i.Num
   if (-not $grp.ContainsKey($k)) { $grp[$k] = [pscustomobject]@{ Movie = $i.Movie; Num = $i.Num; Sz = [long]0 } }
   $grp[$k].Sz += $i.Size
@@ -218,6 +236,41 @@ try {
     if ($handled.ContainsKey($i.Path)) { continue }
     $script:RipName = $i.Movie
     $safe = Sanitize $i.Movie
+
+    # -- TV: no main feature, no merge. episodes -> Season NN (00 = Specials),
+    # -- _eNN -> the show's extras. destination resolved, then the shared
+    # -- transcode-as-is block below does the copy/encode/upload.
+    if ($i.IsTv) {
+      $showDir = Join-Path (Join-Path $libDir 'TV') $safe
+      if ($i.Sfx -eq 'S') {
+        $seasonName = if ([int]$i.Sn -eq 0) { 'Specials' } else { 'Season ' + $i.Sn }
+        $code = 'S' + $i.Sn + 'E' + $i.En + $i.Tail
+        $destDir = Join-Path $showDir $seasonName
+        $dest    = Join-Path $destDir ('{0} - {1}.mkv' -f $safe, $code)
+      } else {
+        $ext    = if ($i.Part -ge 0) { '.p' + $i.Part } else { '' }
+        $destDir = Join-Path $showDir 'extras'
+        $dest    = Join-Path $destDir ('{0}_{1}{2}{3}.mkv' -f $safe, $i.Sfx, $i.NumStr, $ext)
+      }
+      New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+      $localSrc = Join-Path $tmpDir $i.Name
+      $localOut = Join-Path $tmpDir ($i.BaseName + '.h265.mkv')
+      Start-Phase 'encode'
+      Write-Host "copying $($i.Name) to local temp..."
+      Copy-Item -LiteralPath $i.Path -Destination $localSrc -Force
+      if (Invoke-Encode $localSrc $localOut) {
+        Move-Item -LiteralPath $localOut -Destination $dest -Force
+        Remove-Item -LiteralPath $localSrc -Force
+        if ($Keep) { Archive $i.Path } else { Remove-Item -LiteralPath $i.Path -Force }   # lossless source
+        End-Phase
+      } else {
+        # leave the lossless source so a re-run retries; the total logs FAIL.
+        Remove-Item -LiteralPath @($localSrc, $localOut) -Force -ErrorAction SilentlyContinue
+        Warn "FAILED (handbrake): $($i.Name) -- source left in place"
+        $failed = 1; End-Phase
+      }
+      continue
+    }
 
     # -- main feature: merge its .pN parts (if any), transcode as one movie --
     if ($i.Sfx -eq 't' -and $null -ne $mainNum[$i.Movie] -and $mainNum[$i.Movie].Num -eq $i.Num) {

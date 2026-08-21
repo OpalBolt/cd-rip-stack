@@ -109,6 +109,12 @@ usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
           or a comma list (e.g. 0,5-7). list them first with: titles.
           asks for the movie title (TMDB), rips lossless MKVs with the original-
           language audio to $rip_dir; run transcode-video on the desktop to finish.
+
+TV: pick a TV show at the TMDB prompt (results show [lang/tv]) and the flow
+switches — it asks for a season (Enter=1, 0=specials) and the first episode
+number on the disc, rips into $rip_dir/TV/, and stages the titles in numeric
+order as <Show (Year)>_S01E02.mkv (a double stays one file). --part is refused:
+TV episodes never merge.
 EOF
 }
 
@@ -198,8 +204,9 @@ fi
 # session: makemkvcon always stages under an ^[A-Z][0-9]+ label, and the post-rip
 # rename would adopt any leftover into THIS movie (that is how Watchmen disc
 # content ended up filed as "Triple Cross (1966)_t1.mkv"). a fresh session starts
-# from an empty staging dir.
-for f in "$rip_dir"/*.mkv; do
+# from an empty staging dir — both rip/ and its rip/TV/ subtree (TV and movie
+# junk purge by the same rule).
+for f in "$rip_dir"/*.mkv "$rip_dir"/TV/*.mkv; do
   b=$(basename "$f" .mkv)
   [[ $b =~ ^[A-Z][0-9]+_t[0-9]+$ ]] || continue
   echo "rip-video: removing stale staged file from an earlier session: $b" >&2
@@ -207,10 +214,11 @@ for f in "$rip_dir"/*.mkv; do
 done
 
 # ── Task 3: ask for the title, TMDB-resolve it (no disc scan before rip) ──
-# --tmdbid skips the search prompt entirely (exact /movie/<id> fetch).
+# --tmdbid skips the search prompt entirely (exact /movie/<id> fetch). the TSV's
+# 4th field is the pick's type: a tv pick branches into the TV flow below.
 mn=(--tmdb); [ -n "$tmdbid" ] && mn=(--tmdbid "$tmdbid")
 if line=$(movie-name "${mn[@]}"); then
-  IFS=$'\t' read -r TITLE YEAR origlang <<< "$line"
+  IFS=$'\t' read -r TITLE YEAR origlang picktype <<< "$line"
 else
   echo "rip-video: title not resolved — aborting (re-run to retry)." >&2
   exit 1
@@ -218,6 +226,30 @@ fi
 display=$TITLE; [ "$YEAR" != - ] && display="$TITLE ($YEAR)"
 display=${display//\//-}     # a '/' would split the path; transcode sanitizes the rest
 RIP_NAME=$display
+
+# ── TV branch: the type is discovered here, not known up front (settled: one ──
+# rip-video, prompts not flags). episodes stage under rip/TV/ as SNNENN files;
+# the subdirectory is what tells transcode a file is TV.
+# ponytail: bash stays for rip orchestration — if this script passes ~500 lines
+# or needs chapter splitting, move rip orchestration (not transcode) to Python.
+season=; firstep=; stage_dir=$rip_dir
+if [ "$picktype" = tv ]; then
+  [ -z "$part" ] || { echo "rip-video: --part is for a film split across discs — TV episodes never merge; rip them as separate episodes instead." >&2; exit 1; }
+  [ "$extras" = 0 ] || { echo "rip-video: extras discs for TV shows are not supported yet." >&2; exit 1; }
+  printf 'season [1] (0 = specials): '
+  read -r season || season=1
+  season=${season:-1}
+  [[ $season =~ ^[0-9]{1,2}$ ]] || { echo "rip-video: season must be a number 0-99, got '$season'" >&2; exit 1; }
+  printf 'first episode number on this disc [1]: '
+  read -r firstep || firstep=1
+  firstep=${firstep:-1}
+  { [[ $firstep =~ ^[0-9]+$ ]] && (( 10#$firstep >= 1 )); } || { echo "rip-video: episode must be a number >= 1, got '$firstep'" >&2; exit 1; }
+  stage_dir="$rip_dir/TV"
+  mkdir -p "$stage_dir"
+  rip_note type "type=tv season=$season"
+else
+  rip_note type "type=movie"
+fi
 
 if [ "$origlang" != "-" ] && [ -n "$origlang" ]; then keep=$(iso2b "$origlang")
 else                                                      keep=""; fi
@@ -239,23 +271,39 @@ sed "s#${BASELINE}#${sel}#g" "$(dirname "$0")/custom.mmcp.xml" > "$TMP_PROFILE"
 rip_phase rip
 rip_rc=0
 for t in "${titles_to_rip[@]}"; do
-  makemkvcon mkv -r --profile="$TMP_PROFILE" --minlength="$minlen" disc:0 "$t" "$rip_dir/" || rip_rc=$?
+  makemkvcon mkv -r --profile="$TMP_PROFILE" --minlength="$minlen" disc:0 "$t" "$stage_dir/" || rip_rc=$?
 done
 [ "$rip_rc" -eq 0 ] || rip_note rip "makemkvcon rc=$rip_rc — partial rip, renaming what completed"
 
-# rename staged MKVs to "<Title (Year)>_tNN.mkv" — or _eNN.mkv with --extras, so a
-# set's extras disc never collides with the movie's _tNN files; transcode files
-# _eNN as extras. the disc is ejected by hand; transcode-video finishes on the desktop.
-ra=(--rename-as); [ "$extras" = 1 ] && ra+=(--extras); [ -n "$part" ] && ra+=(--part "$part"); ra+=("$display" "$rip_dir")
-movie-name "${ra[@]}" \
-  || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
+if [ "$picktype" = tv ]; then
+  # build the episode map from what actually landed: junk titles in numeric order
+  # get consecutive episodes from $firstep (the sequential fallback — duration
+  # matching proposes instead once it lands). the map is machine-generated; the
+  # user confirms numbers at prompts, never types a map.
+  epmap=; ep=$((10#$firstep))
+  for t in $(for f in "$stage_dir"/*.mkv; do
+    b=$(basename "$f" .mkv)
+    [[ $b =~ _t([0-9]+)$ ]] && printf '%s\n' "${BASH_REMATCH[1]}"
+  done | sort -n); do
+    epmap+="${epmap:+,}${t}=${ep}"; ep=$((ep+1))
+  done
+  movie-name --rename-as --season "$season" --ep-map "$epmap" "$display" "$stage_dir" \
+    || echo "rip-video: rename failed — re-run: movie-name --rename $stage_dir" >&2
+else
+  # rename staged MKVs to "<Title (Year)>_tNN.mkv" — or _eNN.mkv with --extras, so a
+  # set's extras disc never collides with the movie's _tNN files; transcode files
+  # _eNN as extras. the disc is ejected by hand; transcode-video finishes on the desktop.
+  ra=(--rename-as); [ "$extras" = 1 ] && ra+=(--extras); [ -n "$part" ] && ra+=(--part "$part"); ra+=("$display" "$rip_dir")
+  movie-name "${ra[@]}" \
+    || echo "rip-video: rename failed — re-run: movie-name --rename $rip_dir" >&2
+fi
 
 # Task 4: log which subtitle languages landed in the staged MKVs (ffprobe). Danish
 # preferred, English fallback; the note records the outcome so a missing-da disc is
 # visible without opening the file. (a disc with only non-da/non-eng tagged subs
 # and none untagged yields none — re-rip permissively if you need them.)
-# glob the whole rip dir (not ${display}*) so this still reports even if rename failed.
-sub_langs=$(for mk in "$rip_dir"/*.mkv; do
+# glob the whole staging dir (not ${display}*) so this still reports even if rename failed.
+sub_langs=$(for mk in "$stage_dir"/*.mkv; do
   ffprobe -v error -select_streams s -show_entries stream_tags=language -of csv=p=0 "$mk" 2>/dev/null
 done | sed 's/^$/und/' | sort -u | paste -sd, -)
 sub_langs=${sub_langs:-none}

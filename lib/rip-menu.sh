@@ -82,7 +82,7 @@ done
 # ignored — only the first token (the command) matters.
 declare -A arg_hint=(
   [rip]="offset (required) + optional engine/flags — e.g. 6  or  6 whipper"
-  [rip-video]="titles — e.g. 1,3-4  or  --extras  or  --part N  (blank = all)"
+  [rip-video]="titles — e.g. 1,3-4  or  --extras  or  --part N  (blank = all; a TV pick asks season + episode)"
   [titles]="disc — e.g. disc:1 (blank = disc:0)"
   [movie-name]="args — e.g. --rename /mnt/videos/rip"
   [sync-sd]="card mountpoint (blank = auto-detect)"

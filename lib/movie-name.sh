@@ -28,6 +28,15 @@
 #                                     never collides with the movie's "_tNN" files.
 #                                     --part N stamps ".pN" (a split-film half;
 #                                     transcode merges the main feature's parts).
+#   movie-name --rename-as --season N --ep-map '<t>=<e>[,<t>=<e>-<e>][,<t>=e]' <name> <dir>
+#                                     the TV form: rename the dir's junk-labeled
+#                                     titles per the episode map — t=5 a single
+#                                     episode ("<name>_S<NN>E05.mkv"), t=5-6 a
+#                                     double ("…E05-E06.mkv"), t=e an extra
+#                                     ("<name>_eNN.mkv", rolling past existing).
+#                                     rip-video builds the map from its confirm
+#                                     table; the user never types one. --season
+#                                     and --ep-map go together.
 #
 # Name source, first real hit wins:
 #   1. an already-named "Title (Year)_tNN.mkv" in the dir (cache) — used as-is.
@@ -41,7 +50,7 @@
 set -euo pipefail
 shopt -s nullglob
 mode=print
-ra_name=; ra_dir=; ra_sfx=t; ra_part=
+ra_name=; ra_dir=; ra_sfx=t; ra_part=; ra_season=; ra_epmap=
 case "${1:-}" in
   --rename) mode=rename; shift ;;
   --rename-as)
@@ -51,6 +60,23 @@ case "${1:-}" in
       [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "movie-name: --part needs a number, got '${2:-}'" >&2; exit 1; }
       ra_part=".p$2"; shift 2
     fi
+    while [ "${1:-}" = "--season" ] || [ "${1:-}" = "--ep-map" ]; do
+      case "$1" in
+        --season)
+          [[ ${2:-} =~ ^[0-9]{1,2}$ ]] || { echo "movie-name: --season needs a number 0-99, got '${2:-}'" >&2; exit 1; }
+          ra_season=$2; shift 2 ;;
+        --ep-map)
+          [ -n "${2:-}" ] || { echo "movie-name: --ep-map needs a map like '0=1,1=2-3,2=e'" >&2; exit 1; }
+          ra_epmap=$2; shift 2 ;;
+      esac
+    done
+    if [ -n "$ra_epmap" ] || [ -n "$ra_season" ]; then
+      if [ -z "$ra_season" ] || [ -z "$ra_epmap" ]; then
+        echo "movie-name: --season and --ep-map go together" >&2; exit 1
+      fi
+      [ "$ra_sfx" = e ] && { echo "movie-name: --extras and --ep-map are exclusive" >&2; exit 1; }
+      [ -n "$ra_part" ] && { echo "movie-name: --part and --ep-map are exclusive — TV episodes never merge" >&2; exit 1; }
+    fi
     ra_name="${1:?--rename-as needs <name>}"; ra_dir="${2:?--rename-as needs <dir>}"; shift 2 ;;
   --tmdbid)
     mode=tmdbid; shift
@@ -59,8 +85,9 @@ case "${1:-}" in
   --tmdb) mode=tmdb; shift ;;
   -h|--help)
     cat <<EOF
-usage: movie-name [--rename | --rename-as [--extras] [--part N] <name> <dir> | --tmdbid <id> | --tmdb] [disc:N | file.mkv | rip-dir]
-  resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
+usage: movie-name [--rename | --rename-as [--extras] [--part N] | --rename-as --season N --ep-map MAP] <name> <dir> | --tmdbid <id> | --tmdb] [disc:N | file.mkv | rip-dir]
+  resolves "<Title>\t<Year>\t<Lang>\t<Type>" (Lang = ISO 639-1 or "-", Type =
+  movie|tv — a TMDB pick's kind; non-TMDB sources are always "movie").
   --tmdbid <id>:            fetch a TMDB movie or TV entry directly (no search
                             prompt). <id> = movie id | tv:N | a pasted
                             themoviedb.org/movie/N or /tv/N URL. any failure
@@ -76,6 +103,12 @@ usage: movie-name [--rename | --rename-as [--extras] [--part N] <name> <dir> | -
                             disc — transcode files these as extras, never main).
                             add --part N to stamp "<name>_tNN.pN.mkv" (a split-film
                             half; transcode merges the main feature's parts).
+  --rename-as --season N --ep-map MAP <name> <dir>:
+                            the TV form — MAP is "t=ep,t=ep-ep,t=e" (makemkvcon
+                            title number -> episode, double episode, or extra):
+                            "<name>_S<NN>E<EE>.mkv", doubles keep "-E<EE2>",
+                            extras roll as "<name>_eNN.mkv". rip-video builds the
+                            map from its confirm table; nobody types one.
   <disc:N | file>:          Blu-ray metadata is used directly; a DVD label code (B1)
                             prompts a TMDB search (pick: Enter=1, s=skip, q=quit).
   No \$TMDB_API_KEY -> error; other TMDB failures fall back to the label (unless
@@ -85,10 +118,10 @@ EOF
 esac
 arg=${1:-disc:0}
 
-TITLE=-; YEAR=-; LANG=-
+TITLE=-; YEAR=-; LANG=-; TYPE=movie
 warn() { echo "movie-name: $*" >&2; }
-emit() { printf '%s\t%s\t%s\n' "$TITLE" "$YEAR" "${LANG:--}"; }
-setlabel() { TITLE=${1:--}; YEAR=-; LANG=-; }   # fall back to the raw disc label
+emit() { printf '%s\t%s\t%s\t%s\n' "$TITLE" "$YEAR" "${LANG:--}" "$TYPE"; }
+setlabel() { TITLE=${1:--}; YEAR=-; LANG=-; TYPE=movie; }   # fall back to the raw disc label
 
 # looks_real: a makemkvcon name is a real title if it has a space, is longer than
 # 3, isn't the DVD file-label pattern ^[A-Z][0-9]+ (B1, C2), and isn't a short
@@ -159,7 +192,7 @@ tmdb_by_id() {
   fi
   local t y l typ
   IFS=$'\t' read -r t y l typ < <(printf '%s' "$json" | jq -r --arg t "$type" "$TMDB_TSV")
-  TITLE=$t; YEAR=$y; LANG=${l:--}
+  TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ
 }
 
 # tmdb_resolve <fallback> [required=0|1]: prompt -> search -> pick. Sets
@@ -218,13 +251,13 @@ tmdb_resolve() {
     printf 'pick 1-%s (Enter=1, s=skip, q=quit): ' "$n" >&2
     read -r pick || pick=q
     case "$pick" in
-      ''|1) IFS=$'\t' read -r t y l typ <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0 ;;
+      ''|1) IFS=$'\t' read -r t y l typ <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; return 0 ;;
       s|S) if [ "$required" = 1 ]; then warn "skipped — aborting"; return 1; fi
             warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
       q|Q) warn "quit — re-run movie-name later"; return 1 ;;
     esac
     if [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$n" ]; then
-      IFS=$'\t' read -r t y l typ <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0
+      IFS=$'\t' read -r t y l typ <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; return 0
     fi
     warn "invalid choice '$pick'" >&2
   done
@@ -276,6 +309,75 @@ rename_to() {
   printf '%s\n' "$display"
 }
 
+# parse_ep_map <map> <season>: the episode map ("0=5,1=6-7,2=e") — a makemkvcon
+# title number -> a single episode, a double (ep-ep), or an extra ("e"). ONE
+# parser for the whole pipeline: rip-video's confirm-table fix rows use the same
+# syntax, so the grammar lives here and nowhere else. fills ep_map[title] with
+# the staged suffix ("S02E05", "S01E01-E02") or "e" (an extra — numbered at
+# rename time, rolling past existing). returns 1 on a malformed entry.
+declare -A ep_map
+parse_ep_map() {
+  ep_map=()
+  local map=$1 seas=$2 entry t lo hi
+  [[ $seas =~ ^[0-9]{1,2}$ ]] || { warn "season must be a number 0-99, got '$seas'"; return 1; }
+  seas=$((10#$seas))
+  local IFS=,
+  for entry in $map; do
+    [ -n "$entry" ] || continue
+    if   [[ $entry =~ ^([0-9]+)=e$ ]]; then
+      ep_map[$((10#${BASH_REMATCH[1]}))]=e
+    elif [[ $entry =~ ^([0-9]+)=([0-9]+)-([0-9]+)$ ]]; then
+      t=$((10#${BASH_REMATCH[1]})); lo=$((10#${BASH_REMATCH[2]})); hi=$((10#${BASH_REMATCH[3]}))
+      (( lo >= 1 && hi > lo )) || { warn "bad double-episode range in '$entry'"; return 1; }
+      ep_map[$t]=$(printf 'S%02dE%02d-E%02d' "$seas" "$lo" "$hi")
+    elif [[ $entry =~ ^([0-9]+)=([0-9]+)$ ]]; then
+      t=$((10#${BASH_REMATCH[1]})); lo=$((10#${BASH_REMATCH[2]}))
+      (( lo >= 1 )) || { warn "bad episode number in '$entry'"; return 1; }
+      ep_map[$t]=$(printf 'S%02dE%02d' "$seas" "$lo")
+    else
+      warn "bad episode-map entry '$entry' (want t=ep, t=ep-ep, or t=e)"; return 1
+    fi
+  done
+  return 0
+}
+
+# rename_tv <dir> <display>: the --ep-map rename — junk-labeled titles become
+# "<display>_<ep_map[t]>.mkv" (episodes/doubles) or "<display>_eNN.mkv"
+# (extras, rolling past existing so a later disc never clobbers). a junk title
+# with no map entry is left alone with a warning (the junk purge cleans it next
+# run); genuinely-named files carry no _tNN tail and are skipped. prints the
+# display name to stdout, the rename map to stderr — same shape as rename_to.
+rename_tv() {
+  local dir=$1 display=$2 f b cur n v m target
+  for f in "$dir"/*.mkv; do
+    b=$(basename "$f" .mkv)
+    case "$b" in *_t*) n=${b##*_t};; *) n=;; esac     # source is always makemkvcon's _tNN
+    [ -n "$n" ] || continue                           # already renamed (or another show's file)
+    cur=${b%_t*}
+    looks_real "$cur" && continue                     # a genuinely-named file — leave it
+    v=${ep_map[$((10#$n))]:-}
+    if [ -z "$v" ]; then
+      echo "movie-name: no episode for title $n ($b) — left alone" >&2
+      continue
+    fi
+    if [ "$v" = e ]; then
+      # roll past an existing same-named file (an earlier extras disc) — never clobber.
+      m=1
+      while [ -e "$(printf '%s/%s_e%02d.mkv' "$dir" "$display" "$m")" ]; do m=$((m+1)); done
+      target=$(printf '%s/%s_e%02d.mkv' "$dir" "$display" "$m")
+    else
+      target="$dir/${display}_${v}.mkv"
+      if [ -e "$target" ]; then
+        echo "movie-name: $(basename "$target") already exists — $b left alone" >&2
+        continue
+      fi
+    fi
+    mv -- "$f" "$target"
+    echo "movie-name: $cur → $(basename "$target" .mkv)" >&2
+  done
+  printf '%s\n' "$display"
+}
+
 # do_rename: resolve the name for a rip dir (or a file in it), then rename every
 # still-junk-labeled MKV there to "<Title> (Year)_tNN.mkv". an already-named file
 # sets the name (cache); per-title junk labels (B1/C2/D1…) from one disc all map to
@@ -310,7 +412,12 @@ do_rename_as() {  # $1 = display, $2 = dir
   sample=
   for f in "$dir"/*.mkv; do [ -z "$sample" ] && sample=$f; done
   if [ -z "$sample" ]; then warn "no MKVs in $dir"; printf '%s\n' -; return 0; fi
-  rename_to "$dir" "$display" "$ra_sfx" "$ra_part"
+  if [ -n "$ra_epmap" ]; then
+    parse_ep_map "$ra_epmap" "$ra_season" || return 1
+    rename_tv "$dir" "$display"
+  else
+    rename_to "$dir" "$display" "$ra_sfx" "$ra_part"
+  fi
 }
 
 case "$mode" in

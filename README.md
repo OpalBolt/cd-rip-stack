@@ -111,7 +111,9 @@ Layout on the NAS:
 ```text
 /mnt/videos/
   rip/      lossless staging: <Movie (Year)>_tNN.mkv (movie), _tNN.pN.mkv (split-film half), _eNN[.pN].mkv (extras)
+  rip/TV/   TV staging: <Show (Year)>_S01E02.mkv (episode), _S01E01-E02.mkv (double), _eNN.mkv (extras) — the subdirectory is what marks the disc TV
   library/  point Jellyfin here: <Movie (Year)>/<Movie (Year)>.mkv + extras/
+  library/TV/  <Show (Year)>/Season NN/<Show (Year)> - S01E02.mkv, season 0 as Specials/, plus extras/
   rip-DONE/ where transcode-video --keep parks lossless sources after encoding (verify, then delete)
 ```
 
@@ -148,6 +150,8 @@ Examples:
 
 It scans the disc and rips the chosen titles to `/mnt/videos/rip/` as `<Name>_tNN.mkv`. Blu-rays name from metadata with no prompt. DVDs rip as a label code like `B1` and prompt a TMDB search at rip time. With no key, the DVD rip errors after staging. It renames every staged MKV to `<Title> (Year)_tNN.mkv`.
 
+**TV shows** use the same command. Pick the show at the TMDB prompt (results are marked `[lang/tv]`). It asks for a season (Enter = 1, `0` = specials) and the first episode number on the disc, rips into `rip/TV/`, and stages the ripped titles in numeric order as `<Show (Year)>_S01E02.mkv` — title 0 becomes the episode you named first, title 1 the next, and so on. A double episode stays one file. `--part` is refused for TV: episodes never merge.
+
 Track selection happens through a MakeMKV profile (`custom.mmcp.xml`). Audio is the film's original language from TMDB. Subtitles keep Danish when present and fall back to English, plus untagged tracks. Both `titles` and `rip-video` scan with `--minlength=$RIP_MINLENGTH` (default 120s) to drop logos and FBI warnings, so they must share the value. MakeMKV renumbers titles by what survives the scan.
 
 Two kinds of multi-disc sets, handled separately. A **film split across discs** (the movie itself continues on disc 2): rip each disc with `--part N`, picking the same movie at the prompt. Halves stage as `_tNN.pN.mkv`, and `transcode-video` merges the main feature's parts in order (p1, p2, ...) into one movie — only the main feature merges; extras stay separate. An **extras disc** (bonus features, not the film): rip it with `--extras`. It stages as `_eNN.mkv`, and `transcode-video` files it under `extras/`. A second extras disc is safe — the rename rolls past any existing `_eNN`.
@@ -161,6 +165,8 @@ transcode-video [--keep] [name ...]
 ```
 
 For each staged MKV, it pulls the file to a local temp dir so it encodes off NFS. It encodes to H.265 1080p and keeps every audio and subtitle track, then uploads the result and deletes the lossless source. The transcode is a pass-through: all tracks stay soft, never burned in. A film ripped in parts has its main feature merged with `mkvmerge` (in part order) before encoding, so it lands as one movie. Run this on the desktop. Re-run for newly ripped discs.
+
+TV files staged under `rip/TV/` file at `library/TV/<Show (Year)>/Season NN/<Show (Year)> - S01E02.mkv`; season 0 files under `Specials/`, TV extras under the show's `extras/`. The subdirectory is what tells transcode a file is TV. TV files transcode as-is: no main-feature pick, no merging.
 
 Positional `name`s run only the movies whose staged filenames start with them — `transcode-video "X2 (2003)"` transcodes one movie, `"The Godfather"` grabs the whole trilogy. Use it to try the pipeline on a single film.
 
@@ -180,6 +186,8 @@ movie-name [--rename DIR | disc:N | file]
 
 - Blu-rays: the name comes from disc metadata.
 - DVDs: a TMDB search (needs `TMDB_API_KEY`) over movies and TV shows. You pick a result (shown as `[lang/movie]` or `[lang/tv]`). To skip the prompt entirely, `rip-video --tmdbid tv:68357` or paste the full themoviedb.org URL.
+
+The output is a tab-separated `Title`, `Year`, `Lang`, and `Type` (`movie` or `tv`) — the type is what switches `rip-video` into its TV flow. Non-TMDB sources (disc metadata, cached names) always report `movie`.
 
 Re-run with `--rename <dir>` to fix a botched pick across already-staged MKVs. Files that already have a real name set the pattern. It renames only the junk-labelled ones.
 

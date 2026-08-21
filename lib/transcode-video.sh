@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # batch-transcode every lossless MKV in /mnt/videos/rip/ to 1080p H.265 and place
 # it in the Jellyfin library at /mnt/videos/library/<Movie (Year)>/[extras/].
+# TV: anything staged under rip/TV/ routes to library/TV/<Show (Year)>/ — episodes
+# as "Season NN/<Show> - S01E02.mkv" (season 00 as "Specials"), TV extras under
+# extras/. The subdirectory is the type (settled): no main-feature pick, no
+# merging, each file transcodes as-is.
 # pulls each file to a local temp dir to encode off NFS, uploads the result, then
 # deletes the lossless source (--keep: moves it to rip-DONE instead — verify the
 # encodes there, then clean by hand). positional args pick movies by staged-name
@@ -33,7 +37,8 @@ usage() {
   cat <<EOF
 usage: transcode-video [--keep] [name ...]
   transcodes every staged *.mkv under $rip_dir to 1080p H.265 and moves it to
-  $lib_dir/<Movie (Year)>/[extras/], deleting the lossless source on success.
+  $lib_dir/<Movie (Year)>/[extras/] — TV files (under $rip_dir/TV/) to
+  $lib_dir/TV/<Show (Year)>/Season NN/<Show> - S01E02.mkv (season 0: Specials).
   a film ripped in parts (<Movie (Year)>_tNN.pN.mkv) has its main feature merged
   in part order, then transcoded as one movie. re-run for newly ripped discs.
   name    transcode only movies whose staged filename starts with it (prefix
@@ -41,7 +46,7 @@ usage: transcode-video [--keep] [name ...]
   --keep  move lossless sources to $done_dir instead of deleting them; verify
           the encodes, then clean $done_dir by hand
   files with a junk disc label (no "(Year)" in the name — a rip in progress,
-  or a failed rename) are always skipped.
+          or a failed rename) are always skipped.
 EOF
 }
 
@@ -72,9 +77,11 @@ mapfile -t all_files < <(find "$rip_dir" -type f -name '*.mkv' 2>/dev/null)
 # - movie filter: positional args are staged-name prefixes.
 files=()
 declare -A want_hit
+tv_dir="$rip_dir/TV"
 for f in "${all_files[@]}"; do
   b=$(basename "$f")
-  if [[ $b =~ ^(.*)_[te][0-9]+(\.p[0-9]+)?\.mkv$ ]] && [[ ${BASH_REMATCH[1]} =~ \([0-9]{4}\)$ ]]; then
+  # movies carry _tNN/_eNN[.pN]; TV episodes carry _SNNENN or _SNNENN-ENN (a double).
+  if [[ $b =~ ^(.*)_([te][0-9]+(\.p[0-9]+)?|S[0-9]{2}E[0-9]{2}(-E[0-9]{2})?)\.mkv$ ]] && [[ ${BASH_REMATCH[1]} =~ \([0-9]{4}\)$ ]]; then
     :
   else
     echo "skip (junk label — mid-rip or failed rename): $f" >&2
@@ -130,12 +137,15 @@ encode() {
 # decides. _eNN are extras-disc titles, never main. compute before deleting.
 declare -A grp_sz
 for f in "${files[@]}"; do
+  [[ $f == "$tv_dir"/* ]] && continue              # TV never has a main feature
   b=$(basename "$f" .mkv)
   if [[ $b =~ ^(.*)_t([0-9]+)(\.p[0-9]+)?$ ]]; then
     name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}
     grp_sz["$name|$num"]=$(( ${grp_sz["$name|$num"]:-0} + $(stat -c%s "$f") ))
   elif [[ $b =~ ^(.*)_e([0-9]+)(\.p[0-9]+)?$ ]]; then
     :   # extras-disc title — filed as extras below, never main
+  elif [[ $b =~ ^(.*)_S[0-9]{2}E[0-9]{2}(-E[0-9]{2})?$ ]]; then
+    :   # TV episode — no main feature, never merged
   else
     echo "skip (no _tNN/_eNN suffix): $f" >&2
   fi
@@ -160,14 +170,17 @@ declare -A handled          # path -> 1: a main-feature group already handled it
 for f in "${files[@]}"; do
   [ -n "${handled[$f]:-}" ] && continue
   b=$(basename "$f" .mkv)
+  tv=0; [[ $f == "$tv_dir"/* ]] && tv=1   # the subdirectory is the type (settled)
   if   [[ $b =~ ^(.*)_t([0-9]+)(\.p[0-9]+)?$ ]]; then sfx=t; name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}; part=${BASH_REMATCH[3]:-}
   elif [[ $b =~ ^(.*)_e([0-9]+)(\.p[0-9]+)?$ ]]; then sfx=e; name=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}; part=${BASH_REMATCH[3]:-}
-  else echo "skip (no _tNN/_eNN suffix): $f" >&2; continue; fi
+  elif [ "$tv" = 1 ] && [[ $b =~ ^(.*)_S([0-9]{2})E([0-9]{2})(-E[0-9]{2})?$ ]]; then sfx=S; name=${BASH_REMATCH[1]}; seas=${BASH_REMATCH[2]}; num=; part=
+  else echo "skip (no _tNN/_eNN/_SNNENN suffix): $f" >&2; continue; fi
   RIP_NAME=$name
   safe=$(sanitize "$name")
 
   # ── main feature: merge its .pN parts (if any), transcode as one movie ──
-  if [ "$sfx" = t ] && [ "$num" = "${main_num[$name]}" ]; then
+  # (movies only — a TV file never reaches here, even a stray _tNN under rip/TV)
+  if [ "$sfx" = t ] && [ "$tv" = 0 ] && [ "$num" = "${main_num[$name]}" ]; then
     dest_dir="$lib_dir/$safe"; dest="$dest_dir/$safe.mkv"
     # gather every sibling for this (name, title): the split main feature. match
     # "<name>_t<num>" exactly or "<name>_t<num>.p<digits>". fixed-string prefix
@@ -230,9 +243,17 @@ for f in "${files[@]}"; do
     continue
   fi
 
-  # ── extras (non-main _t title, or an _e extras-disc title): transcode as-is ──
-  # the .pN suffix is kept in the extras filename so split-disc extras never collide.
-  dest_dir="$lib_dir/$safe/extras"; dest="$dest_dir/${safe}_${sfx}${num}${part}.mkv"
+  # ── filing destination for everything that is not a movie main feature ──
+  # TV episode: library/TV/<Show>/Season NN/<Show> - S01E02.mkv (00 = Specials).
+  # TV _eNN: library/TV/<Show>/extras/. Movie extra: library/<Movie>/extras/.
+  if [ "$sfx" = S ]; then
+    fol="Season $seas"; [ "$seas" = 00 ] && fol=Specials
+    code=${b##*_}
+    dest_dir="$lib_dir/TV/$safe/$fol"; dest="$dest_dir/$safe - $code.mkv"
+  else
+    root=$lib_dir; [ "$tv" = 1 ] && root="$lib_dir/TV"
+    dest_dir="$root/$safe/extras"; dest="$dest_dir/${safe}_${sfx}${num}${part}.mkv"
+  fi
   mkdir -p "$dest_dir"
   local_src="$tmp_dir/$b.mkv"; local_out="$tmp_dir/$b.h265.mkv"
   rip_phase encode
