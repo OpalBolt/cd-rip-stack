@@ -319,9 +319,10 @@ minlen="${RIP_MINLENGTH:-120}"
 usage() {
   cat <<EOF
 usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
-  --extras  rip this disc's titles as extras for the movie (staged as
-            <Movie (Year)>_eNN.mkv; transcode files them under extras/,
-            never as the main feature). use for a set's extras disc.
+  --extras  rip this disc's titles as extras (staged as <Name>_eNN.mkv;
+            transcode files them under extras/, never as the main feature).
+            use for a set's bonus disc — a movie's or a show's (a TV pick
+            stages under rip/TV/ and asks no season).
   --part N  this disc holds part N of a film split across multiple discs.
             stages titles as <Movie (Year)>_tNN.pN.mkv; transcode merges the
             main feature's parts in order (p1, p2, ...). pick the same movie
@@ -352,6 +353,8 @@ like 3=7 / 1=1-2 / 2=e re-point one title (the table re-prints), q aborts.
 With no TMDB runtimes it falls back to asking the first episode number and
 numbering titles in order. Episodes stage under rip/TV/ as
 <Show (Year)>_SNNENN.mkv. --part is refused: TV episodes never merge.
+--extras rips a show's bonus disc instead: no season, no table, staged _eNN
+under rip/TV/ (an aired special is not an extra — it is a season 0 episode).
 EOF
 }
 
@@ -472,9 +475,24 @@ RIP_NAME=$display
 # ponytail: bash stays for rip orchestration — if this script passes ~500 lines
 # or needs chapter splitting, move rip orchestration (not transcode) to Python.
 season=; epmap=; stage_dir=$rip_dir
+# a TV extras disc (--extras): bonus features, not episodes — no season, no
+# scan, no table. rip straight into the TV staging dir and roll _eNN past
+# existing (the movie-extras semantics, a different library subtree). an
+# aired special is NOT an extra — it is a season 0 episode through the branch
+# below.
 if [ "$picktype" = tv ]; then
   [ -z "$part" ] || { echo "rip-video: --part is for a film split across discs — TV episodes never merge; rip them as separate episodes instead." >&2; exit 1; }
-  [ "$extras" = 0 ] || { echo "rip-video: extras discs for TV shows are not supported yet." >&2; exit 1; }
+fi
+# a TV extras disc (--extras): bonus features, not episodes — no season, no
+# scan, no table. rip straight into the TV staging dir and roll _eNN past
+# existing (the movie-extras semantics, a different library subtree). an
+# aired special is NOT an extra — it is a season 0 episode through the branch
+# below.
+if [ "$picktype" = tv ] && [ "$extras" = 1 ]; then
+  stage_dir="$rip_dir/TV"
+  mkdir -p "$stage_dir"
+  rip_note type "type=tv extras"
+elif [ "$picktype" = tv ]; then
   [ "$pick_id" != - ] && [ -n "$pick_id" ] || { echo "rip-video: the TMDB pick carries no id — cannot fetch episodes. re-pick or use --tmdbid tv:N." >&2; exit 1; }
   printf 'season [1] (0 = specials): '
   read -r season || season=1
@@ -558,7 +576,12 @@ for t in "${titles_to_rip[@]}"; do
 done
 [ "$rip_rc" -eq 0 ] || rip_note rip "makemkvcon rc=$rip_rc — partial rip, renaming what completed"
 
-if [ "$picktype" = tv ]; then
+if [ "$picktype" = tv ] && [ "$extras" = 1 ]; then
+  # the TV extras disc: the same _eNN-rolling rename a movie extras disc
+  # gets, aimed at the TV staging dir.
+  movie-name --rename-as --extras "$display" "$stage_dir" \
+    || echo "rip-video: rename failed — re-run: movie-name --rename $stage_dir" >&2
+elif [ "$picktype" = tv ]; then
   # the confirmed table already produced the map before the rip; junk titles
   # that failed to rip simply have no file for their entry.
   movie-name --rename-as --season "$season" --ep-map "$epmap" "$display" "$stage_dir" \

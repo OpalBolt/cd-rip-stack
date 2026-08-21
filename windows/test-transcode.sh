@@ -150,4 +150,18 @@ grep -q 'skip (junk label' err6.txt || fail "tv junk skip warning"
 [ "$(grep -c . "$STUB_LOG")" = 5 ] || fail "5 encode calls expected (4 tv + 1 movie), got $(grep -c . "$STUB_LOG")"
 echo "scenario 6 OK"
 
+# scenario 7: a TV extras disc alone (no episode files staged) still routes
+# to the TV tree — the parent dir is the type, never the episode files'
+# presence. and a movie of the same name must stay untouched in its own tree.
+cd "$T"; rm -rf run7 vid; mkdir -p run7 vid/rip/TV
+mk "$T/vid/rip/TV/Solo Show (2012)_e04.mkv" 'TVONLY-EXTRA'
+export STUB_LOG="$T/hb-calls-7.log"
+cd run7
+PATH="$T/bin:$PATH" "$PW" -NoProfile -File "$PS1_SCRIPT" > out8.txt 2> err7.txt
+[ "$?" = 0 ] || { echo "ASSERT FAIL: tv-only extras exit"; cat out8.txt; cat err7.txt; exit 1; }
+[ "$(cat "$T/vid/library/TV/Solo Show (2012)/extras/Solo Show (2012)_e04.mkv")" = 'TVONLY-EXTRA' ] || fail "tv-only extras filed in TV tree"
+[ ! -e "$T/vid/library/Solo Show (2012)" ] || fail "tv-only extras must not touch the movie tree"
+[ "$(grep -c . "$STUB_LOG")" = 1 ] || fail "1 encode call expected, got $(grep -c . "$STUB_LOG")"
+echo "scenario 7 OK"
+
 echo "ALL PASS"

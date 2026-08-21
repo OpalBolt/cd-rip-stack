@@ -146,6 +146,11 @@ What happens:
   Stages under rip/TV/ as
   <Show>_S01E02.mkv. --part is
   refused — TV episodes never merge.
+  A show's bonus disc rips with
+  --extras instead: no season, staged
+  _eNN under rip/TV/. An aired
+  special is not an extra — it is a
+  season 0 episode.
 
 Next: run transcode-video on the desktop.
 
