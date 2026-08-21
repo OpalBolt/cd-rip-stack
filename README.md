@@ -150,7 +150,7 @@ Examples:
 
 It scans the disc and rips the chosen titles to `/mnt/videos/rip/` as `<Name>_tNN.mkv`. Blu-rays name from metadata with no prompt. DVDs rip as a label code like `B1` and prompt a TMDB search at rip time. With no key, the DVD rip errors after staging. It renames every staged MKV to `<Title> (Year)_tNN.mkv`.
 
-**TV shows** use the same command. Pick the show at the TMDB prompt (results are marked `[lang/tv]`). It asks for a season (Enter = 1, `0` = specials) and the first episode number on the disc, rips into `rip/TV/`, and stages the ripped titles in numeric order as `<Show (Year)>_S01E02.mkv` — title 0 becomes the episode you named first, title 1 the next, and so on. A double episode stays one file. `--part` is refused for TV: episodes never merge.
+**TV shows** use the same command. Pick the show at the TMDB prompt (results are marked `[lang/tv]`). It asks for a season (Enter = 1, `0` = specials), scans the disc, and proposes a title→episode table matched by duration against the season's TMDB runtimes — longest title first, each title claims the nearest unused episode, and a title close to two consecutive runtimes becomes a double (`S01E01-E02`, one file). Episodes already staged for that season are skipped, so a second disc proposes the next episodes. A title with no episode left — or one too far from any episode's runtime, like a featurette — lists as `→ extra` (fix it at the table with `N=<ep>` if that is wrong). At the `ok?` prompt, Enter rips as proposed; a fix row like `3=7`, `1=1-2`, or `2=e` re-points one title and the table re-prints; `q` aborts before the drive spins. When TMDB has no runtimes for the season, it asks for the first episode number instead and numbers the titles in order. Episodes stage under `rip/TV/` as `<Show (Year)>_S01E02.mkv`. `--part` is refused for TV: episodes never merge.
 
 Track selection happens through a MakeMKV profile (`custom.mmcp.xml`). Audio is the film's original language from TMDB. Subtitles keep Danish when present and fall back to English, plus untagged tracks. Both `titles` and `rip-video` scan with `--minlength=$RIP_MINLENGTH` (default 120s) to drop logos and FBI warnings, so they must share the value. MakeMKV renumbers titles by what survives the scan.
 
@@ -187,7 +187,7 @@ movie-name [--rename DIR | disc:N | file]
 - Blu-rays: the name comes from disc metadata.
 - DVDs: a TMDB search (needs `TMDB_API_KEY`) over movies and TV shows. You pick a result (shown as `[lang/movie]` or `[lang/tv]`). To skip the prompt entirely, `rip-video --tmdbid tv:68357` or paste the full themoviedb.org URL.
 
-The output is a tab-separated `Title`, `Year`, `Lang`, and `Type` (`movie` or `tv`) — the type is what switches `rip-video` into its TV flow. Non-TMDB sources (disc metadata, cached names) always report `movie`.
+The output is a tab-separated `Title`, `Year`, `Lang`, `Type`, and `Id` (`Type` is `movie` or `tv`, `Id` is the TMDB id of a TMDB pick) — the type is what switches `rip-video` into its TV flow, and the id is what fetches the season's episodes. Non-TMDB sources (disc metadata, cached names) always report `movie` and no id.
 
 Re-run with `--rename <dir>` to fix a botched pick across already-staged MKVs. Files that already have a real name set the pattern. It renames only the junk-labelled ones.
 

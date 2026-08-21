@@ -76,6 +76,238 @@ is_recordable() {  # $1 = media token; returns 0 when it is a burnable type
 # rip-video checks TMDB_API_KEY inline first (clear message), then probes the TMDB
 # API — the title + audio language both come from TMDB, so an offline rip is wrong.
 
+# ── TV duration matcher (decisions before the disc leaves the drive) ──
+# disc titles carry no episode numbers; duration matching PROPOSES, the confirm
+# table decides. data model: TT_ORDER = scanned title numbers (ascending),
+# tt_secs_of/tt_size_of keyed by title number; EP_ORDER = fetched episode
+# numbers (ascending), ep_name_of/ep_rt_of keyed by episode number (minutes,
+# 0 = TMDB had none). tv_lo/tv_hi hold the assignment per title (equal = single,
+# lo=0 = extra).
+
+# ponytail: tuning knobs — TV_SINGLE_EPS is how far (seconds) a title may sit
+# from a single episode's runtime and still claim it. 600 ≈ PAL speedup + recap
+# slack; a featurette past it lists as extra (fixable at the table with N=<ep>).
+# TV_DOUBLE_EPS is how close a title must sit to a pair's combined runtime for
+# the double to compete with the best single. 300s ≈ 5 min of recap/cold-open
+# slack; tighten if pairs steal singles, loosen if doubles split into two wrong
+# episodes.
+TV_SINGLE_EPS=600
+TV_DOUBLE_EPS=300
+
+declare -A tt_secs_of tt_size_of ep_name_of ep_rt_of M_avail STAGED_EP tv_lo tv_hi
+TT_ORDER=; EP_ORDER=
+
+# tv_scan: fill TT_ORDER/tt_secs_of/tt_size_of from a makemkvcon info scan.
+# same source rule as titles.sh (MAKEMKV_INFO replays a captured dump) and the
+# same --minlength as the rip loop: makemkv renumbers titles by what survives
+# the scan, so the table must see exactly what the rip will.
+tv_scan() {
+  TT_ORDER=; tt_secs_of=(); tt_size_of=()
+  local out t s z
+  if [ -n "${MAKEMKV_INFO:-}" ]; then out=$("$MAKEMKV_INFO" disc:0)
+  else out=$(makemkvcon -r info --minlength="$minlen" disc:0); fi || return 1
+  while IFS=$'\t' read -r t s z; do
+    [ -n "$t" ] || continue
+    tt_secs_of[$t]=$s; tt_size_of[$t]=$z; TT_ORDER="$TT_ORDER $t"
+  done < <(printf '%s' "$out" | awk -F'"' '
+    /^TINFO:[0-9]+,(9|10),"/ {
+      n=split($1,a,","); sub(/^TINFO:/,"",a[1]); t=a[1]+0; c=a[2]+0
+      if (c==9)  { split($2,h,":"); dur[t]=(h[3]!="")?h[1]*3600+h[2]*60+h[3]:h[1]*60+h[2] }
+      if (c==10) sz[t]=$2
+    }
+    END { for (t in dur) if (t in sz) printf "%s\t%s\t%s\n", t, dur[t], sz[t] }')
+  TT_ORDER=$(printf '%s\n' $TT_ORDER | sort -n | tr '\n' ' ')
+  [ -n "${TT_ORDER// /}" ]
+}
+
+# tv_fetch_season <id> <season>: fill EP_ORDER/ep_name_of/ep_rt_of from
+# GET /3/tv/<id>/season/<n>. hard error on curl failure (offline was gated
+# earlier, but this is a different endpoint).
+tv_fetch_season() {
+  EP_ORDER=; ep_name_of=(); ep_rt_of=()
+  local json n nm rt
+  json=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/tv/$1/season/$2?api_key=${TMDB_API_KEY}") || {
+    echo "rip-video: TMDB season fetch failed (tv/$1/season/$2) — check network/key." >&2; return 1; }
+  while IFS=$'\t' read -r n nm rt; do
+    [ -n "$n" ] || continue
+    ep_name_of[$n]=$nm; ep_rt_of[$n]=$rt; EP_ORDER="$EP_ORDER $n"
+  done < <(printf '%s' "$json" | jq -r '.episodes[] | [(.episode_number|tostring), (.name // ""), ((.runtime // 0)|tostring)] | @tsv')
+  EP_ORDER=$(printf '%s\n' $EP_ORDER | sort -n | tr '\n' ' ')
+}
+
+# tv_staged_eps <dir> <display> <season>: print the episode numbers already
+# staged for this show and season (the staging dir IS the state — settled).
+# "S02E05" -> 5; a double "S01E05-E06" -> 5 and 6.
+tv_staged_eps() {
+  local s2 f b lo hi
+  s2=$(printf '%02d' $((10#$3)))
+  for f in "$1/${2}_S${s2}E"*.mkv; do
+    b=$(basename "$f" .mkv)
+    [[ $b =~ _S[0-9]{2}E([0-9]+)(-E([0-9]+))?$ ]] || continue
+    lo=$((10#${BASH_REMATCH[1]})); hi=${BASH_REMATCH[3]:-}
+    printf '%s\n' "$lo"; [ -n "$hi" ] && printf '%s\n' "$((10#$hi))"
+  done
+}
+
+# tv_build_avail: the candidate set — episodes TMDB gave a runtime for, minus
+# the ones already staged (the staging dir is the state).
+tv_build_avail() {
+  M_avail=()
+  local e
+  for e in $EP_ORDER; do
+    [ "${ep_rt_of[$e]:-0}" -gt 0 ] && [ -z "${STAGED_EP[$e]:-}" ] && M_avail[$e]=1
+  done
+}
+
+# tv_match: greedy duration matching. titles longest-first each claim the
+# unused episode (M_avail) with the nearest runtime (a single only competes
+# within TV_SINGLE_EPS); a consecutive pair competes while within TV_DOUBLE_EPS,
+# and the nearer of the two wins (tie -> single). a pair stamps a double. a
+# title with no claim — no episode near enough, or none left — becomes an extra.
+tv_match() {
+  tv_lo=(); tv_hi=()
+  local order t e rt rt2 d bs bd bl bh pd
+  order=$(for t in $TT_ORDER; do printf '%s\t%s\n' "${tt_secs_of[$t]}" "$t"; done | sort -k1,1rn -k2,2n | cut -f2)
+  for t in $order; do
+    bs=; bd=                                          # best single episode
+    for e in $EP_ORDER; do
+      [ -n "${M_avail[$e]:-}" ] || continue
+      rt=$(( ${ep_rt_of[$e]} * 60 ))
+      d=$(( ${tt_secs_of[$t]} - rt )); [ "$d" -lt 0 ] && d=$((-d))
+      if [ "$d" -le "$TV_SINGLE_EPS" ] && { [ -z "$bs" ] || [ "$d" -lt "$bd" ]; }; then bs=$e; bd=$d; fi   # strict < keeps the lower ep on a tie
+    done
+    bl=; bh=; pd=                                      # best consecutive pair
+    for e in $EP_ORDER; do
+      [ -n "${M_avail[$e]:-}" ] && [ -n "${M_avail[$((e+1))]:-}" ] || continue
+      rt=$(( (${ep_rt_of[$e]} + ${ep_rt_of[$((e+1))]}) * 60 ))
+      d=$(( ${tt_secs_of[$t]} - rt )); [ "$d" -lt 0 ] && d=$((-d))
+      if [ "$d" -le "$TV_DOUBLE_EPS" ] && { [ -z "$bl" ] || [ "$d" -lt "$pd" ]; }; then bl=$e; bh=$((e+1)); pd=$d; fi
+    done
+    if [ -n "$bl" ] && { [ -z "$bs" ] || [ "$pd" -lt "$bd" ]; }; then
+      tv_lo[$t]=$bl; tv_hi[$t]=$bh; unset "M_avail[$bl]" "M_avail[$bh]"
+    elif [ -n "$bs" ]; then
+      tv_lo[$t]=$bs; tv_hi[$t]=$bs; unset "M_avail[$bs]"
+    else
+      tv_lo[$t]=0; tv_hi[$t]=0                         # no claim -> extra
+    fi
+  done
+}
+
+# tv_map_str: serialize the assignment as the episode map ("0=2,1=1-2,2=e").
+tv_map_str() {
+  local m= t lo hi
+  for t in $TT_ORDER; do
+    lo=${tv_lo[$t]:-0}; hi=${tv_hi[$t]:-0}
+    if   [ "$lo" = 0 ];    then m+="${m:+,}${t}=e"
+    elif [ "$lo" = "$hi" ]; then m+="${m:+,}${t}=${lo}"
+    else                          m+="${m:+,}${t}=${lo}-${hi}"; fi
+  done
+  printf '%s' "$m"
+}
+
+# hsize: bytes -> "4.0 GiB" for the table column.
+hsize() { awk -v b="$1" 'BEGIN{split("KiB MiB GiB TiB",u," ");s="B";for(i=1;b>=1024&&i<=4;i++){b/=1024;s=u[i]}printf "%.1f %s",b,s}'; }
+
+# tv_print_table: the confirm table (title order for readability; the matcher
+# works longest-first, the eye reads title numbers).
+tv_print_table() {
+  local s2 t dur sz code name
+  s2=$(printf '%02d' $((10#$season)))
+  printf '\n%s — season %s\n' "$display" "$s2"
+  for t in $TT_ORDER; do
+    dur=$(printf '%d:%02d:%02d' $(( ${tt_secs_of[$t]} / 3600 )) $(( ${tt_secs_of[$t]} % 3600 / 60 )) $(( ${tt_secs_of[$t]} % 60 )))
+    sz=$(hsize "${tt_size_of[$t]}")
+    if [ "${tv_lo[$t]:-0}" = 0 ]; then
+      printf '  title %-3s %-9s %9s  → extra\n' "$t" "$dur" "$sz"
+    else
+      code=$(printf 'S%02dE%02d' $((10#$season)) "${tv_lo[$t]}")
+      [ "${tv_lo[$t]}" != "${tv_hi[$t]}" ] && code+=$(printf -- '-E%02d' "${tv_hi[$t]}")
+      name=${ep_name_of[${tv_lo[$t]}]:-}
+      [ -n "$name" ] && name="  ($name)"
+      printf '  title %-3s %-9s %9s  → %s%s\n' "$t" "$dur" "$sz" "$code" "$name"
+    fi
+  done
+}
+
+# apply_fixes "3=7" / "1=1-2,2=e": grammar via movie-name --parse-ep-map (the
+# ONE parser), semantics here. rows apply left-to-right; a re-pointed row's
+# old episodes are already released by the time later rows validate (the row's
+# own claim is excluded from the clash check). a rejected row changes nothing
+# for that title and the table re-prints.
+apply_fixes() {
+  local tsv line t kind lo hi ok=1 e maxep t2 l2 h2 bad
+  tsv=$(movie-name --parse-ep-map "$1") || {
+    echo "rip-video: bad fix row '$1' (want N=ep, N=ep-ep, or N=e, comma-separable)" >&2; return 1; }
+  maxep=0
+  if [ "$matchmode" = match ]; then for e in $EP_ORDER; do [ "$e" -gt "$maxep" ] && maxep=$e; done; fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS=$'\t' read -r t kind lo hi <<< "$line"
+    if [ -z "${tt_secs_of[$t]:-}" ]; then
+      echo "rip-video: no title $t on this disc" >&2; ok=0; continue
+    fi
+    if [ "$kind" != extra ]; then
+      if [ "$matchmode" = match ]; then
+        [ "$hi" -le "$maxep" ] || { echo "rip-video: episode $hi is past the season's last episode ($maxep)" >&2; ok=0; continue; }
+      fi
+      bad=
+      for (( e=lo; e<=hi; e++ )); do
+        [ -n "${STAGED_EP[$e]:-}" ] && { echo "rip-video: episode $e is already staged" >&2; bad=1; }
+        for t2 in $TT_ORDER; do
+          [ "$t2" = "$t" ] && continue
+          l2=${tv_lo[$t2]:-0}; h2=${tv_hi[$t2]:-0}
+          [ "$l2" = 0 ] && continue
+          if (( e >= l2 && e <= h2 )); then echo "rip-video: episode $e is already claimed by title $t2" >&2; bad=1; fi
+        done
+      done
+      [ -z "$bad" ] || { ok=0; continue; }
+    fi
+    tv_lo[$t]=$lo; tv_hi[$t]=$hi                        # extra rows carry lo=hi=0
+  done <<< "$tsv"
+  [ "$ok" = 1 ]
+}
+
+# rip-video --self-test: assert-based matcher check (fixtures in, assignment
+# out; no drive, no network). a developer hook — deliberately not in usage().
+if [ "${1:-}" = "--self-test" ]; then
+  TV_FAIL=0
+  tva() { if [ "$1" = "$2" ]; then echo "  ok: $3"; else echo "  FAIL: $3 (want '$1' got '$2')"; TV_FAIL=1; fi; }
+  # greedy order: the longest title claims first, so t1 (21:30) takes the
+  # nearer E21 and t0 (21:00) falls to E22 — title-number order would swap them.
+  tt_secs_of=([0]=1260 [1]=1290); tt_size_of=([0]=1 [1]=1); TT_ORDER="0 1"
+  ep_rt_of=([1]=21 [2]=22); EP_ORDER="1 2"; M_avail=([1]=1 [2]=1)
+  tv_match; tva "0=2,1=1" "$(tv_map_str)" "greedy: longest title claims the nearest episode"
+  # nearest single: 21:00 sits nearer the 20-min episode than the 25-min one.
+  tt_secs_of=([0]=1260); TT_ORDER="0"; ep_rt_of=([1]=20 [2]=25); EP_ORDER="1 2"; M_avail=([1]=1 [2]=1)
+  tv_match; tva "0=1" "$(tv_map_str)" "nearest single wins"
+  # double rule: 44:00 against {E1 22min, E2 23min} -> the pair (45min, 60s
+  # off) beats any single; a 21:30 title on the same pool takes a single.
+  tt_secs_of=([0]=2640); TT_ORDER="0"; ep_rt_of=([1]=22 [2]=23); EP_ORDER="1 2"; M_avail=([1]=1 [2]=1)
+  tv_match; tva "0=1-2" "$(tv_map_str)" "double: a near pair beats the best single"
+  tt_secs_of=([0]=1290); TT_ORDER="0"; M_avail=([1]=1 [2]=1)
+  tv_match; tva "0=1" "$(tv_map_str)" "double: a 21:30 title takes a single, not a pair"
+  # leftover -> extra: three titles, one episode.
+  tt_secs_of=([0]=1260 [1]=1300 [2]=1400); TT_ORDER="0 1 2"; ep_rt_of=([1]=21); EP_ORDER="1"; M_avail=([1]=1)
+  tv_match; tva "0=e,1=e,2=1" "$(tv_map_str)" "leftover titles become extras"
+  # featurette -> extra: a 10:00 title sits 720s from the 22/25-min episodes,
+  # past TV_SINGLE_EPS, so it proposes extra; against a 12-min episode (d=120)
+  # it claims. (a 21:30 vs 22-min title — d=90 — still claims, per the asserts above.)
+  tt_secs_of=([0]=600); TT_ORDER="0"; ep_rt_of=([1]=22 [2]=25); EP_ORDER="1 2"; M_avail=([1]=1 [2]=1)
+  tv_match; tva "0=e" "$(tv_map_str)" "single: a featurette too far from every runtime -> extra"
+  ep_rt_of=([1]=12); EP_ORDER="1"; M_avail=([1]=1)
+  tv_match; tva "0=1" "$(tv_map_str)" "single: within TV_SINGLE_EPS it still claims"
+  # staged exclusion: the staging dir is the state — E01 (and both halves of a
+  # staged double) leave the candidate set, so a second disc proposes onward.
+  std=$(mktemp -d)
+  printf x > "$std/Show (2000)_S01E01.mkv"; printf x > "$std/Show (2000)_S01E05-E06.mkv"
+  tva "$(printf '1\n5\n6')" "$(tv_staged_eps "$std" "Show (2000)" 1 | sort -n)" "staged: singles and doubles both parsed"
+  tt_secs_of=([0]=1260); TT_ORDER="0"; ep_rt_of=([1]=21 [2]=21); EP_ORDER="1 2"
+  STAGED_EP=([1]=1); tv_build_avail
+  tv_match; tva "0=2" "$(tv_map_str)" "staged episode no longer proposed"
+  rm -rf "$std"
+  [ "$TV_FAIL" = 0 ] && { echo OK; exit 0; } || exit 1
+fi
+
 # ── main ──
 
 vid="${VIDEOS_MOUNT:-/mnt/videos}"
@@ -111,10 +343,15 @@ usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
           language audio to $rip_dir; run transcode-video on the desktop to finish.
 
 TV: pick a TV show at the TMDB prompt (results show [lang/tv]) and the flow
-switches — it asks for a season (Enter=1, 0=specials) and the first episode
-number on the disc, rips into $rip_dir/TV/, and stages the titles in numeric
-order as <Show (Year)>_S01E02.mkv (a double stays one file). --part is refused:
-TV episodes never merge.
+switches — it asks for a season (Enter=1, 0=specials), scans the disc, and
+proposes a title→episode table matched by duration against the season's TMDB
+runtimes (episodes already staged are skipped, so a second disc proposes the
+next episodes; a double episode stays one file as S01E01-E02; a title with no
+episode left lists as extra). At the ok? prompt Enter rips as proposed, rows
+like 3=7 / 1=1-2 / 2=e re-point one title (the table re-prints), q aborts.
+With no TMDB runtimes it falls back to asking the first episode number and
+numbering titles in order. Episodes stage under rip/TV/ as
+<Show (Year)>_SNNENN.mkv. --part is refused: TV episodes never merge.
 EOF
 }
 
@@ -218,7 +455,7 @@ done
 # 4th field is the pick's type: a tv pick branches into the TV flow below.
 mn=(--tmdb); [ -n "$tmdbid" ] && mn=(--tmdbid "$tmdbid")
 if line=$(movie-name "${mn[@]}"); then
-  IFS=$'\t' read -r TITLE YEAR origlang picktype <<< "$line"
+  IFS=$'\t' read -r TITLE YEAR origlang picktype pick_id <<< "$line"
 else
   echo "rip-video: title not resolved — aborting (re-run to retry)." >&2
   exit 1
@@ -229,24 +466,70 @@ RIP_NAME=$display
 
 # ── TV branch: the type is discovered here, not known up front (settled: one ──
 # rip-video, prompts not flags). episodes stage under rip/TV/ as SNNENN files;
-# the subdirectory is what tells transcode a file is TV.
+# the subdirectory is what tells transcode a file is TV. duration matching
+# proposes title→episode, the confirm table decides, and the sequential prompt
+# survives only as the no-runtimes fallback.
 # ponytail: bash stays for rip orchestration — if this script passes ~500 lines
 # or needs chapter splitting, move rip orchestration (not transcode) to Python.
-season=; firstep=; stage_dir=$rip_dir
+season=; epmap=; stage_dir=$rip_dir
 if [ "$picktype" = tv ]; then
   [ -z "$part" ] || { echo "rip-video: --part is for a film split across discs — TV episodes never merge; rip them as separate episodes instead." >&2; exit 1; }
   [ "$extras" = 0 ] || { echo "rip-video: extras discs for TV shows are not supported yet." >&2; exit 1; }
+  [ "$pick_id" != - ] && [ -n "$pick_id" ] || { echo "rip-video: the TMDB pick carries no id — cannot fetch episodes. re-pick or use --tmdbid tv:N." >&2; exit 1; }
   printf 'season [1] (0 = specials): '
   read -r season || season=1
   season=${season:-1}
   [[ $season =~ ^[0-9]{1,2}$ ]] || { echo "rip-video: season must be a number 0-99, got '$season'" >&2; exit 1; }
-  printf 'first episode number on this disc [1]: '
-  read -r firstep || firstep=1
-  firstep=${firstep:-1}
-  { [[ $firstep =~ ^[0-9]+$ ]] && (( 10#$firstep >= 1 )); } || { echo "rip-video: episode must be a number >= 1, got '$firstep'" >&2; exit 1; }
   stage_dir="$rip_dir/TV"
   mkdir -p "$stage_dir"
   rip_note type "type=tv season=$season"
+
+  # scan the disc — decisions happen before it leaves the drive (settled).
+  tv_scan || { echo "rip-video: disc scan failed — re-run (drive/media issue? see the output above)." >&2; exit 1; }
+  if [ "${titles_to_rip[0]}" != all ]; then
+    # narrow the table to the titles the user asked to rip — makemkvcon rips
+    # exactly those, so the map must not promise the rest.
+    keep=; for t in $TT_ORDER; do
+      case " ${titles_to_rip[*]} " in *" $t "*) keep="$keep $t" ;; esac
+    done
+    TT_ORDER=$keep
+    [ -n "${TT_ORDER// /}" ] || { echo "rip-video: none of the requested titles survived the scan (minlength=$minlen)." >&2; exit 1; }
+  fi
+
+  tv_fetch_season "$pick_id" "$season" || exit 1
+  STAGED_EP=()
+  while read -r e; do [ -n "$e" ] && STAGED_EP[$e]=1; done < <(tv_staged_eps "$stage_dir" "$display" "$season")
+
+  matchmode=match
+  nrt=0; for e in $EP_ORDER; do [ "${ep_rt_of[$e]:-0}" -gt 0 ] && nrt=$((nrt+1)); done
+  if [ "$nrt" -eq 0 ]; then
+    # no runtimes at all (empty season or TMDB gaps) — sequential fallback.
+    matchmode=sequential
+    echo "rip-video: no TMDB runtimes for this season — numbering titles in order instead." >&2
+    printf 'first episode number on this disc [1]: '
+    read -r firstep || firstep=1
+    firstep=${firstep:-1}
+    { [[ $firstep =~ ^[0-9]+$ ]] && (( 10#$firstep >= 1 )); } || { echo "rip-video: episode must be a number >= 1, got '$firstep'" >&2; exit 1; }
+    ep=$((10#$firstep)); tv_lo=(); tv_hi=()
+    for t in $TT_ORDER; do tv_lo[$t]=$ep; tv_hi[$t]=$ep; ep=$((ep+1)); done
+  else
+    tv_build_avail
+    tv_match
+  fi
+
+  # the confirm table is the only correction UI (settled): Enter rips as
+  # proposed; fix rows re-point one title at a time; q aborts pre-rip.
+  while true; do
+    tv_print_table
+    printf 'ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, q=quit): '
+    read -r ans || ans=q
+    case "$ans" in
+      '') break ;;
+      q|Q) echo "rip-video: quit — nothing ripped." >&2; exit 1 ;;
+      *)  apply_fixes "$ans" || true ;;
+    esac
+  done
+  epmap=$(tv_map_str)
 else
   rip_note type "type=movie"
 fi
@@ -276,17 +559,8 @@ done
 [ "$rip_rc" -eq 0 ] || rip_note rip "makemkvcon rc=$rip_rc — partial rip, renaming what completed"
 
 if [ "$picktype" = tv ]; then
-  # build the episode map from what actually landed: junk titles in numeric order
-  # get consecutive episodes from $firstep (the sequential fallback — duration
-  # matching proposes instead once it lands). the map is machine-generated; the
-  # user confirms numbers at prompts, never types a map.
-  epmap=; ep=$((10#$firstep))
-  for t in $(for f in "$stage_dir"/*.mkv; do
-    b=$(basename "$f" .mkv)
-    [[ $b =~ _t([0-9]+)$ ]] && printf '%s\n' "${BASH_REMATCH[1]}"
-  done | sort -n); do
-    epmap+="${epmap:+,}${t}=${ep}"; ep=$((ep+1))
-  done
+  # the confirmed table already produced the map before the rip; junk titles
+  # that failed to rip simply have no file for their entry.
   movie-name --rename-as --season "$season" --ep-map "$epmap" "$display" "$stage_dir" \
     || echo "rip-video: rename failed — re-run: movie-name --rename $stage_dir" >&2
 else

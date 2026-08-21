@@ -37,6 +37,13 @@
 #                                     rip-video builds the map from its confirm
 #                                     table; the user never types one. --season
 #                                     and --ep-map go together.
+#   movie-name --parse-ep-map '<map>'  validate + decompose the episode map WITHOUT
+#                                     renaming: one TSV line per entry,
+#                                     "title<TAB>kind<TAB>lo<TAB>hi" (kind =
+#                                     ep | range | extra; extra carries lo=hi=0).
+#                                     rip-video validates its confirm-table fix
+#                                     rows through this — the grammar has exactly
+#                                     one parser, and this is its read-only face.
 #
 # Name source, first real hit wins:
 #   1. an already-named "Title (Year)_tNN.mkv" in the dir (cache) — used as-is.
@@ -83,11 +90,16 @@ case "${1:-}" in
     [ -n "${1:-}" ] || { echo "movie-name: --tmdbid needs a TMDB id, tv:N, or a themoviedb.org URL" >&2; exit 1; }
     tmdb_id=$1; shift ;;
   --tmdb) mode=tmdb; shift ;;
+  --parse-ep-map)
+    mode=parse-ep-map; shift
+    [ -n "${1:-}" ] || { echo "movie-name: --parse-ep-map needs a map like '0=1,1=2-3,2=e'" >&2; exit 1; }
+    pem_map=$1; shift ;;
   -h|--help)
     cat <<EOF
-usage: movie-name [--rename | --rename-as [--extras] [--part N] | --rename-as --season N --ep-map MAP] <name> <dir> | --tmdbid <id> | --tmdb] [disc:N | file.mkv | rip-dir]
-  resolves "<Title>\t<Year>\t<Lang>\t<Type>" (Lang = ISO 639-1 or "-", Type =
-  movie|tv — a TMDB pick's kind; non-TMDB sources are always "movie").
+usage: movie-name [--rename | --rename-as [--extras] [--part N] | --rename-as --season N --ep-map MAP] <name> <dir> | --parse-ep-map MAP | --tmdbid <id> | --tmdb] [disc:N | file.mkv | rip-dir]
+  resolves "<Title>\t<Year>\t<Lang>\t<Type>\t<Id>" (Lang = ISO 639-1 or "-",
+  Type = movie|tv, Id = the TMDB id a TMDB pick carries — non-TMDB sources
+  report type "movie" and id "-").
   --tmdbid <id>:            fetch a TMDB movie or TV entry directly (no search
                             prompt). <id> = movie id | tv:N | a pasted
                             themoviedb.org/movie/N or /tv/N URL. any failure
@@ -109,6 +121,11 @@ usage: movie-name [--rename | --rename-as [--extras] [--part N] | --rename-as --
                             "<name>_S<NN>E<EE>.mkv", doubles keep "-E<EE2>",
                             extras roll as "<name>_eNN.mkv". rip-video builds the
                             map from its confirm table; nobody types one.
+  --parse-ep-map MAP:      validate + decompose MAP without renaming — one TSV
+                            line per entry, "title<TAB>kind<TAB>lo<TAB>hi"
+                            (kind = ep | range | extra). rip-video validates its
+                            confirm-table fix rows through this, so the grammar
+                            has exactly one parser.
   <disc:N | file>:          Blu-ray metadata is used directly; a DVD label code (B1)
                             prompts a TMDB search (pick: Enter=1, s=skip, q=quit).
   No \$TMDB_API_KEY -> error; other TMDB failures fall back to the label (unless
@@ -118,10 +135,10 @@ EOF
 esac
 arg=${1:-disc:0}
 
-TITLE=-; YEAR=-; LANG=-; TYPE=movie
+TITLE=-; YEAR=-; LANG=-; TYPE=movie; ID=-
 warn() { echo "movie-name: $*" >&2; }
-emit() { printf '%s\t%s\t%s\t%s\n' "$TITLE" "$YEAR" "${LANG:--}" "$TYPE"; }
-setlabel() { TITLE=${1:--}; YEAR=-; LANG=-; TYPE=movie; }   # fall back to the raw disc label
+emit() { printf '%s\t%s\t%s\t%s\t%s\n' "$TITLE" "$YEAR" "${LANG:--}" "$TYPE" "${ID:--}"; }
+setlabel() { TITLE=${1:--}; YEAR=-; LANG=-; TYPE=movie; ID=-; }   # fall back to the raw disc label
 
 # looks_real: a makemkvcon name is a real title if it has a space, is longer than
 # 3, isn't the DVD file-label pattern ^[A-Z][0-9]+ (B1, C2), and isn't a short
@@ -169,7 +186,7 @@ disc_raw() {
 # name/first_air_date. one jq covers both via // fallbacks.
 # ponytail: TV join — search/movie alone never returns TV shows, which is why
 # correctly-named TV discs used to find nothing.
-TMDB_TSV='[ (.title // .name), ((.release_date // .first_air_date // "-")[0:4] // "-"), (.original_language // "-"), $t ] | @tsv'
+TMDB_TSV='[ (.title // .name), ((.release_date // .first_air_date // "-")[0:4] // "-"), (.original_language // "-"), $t, (.id // "-") ] | @tsv'
 
 # tmdb_by_id <id-arg>: fetch the exact movie or TV entry — <id-arg> is a bare id
 # (movie), "tv:N"/"movie:N", or a pasted themoviedb.org /movie/N or /tv/N URL.
@@ -190,9 +207,9 @@ tmdb_by_id() {
   if ! json=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/${type}/${num}?api_key=${TMDB_API_KEY}"); then
     warn "TMDB fetch of ${type}/${num} failed (offline, bad key, or no such id)"; return 1
   fi
-  local t y l typ
-  IFS=$'\t' read -r t y l typ < <(printf '%s' "$json" | jq -r --arg t "$type" "$TMDB_TSV")
-  TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ
+  local t y l typ iid
+  IFS=$'\t' read -r t y l typ iid < <(printf '%s' "$json" | jq -r --arg t "$type" "$TMDB_TSV")
+  TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; ID=$num
 }
 
 # tmdb_resolve <fallback> [required=0|1]: prompt -> search -> pick. Sets
@@ -240,9 +257,9 @@ tmdb_resolve() {
     warn "no TMDB matches for '$query' — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0
   fi
 
-  local i t y l typ
+  local i t y l typ iid
   for i in "${!picks[@]}"; do
-    IFS=$'\t' read -r t y l typ <<< "${picks[$i]}"
+    IFS=$'\t' read -r t y l typ iid <<< "${picks[$i]}"
     printf '%d. %s  (%s)  [%s/%s]\n' "$((i+1))" "$t" "$y" "$l" "$typ" >&2
   done
 
@@ -251,13 +268,13 @@ tmdb_resolve() {
     printf 'pick 1-%s (Enter=1, s=skip, q=quit): ' "$n" >&2
     read -r pick || pick=q
     case "$pick" in
-      ''|1) IFS=$'\t' read -r t y l typ <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; return 0 ;;
+      ''|1) IFS=$'\t' read -r t y l typ iid <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; ID=${iid:--}; return 0 ;;
       s|S) if [ "$required" = 1 ]; then warn "skipped — aborting"; return 1; fi
             warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
       q|Q) warn "quit — re-run movie-name later"; return 1 ;;
     esac
     if [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$n" ]; then
-      IFS=$'\t' read -r t y l typ <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; return 0
+      IFS=$'\t' read -r t y l typ iid <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; TYPE=$typ; ID=${iid:--}; return 0
     fi
     warn "invalid choice '$pick'" >&2
   done
@@ -314,10 +331,13 @@ rename_to() {
 # parser for the whole pipeline: rip-video's confirm-table fix rows use the same
 # syntax, so the grammar lives here and nowhere else. fills ep_map[title] with
 # the staged suffix ("S02E05", "S01E01-E02") or "e" (an extra — numbered at
-# rename time, rolling past existing). returns 1 on a malformed entry.
-declare -A ep_map
+# rename time, rolling past existing). also fills the decomposition the
+# --parse-ep-map mode prints (kind/lo/hi) and EP_KEYS (entry order — fix rows
+# apply left-to-right). returns 1 on a malformed entry.
+declare -A ep_map ep_kind ep_lo ep_hi
+EP_KEYS=
 parse_ep_map() {
-  ep_map=()
+  ep_map=(); ep_kind=(); ep_lo=(); ep_hi=(); EP_KEYS=
   local map=$1 seas=$2 entry t lo hi
   [[ $seas =~ ^[0-9]{1,2}$ ]] || { warn "season must be a number 0-99, got '$seas'"; return 1; }
   seas=$((10#$seas))
@@ -325,18 +345,20 @@ parse_ep_map() {
   for entry in $map; do
     [ -n "$entry" ] || continue
     if   [[ $entry =~ ^([0-9]+)=e$ ]]; then
-      ep_map[$((10#${BASH_REMATCH[1]}))]=e
+      t=$((10#${BASH_REMATCH[1]})); ep_map[$t]=e; ep_kind[$t]=extra; ep_lo[$t]=0; ep_hi[$t]=0
     elif [[ $entry =~ ^([0-9]+)=([0-9]+)-([0-9]+)$ ]]; then
       t=$((10#${BASH_REMATCH[1]})); lo=$((10#${BASH_REMATCH[2]})); hi=$((10#${BASH_REMATCH[3]}))
       (( lo >= 1 && hi > lo )) || { warn "bad double-episode range in '$entry'"; return 1; }
-      ep_map[$t]=$(printf 'S%02dE%02d-E%02d' "$seas" "$lo" "$hi")
+      ep_map[$t]=$(printf 'S%02dE%02d-E%02d' "$seas" "$lo" "$hi"); ep_kind[$t]=range; ep_lo[$t]=$lo; ep_hi[$t]=$hi
     elif [[ $entry =~ ^([0-9]+)=([0-9]+)$ ]]; then
       t=$((10#${BASH_REMATCH[1]})); lo=$((10#${BASH_REMATCH[2]}))
       (( lo >= 1 )) || { warn "bad episode number in '$entry'"; return 1; }
-      ep_map[$t]=$(printf 'S%02dE%02d' "$seas" "$lo")
+      ep_map[$t]=$(printf 'S%02dE%02d' "$seas" "$lo"); ep_kind[$t]=ep; ep_lo[$t]=$lo; ep_hi[$t]=$lo
     else
       warn "bad episode-map entry '$entry' (want t=ep, t=ep-ep, or t=e)"; return 1
     fi
+    # input order; a repeated title keeps its first position, last value wins.
+    case " $EP_KEYS " in *" $t "*) ;; *) EP_KEYS="$EP_KEYS $t" ;; esac
   done
   return 0
 }
@@ -421,9 +443,12 @@ do_rename_as() {  # $1 = display, $2 = dir
 }
 
 case "$mode" in
-  rename)    do_rename || exit 1 ;;
-  rename-as) do_rename_as "$ra_name" "$ra_dir" || exit 1 ;;
-  tmdbid)    tmdb_by_id "$tmdb_id" || exit 1; emit ;;
-  tmdb)      tmdb_resolve "" 1 || exit 1; emit ;;
-  *)         resolve || exit 1; emit ;;
+  rename)       do_rename || exit 1 ;;
+  rename-as)    do_rename_as "$ra_name" "$ra_dir" || exit 1 ;;
+  parse-ep-map)
+    parse_ep_map "$pem_map" 0 || exit 1     # season is a formality — nothing is stamped here
+    for t in $EP_KEYS; do printf '%s\t%s\t%s\t%s\n' "$t" "${ep_kind[$t]}" "${ep_lo[$t]}" "${ep_hi[$t]}"; done ;;
+  tmdbid)       tmdb_by_id "$tmdb_id" || exit 1; emit ;;
+  tmdb)         tmdb_resolve "" 1 || exit 1; emit ;;
+  *)            resolve || exit 1; emit ;;
 esac
