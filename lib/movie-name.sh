@@ -7,10 +7,11 @@
 # picks audio by original_language.
 #
 # Modes:
-#   movie-name --tmdbid <id>           fetch TMDB movie <id> directly (no search,
-#                                      no prompt) and print the TSV — for titles
-#                                      the search prompt can't find. failures are
-#                                      hard errors.
+#   movie-name --tmdbid <id|url>       fetch a TMDB movie or TV entry directly
+#                                      (no search, no prompt) and print the TSV.
+#                                      <id> is a movie id, "tv:N" a TV id, or a
+#                                      pasted themoviedb.org /movie/N or /tv/N
+#                                      URL. failures are hard errors.
 #   movie-name --tmdb                  skip the disc/file; prompt for a title and
 #                                      TMDB-resolve it (rip-video uses this — it
 #                                      asks for the title instead of scanning the
@@ -53,17 +54,17 @@ case "${1:-}" in
     ra_name="${1:?--rename-as needs <name>}"; ra_dir="${2:?--rename-as needs <dir>}"; shift 2 ;;
   --tmdbid)
     mode=tmdbid; shift
-    [[ ${1:-} =~ ^[0-9]+$ ]] || { echo "movie-name: --tmdbid needs a numeric TMDB id, got '${1:-}'" >&2; exit 1; }
+    [ -n "${1:-}" ] || { echo "movie-name: --tmdbid needs a TMDB id, tv:N, or a themoviedb.org URL" >&2; exit 1; }
     tmdb_id=$1; shift ;;
   --tmdb) mode=tmdb; shift ;;
   -h|--help)
     cat <<EOF
 usage: movie-name [--rename | --rename-as [--extras] [--part N] <name> <dir> | --tmdbid <id> | --tmdb] [disc:N | file.mkv | rip-dir]
   resolves "<Title>\t<Year>\t<Lang>" (Lang = ISO 639-1, or "-").
-  --tmdbid <id>:            fetch TMDB movie <id> directly (no search prompt) —
-                            for titles the search can't find (the id is the
-                            number in themoviedb.org/m/movie/<id> URLs).
-                            any failure -> error.
+  --tmdbid <id>:            fetch a TMDB movie or TV entry directly (no search
+                            prompt). <id> = movie id | tv:N | a pasted
+                            themoviedb.org/movie/N or /tv/N URL. any failure
+                            -> error.
   --tmdb:                   skip the disc/file, go straight to a TMDB search prompt
                             (rip-video uses this — it asks for the title instead of
                             scanning the disc). no match / skip / quit -> error.
@@ -131,18 +132,34 @@ disc_raw() {
   '
 }
 
-# tmdb_by_id <id>: fetch /movie/<id> directly — exact match, no search, no
-# prompt. sets TITLE/YEAR/LANG; returns 1 on no-key / offline / bad id.
+# tmdb fields differ by type: movies use title/release_date, TV uses
+# name/first_air_date. one jq covers both via // fallbacks.
+# ponytail: TV join — search/movie alone never returns TV shows, which is why
+# correctly-named TV discs used to find nothing.
+TMDB_TSV='[ (.title // .name), ((.release_date // .first_air_date // "-")[0:4] // "-"), (.original_language // "-"), $t ] | @tsv'
+
+# tmdb_by_id <id-arg>: fetch the exact movie or TV entry — <id-arg> is a bare id
+# (movie), "tv:N"/"movie:N", or a pasted themoviedb.org /movie/N or /tv/N URL.
+# sets TITLE/YEAR/LANG; returns 1 on no-key / offline / bad id.
 tmdb_by_id() {
-  local json
+  local type num json
+  case "$1" in
+    *themoviedb.org*)
+      [[ $1 =~ /(movie|tv)/([0-9]+) ]] || { warn "no movie or tv id found in URL '$1'"; return 1; }
+      type=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]} ;;
+    tv:*|movie:*) type=${1%%:*}; num=${1##*:} ;;
+    *) type=movie; num=$1 ;;
+  esac
+  [[ $num =~ ^[0-9]+$ ]] || { warn "bad TMDB id '$1'"; return 1; }
   if [ -z "${TMDB_API_KEY:-}" ]; then
     warn "no \$TMDB_API_KEY in env — cannot resolve via TMDB. set it and re-run."; return 1
   fi
-  if ! json=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/movie/${1}?api_key=${TMDB_API_KEY}"); then
-    warn "TMDB fetch of id ${1} failed (offline, bad key, or no such id)"; return 1
+  if ! json=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/${type}/${num}?api_key=${TMDB_API_KEY}"); then
+    warn "TMDB fetch of ${type}/${num} failed (offline, bad key, or no such id)"; return 1
   fi
-  IFS=$'\t' read -r TITLE YEAR LANG < <(printf '%s' "$json" | jq -r \
-      '[ .title, (.release_date[0:4] // "-"), (.original_language // "-") ] | @tsv')
+  local t y l typ
+  IFS=$'\t' read -r t y l typ < <(printf '%s' "$json" | jq -r --arg t "$type" "$TMDB_TSV")
+  TITLE=$t; YEAR=$y; LANG=${l:--}
 }
 
 # tmdb_resolve <fallback> [required=0|1]: prompt -> search -> pick. Sets
@@ -166,29 +183,34 @@ tmdb_resolve() {
          warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
   esac
 
-  local q_enc url json
+  local q_enc qurl mjson tjson
   q_enc=$(jq -nr --arg q "$query" '$q|@uri')
-  url="https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${q_enc}"
-  if ! json=$(curl -fsS --max-time 15 "$url"); then
+  qurl="api_key=${TMDB_API_KEY}&query=${q_enc}"
+  # movies and TV live in separate TMDB indexes — query both, then merge.
+  mjson=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/search/movie?${qurl}") || mjson=
+  tjson=$(curl -fsS --max-time 15 "https://api.themoviedb.org/3/search/tv?${qurl}") || tjson=
+  if [ -z "$mjson$tjson" ]; then
     if [ "$required" = 1 ]; then warn "TMDB request failed (offline or bad key) — aborting"; return 1; fi
     warn "TMDB request failed (no network?) — using disc label '${fallback:--}'"
     setlabel "$fallback"; return 0
   fi
 
-  # top 10 results: title \t year (release_date[0:4]) \t original_language
+  # top 5 movie + top 5 TV results: title \t year \t original_language \t type
   local picks=()
-  mapfile -t picks < <(printf '%s' "$json" | jq -r \
-      '.results[0:10][] | [ .title, (.release_date[0:4] // "-"), (.original_language // "-") ] | @tsv')
+  mapfile -t picks < <(
+    if [ -n "$mjson" ]; then printf '%s' "$mjson" | jq -r --arg t movie ".results[] | $TMDB_TSV" | head -5; fi
+    if [ -n "$tjson" ]; then printf '%s' "$tjson" | jq -r --arg t tv ".results[] | $TMDB_TSV" | head -5; fi
+  )
   local n=${#picks[@]}
   if [ "$n" -eq 0 ]; then
     if [ "$required" = 1 ]; then warn "no TMDB matches for '$query' — aborting"; return 1; fi
     warn "no TMDB matches for '$query' — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0
   fi
 
-  local i t y l
+  local i t y l typ
   for i in "${!picks[@]}"; do
-    IFS=$'\t' read -r t y l <<< "${picks[$i]}"
-    printf '%d. %s  (%s)  [%s]\n' "$((i+1))" "$t" "$y" "$l" >&2
+    IFS=$'\t' read -r t y l typ <<< "${picks[$i]}"
+    printf '%d. %s  (%s)  [%s/%s]\n' "$((i+1))" "$t" "$y" "$l" "$typ" >&2
   done
 
   local pick
@@ -196,13 +218,13 @@ tmdb_resolve() {
     printf 'pick 1-%s (Enter=1, s=skip, q=quit): ' "$n" >&2
     read -r pick || pick=q
     case "$pick" in
-      ''|1) IFS=$'\t' read -r t y l <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0 ;;
+      ''|1) IFS=$'\t' read -r t y l typ <<< "${picks[0]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0 ;;
       s|S) if [ "$required" = 1 ]; then warn "skipped — aborting"; return 1; fi
             warn "skipped — using disc label '${fallback:--}'"; setlabel "$fallback"; return 0 ;;
       q|Q) warn "quit — re-run movie-name later"; return 1 ;;
     esac
     if [[ $pick =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$n" ]; then
-      IFS=$'\t' read -r t y l <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0
+      IFS=$'\t' read -r t y l typ <<< "${picks[$((pick-1))]}"; TITLE=$t; YEAR=$y; LANG=${l:--}; return 0
     fi
     warn "invalid choice '$pick'" >&2
   done

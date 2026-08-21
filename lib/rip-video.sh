@@ -95,10 +95,11 @@ usage: rip-video [--extras] [--part N] [title]   (disc is always disc:0)
             main feature's parts in order (p1, p2, ...). pick the same movie
             title at the prompt for every disc. only the main feature merges —
             extras stay separate, filed under extras/.
-  --tmdbid N
-          use this TMDB movie id directly instead of the title-search prompt
-          — for discs whose title the search can't find. N is the number in
-          a themoviedb.org/m/movie/<id> URL.
+  --tmdbid ID
+          use this TMDB movie or TV id directly instead of the title-search
+          prompt — for discs whose title the search can't find. ID is a bare
+          movie id, "tv:N" for a TV show, or a pasted themoviedb.org/movie/N
+          or /tv/N URL.
   --verified  override the burned-media gate: the rip REFUSES recordable media
             (DVD+R/±RW/BD-R/… — thrift-store discs are often bootleg burns).
             pass this only after physically verifying the disc is an original;
@@ -122,7 +123,7 @@ while [ $# -gt 0 ]; do
     --extras) extras=1; shift ;;
     --verified) verified=1; shift ;;
     --tmdbid)
-      [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "rip-video: --tmdbid needs a numeric TMDB id, got '${2:-}'" >&2; exit 1; }
+      [ -n "${2:-}" ] || { echo "rip-video: --tmdbid needs a TMDB id, tv:N, or a themoviedb.org URL" >&2; exit 1; }
       tmdbid=$2; shift 2 ;;
     --part)
       [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "rip-video: --part needs a number, got '${2:-}'" >&2; exit 1; }

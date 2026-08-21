@@ -179,7 +179,7 @@ movie-name [--rename DIR | disc:N | file]
 ```
 
 - Blu-rays: the name comes from disc metadata.
-- DVDs: a TMDB search (needs `TMDB_API_KEY`). You pick a result. When the search can't find the title, `rip-video --tmdbid N` (the number in a themoviedb.org/m/movie/N URL) resolves it exactly, no prompt.
+- DVDs: a TMDB search (needs `TMDB_API_KEY`) over movies and TV shows. You pick a result (shown as `[lang/movie]` or `[lang/tv]`). To skip the prompt entirely, `rip-video --tmdbid tv:68357` or paste the full themoviedb.org URL.
 
 Re-run with `--rename <dir>` to fix a botched pick across already-staged MKVs. Files that already have a real name set the pattern. It renames only the junk-labelled ones.
 
