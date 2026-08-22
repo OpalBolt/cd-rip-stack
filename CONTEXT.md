@@ -12,6 +12,10 @@ _Avoid_: film, video
 A show with seasons and episodes. Stages as `<Show (Year)>_SNNENN.mkv`; files under `library/TV/<Show (Year)>/Season NN/`.
 _Avoid_: series
 
+**Declared type**:
+The movie-or-TV intent stated when a rip starts. Authoritative over disc metadata, which never decides it — for a TV pick, metadata only prefills the search.
+_Avoid_: detected type, pick type
+
 **Disc title**:
 One numbered video blob MakeMKV reports on a disc after the `--minlength` scan. A disc title is not an episode.
 _Avoid_: track, chapter

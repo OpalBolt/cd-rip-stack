@@ -27,3 +27,6 @@ tasks
 
 # HandBrakeCLI --help dump (reference for the transcode flags)
 HandBreakCLI-help.txt
+
+# Scratchpad
+.scratch/
