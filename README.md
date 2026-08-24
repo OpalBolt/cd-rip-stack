@@ -5,8 +5,8 @@ Linux, then transcode to 1080p H.265 on a Windows box. One Python app, five
 commands:
 
 ```text
-skive rip movie  [titles] [--part N] [--extras] [--tmdbid ID|URL] [--verified]   rip a movie to lossless MKV
-skive rip tv     [titles] [--extras] [--tmdbid tv:N|URL] [--verified]             rip a TV disc to named episodes
+skive rip movie  [-T SPEC] [--part N] [-E] [--tmdbid ID|URL] [-V]   rip a movie to lossless MKV
+skive rip tv     [-T SPEC] [-E] [--tmdbid tv:N|URL] [-V]            rip a TV disc to named episodes
 skive rip music  [offset] [cyanrip flags…]                                        rip a CD to FLAC
 skive tag                                                                         file the CD rip into the library
 skive sync-sd    [mountpoint]                                                     copy the library to an SD card
@@ -108,15 +108,18 @@ Both `rip movie` and `rip tv` share the same behavior:
 6. **Rename** — junk labels become `<Title> (Year)_tNN[.pN].mkv` (titles),
    `_eNN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
 
-`titles` is `all` (default), a single number, a range `N-M`, or a comma list
-like `0,5-7`. The drive is always `disc:0`; a stray `disc:N` is rejected
-before the drive spins.
+`-T/--titles` takes `all` (the default), a single number, a range `N-M`, or a
+comma list like `0,5-7`. Bare `-T` (no value) opens an interactive menu to
+check the titles you want — space toggles a box, Enter rips the checked ones,
+`↑/↓` or `j/k` move, `q` quits, and every box starts checked. The drive is
+always `disc:0`; a stray `disc:N` is rejected before the drive spins.
 
 ### rip movie
 
 ```bash
 skive rip movie                # rip all titles
-skive rip movie 0,5-7          # rip a title spec
+skive rip movie -T 0,5-7       # rip a title spec
+skive rip movie -T             # menu to pick titles
 skive rip movie --extras       # rip the 2nd disc of a set as extras
 skive rip movie --part 1       # then --part 2 on the other disc (split film)
 skive rip movie --verified     # override the burned-disc refusal
@@ -143,8 +146,9 @@ skive rip tv --tmdbid tv:68357 # skip the search
 ```
 
 Pick the show at the TMDB prompt, then the season (Enter = 1, `0` = specials).
-skive scans the disc and proposes a title→episode table matched by duration
-against the season's TMDB runtimes: longest title first, each title claims the
+skive scans the disc and shows the title menu (a `-T` spec skips it and
+narrows straight to those titles), then proposes a title→episode table matched
+by duration against the season's TMDB runtimes: longest title first, each title claims the
 nearest unused episode; a title close to two consecutive runtimes becomes a
 double (`S01E01-E02`, one file). Episodes already staged for that season are
 skipped, so a second disc proposes the next episodes. A title with no episode

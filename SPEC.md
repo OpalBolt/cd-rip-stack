@@ -11,15 +11,16 @@ The current stack grew into eleven shell scripts, a menu nobody uses, a Nix flak
 ## The command surface
 
 ```text
-skive rip movie [titles] [--part N] [--extras] [--tmdbid ID|URL] [--verified]
-skive rip tv    [titles] [--extras] [--tmdbid tv:N|URL] [--verified]
+skive rip movie [-T SPEC] [--part N] [-E] [--tmdbid ID|URL] [-V]
+skive rip tv    [-T SPEC] [-E] [--tmdbid tv:N|URL] [-V]
 skive rip music [offset] [cyanrip flags…]
 skive tag
 skive sync-sd   [mountpoint]
 ```
 
 - The `rip` subcommand is the declared type. No mid-flow movie-or-TV prompt.
-- `titles` is `all` (default), a number, a range `N-M`, or a comma list `0,5-7`. The drive is always `disc:0`; a stray `disc:N` is rejected before the drive spins.
+- `-T/--titles` is `all` (default), a number, a range `N-M`, or a comma list `0,5-7`. Bare `-T` (no value) opens an interactive checkbox menu: space toggles a box (or the "Rip all titles" header), Enter rips the checked titles, `↑/↓` or `j/k` move, `q` quits, and every box starts checked. The drive is always `disc:0`; a stray `disc:N` is rejected before the drive spins.
+- `-E/--extras` rips a bonus disc; `-V/--verified` overrides the burned-media gate.
 - `--part` is refused for TV. TV episodes never merge.
 - One executable, installed once: `uv tool install --editable .` puts `skive` on PATH. No `python cdrip/...` ever.
 - Arguments parse with argparse. The interactive layer is `rich` (tables, prompts). These are the only UI dependencies.
@@ -56,7 +57,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
 ## TV flow (preserved 1:1)
 
 1. Pick the show at the TMDB prompt, then the season (Enter = 1, 0 = specials). Episodes stage under `rip/tv/`.
-2. Scan the disc. If the user passed a title spec, the table narrows to those titles.
+2. Scan the disc and show the title menu by default (the scan is reused, so no extra load). A `-T` spec skips the menu and narrows the table to those titles.
 3. **Candidates** — the season's TMDB runtimes, minus the episodes already staged in the show's staging dir. A staged double releases both its numbers. The staging dir is the state; nothing is persisted elsewhere.
 4. **Duration matching** — greedy, titles longest-first. Each title claims the nearest-runtime unmatched episode.
    - A single competes within **600 s** of its runtime.
@@ -66,7 +67,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
    - A title with no claim becomes an extra.
 5. **Confirm table** — printed in title-number order. Enter rips as proposed. Fix rows (`3=7`, `1=1-2`, `2=e`) re-point one title at a time, apply left-to-right, clash-checked; a rejected row changes nothing and the table re-prints. `q` aborts before the drive spins.
 6. **Sequential fallback** — only when TMDB gives zero runtimes: ask the first episode number, number titles in order.
-7. **`--extras`** — a bonus disc: no season, no scan, no table. Rips straight into the TV staging dir as `_eNN`, rolling past existing extras. An aired special is not an extra; it is a season 0 episode through the normal branch.
+7. **`--extras`** — a bonus disc: no season, no table. Rips straight into the TV staging dir as `_eNN`, rolling past existing extras; a bare `-T` opens the title menu first (the only scan on this path). An aired special is not an extra; it is a season 0 episode through the normal branch.
 
 The matcher self-tests port to pytest with the same fixtures: greedy order, nearest single, double-beats-single, 21:30-takes-single, leftovers become extras, featurette-too-far, staged exclusion.
 

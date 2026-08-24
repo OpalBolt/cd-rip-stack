@@ -9,10 +9,11 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
 
-from skive.common import RipLog, ensure_mounted, parse_titles
+from skive.common import RipLog, MENU, ensure_mounted, parse_titles
 from skive.makemkv import (
     BASELINE, build_selection, drive_media, inject_profile, is_recordable,
-    purge_junk, rename_staged, subtitle_note, rip_titles, iso2b, scan_disc,
+    purge_junk, rename_staged, resolve_titles, subtitle_note, rip_titles,
+    iso2b, scan_titles, title_menu, hsize,
 )
 from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online, TMDBPick
 
@@ -307,17 +308,6 @@ def map_str(assignment: dict[int, tuple[int, int]]) -> str:
     return ",".join(parts)
 
 
-def hsize(bytes_val: int) -> str:
-    """Format bytes to human readable (4.0 GiB)."""
-    units = ["B", "KiB", "MiB", "GiB", "TiB"]
-    val = float(bytes_val)
-    unit_idx = 0
-    while val >= 1024 and unit_idx < len(units) - 1:
-        val /= 1024
-        unit_idx += 1
-    return f"{val:.1f} {units[unit_idx]}"
-
-
 def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
                 assignment: dict[int, tuple[int, int]], ep_names: dict[int, str]) -> None:
     """Print the confirmation table in title-number order.
@@ -489,10 +479,9 @@ def rip_tv(args) -> None:
     # --extras: no season, no scan, no table
     if args.extras:
         log.note("type", "type=tv extras")
-        # Rip directly
-        titles = parse_titles(args.titles or "all")
-        log.phase("rip")
         minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
+        titles = resolve_titles(args.titles, minlength)
+        log.phase("rip")
         worst_rc = rip_titles(titles, Path("config/custom.mmcp.xml"), minlength, stage_tv)
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
@@ -534,18 +523,23 @@ def rip_tv(args) -> None:
 
     # Scan the disc
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-    titles_info = scan_disc(minlength)
-    if not titles_info:
+    titles_full = scan_titles(minlength)
+    if not titles_full:
         print("skive: disc scan failed — no titles found", file=sys.stderr)
         sys.exit(1)
 
-    # Narrow to requested titles if specified
-    user_titles = parse_titles(args.titles or "all")
+    # Menu by default (the scan is reused); an explicit spec narrows directly
+    if args.titles is MENU or args.titles is None:
+        user_titles = title_menu(titles_full)
+    else:
+        user_titles = parse_titles(args.titles)
     if user_titles is not None:
-        titles_info = [(t, secs, sz) for t, secs, sz in titles_info if t in user_titles]
-        if not titles_info:
+        titles_full = [t for t in titles_full if t.number in user_titles]
+        if not titles_full:
             print(f"skive: none of the requested titles survived the scan (minlength={minlength})", file=sys.stderr)
             sys.exit(1)
+
+    titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
 
     # Fetch season from TMDB
     if not pick.id or pick.id == "-":
@@ -626,7 +620,6 @@ def rip_tv(args) -> None:
     try:
         # Rip phase
         log.phase("rip")
-        user_titles = parse_titles(args.titles or "all")
         worst_rc = rip_titles(user_titles, profile_path, minlength, season_dir)
 
         if worst_rc != 0:

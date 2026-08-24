@@ -9,8 +9,9 @@ import pytest
 
 from skive.rip_tv import (
     staged_eps, build_candidates, match, parse_fix_rows, apply_fixes, map_str,
-    print_table, rename_tv, rip_tv, SINGLE_EPS, DOUBLE_EPS, scan_disc,
+    print_table, rename_tv, rip_tv, SINGLE_EPS, DOUBLE_EPS,
 )
+from skive.makemkv import scan_disc, TitleInfo
 
 
 # Port of bash --self-test fixtures
@@ -354,7 +355,8 @@ def test_no_runtimes_sequential_fallback():
 
     args = FakeArgs()
 
-    mock_titles = [(0, 1260, 1), (1, 1300, 1)]  # Two titles
+    mock_titles = [TitleInfo(0, 1260, 1, "dan", "", False),
+                   TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
     with patch("skive.rip_tv.drive_media", return_value="DVD-ROM"):
@@ -364,7 +366,7 @@ def test_no_runtimes_sequential_fallback():
                     with patch("skive.rip_tv.search_loop", return_value=TMDBPick(
                         title="Test Show", year="2020", original_language="en", type="tv", id="123"
                     )):
-                        with patch("skive.rip_tv.scan_disc", return_value=mock_titles):
+                        with patch("skive.rip_tv.scan_titles", return_value=mock_titles):
                             with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
                                 with patch("skive.rip_tv.staged_eps", return_value=set()):
                                     with patch("skive.rip_tv.parse_titles", return_value=None):

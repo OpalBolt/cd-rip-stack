@@ -8,6 +8,11 @@ from pathlib import Path
 
 from loguru import logger
 
+# Sentinel for bare -T/--titles (flag with no value) -> open the interactive
+# title menu. Lives here so main.py and makemkv.py can both import it without
+# a cycle.
+MENU = object()
+
 # The 8-column rip.log contract, expressed as a loguru format string. loguru
 # lays out the columns (double-space separated); callers only supply values.
 _FMT = ("{extra[start]}  {extra[end]}  {extra[script]}  {extra[software]}  "

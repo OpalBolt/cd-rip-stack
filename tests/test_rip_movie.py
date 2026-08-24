@@ -21,7 +21,7 @@ class FakeArgs:
     """Minimal argparse.Namespace for rip_movie."""
     def __init__(
         self,
-        titles="all",
+        titles=None,
         extras=False,
         part=None,
         tmdbid=None,

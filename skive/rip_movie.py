@@ -4,10 +4,10 @@ import os
 import sys
 from pathlib import Path
 
-from skive.common import RipLog, ensure_mounted, parse_titles
+from skive.common import RipLog, ensure_mounted
 from skive.makemkv import (
     BASELINE, build_selection, drive_media, inject_profile, is_recordable,
-    purge_junk, rename_staged, subtitle_note, rip_titles, iso2b,
+    purge_junk, rename_staged, resolve_titles, subtitle_note, rip_titles, iso2b,
 )
 from skive.tmdb import fetch_by_id, parse_tmdbid, search_loop, require_online
 
@@ -89,15 +89,16 @@ def rip_movie(args) -> None:
     sel = build_selection(keep)
     log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
 
+    minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
+
     # Inject profile
     profile_path = inject_profile(sel)
     try:
-        # Parse titles arg
-        titles = parse_titles(args.titles or "all")
+        # Resolve titles: explicit spec, or rip all (movie has no scan to reuse)
+        titles = resolve_titles(args.titles, minlength)
 
         # Rip phase
         log.phase("rip")
-        minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
         worst_rc = rip_titles(titles, profile_path, minlength, stage_movie)
 
         if worst_rc != 0:

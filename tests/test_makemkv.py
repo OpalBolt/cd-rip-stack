@@ -302,3 +302,120 @@ def test_subtitle_note_empty():
     note = subtitle_note(stage, run=mock_run)
 
     assert note == "subs=none"
+
+def test_scan_titles_parses_audio_subs_scrambled():
+    """scan_titles parses audio counts, subtitle langs, and the S flag."""
+    from skive.makemkv import scan_titles
+
+    output = """
+TINFO:0,9,0,"1:26:43"
+TINFO:0,10,0,"5845346392"
+TINFO:0,26,0,"1,2,3"
+SINFO:0,0,1,0,"Video"
+SINFO:0,0,3,0,"dan"
+SINFO:0,1,1,0,"Audio"
+SINFO:0,1,3,0,"dan"
+SINFO:0,2,1,0,"Audio"
+SINFO:0,2,3,0,"dan"
+SINFO:0,3,1,0,"Audio"
+SINFO:0,3,3,0,"eng"
+SINFO:0,4,1,0,"Subtitles"
+SINFO:0,4,3,0,"dan"
+SINFO:0,5,1,0,"Subtitles"
+SINFO:0,5,3,0,"eng"
+TINFO:1,9,0,"0:03:33"
+TINFO:1,10,0,"169400000"
+TINFO:1,26,0,"3,2,1"
+"""
+
+    result = scan_titles(120, run=Mock(return_value=Mock(stdout=output)))
+
+    assert len(result) == 2
+    t0 = result[0]
+    assert t0.number == 0
+    assert t0.seconds == 1 * 3600 + 26 * 60 + 43
+    assert t0.audio == "dan(2),eng"
+    assert t0.subtitles == "dan,eng"
+    assert t0.scrambled is False
+
+    t1 = result[1]
+    assert t1.number == 1
+    assert t1.scrambled is True
+    assert t1.audio == ""
+    assert t1.subtitles == ""
+
+
+def test_menu_state_toggle_move_confirm_abort():
+    """Pure menu state machine: space toggles, arrows/jk move and wrap, Enter/q."""
+    from skive.makemkv import _menu_state
+
+    selected = [True, True]
+
+    # j moves down from the header onto title 0
+    sel, cur, done, abort = _menu_state(2, selected, 0, "j")
+    assert cur == 1 and not done and not abort
+
+    # space toggles title 0 (cursor 1 -> index 0) off
+    sel, cur, done, abort = _menu_state(2, sel, 1, " ")
+    assert sel == [False, True]
+
+    # k moves back up to the header
+    sel, cur, done, abort = _menu_state(2, sel, 1, "k")
+    assert cur == 0
+
+    # header space selects all (none were fully on)
+    sel, cur, done, abort = _menu_state(2, sel, 0, " ")
+    assert sel == [True, True]
+
+    # header space again deselects all
+    sel, cur, done, abort = _menu_state(2, sel, 0, " ")
+    assert sel == [False, False]
+
+    # down wraps from last row to header
+    sel, cur, done, abort = _menu_state(2, sel, 1, "j")
+    assert cur == 2
+    sel, cur, done, abort = _menu_state(2, sel, 2, "j")
+    assert cur == 0
+
+    # Enter confirms
+    sel, cur, done, abort = _menu_state(2, sel, 0, "\r")
+    assert done and not abort
+
+    # q aborts
+    sel, cur, done, abort = _menu_state(2, sel, 0, "q")
+    assert abort and not done
+
+
+def test_resolve_titles_none_and_spec():
+    """resolve_titles: None -> None (rip all), spec -> parsed list."""
+    from skive.makemkv import resolve_titles
+
+    assert resolve_titles(None, 120) is None
+    assert resolve_titles("0,5-7", 120) == [0, 5, 6, 7]
+
+
+def test_resolve_titles_menu():
+    """resolve_titles: MENU scans then opens the menu."""
+    from skive.makemkv import resolve_titles, MENU, TitleInfo
+
+    titles = [TitleInfo(0, 100, 1, "", "", False)]
+    with patch("skive.makemkv.scan_titles", return_value=titles):
+        with patch("skive.makemkv.title_menu", return_value=[0]) as mock_menu:
+            assert resolve_titles(MENU, 120) == [0]
+            mock_menu.assert_called_once_with(titles)
+
+
+def test_render_menu_lines():
+    """_render returns a header, one line per title, and a hint."""
+    from skive.makemkv import _render, TitleInfo
+
+    titles = [
+        TitleInfo(2, 5203, 5_845_346_392, "dan", "dan,eng", False),
+        TitleInfo(1, 213, 169_400_000, "", "", True),
+    ]
+    lines = _render(titles, [True, True], 0)
+    assert lines[0].strip() == "> Rip all titles"
+    assert any("title 2" in line for line in lines)
+    assert any("title 1" in line for line in lines)
+    assert any("S" in line for line in lines)
+    assert any("space=toggle" in line for line in lines)

@@ -2,6 +2,8 @@
 
 import argparse
 
+from skive.common import MENU
+
 
 def cmd_rip_movie(args):
     from skive.rip_movie import rip_movie
@@ -38,27 +40,27 @@ def main() -> None:
 
     # rip movie
     rip_movie_parser = rip_subparsers.add_parser("movie", help="rip movie")
-    rip_movie_parser.add_argument("titles", nargs="?", default="all",
-                                  help="title numbers: all, N, N-M, or comma list (default: all)")
+    rip_movie_parser.add_argument("-T", "--titles", nargs="?", const=MENU, default=None, metavar="SPEC",
+                                  help="title spec: all, N, N-M, or comma list; bare -T opens a menu")
     rip_movie_parser.add_argument("--part", type=int, metavar="N",
                                   help="part number for multi-part movies")
-    rip_movie_parser.add_argument("--extras", action="store_true",
+    rip_movie_parser.add_argument("-E", "--extras", action="store_true",
                                   help="rip extras instead of main titles")
     rip_movie_parser.add_argument("--tmdbid", metavar="ID|URL",
                                   help="TMDB movie ID or URL (skip prompt)")
-    rip_movie_parser.add_argument("--verified", action="store_true",
+    rip_movie_parser.add_argument("-V", "--verified", action="store_true",
                                   help="allow recordable media (DVD±R/RW, BD-R)")
     rip_movie_parser.set_defaults(func=cmd_rip_movie)
 
     # rip tv
     rip_tv_parser = rip_subparsers.add_parser("tv", help="rip TV show")
-    rip_tv_parser.add_argument("titles", nargs="?", default="all",
-                               help="title numbers: all, N, N-M, or comma list (default: all)")
-    rip_tv_parser.add_argument("--extras", action="store_true",
+    rip_tv_parser.add_argument("-T", "--titles", nargs="?", const=MENU, default=None, metavar="SPEC",
+                               help="title spec: all, N, N-M, or comma list; bare -T opens a menu")
+    rip_tv_parser.add_argument("-E", "--extras", action="store_true",
                                help="rip bonus disc extras (no season/matching)")
     rip_tv_parser.add_argument("--tmdbid", metavar="tv:N|URL",
                                help="TMDB TV ID or URL (skip prompt)")
-    rip_tv_parser.add_argument("--verified", action="store_true",
+    rip_tv_parser.add_argument("-V", "--verified", action="store_true",
                                help="allow recordable media (DVD±R/RW, BD-R)")
     rip_tv_parser.set_defaults(func=cmd_rip_tv)
 
