@@ -1,5 +1,5 @@
 # beets config — edit directory/paths to taste
-directory: ~/media/audio/music/library
+directory: /mnt/music/library
 
 plugins: fetchart embedart lastgenre ftintitle replaygain scrub the zero musicbrainz bandcamp
 

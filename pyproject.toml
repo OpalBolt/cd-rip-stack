@@ -2,7 +2,7 @@
 name = "skive"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["rich"]
+dependencies = ["rich", "beets", "pylast", "pillow", "beetcamp"]
 
 [project.scripts]
 skive = "skive.main:main"

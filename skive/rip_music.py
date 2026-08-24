@@ -1,0 +1,160 @@
+"""Music rip orchestration: cyanrip wrapper, Multiple releases prompt, rip name from tags."""
+
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+from rich.prompt import Prompt
+
+from skive.common import RipLog, ensure_mounted
+
+
+def rip_music(args) -> None:
+    """Main music rip orchestration.
+
+    Args:
+        args: argparse.Namespace from cmd_rip_music
+
+    Raises:
+        SystemExit: On any error or user abort
+    """
+    # Validate offset
+    if args.offset is None:
+        print("usage: skive rip music <offset> [cyanrip_flags...]", file=sys.stderr)
+        print("  offset       drive sample offset (see drive table in README)", file=sys.stderr)
+        print("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)", file=sys.stderr)
+        sys.exit(2)
+
+    # Environment
+    nfs_music = os.environ.get("NFS_MUSIC", "")
+    music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
+
+    # Mount staging dir
+    ensure_mounted(music_mnt, nfs_music)
+    rip_dir = Path(music_mnt) / "rip"
+    rip_dir.mkdir(parents=True, exist_ok=True)
+
+    # RipLog
+    log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-")
+    log.start()
+
+    # Online gate: skip if -N in cyanrip_flags
+    flags = args.cyanrip_flags or []
+    skip_online = "-N" in flags
+
+    if not skip_online:
+        require_online()
+
+    log.phase("rip")
+
+    # Run cyanrip with tee-like capture
+    cap_path = Path("/tmp/skive-cyanrip-cap.txt")
+    rc = 0
+    try:
+        # First run
+        rc = _cyanrip_run(args.offset, flags, rip_dir, cap_path)
+
+        # Handle "Multiple releases found"
+        if rc != 0 and cap_path.exists():
+            cap_text = cap_path.read_text()
+            if "Multiple releases found" in cap_text:
+                choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
+                if choice:
+                    # Re-run with -R <choice>
+                    rc = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, cap_path)
+                else:
+                    print("skive: aborting", file=sys.stderr)
+                    rc = 1
+    finally:
+        if cap_path.exists():
+            cap_path.unlink(missing_ok=True)
+
+    log.phase_end()
+
+    # Rip name from newest FLAC
+    name = _newest_flac_album(rip_dir)
+    log.name = name
+
+    log.finish(rc)
+    sys.exit(rc)
+
+
+def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, cap_path: Path) -> int:
+    """Run cyanrip with output captured and streamed to stdout."""
+    cmd = ["cyanrip", "-s", offset] + flags
+
+    # Spawn subprocess with output captured
+    result = subprocess.run(
+        cmd,
+        cwd=rip_dir,
+        capture_output=True,
+        text=True
+    )
+
+    # Stream output to stdout
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+
+    # Capture to file for analysis
+    cap_path.write_text(result.stdout + result.stderr)
+
+    return result.returncode
+
+
+def _newest_flac_album(rip_dir: Path) -> str:
+    """Get rip name from the newest FLAC's ALBUM tag.
+
+    Returns "Artist - Album" or just "Album" or "-" if no FLAC/tags.
+    """
+    flacs = list(rip_dir.glob("*.flac"))
+    if not flacs:
+        return "-"
+
+    # Find newest by mtime
+    newest = max(flacs, key=lambda f: f.stat().st_mtime)
+
+    # Run metaflac to get ALBUM and ARTIST
+    album = _metaflac_tag(newest, "ALBUM")
+    artist = _metaflac_tag(newest, "ARTIST")
+
+    if not album:
+        return "-"
+
+    if artist:
+        return f"{artist} - {album}"
+    return album
+
+
+def _metaflac_tag(flac: Path, tag: str) -> str:
+    """Get a tag value from a FLAC file via metaflac."""
+    try:
+        result = subprocess.run(
+            ["metaflac", f"--show-tag={tag}", str(flac)],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        # Output format: TAG=value\n
+        for line in result.stdout.strip().splitlines():
+            if "=" in line:
+                return line.split("=", 1)[1].strip()
+    except FileNotFoundError:
+        pass
+    return ""
+
+
+def require_online() -> None:
+    """Probe MusicBrainz; exit if offline."""
+    try:
+        result = subprocess.run(
+            ["curl", "-sS", "--max-time", "5", "https://musicbrainz.org/"],
+            capture_output=True
+        )
+    except FileNotFoundError:
+        print("skive: curl not found — cannot check MusicBrainz connectivity", file=sys.stderr)
+        sys.exit(1)
+
+    if result.returncode != 0:
+        print("skive: MusicBrainz is unreachable", file=sys.stderr)
+        sys.exit(1)

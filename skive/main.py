@@ -20,11 +20,13 @@ def cmd_rip_tv(args):
 
 
 def cmd_rip_music(args):
-    not_implemented("rip music")
+    from skive.rip_music import rip_music
+    rip_music(args)
 
 
 def cmd_tag(args):
-    not_implemented("tag")
+    from skive.tag import tag
+    tag(args)
 
 
 def cmd_sync_sd(args):
