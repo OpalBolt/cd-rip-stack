@@ -13,29 +13,19 @@
         config.allowUnfree = true;
       };
       python = pkgs.python313;
-      py = python.pkgs;
 
-      # beets + the plugins skive's config enables (bandcamp, lastgenre,
-      # embedart/fetchart, replaygain) so `skive tag`'s `python -m beets`
-      # can import them.
-      beets = py.beets.overridePythonAttrs (old: {
-        propagatedBuildInputs = (old.propagatedBuildInputs or [ ]) ++ [
-          py.pylast # lastgenre
-          py.pillow # embedart / fetchart
-          py.pygobject3 # replaygain (gstreamer backend)
-          py.beetcamp # bandcamp
-        ];
-      });
-
-      skive = py.buildPythonApplication {
+      skive = python.pkgs.buildPythonApplication {
         pname = "skive";
         version = "0.1.0";
         pyproject = true;
         src = ./.;
         propagatedBuildInputs = [
-          py.rich
-          py.loguru
-          beets
+          python.pkgs.rich
+          python.pkgs.loguru
+          python.pkgs.beets
+          python.pkgs.pylast # lastgenre
+          python.pkgs.pillow # fetchart / embedart
+          python.pkgs.beetcamp # bandcamp
         ];
         # tag.py resolves config/ as Path(__file__).parent.parent / "config",
         # i.e. <site-packages>/config — ship it there.
@@ -43,58 +33,37 @@
           cp -r ${./config} "$out/${python.sitePackages}/config"
         '';
       };
-
-      # Wrapped: the native tools skive shells out to, on PATH.
-      # sudo/mount/umount/lsblk are deliberately NOT bundled — nixpkgs'
-      # store copies are not setuid and would shadow the host's working
-      # wrappers; `nix run` already exposes the host system bin on NixOS.
-      gst = pkgs.gst_all_1;
-      skive-wrapped = pkgs.symlinkJoin {
-        name = "skive";
-        paths = [ skive ];
-        buildInputs = [ pkgs.makeWrapper ];
-        postBuild = ''
-          wrapProgram "$out/bin/skive" \
-            --prefix PATH : ${pkgs.lib.makeBinPath [
-              pkgs.makemkv # makemkvcon
-              pkgs.cyanrip
-              pkgs.flac # metaflac
-              pkgs.ffmpeg # ffprobe
-              pkgs.rsync
-              pkgs.curl
-              gst.gstreamer # replaygain backend
-              gst.gst-plugins-base
-              gst.gst-plugins-good
-              gst.gst-plugins-ugly
-            ]} \
-            --prefix GST_PLUGIN_SYSTEM_PATH : ${pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
-              gst.gst-plugins-base
-              gst.gst-plugins-good
-              gst.gst-plugins-ugly
-            ]} \
-            --prefix GI_TYPELIB_PATH : ${pkgs.lib.makeSearchPath "lib/girepository-1.0" [
-              gst.gstreamer
-              gst.gst-plugins-base
-              gst.gst-plugins-good
-            ]}
-        '';
-      };
     in
     {
       packages.${system} = {
-        default = skive-wrapped;
-        skive = skive-wrapped;
+        default = skive;
+        inherit skive;
       };
 
       apps.${system} = {
         default = {
           type = "app";
-          program = "${skive-wrapped}/bin/skive";
+          program = "${skive}/bin/skive";
         };
         skive = {
           type = "app";
-          program = "${skive-wrapped}/bin/skive";
+          program = "${skive}/bin/skive";
         };
+      };
+
+      # Native tools live here, listed plainly — same as `nix-shell -p`.
+      # `nix run .#skive -- rip video -h` builds only skive (no cyanrip);
+      # `nix develop` gives skive + makemkv/cyanrip/flac/ffmpeg/rsync/curl.
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [
+          skive
+          pkgs.makemkv
+          pkgs.cyanrip
+          pkgs.flac # metaflac
+          pkgs.ffmpeg # ffprobe
+          pkgs.rsync
+          pkgs.curl
+        ];
       };
     };
 }
