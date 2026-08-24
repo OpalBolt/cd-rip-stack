@@ -82,6 +82,17 @@ class TestRipLog:
         assert len(lines) == 2  # started + note
         assert "2024-01-15 10:30:00  -  rip-movie  makemkv  Test Movie  scan  -  audio kept=eng detected=eng" in lines[1]
 
+    def test_note_tees_to_stderr(self, tmp_path, capsys):
+        """Note lines also go to stderr (loguru WARNING sink)."""
+        log_path = tmp_path / "rip.log"
+        fixed_ts = datetime(2024, 1, 15, 10, 30, 0)
+        log = skive.common.RipLog("rip-movie", "makemkv", "Test Movie", str(log_path), now=lambda: fixed_ts)
+        log.start()
+        log.note("scan", "audio kept=eng detected=eng")
+        err = capsys.readouterr().err
+        assert "audio kept=eng detected=eng" in err
+        assert "rip-movie  makemkv  Test Movie  scan  -" in err
+
     def test_total_skipped_on_single_successful_phase(self, tmp_path, capsys):
         log_path = tmp_path / "rip.log"
         timestamps = [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0), datetime(2024, 1, 15, 10, 35, 0), datetime(2024, 1, 15, 10, 40, 0)]

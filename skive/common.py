@@ -1,13 +1,27 @@
 """Common helpers ported from the bash helpers."""
 
-import sys
 import subprocess
+import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
+from loguru import logger
+
+# Drop loguru's default stderr sink: 8-col rip.log lines belong only in their
+# per-instance file sink. Notes tee to stderr through the shared WARNING sink
+# (callable sink resolves sys.stderr at write time, so capsys/redirects work).
+logger.remove()
+logger.add(lambda m: sys.stderr.write(m), format="{message}",
+           filter=lambda r: r["level"].name == "WARNING")
+
 
 class RipLog:
-    """8-column rip.log: start end script software name phase m:ss status"""
+    """8-column rip.log: start end script software name phase m:ss status
+
+    Emitted through loguru: each instance gets its own tagged file sink
+    (format="{message}" keeps the bytes identical), notes also tee to stderr.
+    """
 
     def __init__(self, script: str, software: str, name: str = "", path: str = "rip.log", now=None):
         self.script = script
@@ -15,6 +29,16 @@ class RipLog:
         self.name = name
         self.path = Path(path)
         self._now = now or datetime.now
+        self._tag = uuid.uuid4().hex
+        self._log = logger.bind(riplog=self._tag)
+        # per-instance file sink; the tag filter keeps parallel instances apart
+        logger.add(
+            self.path,
+            format="{message}",
+            encoding="utf-8",
+            delay=True,
+            filter=lambda record: record["extra"].get("riplog") == self._tag,
+        )
         self._start = None
         self._start_ts = None
         self._phases = 0
@@ -23,8 +47,8 @@ class RipLog:
         self._phase_start_ts = None
 
     def _emit(self, start_ts: str, end_ts: str, phase: str, minutes: int, seconds: int, status: str) -> None:
-        line = f"{start_ts}  {end_ts}  {self.script}  {self.software}  {self.name}  {phase}  {minutes}m{seconds:02d}  {status}\n"
-        self.path.open("a", encoding="utf-8").write(line)
+        line = f"{start_ts}  {end_ts}  {self.script}  {self.software}  {self.name}  {phase}  {minutes}m{seconds:02d}  {status}"
+        self._log.info(line)
 
     def start(self) -> None:
         """Log the immediate 'started' marker line."""
@@ -47,11 +71,10 @@ class RipLog:
                   elapsed // 60, elapsed % 60, "ok")
 
     def note(self, phase: str, text: str) -> None:
-        """Log an untimed note line (end and m:ss are '-')."""
+        """Log an untimed note line (end and m:ss are '-'); tees to stderr."""
         ts = self._now().strftime("%F %T")
-        line = f"{ts}  -  {self.script}  {self.software}  {self.name}  {phase}  -  {text}\n"
-        self.path.open("a", encoding="utf-8").write(line)
-        sys.stderr.write(line)
+        line = f"{ts}  -  {self.script}  {self.software}  {self.name}  {phase}  -  {text}"
+        self._log.warning(line)
 
     def finish(self, rc: int) -> None:
         """Log the total line, skipped when rc==0 and exactly one phase succeeded."""
