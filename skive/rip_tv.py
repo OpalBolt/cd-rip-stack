@@ -11,9 +11,9 @@ from rich.table import Table
 
 from skive.common import RipLog, MENU, ensure_mounted, parse_titles
 from skive.makemkv import (
-    BASELINE, build_selection, drive_media, inject_profile, is_recordable,
-    purge_junk, rename_staged, resolve_titles, subtitle_note, rip_titles,
-    iso2b, scan_titles, title_menu, hsize,
+    BASELINE, build_selection, inject_profile, is_recordable,
+    purge_junk, rename_staged, resolve_titles, scan_disc, subtitle_note,
+    rip_titles, iso2b, title_menu, hsize,
 )
 from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online, TMDBPick
 
@@ -433,8 +433,10 @@ def rip_tv(args) -> None:
     log = RipLog("skive rip tv", "makemkvcon", "-")
     log.start()
 
-    # Burned-media gate
-    media = drive_media()
+    minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
+
+    # Burned-media gate (one info scan reused for the menu + media check)
+    media, titles_full = scan_disc(minlength)
     if not media:
         print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
         sys.exit(1)
@@ -479,8 +481,7 @@ def rip_tv(args) -> None:
     # --extras: no season, no scan, no table
     if args.extras:
         log.note("type", "type=tv extras")
-        minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-        titles = resolve_titles(args.titles, minlength)
+        titles = resolve_titles(args.titles, titles_full)
         log.phase("rip")
         worst_rc = rip_titles(titles, Path("config/custom.mmcp.xml"), minlength, stage_tv)
         if worst_rc != 0:
@@ -521,9 +522,7 @@ def rip_tv(args) -> None:
     season_dir = stage_tv  # TV always uses the same dir
     season_dir.mkdir(parents=True, exist_ok=True)
 
-    # Scan the disc
-    minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-    titles_full = scan_titles(minlength)
+    # The gate already scanned the disc; reuse that result (no second scan)
     if not titles_full:
         print("skive: disc scan failed — no titles found", file=sys.stderr)
         sys.exit(1)

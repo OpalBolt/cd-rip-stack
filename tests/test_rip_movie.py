@@ -38,7 +38,7 @@ def test_rip_movie_refuses_recordable():
     """Test burned disc refuses without --verified."""
     args = FakeArgs(verified=False)
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD+R"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD+R", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):
@@ -61,7 +61,7 @@ def test_rip_movie_allows_recordable_with_verified():
         id="12345",
     )
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD+R"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD+R", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):
@@ -82,7 +82,7 @@ def test_rip_movie_no_disc():
     """Test no disc detected."""
     args = FakeArgs()
 
-    with patch("skive.rip_movie.drive_media", return_value=""):
+    with patch("skive.rip_movie.scan_disc", return_value=("", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             try:
                 rip_movie(args)
@@ -95,7 +95,7 @@ def test_rip_movie_tmdbid():
     """Test --tmdbid skips search."""
     args = FakeArgs(tmdbid="movie:12345")
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):
@@ -130,7 +130,7 @@ def test_rip_movie_extras():
         id="1",
     )
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):
@@ -163,7 +163,7 @@ def test_rip_movie_part():
         id="1",
     )
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):
@@ -195,7 +195,7 @@ def test_rip_movie_worst_rc_exits():
         id="1",
     )
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):
@@ -223,7 +223,7 @@ def test_rip_movie_rip_failure_notes():
         id="1",
     )
 
-    with patch("skive.rip_movie.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_movie.ensure_mounted"):
             with patch("skive.rip_movie.purge_junk"):
                 with patch("skive.rip_movie.require_online"):

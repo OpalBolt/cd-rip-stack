@@ -259,9 +259,9 @@ def test_naming_no_clobber():
 
 
 def test_scan_disc():
-    """Parse makemkvcon info output."""
-    # Simulate output
+    """One info run returns the media token + parsed titles."""
     output = """
+DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"
 TINFO:0,9,"0:21:00"
 TINFO:0,10,"1234567890"
 TINFO:1,9,"0:22:30"
@@ -272,33 +272,34 @@ TINFO:2,10,"3456789012"
 
     mock_run = Mock(return_value=Mock(stdout=output))
 
-    result = scan_disc(120, run=mock_run)
+    media, titles = scan_disc(120, run=mock_run)
 
-    # Should return (title, seconds, bytes) sorted by title
-    assert len(result) == 3
-    assert result[0][0] == 0
-    assert result[0][1] == 21 * 60  # 21:00
-    assert result[0][2] == 1234567890
-    assert result[1][0] == 1
-    assert result[1][1] == 22 * 60 + 30  # 22:30
-    assert result[2][0] == 2
-    assert result[2][1] == 15 * 60
+    assert media == "DVD-ROM"
+    # titles sorted by number, with seconds and size
+    assert len(titles) == 3
+    assert titles[0].number == 0
+    assert titles[0].seconds == 21 * 60  # 21:00
+    assert titles[0].size == 1234567890
+    assert titles[1].number == 1
+    assert titles[1].seconds == 22 * 60 + 30  # 22:30
+    assert titles[2].number == 2
+    assert titles[2].seconds == 15 * 60
 
 
 def test_scan_disc_makemkv_info_override():
     """Honor MAKEMKV_INFO env var."""
     output = """
+DRV:0,2,0,0,"DVD-ROM"
 TINFO:0,9,"0:21:00"
 TINFO:0,10,"1234567890"
 """
     mock_run = Mock(return_value=Mock(stdout=output))
 
     with patch.dict(os.environ, {"MAKEMKV_INFO": "echo test"}):
-        # The mock will be called with the override command
-        result = scan_disc(120, run=mock_run)
+        media, titles = scan_disc(120, run=mock_run)
 
-    # Should still parse output
-    assert len(result) == 1
+    assert media == "DVD-ROM"
+    assert len(titles) == 1
 
 
 def test_extras_flow():
@@ -316,7 +317,7 @@ def test_extras_flow():
 
     args = FakeArgs()
 
-    with patch("skive.rip_tv.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_tv.ensure_mounted"):
             with patch("skive.rip_tv.purge_junk"):
                 with patch("skive.rip_tv.require_online"):
@@ -359,14 +360,14 @@ def test_no_runtimes_sequential_fallback():
                    TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
-    with patch("skive.rip_tv.drive_media", return_value="DVD-ROM"):
+    with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", [])):
         with patch("skive.rip_tv.ensure_mounted"):
             with patch("skive.rip_tv.purge_junk"):
                 with patch("skive.rip_tv.require_online"):
                     with patch("skive.rip_tv.search_loop", return_value=TMDBPick(
                         title="Test Show", year="2020", original_language="en", type="tv", id="123"
                     )):
-                        with patch("skive.rip_tv.scan_titles", return_value=mock_titles):
+                        with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", mock_titles)):
                             with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
                                 with patch("skive.rip_tv.staged_eps", return_value=set()):
                                     with patch("skive.rip_tv.parse_titles", return_value=None):

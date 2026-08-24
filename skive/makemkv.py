@@ -47,6 +47,29 @@ def build_selection(keep_lang: str) -> str:
     return f"-sel:all,+sel:({langs}),-sel:(havemulti|havecore),-sel:mvcvideo"
 
 
+def _info(minlength: int | None, run=subprocess.run) -> str:
+    """One `makemkvcon -r info` run (honoring MAKEMKV_INFO); minlength=None omits the flag."""
+    override = os.environ.get("MAKEMKV_INFO")
+    if override:
+        # Replay captured dump via the command in override
+        return run(override, shell=True, capture_output=True, text=True).stdout
+    cmd = ["makemkvcon", "-r", "info"]
+    if minlength is not None:
+        cmd.append(f"--minlength={minlength}")
+    cmd.append("disc:0")
+    return run(cmd, capture_output=True, text=True).stdout
+
+
+def _parse_media(out: str) -> str:
+    """Media token from the DRV:0 line (first word), or "" if no disc."""
+    for line in out.splitlines():
+        m = re.match(r'^DRV:0,2,\d+,\d+,"([^"]*)"', line)
+        if m:
+            token = m.group(1)
+            return token.split()[0] if token else ""
+    return ""
+
+
 def drive_media(run=subprocess.run) -> str:
     """Get disc:0's media type token.
 
@@ -58,22 +81,7 @@ def drive_media(run=subprocess.run) -> str:
     Returns:
         Media token (first word), or "" if no disc
     """
-    override = os.environ.get("MAKEMKV_INFO")
-    if override:
-        # Replay captured dump via the command in override
-        result = run(override, shell=True, capture_output=True, text=True)
-        out = result.stdout
-    else:
-        result = run(["makemkvcon", "-r", "info", "disc:0"], capture_output=True, text=True)
-        out = result.stdout
-
-    # Parse DRV:0,2,...,"<media> ..." line
-    for line in out.splitlines():
-        m = re.match(r'^DRV:0,2,\d+,\d+,"([^"]*)"', line)
-        if m:
-            token = m.group(1)
-            return token.split()[0] if token else ""
-    return ""
+    return _parse_media(_info(None, run))
 
 
 def is_recordable(media: str) -> bool:
@@ -351,21 +359,11 @@ def _subs_str(stypes: dict, slangs: dict) -> str:
     return ",".join(order)
 
 
-def scan_titles(minlength: int, run=subprocess.run) -> list[TitleInfo]:
-    """Scan disc:0 and return one TitleInfo per title, ascending by number.
+def _parse_titles(out: str) -> list[TitleInfo]:
+    """Parse TINFO/SINFO lines into TitleInfo per title, ascending by number.
 
-    Honors MAKEMKV_INFO env var to replay a captured dump. A title counts only
-    when both duration (TINFO 9) and size (TINFO 10) are present.
+    A title counts only when both duration (TINFO 9) and size (TINFO 10) are present.
     """
-    override = os.environ.get("MAKEMKV_INFO")
-    if override:
-        result = run(override, shell=True, capture_output=True, text=True)
-        out = result.stdout
-    else:
-        cmd = ["makemkvcon", "-r", "info", f"--minlength={minlength}", "disc:0"]
-        result = run(cmd, capture_output=True, text=True)
-        out = result.stdout
-
     data = {}  # number -> per-title accumulators
     for line in out.splitlines():
         if line.startswith("TINFO:"):
@@ -422,9 +420,15 @@ def scan_titles(minlength: int, run=subprocess.run) -> list[TitleInfo]:
     return result
 
 
-def scan_disc(minlength: int, run=subprocess.run) -> list[tuple[int, int, int]]:
-    """(title_number, seconds, size_bytes) ascending — kept for the matcher."""
-    return [(t.number, t.seconds, t.size) for t in scan_titles(minlength, run)]
+def scan_titles(minlength: int, run=subprocess.run) -> list[TitleInfo]:
+    """Scan disc:0 and return one TitleInfo per title, ascending by number."""
+    return _parse_titles(_info(minlength, run))
+
+
+def scan_disc(minlength: int, run=subprocess.run) -> tuple[str, list[TitleInfo]]:
+    """One `makemkvcon info` run: media token + parsed titles."""
+    out = _info(minlength, run)
+    return _parse_media(out), _parse_titles(out)
 
 
 def _getch() -> str:
@@ -532,14 +536,15 @@ def title_menu(titles: list[TitleInfo], getch=_getch, out=sys.stderr) -> list[in
     return sorted(disp[i].number for i in range(n) if selected[i])
 
 
-def resolve_titles(titles_arg, minlength: int, run=subprocess.run) -> list[int] | None:
-    """Resolve the -T flag to a rip list (None = rip all).
+def resolve_titles(titles_arg, titles: list[TitleInfo]) -> list[int] | None:
+    """Resolve the -T flag to a rip list (None = rip all), using the titles
+    already scanned by the caller.
 
-    MENU (bare -T) opens the interactive menu after scanning; a SPEC string is
-    parsed; None means rip all without a scan.
+    MENU (bare -T) opens the interactive menu; a SPEC string is parsed; None
+    means rip all.
     """
     if titles_arg is MENU:
-        return title_menu(scan_titles(minlength, run))
+        return title_menu(titles)
     if titles_arg is not None:
         return parse_titles(titles_arg)
     return None

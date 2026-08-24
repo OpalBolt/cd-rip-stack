@@ -390,19 +390,18 @@ def test_resolve_titles_none_and_spec():
     """resolve_titles: None -> None (rip all), spec -> parsed list."""
     from skive.makemkv import resolve_titles
 
-    assert resolve_titles(None, 120) is None
-    assert resolve_titles("0,5-7", 120) == [0, 5, 6, 7]
+    assert resolve_titles(None, []) is None
+    assert resolve_titles("0,5-7", []) == [0, 5, 6, 7]
 
 
 def test_resolve_titles_menu():
-    """resolve_titles: MENU scans then opens the menu."""
+    """resolve_titles: MENU opens the menu over the already-scanned titles."""
     from skive.makemkv import resolve_titles, MENU, TitleInfo
 
     titles = [TitleInfo(0, 100, 1, "", "", False)]
-    with patch("skive.makemkv.scan_titles", return_value=titles):
-        with patch("skive.makemkv.title_menu", return_value=[0]) as mock_menu:
-            assert resolve_titles(MENU, 120) == [0]
-            mock_menu.assert_called_once_with(titles)
+    with patch("skive.makemkv.title_menu", return_value=[0]) as mock_menu:
+        assert resolve_titles(MENU, titles) == [0]
+        mock_menu.assert_called_once_with(titles)
 
 
 def test_render_menu_lines():

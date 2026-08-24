@@ -6,8 +6,9 @@ from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted
 from skive.makemkv import (
-    BASELINE, build_selection, drive_media, inject_profile, is_recordable,
-    purge_junk, rename_staged, resolve_titles, subtitle_note, rip_titles, iso2b,
+    BASELINE, build_selection, inject_profile, is_recordable,
+    purge_junk, rename_staged, resolve_titles, scan_disc, subtitle_note,
+    rip_titles, iso2b,
 )
 from skive.tmdb import fetch_by_id, parse_tmdbid, search_loop, require_online
 
@@ -36,8 +37,10 @@ def rip_movie(args) -> None:
     log = RipLog("skive rip movie", "makemkvcon", "-")
     log.start()
 
-    # Burned-media gate
-    media = drive_media()
+    minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
+
+    # Burned-media gate (one info scan reused for the menu + media check)
+    media, titles_full = scan_disc(minlength)
     if not media:
         print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
         sys.exit(1)
@@ -89,13 +92,11 @@ def rip_movie(args) -> None:
     sel = build_selection(keep)
     log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
 
-    minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-
     # Inject profile
     profile_path = inject_profile(sel)
     try:
         # Resolve titles: explicit spec, or rip all (movie has no scan to reuse)
-        titles = resolve_titles(args.titles, minlength)
+        titles = resolve_titles(args.titles, titles_full)
 
         # Rip phase
         log.phase("rip")
