@@ -360,31 +360,29 @@ def test_no_runtimes_sequential_fallback():
                    TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
-    with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", [])):
+    with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", mock_titles)):
         with patch("skive.rip_tv.ensure_mounted"):
             with patch("skive.rip_tv.purge_junk"):
                 with patch("skive.rip_tv.require_online"):
                     with patch("skive.rip_tv.search_loop", return_value=TMDBPick(
                         title="Test Show", year="2020", original_language="en", type="tv", id="123"
                     )):
-                        with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", mock_titles)):
-                            with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
-                                with patch("skive.rip_tv.staged_eps", return_value=set()):
-                                    with patch("skive.rip_tv.parse_titles", return_value=None):
-                                        with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                            with patch("skive.rip_tv.rip_titles", return_value=0):
-                                                with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
-                                                    with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                        with patch("skive.rip_tv.RipLog") as mock_log_class:
-                                                            mock_log = MagicMock()
-                                                            mock_log_class.return_value = mock_log
-                                                            with patch("skive.rip_tv.Prompt") as mock_prompt:
-                                                                # Season prompt (Enter), then first ep prompt (Enter = 1)
-                                                                mock_prompt.ask.side_effect = ["", "", ""]  # Season: empty, firstep: empty
-                                                                try:
-                                                                    rip_tv(args)
-                                                                except SystemExit as e:
-                                                                    pass
+                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
+                            with patch("skive.rip_tv.staged_eps", return_value=set()):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                with patch("skive.rip_tv.RipLog") as mock_log_class:
+                                                    mock_log = MagicMock()
+                                                    mock_log_class.return_value = mock_log
+                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                        # Season prompt (Enter), then first ep prompt (Enter = 1)
+                                                        mock_prompt.ask.side_effect = ["", "", ""]  # Season: empty, firstep: empty
+                                                        try:
+                                                            rip_tv(args)
+                                                        except SystemExit as e:
+                                                            pass
 
     # Verify rename_tv was called - sequential assignment happened
     mock_rename_tv.assert_called()

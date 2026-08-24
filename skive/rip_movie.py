@@ -95,7 +95,7 @@ def rip_movie(args) -> None:
     # Inject profile
     profile_path = inject_profile(sel)
     try:
-        # Resolve titles: explicit spec, or rip all (movie has no scan to reuse)
+        # Bare -T opens the menu over the gate scan; no -T rips all titles
         titles = resolve_titles(args.titles, titles_full)
 
         # Rip phase

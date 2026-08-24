@@ -57,7 +57,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
 ## TV flow (preserved 1:1)
 
 1. Pick the show at the TMDB prompt, then the season (Enter = 1, 0 = specials). Episodes stage under `rip/tv/`.
-2. Scan the disc and show the title menu by default (the scan is reused, so no extra load). A `-T` spec skips the menu and narrows the table to those titles.
+2. Scan the disc once (reused for the media gate, menu, and rip). Rip all titles by default; a bare `-T` opens the title menu first, and a `-T` spec narrows the table to those titles.
 3. **Candidates** — the season's TMDB runtimes, minus the episodes already staged in the show's staging dir. A staged double releases both its numbers. The staging dir is the state; nothing is persisted elsewhere.
 4. **Duration matching** — greedy, titles longest-first. Each title claims the nearest-runtime unmatched episode.
    - A single competes within **600 s** of its runtime.

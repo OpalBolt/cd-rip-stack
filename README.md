@@ -146,9 +146,10 @@ skive rip tv --tmdbid tv:68357 # skip the search
 ```
 
 Pick the show at the TMDB prompt, then the season (Enter = 1, `0` = specials).
-skive scans the disc and shows the title menu (a `-T` spec skips it and
-narrows straight to those titles), then proposes a title→episode table matched
-by duration against the season's TMDB runtimes: longest title first, each title claims the
+skive scans the disc, rips all titles by default, and proposes a
+title→episode table matched by duration against the season's TMDB runtimes —
+a bare `-T` opens the title menu first, or a `-T` spec narrows straight to
+those titles. Longest title first, each title claims the
 nearest unused episode; a title close to two consecutive runtimes becomes a
 double (`S01E01-E02`, one file). Episodes already staged for that season are
 skipped, so a second disc proposes the next episodes. A title with no episode

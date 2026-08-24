@@ -9,11 +9,11 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
 
-from skive.common import RipLog, MENU, ensure_mounted, parse_titles
+from skive.common import RipLog, ensure_mounted
 from skive.makemkv import (
     BASELINE, build_selection, inject_profile, is_recordable,
     purge_junk, rename_staged, resolve_titles, scan_disc, subtitle_note,
-    rip_titles, iso2b, title_menu, hsize,
+    rip_titles, iso2b, hsize,
 )
 from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online, TMDBPick
 
@@ -527,11 +527,8 @@ def rip_tv(args) -> None:
         print("skive: disc scan failed — no titles found", file=sys.stderr)
         sys.exit(1)
 
-    # Menu by default (the scan is reused); an explicit spec narrows directly
-    if args.titles is MENU or args.titles is None:
-        user_titles = title_menu(titles_full)
-    else:
-        user_titles = parse_titles(args.titles)
+    # Bare -T opens the title menu; no -T rips all titles (DVD shows prefer this)
+    user_titles = resolve_titles(args.titles, titles_full)
     if user_titles is not None:
         titles_full = [t for t in titles_full if t.number in user_titles]
         if not titles_full:
