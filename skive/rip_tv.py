@@ -11,11 +11,10 @@ from rich.table import Table
 
 from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
-    BASELINE, build_selection, inject_profile, is_recordable,
-    purge_junk, rename_staged, resolve_titles, scan_disc, subtitle_note,
-    rip_titles, iso2b, hsize,
+    build_selection, inject_profile, is_recordable, purge_junk, rename_staged,
+    resolve_titles, scan_disc, subtitle_note, rip_titles, iso2b, hsize,
 )
-from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online, TMDBPick
+from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online
 
 console = Console()
 
@@ -146,22 +145,18 @@ def match(titles: list[tuple[int, int, int]], candidates: dict[int, tuple[int, s
     return assignment
 
 
-def parse_fix_rows(spec: str, season: int) -> list[tuple[int, str, int, int]]:
-    """Parse fix row spec (t=ep, t=ep-ep, or t=e).
-
-    Returns list of (title, kind, lo, hi).
-    Kind is "ep", "range", or "extra".
-    For extra, lo=hi=0.
-
-    Raises:
-        ValueError: Invalid syntax or values
+def parse_fix_rows(spec: str) -> list[tuple[int, str, int, int]]:
+    """Parse a comma-separated fix row spec (t=ep, t=ep-ep, or t=e).
 
     Args:
         spec: Comma-separated fix row string
-        season: Season number (for stamping episode codes)
 
     Returns:
-        List of (title_number, kind, lo, hi)
+        List of (title_number, kind, lo, hi), where kind is "ep", "range",
+        or "extra" and extras have lo=hi=0
+
+    Raises:
+        ValueError: Invalid syntax or values
     """
     entries = []
     if not spec.strip():
@@ -221,7 +216,7 @@ def apply_fixes(assignment: dict[int, tuple[int, int]], titles: list[int], stage
     Returns:
         True if all fixes applied, False if any row rejected
     """
-    rows = parse_fix_rows(fix_spec, season=max_ep + 1)  # Season not needed for parsing
+    rows = parse_fix_rows(fix_spec)
     ok = True
     for t, kind, lo, hi in rows:
         if t not in titles:
@@ -550,7 +545,6 @@ def rip_tv(args) -> None:
 
     # Build episodes dict
     ep_names = {ep: name for ep, name, _ in episodes}
-    ep_runtimes = {ep: rt for ep, _, rt in episodes}
 
     # Get staged episodes
     staged = staged_eps(season_dir, display, season)

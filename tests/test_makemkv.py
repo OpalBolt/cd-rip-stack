@@ -314,9 +314,9 @@ def test_subtitle_note_empty():
 
     assert note == "subs=none"
 
-def test_scan_titles_parses_audio_subs_scrambled():
-    """scan_titles parses audio counts, subtitle langs, and the S flag."""
-    from skive.makemkv import scan_titles
+def test_scan_disc_parses_audio_subs_scrambled():
+    """scan_disc parses audio counts, subtitle langs, and the S flag."""
+    from skive.makemkv import scan_disc
 
     output = """
 TINFO:0,9,0,"1:26:43"
@@ -339,7 +339,7 @@ TINFO:1,10,0,"169400000"
 TINFO:1,26,0,"3,2,1"
 """
 
-    result = scan_titles(120, run=Mock(return_value=Mock(stdout=output)))
+    _, result = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
 
     assert len(result) == 2
     t0 = result[0]

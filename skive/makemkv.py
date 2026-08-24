@@ -8,7 +8,6 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from rich.console import Console
 from rich.table import Table
@@ -136,7 +135,6 @@ def inject_profile(selection: str) -> Path:
     content = profile_path.read_text(encoding="utf-8")
     modified = content.replace(BASELINE, selection)
 
-    import tempfile
     fd, tmp_path = tempfile.mkstemp(suffix=".mmcp.xml")
     os.write(fd, modified.encode("utf-8"))
     os.close(fd)
@@ -423,11 +421,6 @@ def _parse_titles(out: str) -> list[TitleInfo]:
             scrambled=rec["scrambled"],
         ))
     return result
-
-
-def scan_titles(minlength: int, run=subprocess.run) -> list[TitleInfo]:
-    """Scan disc:0 and return one TitleInfo per title, ascending by number."""
-    return _parse_titles(_info(minlength, run))
 
 
 def scan_disc(minlength: int, run=subprocess.run) -> tuple[str, list[TitleInfo]]:

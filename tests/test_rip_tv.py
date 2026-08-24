@@ -120,23 +120,23 @@ def test_staged_eps_second_disc():
 
 def test_parse_fix_rows():
     """Parse fix row grammar."""
-    rows = parse_fix_rows("1=5,2=1-2,3=e", season=1)
+    rows = parse_fix_rows("1=5,2=1-2,3=e")
     assert rows == [(1, "ep", 5, 5), (2, "range", 1, 2), (3, "extra", 0, 0)]
 
     # Empty
-    assert parse_fix_rows("", season=1) == []
+    assert parse_fix_rows("") == []
 
     # Invalid range
     with pytest.raises(ValueError, match="bad double-episode range"):
-        parse_fix_rows("1=2-1", season=1)
+        parse_fix_rows("1=2-1")
 
     # Invalid episode
     with pytest.raises(ValueError, match="bad episode number"):
-        parse_fix_rows("1=0", season=1)
+        parse_fix_rows("1=0")
 
     # Bad format
     with pytest.raises(ValueError, match="bad episode-map entry"):
-        parse_fix_rows("1=x", season=1)
+        parse_fix_rows("1=x")
 
 
 def test_fix_rows_repoint():

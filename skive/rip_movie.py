@@ -6,8 +6,8 @@ from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
-    BASELINE, build_selection, inject_profile, is_recordable,
-    purge_junk, rename_staged, resolve_titles, scan_disc, subtitle_note,
+    build_selection, inject_profile, is_recordable, purge_junk,
+    rename_staged, resolve_titles, scan_disc, subtitle_note,
     rip_titles, iso2b,
 )
 from skive.tmdb import fetch_by_id, parse_tmdbid, search_loop, require_online
