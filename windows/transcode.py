@@ -165,10 +165,11 @@ def _scan(rip_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             print(f"skip (junk label -- mid-rip or failed rename): {f}", file=sys.stderr)
             continue
         if want:
-            if not any(f.name.startswith(w) for w in want):
+            want_s = {sanitize(w): w for w in want}
+            if not any(f.name.startswith(ws) for ws in want_s):
                 continue
-            for w in want:
-                if f.name.startswith(w):
+            for ws, w in want_s.items():
+                if f.name.startswith(ws):
                     want_hit.add(w)
         items.append(Item(
             path=str(f), name=f.name, base=f.stem, movie=movie, sfx=sfx,

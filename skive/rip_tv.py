@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
 
-from skive.common import RipLog, ensure_mounted
+from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
     BASELINE, build_selection, inject_profile, is_recordable,
     purge_junk, rename_staged, resolve_titles, scan_disc, subtitle_note,
@@ -475,7 +475,7 @@ def rip_tv(args) -> None:
     display = pick.title
     if pick.year and pick.year != "-":
         display = f"{pick.title} ({pick.year})"
-    display = display.replace("/", "-")
+    display = sanitize(display)
     log.name = display
 
     # --extras: no season, no scan, no table

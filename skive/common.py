@@ -1,5 +1,6 @@
 """Common helpers: title-spec parser, NFS mount-on-demand, rip.log via loguru."""
 
+import re
 import subprocess
 import sys
 import uuid
@@ -25,6 +26,16 @@ _FMT = ("{extra[start]}  {extra[end]}  {extra[script]}  {extra[software]}  "
 logger.remove()
 logger.add(lambda m: sys.stderr.write(str(m)), format=_FMT, level="WARNING",
            filter=lambda r: "riplog" in r["extra"])
+
+
+def sanitize(title: str) -> str:
+    """Strip Windows/SMB-hostile characters from a title used as a filename.
+
+    ':' and friends are legal on Linux, but SMB surfaces them as 8.3 short
+    names (P3TGB9~G.MKV) that transcode then skips as junk. '/' becomes '-'
+    because it is a path separator on every OS. Matches windows/transcode.py.
+    """
+    return re.sub(r'[:*?"<>|]', "", title.replace("/", "-"))
 
 
 def _elapsed(seconds: int) -> str:

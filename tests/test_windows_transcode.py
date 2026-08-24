@@ -192,6 +192,17 @@ def test_scenario3b_no_match_prefix_exits_1(env, capsys):
     assert "no staged MKVs match" in capsys.readouterr().err
 
 
+def test_scenario3c_colon_prefix_matches_sanitized_file(env):
+    vid = env / "vid"
+    mk(vid, "rip/Team America World Police (2004)_t00.mkv", "TEAM-MAIN")
+
+    rc = transcode.run_transcode(Args(prefixes=["Team America: World Police (2004)"]))
+
+    assert rc == 0
+    assert (vid / "library" / "Team America World Police (2004)"
+            / "Team America World Police (2004).mkv").read_text() == "TEAM-MAIN"
+
+
 # -- scenario 4: empty rip dir -> exit 0; log line shape ----------------------
 def test_scenario4_empty_rip(env, capsys):
     rc = transcode.run_transcode(Args())

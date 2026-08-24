@@ -47,6 +47,13 @@ class TestParseTitles:
             skive.common.parse_titles("5-2")
 
 
+class TestSanitize:
+    def test_strips_smb_hostile_chars(self):
+        assert skive.common.sanitize("Team America: World Police (2004)") == \
+            "Team America World Police (2004)"
+        assert skive.common.sanitize('A/B?C*D"E<F>G|H') == "A-BCDEFGH"
+
+
 class TestRipLog:
     """rip.log 8-column tests."""
 
