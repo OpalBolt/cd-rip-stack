@@ -38,10 +38,10 @@ def test_rip_movie_refuses_recordable():
     """Test burned disc refuses without --verified."""
     args = FakeArgs(verified=False)
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD+R", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD+R", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
                     try:
                         rip_movie(args)
                         assert False, "Should have exited"
@@ -61,11 +61,11 @@ def test_rip_movie_allows_recordable_with_verified():
         id="12345",
     )
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD+R", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
-                    with patch("skive.rip_movie.search_loop", return_value=mock_pick):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD+R", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
                         with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
                             with patch("skive.rip_movie.rip_titles", return_value=0):
                                 with patch("skive.rip_movie.rename_staged"):
@@ -82,8 +82,8 @@ def test_rip_movie_no_disc():
     """Test no disc detected."""
     args = FakeArgs()
 
-    with patch("skive.rip_movie.scan_disc", return_value=("", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
+    with patch("skive.rip_common.scan_disc", return_value=("", [])):
+        with patch("skive.rip_common.ensure_mounted"):
             try:
                 rip_movie(args)
                 assert False, "Should have exited"
@@ -95,10 +95,10 @@ def test_rip_movie_tmdbid():
     """Test --tmdbid skips search."""
     args = FakeArgs(tmdbid="movie:12345")
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
                     mock_pick = TMDBPick(
                         title="TMDB Movie",
                         year="2019",
@@ -106,7 +106,7 @@ def test_rip_movie_tmdbid():
                         type="movie",
                         id="12345",
                     )
-                    with patch("skive.rip_movie.fetch_by_id", return_value=mock_pick):
+                    with patch("skive.rip_common.fetch_by_id", return_value=mock_pick):
                         with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
                             with patch("skive.rip_movie.rip_titles", return_value=0):
                                 with patch("skive.rip_movie.rename_staged"):
@@ -130,11 +130,11 @@ def test_rip_movie_extras():
         id="1",
     )
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
-                    with patch("skive.rip_movie.search_loop", return_value=mock_pick):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
                         with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
                             with patch("skive.rip_movie.rip_titles", return_value=0):
                                 with patch("skive.rip_movie.rename_staged") as mock_rename:
@@ -163,11 +163,11 @@ def test_rip_movie_part():
         id="1",
     )
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
-                    with patch("skive.rip_movie.search_loop", return_value=mock_pick):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
                         with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
                             with patch("skive.rip_movie.rip_titles", return_value=0):
                                 with patch("skive.rip_movie.rename_staged") as mock_rename:
@@ -195,11 +195,11 @@ def test_rip_movie_worst_rc_exits():
         id="1",
     )
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
-                    with patch("skive.rip_movie.search_loop", return_value=mock_pick):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
                         with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
                             with patch("skive.rip_movie.rip_titles", return_value=2):
                                 with patch("skive.rip_movie.rename_staged"):
@@ -223,17 +223,17 @@ def test_rip_movie_rip_failure_notes():
         id="1",
     )
 
-    with patch("skive.rip_movie.scan_disc", return_value=("DVD-ROM", [])):
-        with patch("skive.rip_movie.ensure_mounted"):
-            with patch("skive.rip_movie.purge_junk"):
-                with patch("skive.rip_movie.require_online"):
-                    with patch("skive.rip_movie.search_loop", return_value=mock_pick):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
                         with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
                             with patch("skive.rip_movie.rip_titles", return_value=1):
                                 with patch("skive.rip_movie.rename_staged"):
                                     with patch("skive.rip_movie.subtitle_note", return_value="subs=dan"):
                                         with patch("pathlib.Path.unlink") as mock_unlink:
-                                            with patch("skive.rip_movie.RipLog") as MockLog:
+                                            with patch("skive.rip_common.RipLog") as MockLog:
                                                 # RipLog.note should be called with rip note
                                                 log_instance = MockLog.return_value
                                                 try:

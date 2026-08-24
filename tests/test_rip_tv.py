@@ -317,11 +317,11 @@ def test_extras_flow():
 
     args = FakeArgs()
 
-    with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", [])):
-        with patch("skive.rip_tv.ensure_mounted"):
-            with patch("skive.rip_tv.purge_junk"):
-                with patch("skive.rip_tv.require_online"):
-                    with patch("skive.rip_tv.search_loop", return_value=TMDBPick(
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
                         title="Test Show", year="2020", original_language="en", type="tv", id="123"
                     )):
                         with patch("skive.rip_tv.rename_staged") as mock_rename:
@@ -360,11 +360,11 @@ def test_no_runtimes_sequential_fallback_rips_only_confirmed_titles():
                    TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
-    with patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", mock_titles)):
-        with patch("skive.rip_tv.ensure_mounted"):
-            with patch("skive.rip_tv.purge_junk"):
-                with patch("skive.rip_tv.require_online"):
-                    with patch("skive.rip_tv.search_loop", return_value=TMDBPick(
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
                         title="Test Show", year="2020", original_language="en", type="tv", id="123"
                     )):
                         with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
@@ -373,7 +373,7 @@ def test_no_runtimes_sequential_fallback_rips_only_confirmed_titles():
                                     with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_tv.RipLog") as mock_log_class:
+                                                with patch("skive.rip_common.RipLog") as mock_log_class:
                                                     mock_log = MagicMock()
                                                     mock_log_class.return_value = mock_log
                                                     with patch("skive.rip_tv.Prompt") as mock_prompt:

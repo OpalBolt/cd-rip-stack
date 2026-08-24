@@ -1,6 +1,5 @@
 """TV rip orchestration: season prompt, duration matching, confirm table."""
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -9,13 +8,12 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
 
-from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
-    CONFIG_DIR, build_selection, inject_profile, is_recordable, purge_junk,
-    rename_staged, resolve_titles, scan_disc, subtitle_note, rip_titles, iso2b,
-    hsize,
+    CONFIG_DIR, build_selection, inject_profile, rename_staged,
+    resolve_titles, subtitle_note, rip_titles, hsize,
 )
-from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online
+from skive.rip_common import rip_preamble
+from skive.tmdb import fetch_season
 
 console = Console()
 
@@ -414,65 +412,13 @@ def rip_tv(args) -> None:
     Raises:
         SystemExit: On any error or user abort
     """
-    # Environment
-    nfs_videos = os.environ.get("NFS_VIDEOS", "")
-    videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
-
-    # Mount staging dirs
-    ensure_mounted(videos_mnt, nfs_videos)
-    stage_tv = Path(videos_mnt) / "rip" / "tv"
-    stage_movie = Path(videos_mnt) / "rip" / "movies"
-    stage_tv.mkdir(parents=True, exist_ok=True)
-    stage_movie.mkdir(parents=True, exist_ok=True)
-
-    # RipLog
-    log = RipLog("skive rip tv", "makemkvcon", "-")
-    log.start()
-
-    minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-
-    # Burned-media gate (one info scan reused for the menu + media check)
-    media, titles_full = scan_disc(minlength)
-    if not media:
-        print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
-        sys.exit(1)
-
-    if is_recordable(media):
-        if args.verified:
-            log.note("media", f"recordable media ({media}) — override by --verified")
-        else:
-            print(f"skive: RECORDABLE media in the drive ({media}) — this looks like a burned copy, not a", file=sys.stderr)
-            print("  pressed original (thrift-store discs are often bootlegs). check the disc by eye: burns", file=sys.stderr)
-            print("  have purple/green/blue dye and often a stick-on or inkjet label; originals are silver", file=sys.stderr)
-            print("  with printed artwork. genuinely-original recordable releases exist (e.g. Warner Archive", file=sys.stderr)
-            print("  DVD-R) — if you verify it is one, re-run with --verified.", file=sys.stderr)
-            sys.exit(1)
-    else:
-        log.note("media", f"media={media}")
-
-    # Purge junk from both staging dirs
-    purge_junk([stage_tv, stage_movie])
-
-    # Online gate + TMDB_API_KEY check
-    require_online()
-
-    # Resolve the show
-    if args.tmdbid:
-        try:
-            kind, tmdb_id = parse_tmdbid(args.tmdbid, "tv")
-            pick = fetch_by_id(kind, tmdb_id)
-        except (ValueError, RuntimeError) as e:
-            print(f"skive: TMDB resolve failed: {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        pick = search_loop("tv")
-
-    # Display name
-    display = pick.title
-    if pick.year and pick.year != "-":
-        display = f"{pick.title} ({pick.year})"
-    display = sanitize(display)
-    log.name = display
+    preamble = rip_preamble("tv", "skive rip tv", args)
+    log = preamble.log
+    pick = preamble.pick
+    display = preamble.display
+    titles_full = preamble.titles_full
+    stage_tv = preamble.stage_tv
+    minlength = preamble.minlength
 
     # --extras: no season, no scan, no table
     if args.extras:
@@ -600,10 +546,7 @@ def rip_tv(args) -> None:
             apply_fixes(assignment, [t for t, _, _ in titles_info], staged, ans, max_ep, title_to_eps)
 
     # Selection string + profile injection
-    if pick.original_language and pick.original_language != "-":
-        keep = iso2b(pick.original_language)
-    else:
-        keep = ""
+    keep = preamble.keep
     sel = build_selection(keep)
     log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
 
