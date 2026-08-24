@@ -33,3 +33,8 @@ HandBreakCLI-help.txt
 
 # local agent config
 .env
+
+# python
+.venv/
+.pytest_cache/
+__pycache__/

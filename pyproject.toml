@@ -1,0 +1,15 @@
+[project]
+name = "skive"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["rich"]
+
+[project.scripts]
+skive = "skive.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest"]
