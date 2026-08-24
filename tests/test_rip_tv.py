@@ -341,15 +341,15 @@ def test_extras_flow():
     assert call_kwargs.get("suffix") == "e"
 
 
-def test_no_runtimes_sequential_fallback():
-    """Test sequential fallback when TMDB has no runtimes."""
+def test_no_runtimes_sequential_fallback_rips_only_confirmed_titles():
+    """Sequential fallback rips only requested titles that survived the scan."""
     from unittest.mock import MagicMock, patch
     from skive.tmdb import TMDBPick
     from rich.prompt import Prompt
 
     @dataclass
     class FakeArgs:
-        titles = "all"
+        titles = "0,2"
         extras = False
         tmdbid = None
         verified = True
@@ -370,7 +370,7 @@ def test_no_runtimes_sequential_fallback():
                         with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
                             with patch("skive.rip_tv.staged_eps", return_value=set()):
                                 with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_tv.RipLog") as mock_log_class:
@@ -384,7 +384,8 @@ def test_no_runtimes_sequential_fallback():
                                                         except SystemExit as e:
                                                             pass
 
-    # Verify rename_tv was called - sequential assignment happened
+    # Title 2 was requested but absent from the confirmed scan, so it must not be ripped.
+    assert mock_rip_titles.call_args.args[0] == [0]
     mock_rename_tv.assert_called()
 
 

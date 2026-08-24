@@ -611,7 +611,9 @@ def rip_tv(args) -> None:
     try:
         # Rip phase
         log.phase("rip")
-        worst_rc = rip_titles(user_titles, profile_path, minlength, season_dir)
+        # Explicit -T selections may include titles filtered from the confirmed scan.
+        rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
+        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir)
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
