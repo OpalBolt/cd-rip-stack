@@ -17,6 +17,7 @@ from skive.common import MENU, parse_titles
 
 # Port of bash constants
 BASELINE = '-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
+CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 
 def iso2b(code: str) -> str:
@@ -131,7 +132,7 @@ def inject_profile(selection: str) -> Path:
     Returns:
         Path to the temporary profile file
     """
-    profile_path = Path("config/custom.mmcp.xml")
+    profile_path = CONFIG_DIR / "custom.mmcp.xml"
     content = profile_path.read_text(encoding="utf-8")
     modified = content.replace(BASELINE, selection)
 

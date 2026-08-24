@@ -38,14 +38,9 @@ def test_build_selection_dup_guard():
     assert "dan" in sel and "eng" in sel
 
 
-def test_inject_profile(tmp_path):
-    """Test profile injection replaces BASELINE everywhere."""
-    profile = tmp_path / "custom.mmcp.xml"
-    profile.write_text(
-        '<defaultSelection>-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo</defaultSelection>\n'
-        '<other>-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo</other>'
-    )
-
+def test_inject_profile(tmp_path, monkeypatch):
+    """Test profile injection replaces BASELINE outside the repo directory."""
+    monkeypatch.chdir(tmp_path)
     new_sel = "-sel:all,+sel:(jpn|dan|eng|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo"
     tmp_profile = inject_profile(new_sel)
 

@@ -11,8 +11,9 @@ from rich.table import Table
 
 from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
-    build_selection, inject_profile, is_recordable, purge_junk, rename_staged,
-    resolve_titles, scan_disc, subtitle_note, rip_titles, iso2b, hsize,
+    CONFIG_DIR, build_selection, inject_profile, is_recordable, purge_junk,
+    rename_staged, resolve_titles, scan_disc, subtitle_note, rip_titles, iso2b,
+    hsize,
 )
 from skive.tmdb import fetch_by_id, fetch_season, parse_tmdbid, search_loop, require_online
 
@@ -478,7 +479,7 @@ def rip_tv(args) -> None:
         log.note("type", "type=tv extras")
         titles = resolve_titles(args.titles, titles_full)
         log.phase("rip")
-        worst_rc = rip_titles(titles, Path("config/custom.mmcp.xml"), minlength, stage_tv)
+        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv)
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
