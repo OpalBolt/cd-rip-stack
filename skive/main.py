@@ -1,12 +1,6 @@
 """skive main entry point — argparse dispatch for rip movie|tv|music, tag, sync-sd."""
 
 import argparse
-import sys
-
-
-def not_implemented(subcommand: str) -> None:
-    print(f"{subcommand}: not implemented yet", file=sys.stderr)
-    sys.exit(2)
 
 
 def cmd_rip_movie(args):
@@ -30,7 +24,8 @@ def cmd_tag(args):
 
 
 def cmd_sync_sd(args):
-    not_implemented("sync-sd")
+    from skive.sync_sd import sync_sd
+    sync_sd(args)
 
 
 def main() -> None:
