@@ -43,8 +43,9 @@ class TestParseTitles:
             skive.common.parse_titles("3-")
 
     def test_range_start_gt_end(self):
-        with pytest.raises(ValueError, match="invalid range.*start > end"):
+        with pytest.raises(ValueError) as exc_info:
             skive.common.parse_titles("5-2")
+        assert str(exc_info.value) == "invalid range 5-2: start > end"
 
 
 class TestSanitize:

@@ -162,11 +162,11 @@ def parse_titles(spec: str) -> list[int] | None:
                 start, end = part.split("-", 1)
                 start_int = int(start.strip())
                 end_int = int(end.strip())
-                if start_int > end_int:
-                    raise ValueError(f"invalid range {part}: start > end")
-                titles.update(range(start_int, end_int + 1))
             except ValueError as e:
                 raise ValueError(f"invalid range '{part}': {e}")
+            if start_int > end_int:
+                raise ValueError(f"invalid range {part}: start > end")
+            titles.update(range(start_int, end_int + 1))
         else:
             # Single N
             try:
