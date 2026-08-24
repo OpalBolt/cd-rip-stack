@@ -3,6 +3,7 @@
 import os
 import subprocess
 import tempfile
+import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
@@ -77,6 +78,39 @@ def test_multiple_releases_prompts(tmp_path):
         (("100", ["-N"], rip_dir),),
         (("100", ["-R", "2", "-N"], rip_dir),),
     ]
+
+
+def test_require_online_uses_stdlib_head_probe():
+    """Test MusicBrainz connectivity uses urllib with a five-second timeout."""
+    response = MagicMock()
+
+    with patch("urllib.request.urlopen", return_value=response) as mock_urlopen:
+        require_online()
+
+    request = mock_urlopen.call_args.args[0]
+    assert request.full_url == "https://musicbrainz.org/"
+    assert request.get_method() == "HEAD"
+    assert mock_urlopen.call_args.kwargs["timeout"] == 5
+
+
+def test_require_online_accepts_http_error_response():
+    """Test any MusicBrainz HTTP response counts as online."""
+    error = urllib.error.HTTPError(
+        "https://musicbrainz.org/", 503, "unavailable", {}, None
+    )
+
+    with patch("urllib.request.urlopen", side_effect=error):
+        require_online()
+
+
+def test_require_online_exits_on_network_failure(capsys):
+    """Test MusicBrainz network failure exits as offline."""
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+        with pytest.raises(SystemExit) as exc:
+            require_online()
+
+    assert exc.value.code == 1
+    assert capsys.readouterr().err == "skive: MusicBrainz is unreachable\n"
 
 
 def test_online_gate_skipped_with_minus_N():

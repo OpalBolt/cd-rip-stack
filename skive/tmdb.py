@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -24,6 +25,13 @@ class TMDBPick:
     id: str  # TMDB id as string
 
 
+def _api_key() -> str:
+    api_key = os.environ.get("TMDB_API_KEY")
+    if not api_key:
+        raise ValueError("no $TMDB_API_KEY in env")
+    return api_key
+
+
 def _http_get_json(url: str, timeout: int = 15) -> dict:
     """Fetch JSON from a URL, return parsed dict. Raises on failure."""
     req = urllib.request.Request(url)
@@ -33,14 +41,18 @@ def _http_get_json(url: str, timeout: int = 15) -> dict:
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status}")
             return json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        raise RuntimeError(f"TMDB request failed: {e}") from e
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError) as e:
+        message = str(e)
+        if api_key := os.environ.get("TMDB_API_KEY"):
+            message = message.replace(api_key, "***")
+        raise RuntimeError(f"TMDB request failed: {message}") from e
 
 
 def require_online() -> None:
     """Probe TMDB API; exit if offline."""
-    api_key = os.environ.get("TMDB_API_KEY")
-    if not api_key:
+    try:
+        api_key = _api_key()
+    except ValueError:
         print("skive: no $TMDB_API_KEY in env — set it and re-run.", file=sys.stderr)
         sys.exit(1)
 
@@ -116,9 +128,7 @@ def fetch_by_id(type_: str, id_: str) -> TMDBPick:
         RuntimeError: On API failure
         ValueError: On bad id
     """
-    api_key = os.environ.get("TMDB_API_KEY")
-    if not api_key:
-        raise ValueError("no $TMDB_API_KEY in env")
+    api_key = _api_key()
 
     url = f"https://api.themoviedb.org/3/{type_}/{id_}?api_key={api_key}"
     try:
@@ -150,8 +160,9 @@ def search_loop(kind: str) -> TMDBPick:
     Raises:
         SystemExit: On 'q' or unrecoverable error
     """
-    api_key = os.environ.get("TMDB_API_KEY")
-    if not api_key:
+    try:
+        api_key = _api_key()
+    except ValueError:
         print("skive: no $TMDB_API_KEY in env — set it and re-run.", file=sys.stderr)
         sys.exit(1)
 
@@ -239,9 +250,7 @@ def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:
     Raises:
         RuntimeError: On API failure
     """
-    api_key = os.environ.get("TMDB_API_KEY")
-    if not api_key:
-        raise ValueError("no $TMDB_API_KEY in env")
+    api_key = _api_key()
 
     url = f"https://api.themoviedb.org/3/tv/{tv_id}/season/{season}?api_key={api_key}"
     try:

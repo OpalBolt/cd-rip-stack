@@ -3,6 +3,8 @@
 import os
 import sys
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from rich.prompt import Prompt
@@ -136,15 +138,12 @@ def _metaflac_tag(flac: Path, tag: str) -> str:
 
 def require_online() -> None:
     """Probe MusicBrainz; exit if offline."""
+    request = urllib.request.Request("https://musicbrainz.org/", method="HEAD")
     try:
-        result = subprocess.run(
-            ["curl", "-sS", "--max-time", "5", "https://musicbrainz.org/"],
-            capture_output=True
-        )
-    except FileNotFoundError:
-        print("skive: curl not found — cannot check MusicBrainz connectivity", file=sys.stderr)
-        sys.exit(1)
-
-    if result.returncode != 0:
+        with urllib.request.urlopen(request, timeout=5):
+            pass
+    except urllib.error.HTTPError as e:
+        e.close()
+    except (urllib.error.URLError, TimeoutError, OSError):
         print("skive: MusicBrainz is unreachable", file=sys.stderr)
         sys.exit(1)

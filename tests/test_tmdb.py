@@ -2,7 +2,10 @@
 
 import json
 import os
+import urllib.error
 from unittest.mock import Mock, patch, MagicMock
+
+import pytest
 
 from skive.tmdb import (
     _http_get_json, fetch_by_id, parse_tmdbid, require_online, search_loop,
@@ -28,14 +31,24 @@ def test_http_get_json_success():
         assert result == {"key": "value"}
 
 
-def test_http_get_json_failure():
-    """Test _http_get_json on HTTP error."""
-    with patch("urllib.request.urlopen", side_effect=RuntimeError("network error")):
-        try:
+def test_http_get_json_failure_scrubs_api_key():
+    """Test _http_get_json scrubs the API key from network errors."""
+    error = urllib.error.URLError("https://example.com?api_key=secret")
+    with patch.dict(os.environ, {"TMDB_API_KEY": "secret"}, clear=False):
+        with patch("urllib.request.urlopen", side_effect=error):
+            with pytest.raises(RuntimeError) as exc:
+                _http_get_json("https://example.com?api_key=secret")
+
+    assert "TMDB request failed" in str(exc.value)
+    assert "secret" not in str(exc.value)
+    assert "api_key=***" in str(exc.value)
+
+
+def test_http_get_json_does_not_wrap_unexpected_errors():
+    """Test _http_get_json only wraps expected request and decoding errors."""
+    with patch("urllib.request.urlopen", side_effect=RuntimeError("unexpected")):
+        with pytest.raises(RuntimeError, match="^unexpected$"):
             _http_get_json("http://example.com")
-            assert False, "Should have raised RuntimeError"
-        except RuntimeError as e:
-            assert "TMDB request failed" in str(e)
 
 
 def test_parse_tmdbid_bare():
