@@ -49,26 +49,17 @@ def rip_music(args) -> None:
     log.phase("rip")
 
     # Run cyanrip with tee-like capture
-    cap_path = Path("/tmp/skive-cyanrip-cap.txt")
-    rc = 0
-    try:
-        # First run
-        rc = _cyanrip_run(args.offset, flags, rip_dir, cap_path)
+    rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir)
 
-        # Handle "Multiple releases found"
-        if rc != 0 and cap_path.exists():
-            cap_text = cap_path.read_text()
-            if "Multiple releases found" in cap_text:
-                choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
-                if choice:
-                    # Re-run with -R <choice>
-                    rc = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, cap_path)
-                else:
-                    print("skive: aborting", file=sys.stderr)
-                    rc = 1
-    finally:
-        if cap_path.exists():
-            cap_path.unlink(missing_ok=True)
+    # Handle "Multiple releases found"
+    if rc != 0 and "Multiple releases found" in cap_text:
+        choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
+        if choice:
+            # Re-run with -R <choice>
+            rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir)
+        else:
+            print("skive: aborting", file=sys.stderr)
+            rc = 1
 
     log.phase_end()
 
@@ -80,26 +71,25 @@ def rip_music(args) -> None:
     sys.exit(rc)
 
 
-def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, cap_path: Path) -> int:
-    """Run cyanrip with output captured and streamed to stdout."""
+def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path) -> tuple[int, str]:
+    """Run cyanrip with merged output captured and streamed to stdout."""
     cmd = ["cyanrip", "-s", offset] + flags
-
-    # Spawn subprocess with output captured
-    result = subprocess.run(
+    process = subprocess.Popen(
         cmd,
         cwd=rip_dir,
-        capture_output=True,
-        text=True
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
 
-    # Stream output to stdout
-    print(result.stdout, end="")
-    print(result.stderr, end="", file=sys.stderr)
+    captured = []
+    if process.stdout is not None:
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            captured.append(line)
 
-    # Capture to file for analysis
-    cap_path.write_text(result.stdout + result.stderr)
-
-    return result.returncode
+    return process.wait(), "".join(captured)
 
 
 def _newest_flac_album(rip_dir: Path) -> str:

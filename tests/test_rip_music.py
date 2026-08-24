@@ -1,6 +1,7 @@
 """Tests for rip_music.py — no network, no drive, no cyanrip, stub everything."""
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
@@ -28,57 +29,54 @@ def test_cyanrip_run_cmdline():
     """Test cyanrip command line includes offset and flags."""
     with tempfile.TemporaryDirectory() as tmpdir:
         rip_dir = Path(tmpdir)
-        cap_path = Path(tmpdir) / "cap.txt"
+        process = Mock(stdout=iter(()))
+        process.wait.return_value = 0
 
-        mock_result = Mock(returncode=0, stdout="", stderr="")
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            _cyanrip_run("100", ["-N"], rip_dir, cap_path)
+        with patch("subprocess.Popen", return_value=process) as mock_popen:
+            rc, captured = _cyanrip_run("100", ["-N"], rip_dir)
 
-            cmd = mock_run.call_args[0][0]
-            assert "cyanrip" in cmd
-            assert "-s" in cmd
-            assert "100" in cmd
-            assert "-N" in cmd
-            assert rip_dir == mock_run.call_args[1]["cwd"]
-
-            assert cap_path.exists()
+            cmd = mock_popen.call_args[0][0]
+            assert cmd == ["cyanrip", "-s", "100", "-N"]
+            assert rip_dir == mock_popen.call_args[1]["cwd"]
+            assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT
+            assert (rc, captured) == (0, "")
 
 
-def test_cyanrip_run_captures_output():
-    """Test cyanrip output is captured."""
+def test_cyanrip_run_captures_and_streams_output(capsys):
+    """Test cyanrip output is captured and streamed."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        rip_dir = Path(tmpdir)
-        cap_path = Path(tmpdir) / "cap.txt"
+        process = Mock(stdout=iter(["Ripping track 1\n", "Rip complete\n"]))
+        process.wait.return_value = 0
 
-        mock_result = Mock(returncode=0, stdout="Rip complete\n", stderr="")
-        with patch("subprocess.run", return_value=mock_result):
-            _cyanrip_run("100", [], rip_dir, cap_path)
-            cap = cap_path.read_text()
-            assert "Rip complete" in cap
+        with patch("subprocess.Popen", return_value=process):
+            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+
+        assert rc == 0
+        assert captured == "Ripping track 1\nRip complete\n"
+        assert capsys.readouterr().out == captured
 
 
-def test_multiple_releases_prompts():
+def test_multiple_releases_prompts(tmp_path):
     """Test 'Multiple releases found' prompts and re-runs with -R."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        rip_dir = Path(tmpdir)
-        cap_path = Path(tmpdir) / "cap.txt"
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
 
-        # Mock first run to return rc=1 with the message
-        mock_run = Mock()
-        first_result = Mock(returncode=1, stdout="Multiple releases found\n", stderr="")
-        second_result = Mock(returncode=0, stdout="Rip complete\n", stderr="")
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.RipLog"), \
+            patch("skive.rip_music._newest_flac_album", return_value="-"), \
+            patch("skive.rip_music.Prompt.ask", return_value="2"), \
+            patch("skive.rip_music._cyanrip_run", side_effect=[
+                (1, "Multiple releases found\n"),
+                (0, "Rip complete\n"),
+            ]) as mock_run:
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
 
-        mock_run.side_effect = [first_result, second_result]
-
-        with patch("subprocess.run", return_value=first_result):
-            # Simulate the prompt logic directly
-            cap_path.write_text("Multiple releases found\n")
-            choice = "2"
-            if choice:
-                # Re-run with -R
-                result = _cyanrip_run("100", [f"-R{choice}"], rip_dir, cap_path)
-                # Check the command was built correctly
-                pass
+    assert exc.value.code == 0
+    rip_dir = tmp_path / "rip"
+    assert mock_run.call_args_list == [
+        (("100", ["-N"], rip_dir),),
+        (("100", ["-R", "2", "-N"], rip_dir),),
+    ]
 
 
 def test_online_gate_skipped_with_minus_N():
@@ -87,7 +85,7 @@ def test_online_gate_skipped_with_minus_N():
         args = FakeArgs(offset="100", cyanrip_flags=["-N"])
 
         with patch("skive.rip_music.require_online") as mock_require:
-            with patch("skive.rip_music._cyanrip_run", return_value=0):
+            with patch("skive.rip_music._cyanrip_run", return_value=(0, "")):
                 with patch("skive.rip_music._newest_flac_album", return_value="-"):
                     try:
                         rip_music(args)
@@ -103,7 +101,7 @@ def test_online_gate_without_minus_N():
 
         with patch("skive.rip_music.ensure_mounted"):
             with patch("skive.rip_music.require_online") as mock_require:
-                with patch("skive.rip_music._cyanrip_run", return_value=0):
+                with patch("skive.rip_music._cyanrip_run", return_value=(0, "")):
                     with patch("skive.rip_music._newest_flac_album", return_value="-"):
                         with patch("skive.rip_music.RipLog"):
                             try:
