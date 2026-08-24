@@ -4,8 +4,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 # Port of bash constants
 BASELINE = '-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
@@ -262,3 +264,65 @@ def subtitle_note(stage_dir: Path, run=subprocess.run) -> str:
         return f"subs=eng langs={langs_str} (no dan)"
     else:
         return f"subs={langs_str} (no dan/eng)"
+
+
+def scan_disc(minlength: int, run=subprocess.run) -> list[tuple[int, int, int]]:
+    """Scan disc:0 with makemkvcon info, return ordered title list.
+
+    Honors MAKEMKV_INFO env var to replay a captured dump.
+    Returns list of (title_number, seconds, size_bytes) ordered by title number.
+
+    Args:
+        minlength: Minimum title length in seconds
+        run: subprocess.run callable for monkeypatching
+
+    Returns:
+        List of (title_number, seconds, size_bytes) sorted by title_number.
+        A title counts only when both duration and size are present.
+    """
+    override = os.environ.get("MAKEMKV_INFO")
+    if override:
+        result = run(override, shell=True, capture_output=True, text=True)
+        out = result.stdout
+    else:
+        cmd = ["makemkvcon", "-r", "info", f"--minlength={minlength}", "disc:0"]
+        result = run(cmd, capture_output=True, text=True)
+        out = result.stdout
+
+    # Parse TINFO lines
+    # Format: TINFO:<title>,9,"H:MM:SS" or "MM:SS" for duration
+    #         TINFO:<title>,10,"<bytes>" for size
+    titles = {}  # title -> (duration_seconds, size_bytes)
+    for line in out.splitlines():
+        m = re.match(r'^TINFO:(\d+),9,"([^"]*)"', line)
+        if m:
+            title_num = int(m.group(1))
+            time_str = m.group(2)
+            # Parse H:MM:SS or MM:SS
+            if time_str:
+                parts = time_str.split(":")
+                if len(parts) == 3:
+                    dur = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                else:  # len == 2
+                    dur = int(parts[0]) * 60 + int(parts[1])
+            else:
+                dur = 0
+            if title_num in titles:
+                titles[title_num] = (dur, titles[title_num][1])
+            else:
+                titles[title_num] = (dur, 0)
+        else:
+            m = re.match(r'^TINFO:(\d+),10,"([^"]*)"', line)
+            if m:
+                title_num = int(m.group(1))
+                size_str = m.group(2)
+                size = int(size_str) if size_str.isdigit() else 0
+                if title_num in titles:
+                    titles[title_num] = (titles[title_num][0], size)
+                else:
+                    titles[title_num] = (0, size)
+
+    # Filter to titles with both duration and size
+    result_list = [(t, dur, sz) for t, (dur, sz) in titles.items() if dur > 0 and sz > 0]
+    result_list.sort(key=lambda x: x[0])  # Sort by title number
+    return result_list

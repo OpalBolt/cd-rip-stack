@@ -223,3 +223,40 @@ def search_loop(kind: str) -> TMDBPick:
                     print(f"skive: pick 1-{len(results[:5])}", file=sys.stderr)
             except ValueError:
                 print(f"skive: invalid choice '{pick_str}'", file=sys.stderr)
+
+
+def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:
+    """Fetch a TV season's episodes from TMDB.
+
+    Args:
+        tv_id: TMDB TV show id
+        season: Season number (0 for specials)
+
+    Returns:
+        List of (episode_number, name, runtime_minutes) sorted by episode_number.
+        Episodes with no runtime are included with runtime=0.
+
+    Raises:
+        RuntimeError: On API failure
+    """
+    api_key = os.environ.get("TMDB_API_KEY")
+    if not api_key:
+        raise ValueError("no $TMDB_API_KEY in env")
+
+    url = f"https://api.themoviedb.org/3/tv/{tv_id}/season/{season}?api_key={api_key}"
+    try:
+        data = _http_get_json(url)
+    except RuntimeError as e:
+        raise RuntimeError(f"TMDB season fetch failed (tv/{tv_id}/season/{season}): {e}") from e
+
+    episodes: list[tuple[int, str, int]] = []
+    for ep in data.get("episodes", []):
+        ep_num = ep.get("episode_number")
+        name = ep.get("name", "")
+        runtime = ep.get("runtime") or 0
+        if ep_num is not None:
+            episodes.append((ep_num, name, runtime))
+
+    # Sort by episode_number
+    episodes.sort(key=lambda x: x[0])
+    return episodes

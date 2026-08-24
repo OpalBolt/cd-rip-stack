@@ -15,7 +15,8 @@ def cmd_rip_movie(args):
 
 
 def cmd_rip_tv(args):
-    not_implemented("rip tv")
+    from skive.rip_tv import rip_tv
+    rip_tv(args)
 
 
 def cmd_rip_music(args):
