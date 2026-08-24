@@ -1,4 +1,4 @@
-"""Common helpers ported from the bash helpers."""
+"""Common helpers: title-spec parser, NFS mount-on-demand, rip.log via loguru."""
 
 import subprocess
 import sys
@@ -8,85 +8,84 @@ from pathlib import Path
 
 from loguru import logger
 
-# Drop loguru's default stderr sink: 8-col rip.log lines belong only in their
-# per-instance file sink. Notes tee to stderr through the shared WARNING sink
-# (callable sink resolves sys.stderr at write time, so capsys/redirects work).
+# The 8-column rip.log contract, expressed as a loguru format string. loguru
+# lays out the columns (double-space separated); callers only supply values.
+_FMT = ("{extra[start]}  {extra[end]}  {extra[script]}  {extra[software]}  "
+        "{extra[name]}  {extra[phase]}  {extra[elapsed]}  {extra[status]}")
+
+# One logger, two sinks: INFO lines go to the per-instance rip.log file (added
+# by RipLog), WARNING lines (notes) also tee to stderr. The stderr sink is a
+# callable so sys.stderr is resolved at write time — capsys and other
+# redirects still capture the tee.
 logger.remove()
-logger.add(lambda m: sys.stderr.write(m), format="{message}",
-           filter=lambda r: r["level"].name == "WARNING")
+logger.add(lambda m: sys.stderr.write(str(m)), format=_FMT, level="WARNING",
+           filter=lambda r: "riplog" in r["extra"])
+
+
+def _elapsed(seconds: int) -> str:
+    """The m:ss column, e.g. 270 -> '4m30'."""
+    return f"{seconds // 60}m{seconds % 60:02d}"
 
 
 class RipLog:
-    """8-column rip.log: start end script software name phase m:ss status
+    """Writes the 8-column rip.log.
 
-    Emitted through loguru: each instance gets its own tagged file sink
-    (format="{message}" keeps the bytes identical), notes also tee to stderr.
+    loguru owns the layout (_FMT) and the routing (INFO -> file, WARNING ->
+    file + stderr). This class only holds what loguru does not: the run/phase
+    clock readings, the phase count, and the total-on-exit rule.
     """
 
-    def __init__(self, script: str, software: str, name: str = "", path: str = "rip.log", now=None):
-        self.script = script
-        self.software = software
-        self.name = name
-        self.path = Path(path)
+    def __init__(self, script, software, name="", path="rip.log", now=None):
         self._now = now or datetime.now
+        self.name = name  # mutable: callers assign it mid-run (e.g. the title)
         self._tag = uuid.uuid4().hex
-        self._log = logger.bind(riplog=self._tag)
-        # per-instance file sink; the tag filter keeps parallel instances apart
-        logger.add(
-            self.path,
-            format="{message}",
-            encoding="utf-8",
-            delay=True,
-            filter=lambda record: record["extra"].get("riplog") == self._tag,
-        )
-        self._start = None
-        self._start_ts = None
+        self._log = logger.bind(riplog=self._tag, script=script, software=software)
+        # per-instance file sink; the tag keeps parallel instances from crossing
+        logger.add(str(path), format=_FMT, encoding="utf-8", level="INFO",
+                   filter=lambda r: r["extra"].get("riplog") == self._tag)
+        self._start = self._start_ts = None
         self._phases = 0
-        self._phase_start = None
         self._phase_name = None
-        self._phase_start_ts = None
+        self._phase_start = self._phase_start_ts = None
 
-    def _emit(self, start_ts: str, end_ts: str, phase: str, minutes: int, seconds: int, status: str) -> None:
-        line = f"{start_ts}  {end_ts}  {self.script}  {self.software}  {self.name}  {phase}  {minutes}m{seconds:02d}  {status}"
-        self._log.info(line)
+    def _emit(self, start, end, phase, elapsed, status):
+        self._log.bind(name=self.name, start=start, end=end, phase=phase,
+                       elapsed=elapsed, status=status).info("")
 
-    def start(self) -> None:
+    def start(self):
         """Log the immediate 'started' marker line."""
         self._start = self._now()
         self._start_ts = self._start.strftime("%F %T")
-        self._emit(self._start_ts, "-", "-", 0, 0, "started")
+        self._emit(self._start_ts, "-", "-", "0m00", "started")
 
-    def phase(self, name: str) -> None:
+    def phase(self, name):
         """Begin a named phase."""
         self._phase_name = name
         self._phase_start = self._now()
         self._phase_start_ts = self._phase_start.strftime("%F %T")
 
-    def phase_end(self) -> None:
+    def phase_end(self):
         """Log the just-finished phase."""
-        end_ts = self._now()
-        elapsed = int((end_ts - self._phase_start).total_seconds())
+        end = self._now()
         self._phases += 1
-        self._emit(self._phase_start_ts, end_ts.strftime("%F %T"), self._phase_name,
-                  elapsed // 60, elapsed % 60, "ok")
+        self._emit(self._phase_start_ts, end.strftime("%F %T"), self._phase_name,
+                   _elapsed(int((end - self._phase_start).total_seconds())), "ok")
 
-    def note(self, phase: str, text: str) -> None:
+    def note(self, phase, text):
         """Log an untimed note line (end and m:ss are '-'); tees to stderr."""
-        ts = self._now().strftime("%F %T")
-        line = f"{ts}  -  {self.script}  {self.software}  {self.name}  {phase}  -  {text}"
-        self._log.warning(line)
+        self._log.bind(name=self.name, start=self._now().strftime("%F %T"),
+                       end="-", phase=phase, elapsed="-", status=text).warning("")
 
-    def finish(self, rc: int) -> None:
+    def finish(self, rc):
         """Log the total line, skipped when rc==0 and exactly one phase succeeded."""
-        # one phase that succeeded already logged start..end..status — the total would
-        # duplicate it. skip it.
+        # a lone successful phase already logged start..end..status — the total
+        # would duplicate it. skip it.
         if rc == 0 and self._phases == 1:
             return
-        end_ts = self._now()
-        elapsed = int((end_ts - self._start).total_seconds())
+        end = self._now()
         status = "ok" if rc == 0 else f"FAIL({rc})"
-        self._emit(self._start_ts, end_ts.strftime("%F %T"), "total",
-                  elapsed // 60, elapsed % 60, status)
+        self._emit(self._start_ts, end.strftime("%F %T"), "total",
+                   _elapsed(int((end - self._start).total_seconds())), status)
 
 
 def ensure_mounted(mnt: str, export: str) -> None:
