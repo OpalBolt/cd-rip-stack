@@ -225,7 +225,7 @@ def test_naming_extras_rolling():
         stage = Path(tmpdir)
 
         # Existing extra
-        (stage / "Show (2000)_e01.mkv").touch()
+        (stage / "Show (2000) - Extra 01.mkv").touch()
 
         # New junk file
         (stage / "D1_t02.mkv").touch()
@@ -234,8 +234,8 @@ def test_naming_extras_rolling():
 
         rename_tv("Show (2000)", stage, 1, assignment)
 
-        # Should create e02 (rolling past e01)
-        assert (stage / "Show (2000)_e02.mkv").exists()
+        # Should create Extra 02 (rolling past Extra 01)
+        assert (stage / "Show (2000) - Extra 02.mkv").exists()
 
 
 def test_naming_no_clobber():

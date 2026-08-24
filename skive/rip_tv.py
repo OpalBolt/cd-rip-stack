@@ -358,7 +358,7 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
 def rename_tv(display: str, stage_dir: Path, season: int, assignment: dict[int, tuple[int, int]]) -> None:
     """Rename staged files per the episode map.
 
-    Junk-labeled titles become <display>_SNNENN[-ENNN].mkv or <display>_eNN.mkv.
+    Junk-labeled titles become <display>_SNNENN[-ENNN].mkv or <display> - Extra NN.mkv.
     Never clobbers existing targets.
 
     Args:
@@ -385,11 +385,11 @@ def rename_tv(display: str, stage_dir: Path, season: int, assignment: dict[int, 
 
         lo, hi = lohi
         if lo == 0:
-            # Extra - roll _eNN past existing
+            # Extra - roll "Extra NN" past existing
             m_val = 1
-            while (stage_dir / f"{display}_e{m_val:02d}.mkv").exists():
+            while (stage_dir / f"{display} - Extra {m_val:02d}.mkv").exists():
                 m_val += 1
-            target = stage_dir / f"{display}_e{m_val:02d}.mkv"
+            target = stage_dir / f"{display} - Extra {m_val:02d}.mkv"
         elif lo == hi:
             # Single episode
             target_name = f"{display}_S{season_str}E{lo:02d}.mkv"

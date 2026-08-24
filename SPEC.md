@@ -50,7 +50,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
 5. **Scan and rip at the same minlength** — `--minlength=120` (configurable via `RIP_MINLENGTH`). MakeMKV renumbers titles by what survives the scan, so the table and the rip must see the same disc.
 6. **Profile injection** — `custom.mmcp.xml` ships a BASELINE selection string. `skive` copies the profile, replaces the BASELINE with the per-movie language list (original-language audio plus Danish and English subtitles), and passes the copy to `makemkvcon`.
 7. **Rip loop** — one `makemkvcon` call per title. A failed title must not kill the run: collect the worst return code, always rename, exit with it at the end.
-8. **Rename** — junk labels become `<Name (Year)>_tNN[.pN].mkv` (titles), `_eNN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
+8. **Rename** — junk labels become `<Name (Year)>_tNN[.pN].mkv` (titles), `<Name (Year)> - Extra NN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
 9. **Subtitle note** — after the rip, `ffprobe` reads which subtitle languages landed in the staged MKVs. The note goes to stderr and `rip.log`.
 10. **`rip.log`** — the same 8 columns as today (`start end script software name phase m:ss status`), one line per phase, a total line on exit. Simple and resilient.
 
@@ -67,7 +67,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
    - A title with no claim becomes an extra.
 5. **Confirm table** — printed in title-number order. Enter rips as proposed. Fix rows (`3=7`, `1=1-2`, `2=e`) re-point one title at a time, apply left-to-right, clash-checked; a rejected row changes nothing and the table re-prints. `q` aborts before the drive spins.
 6. **Sequential fallback** — only when TMDB gives zero runtimes: ask the first episode number, number titles in order.
-7. **`--extras`** — a bonus disc: no season, no table. Rips straight into the TV staging dir as `_eNN`, rolling past existing extras; a bare `-T` opens the title menu first (the only scan on this path). An aired special is not an extra; it is a season 0 episode through the normal branch.
+7. **`--extras`** — a bonus disc: no season, no table. Rips straight into the TV staging dir as `<Show (Year)> - Extra NN`, rolling past existing extras; a bare `-T` opens the title menu first (the only scan on this path). An aired special is not an extra; it is a season 0 episode through the normal branch.
 
 The matcher self-tests port to pytest with the same fixtures: greedy order, nearest single, double-beats-single, 21:30-takes-single, leftovers become extras, featurette-too-far, staged exclusion.
 

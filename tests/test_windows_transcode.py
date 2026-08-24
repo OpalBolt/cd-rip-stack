@@ -102,8 +102,8 @@ def test_scenario1_end_to_end_movie_batch(env, capsys):
     mk(vid, "rip/Bar (2002)_t01.p1.mkv", "BAR-P1-BYTES-BYTES-BYTES-BYTES")
     mk(vid, "rip/Bar (2002)_t01.p2.mkv", "BAR-P2-BYTES-BYTES-BYTES-BYTES-BYTES-BYTES")
     mk(vid, "rip/Bar (2002)_t02.mkv", "BAR-EXTRA")
-    mk(vid, "rip/Baz Extras (2003)_e00.mkv", "BAZ-E0")
-    mk(vid, "rip/Baz Extras (2003)_e02.mkv", "BAZ-E2")
+    mk(vid, "rip/Baz Extras (2003) - Extra 00.mkv", "BAZ-E0")
+    mk(vid, "rip/Baz Extras (2003) - Extra 02.mkv", "BAZ-E2")
     mk(vid, "rip/B1_t00.mkv", "JUNK-MIDRIP")
     mk(vid, "rip/Failme (1999)_t00.mkv", "FAILME")
     mk(vid, "rip/Qux (2004)_t00.mkv", "QUX-MAIN")
@@ -119,8 +119,8 @@ def test_scenario1_end_to_end_movie_batch(env, capsys):
     assert (L / "Foo (2001)" / "extras" / "Foo (2001)_t01.mkv").read_text() == "FOO-EXTRA"
     assert (L / "Bar (2002)" / "extras" / "Bar (2002)_t00.mkv").read_text() == "BAR-DECOY"
     assert (L / "Bar (2002)" / "extras" / "Bar (2002)_t02.mkv").read_text() == "BAR-EXTRA"
-    assert (L / "Baz Extras (2003)" / "extras" / "Baz Extras (2003)_e00.mkv").read_text() == "BAZ-E0"
-    assert (L / "Baz Extras (2003)" / "extras" / "Baz Extras (2003)_e02.mkv").read_text() == "BAZ-E2"
+    assert (L / "Baz Extras (2003)" / "extras" / "Baz Extras (2003) - Extra 00.mkv").read_text() == "BAZ-E0"
+    assert (L / "Baz Extras (2003)" / "extras" / "Baz Extras (2003) - Extra 02.mkv").read_text() == "BAZ-E2"
     assert (L / "Qux (2004)" / "Qux (2004).mkv").read_text() == "QUX-MAIN"
     assert sorted(p.name for p in (vid / "rip").iterdir()) == ["B1_t00.mkv", "Failme (1999)_t00.mkv"]
     assert "skip (junk label" in err
@@ -141,7 +141,7 @@ def test_scenario1_end_to_end_movie_batch(env, capsys):
 def test_scenario2_keep_archive(env, capsys):
     vid = env / "vid"
     mk(vid, "rip/Keep (2005)_t00.mkv", "KEEP-MAIN")
-    mk(vid, "rip/Keep (2005)_e01.p2.mkv", "KEEP-EXTRA-P2")
+    mk(vid, "rip/Keep (2005) - Extra 01.p2.mkv", "KEEP-EXTRA-P2")
 
     rc = transcode.run_transcode(Args(keep=True))
     out = capsys.readouterr().out
@@ -149,8 +149,8 @@ def test_scenario2_keep_archive(env, capsys):
     assert rc == 0
     assert list((vid / "rip").iterdir()) == []
     assert sorted(p.name for p in (vid / "rip-DONE").iterdir()) == \
-        ["Keep (2005)_e01.p2.mkv", "Keep (2005)_t00.mkv"]
-    assert (vid / "library" / "Keep (2005)" / "extras" / "Keep (2005)_e01.p2.mkv").read_text() == "KEEP-EXTRA-P2"
+        ["Keep (2005) - Extra 01.p2.mkv", "Keep (2005)_t00.mkv"]
+    assert (vid / "library" / "Keep (2005)" / "extras" / "Keep (2005) - Extra 01.p2.mkv").read_text() == "KEEP-EXTRA-P2"
     assert "--keep: lossless sources moved to" in out
 
 
@@ -243,7 +243,7 @@ def test_scenario6_tv_seasons_specials_junk(env, capsys):
     mk(vid, "rip/TV/Show (2010)_S01E02.mkv", "TV-E02")
     mk(vid, "rip/TV/Show (2010)_S01E05-E06.mkv", "TV-DOUBLE")
     mk(vid, "rip/TV/Show (2010)_S00E01.mkv", "TV-SPECIAL")
-    mk(vid, "rip/TV/Show (2010)_e03.mkv", "TV-EXTRA")
+    mk(vid, "rip/TV/Show (2010) - Extra 03.mkv", "TV-EXTRA")
     mk(vid, "rip/TV/B1_S01E02.mkv", "TV-JUNK")
     mk(vid, "rip/Mov (2011)_t00.mkv", "MOV-MAIN")
 
@@ -255,7 +255,7 @@ def test_scenario6_tv_seasons_specials_junk(env, capsys):
     assert (TL / "Season 01" / "Show (2010) - S01E02.mkv").read_text() == "TV-E02"
     assert (TL / "Season 01" / "Show (2010) - S01E05-E06.mkv").read_text() == "TV-DOUBLE"
     assert (TL / "Specials" / "Show (2010) - S00E01.mkv").read_text() == "TV-SPECIAL"
-    assert (TL / "extras" / "Show (2010)_e03.mkv").read_text() == "TV-EXTRA"
+    assert (TL / "extras" / "Show (2010) - Extra 03.mkv").read_text() == "TV-EXTRA"
     assert (vid / "library" / "Mov (2011)" / "Mov (2011).mkv").read_text() == "MOV-MAIN"
     assert [p.name for p in (vid / "rip" / "TV").iterdir()] == ["B1_S01E02.mkv"]
     assert "skip (junk label" in err
@@ -265,15 +265,27 @@ def test_scenario6_tv_seasons_specials_junk(env, capsys):
 # -- scenario 7: TV-extras-only disc routes to the TV tree --------------------
 def test_scenario7_tv_extras_disc(env):
     vid = env / "vid"
-    mk(vid, "rip/TV/Solo Show (2012)_e04.mkv", "TVONLY-EXTRA")
+    mk(vid, "rip/TV/Solo Show (2012) - Extra 04.mkv", "TVONLY-EXTRA")
 
     rc = transcode.run_transcode(Args())
 
     assert rc == 0
     assert (vid / "library" / "TV" / "Solo Show (2012)" / "extras" /
-            "Solo Show (2012)_e04.mkv").read_text() == "TVONLY-EXTRA"
+            "Solo Show (2012) - Extra 04.mkv").read_text() == "TVONLY-EXTRA"
     assert not (vid / "library" / "Solo Show (2012)").exists()
     assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 1
+
+
+def test_legacy_eNN_extras_still_file(env):
+    """Old _eNN staged names still parse and file under extras/ (backward compat)."""
+    vid = env / "vid"
+    mk(vid, "rip/Old (2001)_e02.mkv", "OLD-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (vid / "library" / "Old (2001)" / "extras" /
+            "Old (2001) - Extra 02.mkv").read_text() == "OLD-EXTRA"
 
 
 # -- spec extras ---------------------------------------------------------------

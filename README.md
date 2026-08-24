@@ -77,8 +77,8 @@ The staging subdirectory is what tells transcode a file is TV — hence `tv/`.
 
 ```text
 /mnt/videos/
-  rip/movies/      movie staging: <Movie (Year)>_tNN.mkv, _tNN.pN.mkv (split-film half), _eNN[.pN].mkv (extras)
-  rip/tv/          TV staging: <Show (Year)>_S01E02.mkv, _S01E01-E02.mkv (double), _eNN.mkv (extras)
+  rip/movies/      movie staging: <Movie (Year)>_tNN.mkv, _tNN.pN.mkv (split-film half), <Movie (Year)> - Extra NN[.pN].mkv (extras)
+  rip/tv/          TV staging: <Show (Year)>_S01E02.mkv, _S01E01-E02.mkv (double), <Show (Year)> - Extra NN.mkv (extras)
   library/         point Jellyfin here: <Movie (Year)>/<Movie (Year)>.mkv + extras/
   library/TV/      <Show (Year)>/Season NN/<Show (Year)> - S01E02.mkv, season 0 as Specials/, plus extras/
   rip-DONE/        where transcode --keep parks lossless sources (verify, then delete)
@@ -106,7 +106,7 @@ Both `rip movie` and `rip tv` share the same behavior:
    A failed title never kills the run: the worst return code is collected and
    becomes the exit code.
 6. **Rename** — junk labels become `<Title> (Year)_tNN[.pN].mkv` (titles),
-   `_eNN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
+   `<Title> (Year) - Extra NN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
 
 `-T/--titles` takes `all` (the default), a single number, a range `N-M`, or a
 comma list like `0,5-7`. Bare `-T` (no value) opens an interactive menu to
@@ -133,9 +133,9 @@ film's original language; subtitles keep Danish when present, else English.
 - A **film split across discs** — rip each disc with `--part N`, picking the
   same movie at each prompt. Halves stage as `_tNN.pN.mkv`; transcode merges
   the main feature's parts in order into one movie.
-- An **extras disc** — rip with `--extras`. Files stage as `_eNN.mkv` and
-  file under the movie's `extras/`. A second extras disc rolls past the
-  existing numbers.
+- An **extras disc** — rip with `--extras`. Files stage as
+  `<Movie (Year)> - Extra NN.mkv` and file under the movie's `extras/`. A
+  second extras disc rolls past the existing numbers.
 
 ### rip tv
 
@@ -266,7 +266,7 @@ drive fails loudly with a `net use` hint — it never silently scans "no MKVs".
   split main's `.pN` parts sum; tie goes to the lowest number). Parts merge
   in order via `mkvmerge`, then encode as one movie into
   `library\<Movie (Year)>\<Movie (Year)>.mkv`. Extras never merge; they file
-  under the movie's `extras\` keeping their `_tNN`/`_eNN`/`.pN` names.
+  under the movie's `extras\` keeping their `_tNN`/`- Extra NN`/`.pN` names.
 - **TV**: no main feature, no merge. Episodes file as
   `library\TV\<Show (Year)>\Season NN\<Show (Year)> - S01E02.mkv`; season 00
   goes to `Specials\`; TV extras under the show's `extras\`.

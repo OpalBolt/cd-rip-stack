@@ -245,6 +245,17 @@ def test_rename_staged_skip_real():
     assert (stage / "Movie (2020)_t02.mkv").exists()
 
 
+def test_rename_staged_extras():
+    """Test rename_staged names extras as '<display> - Extra NN'."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stage = Path(tmpdir)
+        (stage / "B1_t1.mkv").touch()
+
+        rename_staged("Movie (2020)", stage, suffix="e")
+
+        assert (stage / "Movie (2020) - Extra 01.mkv").exists()
+
+
 def test_subtitle_note():
     """Test subtitle_note parses ffprobe output."""
     stage = Path("/tmp/test_sub")

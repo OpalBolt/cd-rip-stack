@@ -212,8 +212,9 @@ def looks_real(name: str) -> bool:
 
 
 def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | None = None) -> None:
-    """Rename junk-labeled .mkv files to <display>_<suffix>NN[.pN].mkv.
+    """Rename junk-labeled .mkv files.
 
+    Titles become <display>_tNN[.pN].mkv; extras become <display> - Extra NN[.pN].mkv.
     Files already matching display or looking real are untouched.
     Rolls numbers forward past existing files (never clobber).
 
@@ -238,11 +239,15 @@ def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | 
 
         # Build target name
         part_suffix = f".p{part}" if part is not None else ""
+        if suffix == "e":
+            stem, sep = f"{display} - Extra", " "
+        else:
+            stem, sep = f"{display}_{suffix}", ""
         m_val = title_num
-        while (stage_dir / f"{display}_{suffix}{m_val:02d}{part_suffix}.mkv").exists():
+        while (stage_dir / f"{stem}{sep}{m_val:02d}{part_suffix}.mkv").exists():
             m_val += 1
 
-        target = stage_dir / f"{display}_{suffix}{m_val:02d}{part_suffix}.mkv"
+        target = stage_dir / f"{stem}{sep}{m_val:02d}{part_suffix}.mkv"
         mkv.rename(target)
         print(f"skive: {cur} → {target.stem}", file=sys.stderr)
 

@@ -47,7 +47,7 @@ The biggest-bytes `_tNN` group of a staged movie. Movies only — never computed
 _Avoid_: main title
 
 **Extras**:
-Bonus features staged `_eNN[.pN].mkv`; filed under `extras/` beside the movie or show. An aired special is not an extra — it is a Season 0 episode.
+Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. An aired special is not an extra — it is a Season 0 episode.
 _Avoid_: bonus, featurette, special
 
 **Junk label**:

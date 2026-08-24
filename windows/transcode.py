@@ -25,10 +25,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-# Staged names: <Movie (Year)>_tNN[.pN].mkv (titles), _eNN[.pN].mkv (extras
-# disc), <Show (Year)>_SNNENN[-ENN].mkv (TV, incl. doubles).
+# Staged names: <Movie (Year)>_tNN[.pN].mkv (titles), <Movie (Year)> - Extra NN[.pN].mkv
+# (extras disc), <Show (Year)>_SNNENN[-ENN].mkv (TV, incl. doubles).
 _RX_TITLE = re.compile(
     r"^(?P<movie>.+)_(?P<sfx>[te])(?P<num>\d+)(?P<part>\.p(?P<pn>\d+))?\.mkv$"
+)
+_RX_EXTRA = re.compile(
+    r"^(?P<movie>.+) - Extra (?P<num>\d+)(?P<part>\.p(?P<pn>\d+))?\.mkv$"
 )
 _RX_EP = re.compile(
     r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$"
@@ -157,6 +160,12 @@ def _scan(rip_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             part = -1
             sn, en = m.group("sn"), m.group("en")
             tail = m.group("tail") or ""
+        elif (m := _RX_EXTRA.match(f.name)):
+            movie = m.group("movie")
+            sfx = "e"
+            num_str = m.group("num")
+            num = int(num_str)
+            part = int(m.group("pn")) if m.group("part") else -1
         else:
             print(f"skip (junk label -- mid-rip or failed rename): {f}", file=sys.stderr)
             continue
@@ -301,7 +310,7 @@ def run_transcode(args) -> int:
         return 0
 
     # main feature per movie = the _tNN group with the most bytes (a split
-    # main's .pN halves sum; tie -> lowest number). _eNN are never main.
+    # main's .pN halves sum; tie -> lowest number). Extras are never main.
     grp: dict[tuple[str, int], int] = {}
     for i in items:
         if i.sfx != "t" or i.is_tv:
@@ -325,7 +334,7 @@ def run_transcode(args) -> int:
             safe = sanitize(i.movie)
 
             # -- TV: no main feature, no merge. episodes -> Season NN (00 =
-            # -- Specials), _eNN -> the show's extras.
+            # -- Specials), extras -> the show's extras.
             if i.is_tv:
                 show_dir = os.path.join(lib_dir, "TV", safe)
                 if i.sfx == "S":
@@ -335,7 +344,9 @@ def run_transcode(args) -> int:
                 else:
                     ext = f".p{i.part}" if i.part >= 0 else ""
                     dest_dir = os.path.join(show_dir, "extras")
-                    dest = os.path.join(dest_dir, f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
+                    name = (f"{safe} - Extra {i.num_str}{ext}.mkv"
+                            if i.sfx == "e" else f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
+                    dest = os.path.join(dest_dir, name)
                 os.makedirs(dest_dir, exist_ok=True)
                 local_src = os.path.join(tmp_dir, i.name)
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
@@ -423,11 +434,13 @@ def run_transcode(args) -> int:
                     log.phase_end()
                 continue
 
-            # -- extras (non-main _t title, or an _e extras-disc title): as-is.
+            # -- extras (non-main _t title, or an extras-disc title): as-is.
             # the .pN suffix is kept so split-disc extras never collide.
             ext = f".p{i.part}" if i.part >= 0 else ""
             dest_dir = os.path.join(lib_dir, safe, "extras")
-            dest = os.path.join(dest_dir, f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
+            name = (f"{safe} - Extra {i.num_str}{ext}.mkv"
+                    if i.sfx == "e" else f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
+            dest = os.path.join(dest_dir, name)
             os.makedirs(dest_dir, exist_ok=True)
             local_src = os.path.join(tmp_dir, i.name)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
