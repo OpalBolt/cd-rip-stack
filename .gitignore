@@ -30,3 +30,6 @@ HandBreakCLI-help.txt
 
 # Scratchpad
 .scratch/
+
+# local agent config
+.env

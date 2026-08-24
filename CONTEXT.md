@@ -13,7 +13,7 @@ A show with seasons and episodes. Stages as `<Show (Year)>_SNNENN.mkv`; files un
 _Avoid_: series
 
 **Declared type**:
-The movie-or-TV intent stated when a rip starts. Authoritative over disc metadata, which never decides it — for a TV pick, metadata only prefills the search.
+The movie-or-TV intent, stated by invoking `rip-movie` or `rip-tv`. Authoritative over disc metadata, which never decides it — for a TV pick, metadata only prefills the search.
 _Avoid_: detected type, pick type
 
 **Disc title**:
@@ -55,4 +55,4 @@ MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; tra
 _Avoid_: label, code
 
 **Staging**:
-The `rip/` dir: finished lossless rips waiting for transcode. TV stages under `rip/TV/` — the subdirectory is what tells transcode a file is TV. A mid-rip file still wears its junk label.
+Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/movies/` or `rip/tv/` — the subdirectory is what tells transcode a file is TV. Music stages under `/mnt/music/rip/` until `tag` files it into the library. A mid-rip file still wears its junk label.
