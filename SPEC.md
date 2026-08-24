@@ -103,7 +103,7 @@ Linux never transcodes. `lib/transcode-video.sh` is dead code and goes.
 ```text
 cd-rip-stack/
 ├── mise.toml            # tools: python 3.13, uv. Nothing else — no task aliases.
-├── pyproject.toml       # deps: rich, beets, pylast, pillow, beetcamp; scripts: skive
+├── pyproject.toml       # deps: rich, beets, pylast, pillow, beetcamp, loguru; scripts: skive
 ├── README.md            # Linux setup + the Windows install spec, one document
 ├── CONTEXT.md
 ├── SPEC.md

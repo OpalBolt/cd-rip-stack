@@ -18,15 +18,16 @@
   BASELINE selection string: keep English + Danish audio and subtitles (plus
   no-lang and single tracks), drop MVC and duplicate multi/core tracks.
 
-  rip-video does NOT hand-edit this file — it reads it, sed-replaces the BASELINE
-  literal below with a per-movie language list (original-language audio + Danish/
-  English subtitles), and feeds that temp copy to makemkvcon as its profile.
+  skive (rip movie/tv) does NOT hand-edit this file — it reads it, replaces the
+  BASELINE literal below with a per-movie language list (original-language audio +
+  Danish/English subtitles), and feeds that temp copy to makemkvcon as its
+  profile.
   MakeMKV's selection string is type-agnostic: one list covers every track type
   (audio(lang)/subtitle(lang) qualifiers are invalid tokens), so the list is the
   union of what audio and subtitles each need. This BASELINE is BOTH the manual-use
-  default AND the substitution target (rip-video.sh:BASELINE must stay byte-
-  identical to it). Edit the one string in each defaultSelection attribute below
-  (and the app_DefaultSelectionString line).
+  default AND the substitution target (skive.makemkv.BASELINE must stay
+  byte-identical to it). Edit the one string in each defaultSelection attribute
+  below (and the app_DefaultSelectionString line).
 -->
 <profile>
     <!-- profile name -->
