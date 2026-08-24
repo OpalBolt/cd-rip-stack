@@ -27,6 +27,7 @@
           ]))
           pkgs.makemkv
           pkgs.cyanrip
+          pkgs.uv
           pkgs.flac # metaflac
           pkgs.ffmpeg # ffprobe
           pkgs.rsync
