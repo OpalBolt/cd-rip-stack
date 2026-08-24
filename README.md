@@ -238,9 +238,10 @@ Python, no skive imports, runs on a clean `python.exe`.
 ### Install
 
 1. `winget install Python.Python.3` (add `python` to PATH).
-2. Install **HandBrake** (the CLI must be reachable) and **MKVToolNix**
-   (`mkvmerge.exe`). Both are found on PATH, else under their default
-   Program Files dirs.
+2. Install **HandBrake** (the CLI must be reachable), **MKVToolNix**
+   (`mkvmerge.exe`), and **ffmpeg** (`ffprobe.exe`, `winget install
+   Gyan.FFmpeg`). Each is found on PATH, else under its default Program
+   Files dir.
 3. Map the NAS share: `net use Z: \\nas\videos` (or any drive letter). Copy
    `windows/transcode.py` to the box.
 4. Open an SSH session and run:
@@ -269,9 +270,11 @@ drive fails loudly with a `net use` hint — it never silently scans "no MKVs".
 - **TV**: no main feature, no merge. Episodes file as
   `library\TV\<Show (Year)>\Season NN\<Show (Year)> - S01E02.mkv`; season 00
   goes to `Specials\`; TV extras under the show's `extras\`.
-- **Encode**: `HandBrakeCLI` re-encodes video only to H.265 1080p; every
-  audio and subtitle track passes through (`--all-audio --aencoder copy`,
-  `--all-subtitles`, nothing burned in). GPU encoders add
+- **Encode**: `HandBrakeCLI` re-encodes video only to H.265 at the source's
+  native resolution — never upscaled (ffprobe picks the preset: 480p/576p
+  for DVD, 1080p for Blu-ray, 4K for UHD; DVD also gets detelecine +
+  decomb). Every audio and subtitle track passes through (`--all-audio
+  --aencoder copy`, `--all-subtitles`, nothing burned in). GPU encoders add
   `--encoder <gpu>_h265 --quality 28`.
 - Each file is pulled to a local temp dir first so it encodes off the
   network share.

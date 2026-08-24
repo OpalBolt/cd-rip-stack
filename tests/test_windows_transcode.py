@@ -73,6 +73,16 @@ for a in "$@"; do
 done
 """
     )
+    (bin_dir / "ffprobe.exe").write_text(
+        """#!/bin/sh
+in=""
+for a in "$@"; do in="$a"; done
+if grep -q 2160 "$in" 2>/dev/null; then echo 2160
+elif grep -q 576 "$in" 2>/dev/null; then echo 576
+elif grep -q 480 "$in" 2>/dev/null; then echo 480
+else echo 1080; fi
+"""
+    )
     for f in bin_dir.iterdir():
         f.chmod(0o755)
 
@@ -161,7 +171,7 @@ def test_keep_clobber_refusal(env, capsys):
 
 
 # -- scenario 3: prefix run = one phase, no total; no-match prefix exits 1 ----
-def test_scenario3_prefix_single_phase_no_total(env, capsys):
+def test_scenario3_prefix_single_phase_total(env, capsys):
     vid = env / "vid"
     mk(vid, "rip/Solo (2006)_t00.mkv", "SOLO-MAIN")
 
@@ -169,7 +179,7 @@ def test_scenario3_prefix_single_phase_no_total(env, capsys):
 
     assert rc == 0
     assert (vid / "library" / "Solo (2006)" / "Solo (2006).mkv").read_text() == "SOLO-MAIN"
-    assert "  total  " not in (env / "rip.log").read_text()
+    assert "  total  " in (env / "rip.log").read_text()
 
 
 def test_scenario3b_no_match_prefix_exits_1(env, capsys):
@@ -302,6 +312,16 @@ def test_tv_lowercase_root_is_tv(env):
             "Show (2013) - S01E01.mkv").read_text() == "LOW-TV"
 
 
+def test_copy2_reports_progress(tmp_path, capsys):
+    src = tmp_path / "big.mkv"
+    src.write_bytes(b"\0" * (3 * 1024 * 1024))
+    dst = tmp_path / "copy.mkv"
+    transcode._copy2(str(src), str(dst))
+    out = capsys.readouterr().out
+    assert dst.read_bytes() == src.read_bytes()
+    assert "33%" in out and "100%" in out
+
+
 def test_no_third_party_imports():
     src = pathlib.Path(__file__).parent.parent / "windows" / "transcode.py"
     tree = ast.parse(src.read_text())
@@ -313,6 +333,30 @@ def test_no_third_party_imports():
                 assert a.name.split(".")[0] in stdlib, a.name
         elif isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] in stdlib, node.module
+
+
+def test_dvd_not_upscaled(env):
+    vid = env / "vid"
+    mk(vid, "rip/Dvd (2001)_t00.mkv", "480")  # ffprobe stub sees "480" -> SD
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    hb = (env / "hb-calls.log").read_text()
+    assert "--preset H.265 MKV 480p30" in hb
+    assert "--detelecine" in hb and "--decomb" in hb
+
+
+def test_uhd_kept_at_4k(env):
+    vid = env / "vid"
+    mk(vid, "rip/Uhd (2002)_t00.mkv", "2160")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    hb = (env / "hb-calls.log").read_text()
+    assert "--preset H.265 MKV 2160p60 4K" in hb
+    assert "--detelecine" not in hb
 
 
 def test_runs_standalone_help():

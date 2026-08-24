@@ -3,8 +3,8 @@
 
 Port of windows/transcode-video.ps1 to stdlib-only Python (3.10+; runs on a
 clean `python.exe`, no rich, no skive imports). The whole Windows install spec
-is: winget Python 3, HandBrake (CLI reachable), MKVToolNix, and the share
-mapped (default `Z:\\`, `$env:VIDEOS` overrides).
+is: winget Python 3, HandBrake (CLI reachable), MKVToolNix, ffmpeg (ffprobe),
+and the share mapped (default `Z:\\`, `$env:VIDEOS` overrides).
 
 The staging subdirectory decides the type: anything under `rip\\{TV,tv}` is TV
 (no main-feature pick, no merging); everything else is a movie. This is a
@@ -36,6 +36,7 @@ _RX_EP = re.compile(
 _TV_ROOTS = ("TV", "tv")  # rip\TV (legacy ps1 staging) and rip\tv (SPEC layout)
 _HB = "HandBrakeCLI.exe"
 _MKV = "mkvmerge.exe"
+_FFPROBE = "ffprobe.exe"
 # one comma-joined argument: stays a single argv entry
 _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm"
 
@@ -57,16 +58,20 @@ class RipLog:
         self.name = "-"
         self._phases = 0
 
-    def _emit(self, t1, t2, phase, m, s, status) -> None:
-        line = f"{t1}  {t2}  {self.SCRIPT}  {self.SOFT}  {self.name}  {phase}  {m}m{s:02d}  {status}"
+    def _emit(self, t1, t2, phase, elapsed, status) -> None:
+        line = f"{t1}  {t2}  {self.SCRIPT}  {self.SOFT}  {self.name}  {phase}  {elapsed}  {status}"
         print(line)
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
+    @staticmethod
+    def _elapsed(seconds: int) -> str:
+        return f"{seconds // 60}m{seconds % 60:02d}"
+
     def start(self) -> None:
         self._t0 = self._now()
         self._t0_ts = self._t0.strftime("%Y-%m-%d %H:%M:%S")
-        self._emit(self._t0_ts, "-", "-", 0, 0, "started")
+        self._emit(self._t0_ts, "-", "-", "0m00", "started")
 
     def phase(self, name: str) -> None:
         self._phase_name = name
@@ -74,24 +79,26 @@ class RipLog:
 
     def phase_end(self) -> None:
         now = self._now()
-        el = int((now - self._phase_t0).total_seconds())
         self._phases += 1
         self._emit(
             self._phase_t0.strftime("%Y-%m-%d %H:%M:%S"),
             now.strftime("%Y-%m-%d %H:%M:%S"),
-            self._phase_name, el // 60, el % 60, "ok",
+            self._phase_name,
+            self._elapsed(int((now - self._phase_t0).total_seconds())),
+            "ok",
         )
 
+    def note(self, phase: str, status: str) -> None:
+        """Untimed detail line (end and elapsed are '-'); mirrors Linux RipLog.note."""
+        self._emit(self._now().strftime("%Y-%m-%d %H:%M:%S"), "-", phase, "-", status)
+
     def finish(self, rc: int) -> None:
-        # one phase that succeeded already logged start..end..status — a total
-        # would just duplicate it (mirrors rip-common.sh). failures get one.
-        if rc == 0 and self._phases == 1:
-            return
+        # always write the total so a successful run ends with a clear summary
+        # line (the README contract is "a total on exit").
         now = self._now()
-        el = int((now - self._t0).total_seconds())
         status = "ok" if rc == 0 else f"FAIL({rc})"
         self._emit(self._t0_ts, now.strftime("%Y-%m-%d %H:%M:%S"), "total",
-                   el // 60, el % 60, status)
+                   self._elapsed(int((now - self._t0).total_seconds())), status)
 
 
 @dataclass
@@ -171,13 +178,42 @@ def _scan(rip_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
     return items, want_hit
 
 
-def _encode(src: str, out: str, encoder: str, hb_exe: str) -> bool:
-    """HandBrake pass-through re-encode. GPU encoders override the encoder."""
+def _probe_height(src: str, ffprobe_exe: str) -> int:
+    """Height of the first video stream; 0 if unreadable."""
+    r = subprocess.run(
+        [ffprobe_exe, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=height", "-of", "csv=p=0", src],
+        capture_output=True, text=True,
+    )
+    try:
+        return int(r.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _preset(height: int) -> str:
+    """Largest standard preset that does NOT upscale the source."""
+    if height <= 480:
+        return "H.265 MKV 480p30"
+    if height <= 576:
+        return "H.265 MKV 576p25"
+    if height <= 720:
+        return "H.265 MKV 720p30"
+    if height <= 1080:
+        return "H.265 MKV 1080p30"
+    return "H.265 MKV 2160p60 4K"
+
+
+def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str) -> bool:
+    """HandBrake pass-through re-encode at native resolution. GPU encoders override the encoder."""
+    height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
     if encoder != "x265":
         cmd += ["--encoder", f"{encoder}_h265", "--quality", "28"]
+    cmd += ["--preset", _preset(height) if height else "H.265 MKV 1080p30"]
+    if 0 < height <= 576:
+        cmd += ["--detelecine", "--decomb"]  # DVD: kill telecine/interlace combing
     cmd += [
-        "--preset", "H.265 MKV 1080p30",
         "--all-audio", "--aencoder", "copy",
         "--audio-copy-mask", _COPY_MASK,
         "--audio-fallback", "ac3",
@@ -191,6 +227,29 @@ def _rmf(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
+
+
+def _copy2(src: str, dst: str) -> None:
+    """copy2 (mode + mtime preserved) with a progress line every 10%."""
+    total = os.path.getsize(src)
+    if total == 0:
+        shutil.copy2(src, dst)
+        return
+    mb = 1024 * 1024
+    done = 0
+    last = -1
+    with open(src, "rb") as fin, open(dst, "wb") as fout:
+        while True:
+            buf = fin.read(mb)
+            if not buf:
+                break
+            fout.write(buf)
+            done += len(buf)
+            pct = done * 100 // total
+            if pct >= last + 10 or pct == 100:
+                print(f"  {pct}%  ({done // mb}/{total // mb} MB)")
+                last = pct
+    shutil.copystat(src, dst)
 
 
 def _archive(src: str, done_dir: str, rip_dir: str, keep: bool) -> None:
@@ -222,7 +281,8 @@ def run_transcode(args) -> int:
 
     hb_exe = _find_tool(_HB, os.path.join("HandBrake", _HB))
     mkv_exe = _find_tool(_MKV, os.path.join("MKVToolNix", _MKV))
-    if not hb_exe or not mkv_exe:
+    ffprobe_exe = _find_tool(_FFPROBE, os.path.join("ffmpeg", "bin", _FFPROBE))
+    if not hb_exe or not mkv_exe or not ffprobe_exe:
         return 1
     if args.keep:
         os.makedirs(done_dir, exist_ok=True)
@@ -280,8 +340,8 @@ def run_transcode(args) -> int:
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 log.phase("encode")
                 print(f"copying {i.name} to local temp...")
-                shutil.copy2(i.path, local_src)
-                if _encode(local_src, local_out, args.encoder, hb_exe):
+                _copy2(i.path, local_src)
+                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe):
                     shutil.move(local_out, dest)
                     _rmf(local_src)
                     _archive(i.path, done_dir, rip_dir, args.keep)
@@ -289,6 +349,7 @@ def run_transcode(args) -> int:
                 else:
                     _rmf(local_src)
                     _rmf(local_out)
+                    log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                     print(f"FAILED (handbrake): {i.name} -- source left in place", file=sys.stderr)
                     failed = 1
                     log.phase_end()
@@ -312,7 +373,7 @@ def run_transcode(args) -> int:
                     for s in siblings:
                         lb = os.path.join(tmp_dir, s.name)
                         print(f"copying {s.name} to local temp...")
-                        shutil.copy2(s.path, lb)
+                        _copy2(s.path, lb)
                         local_parts.append(lb)
                         cleanup.append(lb)
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
@@ -324,6 +385,7 @@ def run_transcode(args) -> int:
                         cleanup.append(local_src)
                     else:  # 2+ failure: sources left, run continues
                         names = " ".join(s.name for s in siblings)
+                        log.note("encode", f"FAILED mkvmerge ({mrc}): {names} -- sources left in place")
                         print(f"FAILED mkvmerge ({mrc}): {names} -- sources left in place "
                               f"(see mkvmerge output above)", file=sys.stderr)
                         for p in cleanup:
@@ -336,11 +398,11 @@ def run_transcode(args) -> int:
                 else:
                     local_src = os.path.join(tmp_dir, i.name)
                     print(f"copying {i.name} to local temp...")
-                    shutil.copy2(i.path, local_src)
+                    _copy2(i.path, local_src)
                     cleanup.append(local_src)
 
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
-                if _encode(local_src, local_out, args.encoder, hb_exe):
+                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe):
                     shutil.move(local_out, dest)
                     for p in cleanup:
                         _rmf(p)
@@ -352,6 +414,7 @@ def run_transcode(args) -> int:
                 else:
                     for p in cleanup + [local_out]:
                         _rmf(p)
+                    log.note("encode", f"FAILED handbrake: {i.name} -- sources left in place")
                     print(f"FAILED (handbrake): {i.name} -- sources left in place", file=sys.stderr)
                     for s in siblings:
                         handled.add(s.path)
@@ -369,8 +432,8 @@ def run_transcode(args) -> int:
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             log.phase("encode")
             print(f"copying {i.name} to local temp...")
-            shutil.copy2(i.path, local_src)
-            if _encode(local_src, local_out, args.encoder, hb_exe):
+            _copy2(i.path, local_src)
+            if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe):
                 shutil.move(local_out, dest)
                 _rmf(local_src)
                 _archive(i.path, done_dir, rip_dir, args.keep)
@@ -378,6 +441,7 @@ def run_transcode(args) -> int:
             else:
                 _rmf(local_src)
                 _rmf(local_out)
+                log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                 print(f"FAILED (handbrake): {i.name} -- source left in place", file=sys.stderr)
                 failed = 1
                 log.phase_end()
@@ -395,7 +459,7 @@ def run_transcode(args) -> int:
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="transcode.py",
-        description="Batch-transcode staged lossless MKVs to 1080p H.265 for the Jellyfin library.",
+        description="Batch-transcode staged lossless MKVs to native-resolution H.265 for the Jellyfin library.",
     )
     p.add_argument("-k", "--keep", action="store_true",
                    help="move lossless sources to rip-DONE instead of deleting them (verify, then clean by hand)")
