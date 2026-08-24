@@ -10,7 +10,8 @@ def not_implemented(subcommand: str) -> None:
 
 
 def cmd_rip_movie(args):
-    not_implemented("rip movie")
+    from skive.rip_movie import rip_movie
+    rip_movie(args)
 
 
 def cmd_rip_tv(args):
