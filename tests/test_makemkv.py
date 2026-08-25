@@ -400,6 +400,18 @@ def test_resolve_titles_none_and_spec():
     assert resolve_titles("0,5-7", []) == [0, 5, 6, 7]
 
 
+def test_resolve_titles_bd_skips_scrambled():
+    """resolve_titles: no -T on Blu-ray drops scrambled titles; DVD rips all."""
+    from skive.makemkv import resolve_titles, TitleInfo
+
+    titles = [TitleInfo(0, 100, 1, "", "", False), TitleInfo(1, 100, 1, "", "", True)]
+    assert resolve_titles(None, titles, "BD-ROM") == [0]
+    assert resolve_titles(None, titles, "DVD-ROM") is None
+    # all clean on BD -> None (rip all, single makemkvcon run)
+    clean = [TitleInfo(0, 100, 1, "", "", False)]
+    assert resolve_titles(None, clean, "BD-ROM") is None
+
+
 def test_resolve_titles_menu():
     """resolve_titles: MENU opens the menu over the already-scanned titles."""
     from skive.makemkv import resolve_titles, MENU, TitleInfo

@@ -423,7 +423,7 @@ def rip_tv(args) -> None:
     # --extras: no season, no scan, no table
     if args.extras:
         log.note("type", "type=tv extras")
-        titles = resolve_titles(args.titles, titles_full)
+        titles = resolve_titles(args.titles, titles_full, preamble.media)
         log.phase("rip")
         worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv)
         if worst_rc != 0:
@@ -470,7 +470,7 @@ def rip_tv(args) -> None:
         sys.exit(1)
 
     # Bare -T opens the title menu; no -T rips all titles (DVD shows prefer this)
-    user_titles = resolve_titles(args.titles, titles_full)
+    user_titles = resolve_titles(args.titles, titles_full, preamble.media)
     if user_titles is not None:
         titles_full = [t for t in titles_full if t.number in user_titles]
         if not titles_full:

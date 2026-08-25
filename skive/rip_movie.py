@@ -37,7 +37,8 @@ def rip_movie(args) -> None:
     profile_path = inject_profile(sel)
     try:
         # Bare -T opens the menu over the gate scan; no -T rips all titles
-        titles = resolve_titles(args.titles, titles_full)
+        # (Blu-ray: scrambled decoy titles are skipped by default)
+        titles = resolve_titles(args.titles, titles_full, preamble.media)
 
         # Rip phase
         log.phase("rip")

@@ -535,15 +535,18 @@ def title_menu(titles: list[TitleInfo], getch=_getch, out=sys.stderr) -> list[in
     return sorted(disp[i].number for i in range(n) if selected[i])
 
 
-def resolve_titles(titles_arg, titles: list[TitleInfo]) -> list[int] | None:
+def resolve_titles(titles_arg, titles: list[TitleInfo], media: str = "") -> list[int] | None:
     """Resolve the -T flag to a rip list (None = rip all), using the titles
     already scanned by the caller.
 
     MENU (bare -T) opens the interactive menu; a SPEC string is parsed; None
-    means rip all.
+    means rip all — except on Blu-ray, where scrambled (decoy) titles are
+    dropped by default.
     """
     if titles_arg is MENU:
         return title_menu(titles)
     if titles_arg is not None:
         return parse_titles(titles_arg)
+    if media.startswith("BD") and any(t.scrambled for t in titles):
+        return sorted(t.number for t in titles if not t.scrambled)
     return None
