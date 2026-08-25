@@ -535,6 +535,20 @@ def title_menu(titles: list[TitleInfo], getch=_getch, out=sys.stderr) -> list[in
     return sorted(disp[i].number for i in range(n) if selected[i])
 
 
+def _dedupe(titles: list[TitleInfo]) -> list[TitleInfo]:
+    """Drop playlist-obfuscation duplicates: titles with identical duration.
+
+    Keeps the richest copy per duration (most subtitle languages, then
+    largest size, then lowest title number).
+    # ponytail: exact-seconds key; use a tolerance if decoys ever differ by 1s.
+    """
+    best: dict[int, TitleInfo] = {}
+    for t in sorted(titles, key=lambda t: (-len(t.subtitles.split(",")) if t.subtitles else 0,
+                                           -t.size, t.number)):
+        best.setdefault(t.seconds, t)
+    return sorted(best.values(), key=lambda t: t.number)
+
+
 def resolve_titles(titles_arg, titles: list[TitleInfo], media: str = "") -> list[int] | None:
     """Resolve the -T flag to a rip list (None = rip all), using the titles
     already scanned by the caller.
@@ -547,6 +561,8 @@ def resolve_titles(titles_arg, titles: list[TitleInfo], media: str = "") -> list
         return title_menu(titles)
     if titles_arg is not None:
         return parse_titles(titles_arg)
-    if media.startswith("BD") and any(t.scrambled for t in titles):
-        return sorted(t.number for t in titles if not t.scrambled)
+    if media.startswith("BD"):
+        keep = _dedupe([t for t in titles if not t.scrambled])
+        if len(keep) != len(titles):
+            return sorted(t.number for t in keep)
     return None

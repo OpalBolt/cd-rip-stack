@@ -412,6 +412,20 @@ def test_resolve_titles_bd_skips_scrambled():
     assert resolve_titles(None, clean, "BD-ROM") is None
 
 
+def test_resolve_titles_bd_dedupes_playlist_obfuscation():
+    """resolve_titles: BD titles with identical duration are duplicates;
+    keep the one with the most subtitle languages."""
+    from skive.makemkv import resolve_titles, TitleInfo
+
+    titles = [
+        TitleInfo(1, 6835, 22_150_429_318, "eng", "eng,dan", False),
+        TitleInfo(2, 6835, 21_592_789_440, "eng", "eng", False),
+        TitleInfo(3, 500, 349_207_267, "eng", "eng", False),
+    ]
+    assert resolve_titles(None, titles, "BD-ROM") == [1, 3]
+    assert resolve_titles(None, titles, "DVD-ROM") is None
+
+
 def test_resolve_titles_menu():
     """resolve_titles: MENU opens the menu over the already-scanned titles."""
     from skive.makemkv import resolve_titles, MENU, TitleInfo
