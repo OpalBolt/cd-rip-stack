@@ -148,7 +148,7 @@ def parse_titles(spec: str) -> list[int] | None:
         return None
 
     if spec.startswith("disc:"):
-        raise ValueError(f"disc:N is not supported; use the default disc:0 instead of '{spec}'")
+        raise ValueError(f"disc:N does not belong in a title spec; use --disc N instead of '{spec}'")
 
     titles: set[int] = set()
     for part in spec.split(","):

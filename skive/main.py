@@ -50,6 +50,8 @@ def main() -> None:
                                   help="TMDB movie ID or URL (skip prompt)")
     rip_movie_parser.add_argument("-V", "--verified", action="store_true",
                                   help="allow recordable media (DVD±R/RW, BD-R)")
+    rip_movie_parser.add_argument("-d", "--disc", type=int, default=0, metavar="N",
+                                  help="drive number (default 0); use for concurrent rips from two drives")
     rip_movie_parser.set_defaults(func=cmd_rip_movie)
 
     # rip tv
@@ -62,6 +64,8 @@ def main() -> None:
                                help="TMDB TV ID or URL (skip prompt)")
     rip_tv_parser.add_argument("-V", "--verified", action="store_true",
                                help="allow recordable media (DVD±R/RW, BD-R)")
+    rip_tv_parser.add_argument("-d", "--disc", type=int, default=0, metavar="N",
+                               help="drive number (default 0); use for concurrent rips from two drives")
     rip_tv_parser.set_defaults(func=cmd_rip_tv)
 
     # rip music

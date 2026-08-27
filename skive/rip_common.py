@@ -23,6 +23,7 @@ class Preamble:
     stage_tv: Path
     minlength: int
     keep: str
+    disc: int
 
 
 def rip_preamble(kind: str, script: str, args) -> Preamble:
@@ -31,8 +32,14 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
 
     ensure_mounted(videos_mnt, nfs_videos)
+    disc = getattr(args, "disc", 0)
     stage_movie = Path(videos_mnt) / "rip" / "movies"
     stage_tv = Path(videos_mnt) / "rip" / "tv"
+    if disc > 0:
+        # Per-disc subdir so two concurrent rips never rename each other's files;
+        # finished files are promoted to the parent dir after renaming.
+        stage_movie = stage_movie / f"d{disc}"
+        stage_tv = stage_tv / f"d{disc}"
     stage_dirs = [stage_movie, stage_tv] if kind == "movie" else [stage_tv, stage_movie]
     for stage_dir in stage_dirs:
         stage_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +48,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log.start()
 
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-    media, titles_full = scan_disc(minlength)
+    media, titles_full = scan_disc(minlength, disc=disc)
     if not media:
         print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
         sys.exit(1)
@@ -79,4 +86,4 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log.name = display
 
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
-    return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv, minlength, keep)
+    return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv, minlength, keep, disc)

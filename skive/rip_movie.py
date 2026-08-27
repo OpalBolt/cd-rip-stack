@@ -3,7 +3,7 @@
 import sys
 
 from skive.makemkv import (
-    build_selection, inject_profile, rename_staged, resolve_titles,
+    build_selection, inject_profile, promote_staged, rename_staged, resolve_titles,
     subtitle_note, rip_titles,
 )
 from skive.rip_common import rip_preamble
@@ -42,7 +42,7 @@ def rip_movie(args) -> None:
 
         # Rip phase
         log.phase("rip")
-        worst_rc = rip_titles(titles, profile_path, minlength, stage_movie)
+        worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc)
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
@@ -50,6 +50,8 @@ def rip_movie(args) -> None:
         # Rename
         suffix = "e" if args.extras else "t"
         rename_staged(display, stage_movie, suffix=suffix, part=args.part)
+        if preamble.disc > 0:
+            promote_staged(stage_movie)
 
         # Subtitle note
         note = subtitle_note(stage_movie)

@@ -463,3 +463,40 @@ def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
         scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
     assert "no titles" in capsys.readouterr().err
     assert (tmp_path / "skive-scan-failed.txt").exists()
+
+
+def test_disc_n_threads_through_scan_and_rip(tmp_path):
+    """disc=1 uses disc:1 in commands and parses the DRV:1 line."""
+    from skive.makemkv import scan_disc, rip_titles
+
+    output = '''DRV:0,256,999,0,"","",""
+DRV:1,2,999,12,"BD-ROM DRIVE","MOVIE","/dev/sr1"
+TINFO:0,9,0,"1:26:43"
+TINFO:0,11,0,"5845346392"
+'''
+    mock_run = Mock(return_value=Mock(stdout=output))
+    media, titles = scan_disc(120, run=mock_run, disc=1)
+    assert media == "BD-ROM"
+    assert len(titles) == 1
+    assert "disc:1" in mock_run.call_args[0][0]
+
+    rip_run = Mock(return_value=Mock(returncode=0))
+    rip_titles(None, Path("/tmp/p.xml"), 120, tmp_path, run=rip_run, disc=1)
+    assert "disc:1" in rip_run.call_args[0][0]
+
+
+def test_promote_staged(tmp_path):
+    """promote_staged moves mkvs up one dir and never clobbers."""
+    from skive.makemkv import promote_staged
+
+    sub = tmp_path / "d1"
+    sub.mkdir()
+    (sub / "Movie_t00.mkv").write_text("a")
+    (sub / "Clash.mkv").write_text("b")
+    (tmp_path / "Clash.mkv").write_text("existing")
+
+    promote_staged(sub)
+
+    assert (tmp_path / "Movie_t00.mkv").exists()
+    assert (sub / "Clash.mkv").exists()  # not clobbered
+    assert (tmp_path / "Clash.mkv").read_text() == "existing"

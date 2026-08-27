@@ -9,7 +9,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from skive.makemkv import (
-    CONFIG_DIR, build_selection, inject_profile, rename_staged,
+    CONFIG_DIR, build_selection, inject_profile, promote_staged, rename_staged,
     resolve_titles, subtitle_note, rip_titles, hsize,
 )
 from skive.rip_common import rip_preamble
@@ -425,12 +425,14 @@ def rip_tv(args) -> None:
         log.note("type", "type=tv extras")
         titles = resolve_titles(args.titles, titles_full, preamble.media)
         log.phase("rip")
-        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv)
+        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc)
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
         # Rename as extras
         rename_staged(display, stage_tv, suffix="e")
+        if preamble.disc > 0:
+            promote_staged(stage_tv)
 
         # Subtitle note
         note = subtitle_note(stage_tv)
@@ -495,6 +497,9 @@ def rip_tv(args) -> None:
 
     # Get staged episodes
     staged = staged_eps(season_dir, display, season)
+    if preamble.disc > 0:
+        # Already-promoted episodes live in the parent staging dir
+        staged |= staged_eps(season_dir.parent, display, season)
 
     # Build candidates (episodes with runtime, excluding staged)
     candidates = build_candidates(episodes, staged)
@@ -556,13 +561,15 @@ def rip_tv(args) -> None:
         log.phase("rip")
         # Explicit -T selections may include titles filtered from the confirmed scan.
         rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
-        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir)
+        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc)
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
         # Rename per the map
         rename_tv(display, season_dir, season, assignment)
+        if preamble.disc > 0:
+            promote_staged(season_dir)
 
         # Subtitle note
         note = subtitle_note(season_dir)

@@ -47,7 +47,7 @@ def build_selection(keep_lang: str) -> str:
     return f"-sel:all,+sel:({langs}),-sel:(havemulti|havecore),-sel:mvcvideo"
 
 
-def _info(minlength: int | None, run=subprocess.run) -> str:
+def _info(minlength: int | None, run=subprocess.run, disc: int = 0) -> str:
     """One `makemkvcon -r info` run (honoring MAKEMKV_INFO); minlength=None omits the flag."""
     override = os.environ.get("MAKEMKV_INFO")
     if override:
@@ -56,14 +56,14 @@ def _info(minlength: int | None, run=subprocess.run) -> str:
     cmd = ["makemkvcon", "-r", "info"]
     if minlength is not None:
         cmd.append(f"--minlength={minlength}")
-    cmd.append("disc:0")
+    cmd.append(f"disc:{disc}")
     return run(cmd, capture_output=True, text=True).stdout
 
 
-def _parse_media(out: str) -> str:
-    """Media token from the DRV:0 line (first word), or "" if no disc."""
+def _parse_media(out: str, disc: int = 0) -> str:
+    """Media token from the DRV:N line (first word), or "" if no disc."""
     for line in out.splitlines():
-        m = re.match(r'^DRV:0,2,\d+,\d+,"([^"]*)"', line)
+        m = re.match(rf'^DRV:{disc},2,\d+,\d+,"([^"]*)"', line)
         if m:
             token = m.group(1)
             return token.split()[0] if token else ""
@@ -142,7 +142,7 @@ def inject_profile(selection: str) -> Path:
     return Path(tmp_path)
 
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run) -> int:
+def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
@@ -158,17 +158,31 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
     worst_rc = 0
     if titles is None:
         # Rip all in one call
-        cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", "disc:0", "all", str(stage_dir) + "/"]
+        cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", "all", str(stage_dir) + "/"]
         rc = run(cmd).returncode
         if rc > worst_rc:
             worst_rc = rc
     else:
         for t in titles:
-            cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", "disc:0", str(t), str(stage_dir) + "/"]
+            cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", str(t), str(stage_dir) + "/"]
             rc = run(cmd).returncode
             if rc > worst_rc:
                 worst_rc = rc
     return worst_rc
+
+
+def promote_staged(stage_dir: Path) -> None:
+    """Move finished .mkv files from a per-disc subdir up to the parent staging dir.
+
+    No-op for the parent dir itself. Never clobbers.
+    """
+    parent = stage_dir.parent
+    for mkv in stage_dir.glob("*.mkv"):
+        target = parent / mkv.name
+        if target.exists():
+            print(f"skive: {target.name} already exists — left in {stage_dir.name}/", file=sys.stderr)
+            continue
+        mkv.rename(target)
 
 
 def purge_junk(stage_dirs: list[Path]) -> None:
@@ -424,10 +438,10 @@ def _parse_titles(out: str) -> list[TitleInfo]:
     return result
 
 
-def scan_disc(minlength: int, run=subprocess.run) -> tuple[str, list[TitleInfo]]:
+def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, list[TitleInfo]]:
     """One `makemkvcon info` run: media token + parsed titles."""
-    out = _info(minlength, run)
-    media, titles = _parse_media(out), _parse_titles(out)
+    out = _info(minlength, run, disc)
+    media, titles = _parse_media(out, disc), _parse_titles(out)
     if media and not titles:
         # A disc with zero parseable titles means the info scan failed (e.g.
         # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.

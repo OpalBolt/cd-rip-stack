@@ -31,9 +31,9 @@ class TestParseTitles:
         assert skive.common.parse_titles("0,5-7,10") == [0, 5, 6, 7, 10]
 
     def test_reject_disc_n(self):
-        with pytest.raises(ValueError, match="disc:N is not supported"):
+        with pytest.raises(ValueError, match="disc:N does not belong"):
             skive.common.parse_titles("disc:2")
-        with pytest.raises(ValueError, match="disc:N is not supported"):
+        with pytest.raises(ValueError, match="disc:N does not belong"):
             skive.common.parse_titles("disc:0")
 
     def test_reject_garbage(self):
