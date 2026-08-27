@@ -167,7 +167,10 @@ def _run_with_progress(cmd: list[str], desc: str) -> int:
             if line.startswith("PRGV:"):
                 parts = line[5:].split(",")
                 if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
-                    progress.update(task, completed=int(parts[1]), total=int(parts[2]) or 65536)
+                    tot = int(parts[2]) or 65536
+                    # Clamp below total: rich freezes elapsed/ETA once a task
+                    # finishes, and makemkvcon hits 100% on quick sub-phases.
+                    progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot)
             elif line.startswith("PRGT:"):
                 progress.update(task, description=f"{desc} — {_qval(line)}")
             elif line.startswith("MSG:"):
