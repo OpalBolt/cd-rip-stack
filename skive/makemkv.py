@@ -385,7 +385,7 @@ def _parse_titles(out: str) -> list[TitleInfo]:
             val = _qval(line)
             if code == "9":
                 rec["secs"] = _dur_seconds(val)
-            elif code == "10":
+            elif code == "11":
                 rec["size"] = int(val) if val.isdigit() else 0
             elif code == "26":
                 rec["scrambled"] = _scrambled(val)
@@ -427,7 +427,16 @@ def _parse_titles(out: str) -> list[TitleInfo]:
 def scan_disc(minlength: int, run=subprocess.run) -> tuple[str, list[TitleInfo]]:
     """One `makemkvcon info` run: media token + parsed titles."""
     out = _info(minlength, run)
-    return _parse_media(out), _parse_titles(out)
+    media, titles = _parse_media(out), _parse_titles(out)
+    if media and not titles:
+        # A disc with zero parseable titles means the info scan failed (e.g.
+        # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.
+        dump = Path(tempfile.gettempdir()) / "skive-scan-failed.txt"
+        dump.write_text(out)
+        print(f"skive: disc scan returned no titles ({media}) — raw output saved to {dump}", file=sys.stderr)
+        print("  refusing to rip blind (this is how scrambled duplicates get ripped).", file=sys.stderr)
+        sys.exit(1)
+    return media, titles
 
 
 def _getch() -> str:

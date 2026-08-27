@@ -263,11 +263,11 @@ def test_scan_disc():
     output = """
 DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"
 TINFO:0,9,"0:21:00"
-TINFO:0,10,"1234567890"
+TINFO:0,11,"1234567890"
 TINFO:1,9,"0:22:30"
-TINFO:1,10,"2345678901"
+TINFO:1,11,"2345678901"
 TINFO:2,9,"0:15:00"
-TINFO:2,10,"3456789012"
+TINFO:2,11,"3456789012"
 """
 
     mock_run = Mock(return_value=Mock(stdout=output))
@@ -291,7 +291,7 @@ def test_scan_disc_makemkv_info_override():
     output = """
 DRV:0,2,0,0,"DVD-ROM"
 TINFO:0,9,"0:21:00"
-TINFO:0,10,"1234567890"
+TINFO:0,11,"1234567890"
 """
     mock_run = Mock(return_value=Mock(stdout=output))
 

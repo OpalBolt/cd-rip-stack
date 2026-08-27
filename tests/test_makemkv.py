@@ -315,7 +315,7 @@ def test_scan_disc_parses_audio_subs_scrambled():
 
     output = """
 TINFO:0,9,0,"1:26:43"
-TINFO:0,10,0,"5845346392"
+TINFO:0,11,0,"5845346392"
 TINFO:0,26,0,"1,2,3"
 SINFO:0,0,1,0,"Video"
 SINFO:0,0,3,0,"dan"
@@ -330,7 +330,7 @@ SINFO:0,4,3,0,"dan"
 SINFO:0,5,1,0,"Subtitles"
 SINFO:0,5,3,0,"eng"
 TINFO:1,9,0,"0:03:33"
-TINFO:1,10,0,"169400000"
+TINFO:1,11,0,"169400000"
 TINFO:1,26,0,"3,2,1"
 """
 
@@ -450,3 +450,16 @@ def test_render_menu_lines():
     assert any("title 1" in line for line in lines)
     assert any("S" in line for line in lines)
     assert any("space=toggle" in line for line in lines)
+
+
+def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
+    """A disc with media but zero parseable titles aborts instead of ripping blind."""
+    import pytest
+    from skive.makemkv import scan_disc
+
+    output = 'DRV:0,2,999,12,"BD-RE ASUS","ROGUE_ONE","/dev/sr0"\nMSG:3307,0,2,"File 00800.mpls was added as title #1","",""\n'
+    monkeypatch.setattr("skive.makemkv.tempfile.gettempdir", lambda: str(tmp_path))
+    with pytest.raises(SystemExit):
+        scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+    assert "no titles" in capsys.readouterr().err
+    assert (tmp_path / "skive-scan-failed.txt").exists()
