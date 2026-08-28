@@ -214,7 +214,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     return proc.wait()
 
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list[TitleInfo] | None = None, header: str | None = None) -> int:
+def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
