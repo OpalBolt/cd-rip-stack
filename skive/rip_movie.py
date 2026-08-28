@@ -42,7 +42,7 @@ def rip_movie(args) -> None:
 
         # Rip phase
         log.phase("rip")
-        worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc)
+        worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc, total=len(titles_full))
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")

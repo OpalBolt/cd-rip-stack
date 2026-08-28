@@ -142,7 +142,7 @@ def inject_profile(selection: str) -> Path:
     return Path(tmp_path)
 
 
-def _run_with_progress(cmd: list[str], desc: str) -> int:
+def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1) -> int:
     """Run makemkvcon with --progress=-same and drive a rich progress bar.
 
     Parses robot output: PRGV (values), PRGT (phase name), MSG (messages).
@@ -162,6 +162,7 @@ def _run_with_progress(cmd: list[str], desc: str) -> int:
         console=Console(file=sys.stderr),
     ) as progress:
         task = progress.add_task(desc, total=65536)
+        cur_title = 0
         for line in proc.stdout:
             line = line.rstrip()
             if line.startswith("PRGV:"):
@@ -171,17 +172,24 @@ def _run_with_progress(cmd: list[str], desc: str) -> int:
                     # Clamp below total: rich freezes elapsed/ETA once a task
                     # finishes, and makemkvcon hits 100% on quick sub-phases.
                     progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot)
+            elif line.startswith("PRGC:"):
+                # New sub-task; "Saving to MKV file" marks the start of each title
+                val = _qval(line)
+                if "Saving to MKV file" in val:
+                    cur_title += 1
+                    val = f"title {cur_title}/{total_titles} — {val}"
+                progress.update(task, description=f"{desc} — {val}")
             elif line.startswith("PRGT:"):
                 progress.update(task, description=f"{desc} — {_qval(line)}")
             elif line.startswith("MSG:"):
                 progress.console.print(_qval(line), highlight=False)
-            elif not line.startswith("PRGC:") and line:
+            elif line:
                 # Pass through anything else makemkvcon prints (drive/errors/etc.)
                 progress.console.print(line, highlight=False)
     return proc.wait()
 
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0) -> int:
+def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
@@ -198,7 +206,7 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
     if titles is None:
         # Rip all in one call
         cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", "all", str(stage_dir) + "/"]
-        rc = _run_with_progress(cmd, "all titles") if run is subprocess.run else run(cmd).returncode
+        rc = _run_with_progress(cmd, "all titles", total_titles=total or 1) if run is subprocess.run else run(cmd).returncode
         if rc > worst_rc:
             worst_rc = rc
     else:

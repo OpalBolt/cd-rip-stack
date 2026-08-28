@@ -425,7 +425,7 @@ def rip_tv(args) -> None:
         log.note("type", "type=tv extras")
         titles = resolve_titles(args.titles, titles_full, preamble.media)
         log.phase("rip")
-        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc)
+        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc, total=len(titles_full))
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
@@ -561,7 +561,7 @@ def rip_tv(args) -> None:
         log.phase("rip")
         # Explicit -T selections may include titles filtered from the confirmed scan.
         rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
-        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc)
+        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc, total=len(titles_info))
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
