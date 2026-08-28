@@ -10,7 +10,7 @@ from rich.table import Table
 
 from skive.makemkv import (
     CONFIG_DIR, build_selection, inject_profile, promote_staged, rename_staged,
-    resolve_titles, subtitle_note, rip_titles, hsize,
+    resolve_titles, rip_header, subtitle_note, rip_titles, hsize,
 )
 from skive.rip_common import rip_preamble
 from skive.tmdb import fetch_season
@@ -425,7 +425,9 @@ def rip_tv(args) -> None:
         log.note("type", "type=tv extras")
         titles = resolve_titles(args.titles, titles_full, preamble.media)
         log.phase("rip")
-        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc, total=len(titles_full))
+        infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
+        worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc,
+                              total=len(titles_full), infos=infos, header=rip_header(display, infos))
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
@@ -561,7 +563,8 @@ def rip_tv(args) -> None:
         log.phase("rip")
         # Explicit -T selections may include titles filtered from the confirmed scan.
         rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
-        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc, total=len(titles_info))
+        worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc,
+                              total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full))
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")

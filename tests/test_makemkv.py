@@ -513,3 +513,15 @@ def test_rename_staged_extras_real_looking():
 
         assert (stage / "Rogue One (2016) - Extra 00.mkv").exists()
         assert (stage / "Rogue One (2016) - Extra 01.mkv").exists()
+
+
+def test_rip_header():
+    from skive.makemkv import TitleInfo, rip_header
+    infos = [
+        TitleInfo(0, 5000, 30 * 1024**3, "eng,dan(2)", "eng,dan", False),
+        TitleInfo(1, 600, 1024**3, "eng", "", False),
+    ]
+    h = rip_header("Movie (2020)", infos)
+    assert "Movie (2020)" in h and "2 title(s)" in h
+    assert "31.0 GiB" in h
+    assert "audio: dan,eng" in h and "subs: dan,eng" in h
