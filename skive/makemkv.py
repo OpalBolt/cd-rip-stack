@@ -286,8 +286,10 @@ def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | 
         title_num = int(m.group(1))
         cur = base[:m.start()]
 
-        # Skip if already this display or looks real
-        if cur == display or looks_real(cur):
+        # Skip if already this display; extras (-E) rename everything else —
+        # bonus discs label files from the disc name ("... Bonus Disc_t00"),
+        # which looks real but must still become "<display> - Extra NN".
+        if cur == display or (suffix != "e" and looks_real(cur)):
             continue
 
         # Build target name

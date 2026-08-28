@@ -500,3 +500,16 @@ def test_promote_staged(tmp_path):
     assert (tmp_path / "Movie_t00.mkv").exists()
     assert (sub / "Clash.mkv").exists()  # not clobbered
     assert (tmp_path / "Clash.mkv").read_text() == "existing"
+
+
+def test_rename_staged_extras_real_looking():
+    """Extras rename even real-looking bonus-disc names (Bonus Disc_tNN → Extra NN)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stage = Path(tmpdir)
+        (stage / "Rogue One- A Star Wars Story Bonus Disc_t00.mkv").touch()
+        (stage / "Rogue One- A Star Wars Story Bonus Disc_t01.mkv").touch()
+
+        rename_staged("Rogue One (2016)", stage, suffix="e")
+
+        assert (stage / "Rogue One (2016) - Extra 00.mkv").exists()
+        assert (stage / "Rogue One (2016) - Extra 01.mkv").exists()
