@@ -522,6 +522,6 @@ def test_rip_header():
         TitleInfo(1, 600, 1024**3, "eng", "", False),
     ]
     h = rip_header("Movie (2020)", infos)
-    assert "Movie (2020)" in h and "2 title(s)" in h
+    assert "Movie (2020)" in h and "titles: 2" in h
     assert "31.0 GiB" in h
-    assert "audio: dan,eng" in h and "subs: dan,eng" in h
+    assert "audio: dan,eng" in h and "subs:  dan,eng" in h

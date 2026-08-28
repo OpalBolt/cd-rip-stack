@@ -143,13 +143,15 @@ def inject_profile(selection: str) -> Path:
 
 
 def rip_header(display: str, infos: list["TitleInfo"]) -> str:
-    """One-line summary of what is being ripped: name, count, est size, languages."""
+    """Multi-line summary of what is being ripped: name, count, est size, languages."""
     strip = lambda s: re.sub(r"\(\d+\)", "", s)
     audio = sorted({strip(l) for t in infos for l in t.audio.split(",") if l})
     subs = sorted({l for t in infos for l in t.subtitles.split(",") if l})
     total = sum(t.size for t in infos)
-    return (f"{display} — {len(infos)} title(s), est {hsize(total)}"
-            f" — audio: {','.join(audio) or '?'}  subs: {','.join(subs) or 'none'}")
+    return (f"{display}\n"
+            f"  titles: {len(infos)}  est total: {hsize(total)}\n"
+            f"  audio: {','.join(audio) or '?'}\n"
+            f"  subs:  {','.join(subs) or 'none'}")
 
 
 def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
