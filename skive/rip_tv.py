@@ -424,6 +424,7 @@ def rip_tv(args) -> None:
     if args.extras:
         log.note("type", "type=tv extras")
         titles = resolve_titles(args.titles, titles_full, preamble.media)
+        preexisting = set(stage_tv.glob("*.mkv"))
         log.phase("rip")
         infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
         worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc,
@@ -432,7 +433,7 @@ def rip_tv(args) -> None:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
         # Rename as extras
-        rename_staged(display, stage_tv, suffix="e")
+        rename_staged(display, stage_tv, suffix="e", preexisting=preexisting)
         if preamble.disc > 0:
             promote_staged(stage_tv)
 

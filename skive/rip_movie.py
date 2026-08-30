@@ -41,6 +41,7 @@ def rip_movie(args) -> None:
         titles = resolve_titles(args.titles, titles_full, preamble.media)
 
         # Rip phase
+        preexisting = set(stage_movie.glob("*.mkv"))
         log.phase("rip")
         infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
         worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
@@ -51,7 +52,7 @@ def rip_movie(args) -> None:
 
         # Rename
         suffix = "e" if args.extras else "t"
-        rename_staged(display, stage_movie, suffix=suffix, part=args.part)
+        rename_staged(display, stage_movie, suffix=suffix, part=args.part, preexisting=preexisting)
         if preamble.disc > 0:
             promote_staged(stage_movie)
 

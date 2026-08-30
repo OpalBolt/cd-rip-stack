@@ -197,6 +197,24 @@ def test_rename_staged():
     assert (stage / "Movie (2020)_t01.mkv").exists()
 
 
+def test_rename_staged_preexisting():
+    """Files present before the rip are never renamed, even by extras."""
+    import shutil
+    stage = Path("/tmp/test_rename_pre")
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir()
+
+    old = stage / "Other Movie (1999)_t00.mkv"
+    old.touch()
+    new = stage / "Bonus Disc_t01.mkv"
+    new.touch()
+
+    rename_staged("Movie (2020)", stage, suffix="e", preexisting={old})
+
+    assert old.exists()
+    assert (stage / "Movie (2020) - Extra 01.mkv").exists()
+
+
 def test_rename_staged_part():
     """Test rename_staged with part suffix."""
     stage = Path("/tmp/test_rename_part")

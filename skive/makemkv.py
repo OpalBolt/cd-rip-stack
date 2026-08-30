@@ -302,7 +302,8 @@ def looks_real(name: str) -> bool:
     return True
 
 
-def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | None = None) -> None:
+def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | None = None,
+                  preexisting: set[Path] | None = None) -> None:
     """Rename junk-labeled .mkv files.
 
     Titles become <display>_tNN[.pN].mkv; extras become <display> - Extra NN[.pN].mkv.
@@ -314,8 +315,12 @@ def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | 
         stage_dir: Staging directory
         suffix: "t" for titles, "e" for extras
         part: Part number for .pN suffix
+        preexisting: Files present before the rip started — never renamed.
+            Guards against --extras renaming leftovers from earlier rips.
     """
     for mkv in stage_dir.glob("*.mkv"):
+        if preexisting and mkv in preexisting:
+            continue
         base = mkv.stem
         # Extract _tNN suffix
         m = re.search(r'_t(\d+)$', base)
