@@ -146,13 +146,17 @@ def fetch_by_id(type_: str, id_: str) -> TMDBPick:
     return TMDBPick(title=title, year=year, original_language=orig_lang, type=type_, id=tmdb_id)
 
 
-def search_loop(kind: str) -> TMDBPick:
-    """Interactive TMDB search: prompt, show table, pick one.
+def search_loop(kind: str, prefill: str = "") -> TMDBPick:
+    """Interactive TMDB search: run the prefill, show table, pick one.
 
-    Re-prompts on garbage query or zero results. 'q' aborts (exit 1).
+    `prefill` (the disc's volume label) skips the first query prompt — the
+    search runs straight away and lands on the results table. At the table,
+    `s` drops back to a typed query. Re-prompts on garbage query or zero
+    results. 'q' aborts (exit 1).
 
     Args:
         kind: "movie" or "tv" — search index to use
+        prefill: Query to run before prompting ("" to prompt immediately)
 
     Returns:
         TMDBPick with the user's selection
@@ -166,17 +170,19 @@ def search_loop(kind: str) -> TMDBPick:
         print("skive: no $TMDB_API_KEY in env — set it and re-run.", file=sys.stderr)
         sys.exit(1)
 
+    query: str | None = prefill or None
     while True:
-        console.print("\nTMDB search (blank=skip, q=quit): ", end="")
-        query = Prompt.ask("") or ""
+        if query is None:
+            console.print("\nTMDB search (blank=skip, q=quit): ", end="")
+            query = Prompt.ask("") or ""
 
-        if query.lower() == "q":
-            print("skive: quit — re-run later", file=sys.stderr)
-            sys.exit(1)
+            if query.lower() == "q":
+                print("skive: quit — re-run later", file=sys.stderr)
+                sys.exit(1)
 
-        if not query:
-            print("skive: skipped — re-run to search again", file=sys.stderr)
-            continue
+            if not query:
+                print("skive: skipped — re-run to search again", file=sys.stderr)
+                continue
 
         # URL-encode the query
         q_enc = urllib.parse.quote(query)
@@ -192,10 +198,11 @@ def search_loop(kind: str) -> TMDBPick:
         results = data.get("results", [])
         if not results:
             print(f"skive: no TMDB matches for '{query}'", file=sys.stderr)
+            query = None
             continue
 
         # Show top 5 in a rich table
-        table = Table(title=f"Top {len(results[:5])} {kind} results")
+        table = Table(title=f'TMDB "{query}" — top {len(results[:5])} {kind} results')
         table.add_column("#", style="cyan", width=4)
         table.add_column("Title", style="white")
         table.add_column("Year", style="yellow", width=6)
@@ -213,12 +220,16 @@ def search_loop(kind: str) -> TMDBPick:
         console.print(table)
 
         while True:
-            console.print(f"pick 1-{len(results[:5])} (Enter=1, q=quit): ", end="")
+            console.print(f"pick 1-{len(results[:5])} (Enter=1, s=new search, q=quit): ", end="")
             pick_str = Prompt.ask("") or "1"
 
             if pick_str.lower() == "q":
                 print("skive: quit — re-run later", file=sys.stderr)
                 sys.exit(1)
+
+            if pick_str.lower() == "s":
+                query = None
+                break
 
             try:
                 pick_idx = int(pick_str)

@@ -176,3 +176,47 @@ def test_search_loop_q_quits():
             assert False, "Should have exited"
         except SystemExit as e:
             assert e.code == 1
+
+@patch_console
+@patch_prompt
+def test_search_loop_prefill_skips_query_prompt():
+    """Prefill runs the search directly; only the pick prompt is asked."""
+    mock_data = {"results": [{"title": "Rogue One", "release_date": "2016-12-14",
+                              "original_language": "en", "id": 330459}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data) as mock_http:
+            mock_prompt.ask.reset_mock()
+            mock_prompt.ask.side_effect = [""]  # Enter = pick 1
+            pick = search_loop("movie", prefill="ROGUE ONE")
+            assert pick.title == "Rogue One"
+            assert mock_prompt.ask.call_count == 1
+            assert "query=ROGUE%20ONE" in mock_http.call_args.args[0]
+
+
+@patch_console
+@patch_prompt
+def test_search_loop_s_drops_to_typed_query():
+    """'s' at the table returns to a typed search."""
+    mock_data = {"results": [{"title": "Alien", "release_date": "1979-05-25",
+                              "original_language": "en", "id": 348}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data) as mock_http:
+            mock_prompt.ask.side_effect = ["s", "typed query", ""]
+            pick = search_loop("movie", prefill="ALIEN")
+            assert pick.title == "Alien"
+            assert "query=typed%20query" in mock_http.call_args.args[0]
+            assert mock_http.call_count == 2
+
+
+@patch_console
+@patch_prompt
+def test_search_loop_prefill_zero_results_prompts_typed():
+    """A prefilled query with no matches falls back to the typed prompt."""
+    empty = {"results": []}
+    hit = {"results": [{"title": "Alien", "release_date": "1979-05-25",
+                        "original_language": "en", "id": 348}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", side_effect=[empty, hit]):
+            mock_prompt.ask.side_effect = ["typed", ""]
+            pick = search_loop("movie", prefill="GARBAGE_LABEL")
+            assert pick.title == "Alien"

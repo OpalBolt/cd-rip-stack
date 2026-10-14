@@ -48,7 +48,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log.start()
 
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-    media, titles_full = scan_disc(minlength, disc=disc)
+    media, label, titles_full = scan_disc(minlength, disc=disc)
     if not media:
         print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
         sys.exit(1)
@@ -77,7 +77,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
             print(f"skive: TMDB resolve failed: {e}", file=sys.stderr)
             sys.exit(1)
     else:
-        pick = search_loop(kind)
+        pick = search_loop(kind, prefill=label)
 
     display = pick.title
     if pick.year and pick.year != "-":

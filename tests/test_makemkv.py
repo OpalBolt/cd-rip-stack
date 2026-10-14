@@ -352,7 +352,7 @@ TINFO:1,11,0,"169400000"
 TINFO:1,26,0,"3,2,1"
 """
 
-    _, result = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+    _, _, result = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
 
     assert len(result) == 2
     t0 = result[0]
@@ -493,8 +493,9 @@ TINFO:0,9,0,"1:26:43"
 TINFO:0,11,0,"5845346392"
 '''
     mock_run = Mock(return_value=Mock(stdout=output))
-    media, titles = scan_disc(120, run=mock_run, disc=1)
+    media, label, titles = scan_disc(120, run=mock_run, disc=1)
     assert media == "BD-ROM"
+    assert label == "MOVIE"
     assert len(titles) == 1
     assert "disc:1" in mock_run.call_args[0][0]
 
@@ -543,3 +544,22 @@ def test_rip_header():
     assert "Movie (2020)" in h and "titles: 2" in h
     assert "31.0 GiB" in h
     assert "audio: dan,eng" in h and "subs:  dan,eng" in h
+
+
+def test_scan_disc_label_cleaning():
+    """The DRV volume label becomes a cleaned search prefill."""
+    from skive.makemkv import scan_disc
+
+    output = 'DRV:0,2,999,12,"BD-RE ASUS","ROGUE__ONE_  A ","x"\nTINFO:0,9,0,"1:26:43"\nTINFO:0,11,0,"5845346392"\n'
+    _, label, titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+    assert label == "ROGUE ONE A"
+    assert len(titles) == 1
+
+
+def test_scan_disc_label_absent():
+    """No second DRV field means no prefill."""
+    from skive.makemkv import scan_disc
+
+    output = 'DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"\nTINFO:0,9,"0:21:00"\nTINFO:0,11,"1234567890"\n'
+    _, label, _titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+    assert label == ""

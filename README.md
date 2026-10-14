@@ -99,9 +99,10 @@ Both `rip movie` and `rip tv` share the same behavior:
 2. **Junk purge** — stale junk-labeled leftovers (`B1_t00.mkv`) from a failed
    earlier session are deleted before the rip.
 3. **Online gate** — TMDB must answer before anything spins.
-4. **TMDB title prompt** — type a title, pick from a table; a typo or empty
-   result re-prompts, `q` aborts. `--tmdbid` (bare id, `tv:N`, or a pasted
-   themoviedb.org URL) skips the prompt.
+4. **TMDB search** — the disc's volume label searches TMDB automatically and
+   the results table appears; pick a hit, or `s` drops to a typed search. An
+   empty result re-prompts typed, `q` aborts. `--tmdbid` (bare id, `tv:N`, or
+   a pasted themoviedb.org URL) skips the search.
 5. **Rip** — one `makemkvcon` call per title at `--minlength=$RIP_MINLENGTH`.
    A failed title never kills the run: the worst return code is collected and
    becomes the exit code.
@@ -125,7 +126,7 @@ skive rip movie --part 1       # then --part 2 on the other disc (split film)
 skive rip movie --verified     # override the burned-disc refusal
 ```
 
-Blu-rays name from disc metadata; DVDs prompt a TMDB search. Audio is the
+The volume label prefills the TMDB search; the pick names the rip. Audio is the
 film's original language; subtitles keep Danish when present, else English.
 
 **Multi-disc sets**, two kinds:
@@ -145,7 +146,8 @@ skive rip tv --extras          # a show's extras disc (no season prompt)
 skive rip tv --tmdbid tv:68357 # skip the search
 ```
 
-Pick the show at the TMDB prompt, then the season (Enter = 1, `0` = specials).
+Confirm the show at the results table (the volume label prefills the search),
+then the season (Enter = 1, `0` = specials).
 skive scans the disc, rips all titles by default, and proposes a
 title→episode table matched by duration against the season's TMDB runtimes —
 a bare `-T` opens the title menu first, or a `-T` spec narrows straight to

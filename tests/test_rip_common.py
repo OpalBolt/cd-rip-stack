@@ -11,7 +11,7 @@ def _mock_preamble_seams(monkeypatch, media="DVD-ROM"):
     log = Mock()
     monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))
     monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
-    monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=(media, [])))
+    monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=(media, "", [])))
     monkeypatch.setattr(rip_common, "purge_junk", Mock())
     monkeypatch.setattr(rip_common, "require_online", Mock())
     return log
@@ -35,6 +35,21 @@ def test_movie_preamble_returns_shared_values(tmp_path, monkeypatch):
     rip_common.purge_junk.assert_called_once_with([result.stage_movie, result.stage_tv])
     log.start.assert_called_once_with()
     log.note.assert_called_once_with("media", "media=DVD-ROM")
+    rip_common.search_loop.assert_called_once_with("movie", prefill="")
+
+
+def test_preamble_passes_volume_label_as_prefill(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    _mock_preamble_seams(monkeypatch)
+    rip_common.scan_disc.return_value = ("DVD-ROM", "ROGUE ONE", [])
+    search = Mock(return_value=TMDBPick("Rogue One", "2016", "en", "movie", "330459"))
+    monkeypatch.setattr(rip_common, "search_loop", search)
+
+    rip_common.rip_preamble(
+        "movie", "skive rip movie", SimpleNamespace(tmdbid=None, verified=False)
+    )
+
+    search.assert_called_once_with("movie", prefill="ROGUE ONE")
 
 
 def test_tv_preamble_resolves_tmdb_id_and_preserves_stage_order(tmp_path, monkeypatch):

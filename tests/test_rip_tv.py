@@ -272,7 +272,7 @@ TINFO:2,11,"3456789012"
 
     mock_run = Mock(return_value=Mock(stdout=output))
 
-    media, titles = scan_disc(120, run=mock_run)
+    media, _label, titles = scan_disc(120, run=mock_run)
 
     assert media == "DVD-ROM"
     # titles sorted by number, with seconds and size
@@ -296,7 +296,7 @@ TINFO:0,11,"1234567890"
     mock_run = Mock(return_value=Mock(stdout=output))
 
     with patch.dict(os.environ, {"MAKEMKV_INFO": "echo test"}):
-        media, titles = scan_disc(120, run=mock_run)
+        media, _label, titles = scan_disc(120, run=mock_run)
 
     assert media == "DVD-ROM"
     assert len(titles) == 1
@@ -317,7 +317,7 @@ def test_extras_flow():
 
     args = FakeArgs()
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", [])):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -360,7 +360,7 @@ def test_no_runtimes_sequential_fallback_rips_only_confirmed_titles():
                    TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", mock_titles)):
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):

@@ -70,6 +70,19 @@ def _parse_media(out: str, disc: int = 0) -> str:
     return ""
 
 
+def _parse_label(out: str, disc: int = 0) -> str:
+    """Disc volume label from the DRV:N line, cleaned into a search query.
+
+    The label is a search prefill, never a name: underscores become spaces,
+    whitespace collapses, nothing else. Empty when the disc reports no label.
+    """
+    for line in out.splitlines():
+        m = re.match(rf'^DRV:{disc},2,\d+,\d+,"[^"]*","([^"]*)"', line)
+        if m:
+            return re.sub(r"[ _]+", " ", m.group(1)).strip()
+    return ""
+
+
 def drive_media(run=subprocess.run) -> str:
     """Get disc:0's media type token.
 
@@ -523,10 +536,10 @@ def _parse_titles(out: str) -> list[TitleInfo]:
     return result
 
 
-def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, list[TitleInfo]]:
-    """One `makemkvcon info` run: media token + parsed titles."""
+def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, str, list[TitleInfo]]:
+    """One `makemkvcon info` run: media token, volume label, parsed titles."""
     out = _info(minlength, run, disc)
-    media, titles = _parse_media(out, disc), _parse_titles(out)
+    media, label, titles = _parse_media(out, disc), _parse_label(out, disc), _parse_titles(out)
     if media and not titles:
         # A disc with zero parseable titles means the info scan failed (e.g.
         # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.
@@ -535,7 +548,7 @@ def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, l
         print(f"skive: disc scan returned no titles ({media}) — raw output saved to {dump}", file=sys.stderr)
         print("  refusing to rip blind (this is how scrambled duplicates get ripped).", file=sys.stderr)
         sys.exit(1)
-    return media, titles
+    return media, label, titles
 
 
 def _getch() -> str:

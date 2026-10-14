@@ -16,6 +16,10 @@ _Avoid_: series
 The movie-or-TV intent, stated by invoking `rip-movie` or `rip-tv`. Authoritative over disc metadata, which never decides it — for a TV pick, metadata only prefills the search.
 _Avoid_: detected type, pick type
 
+**Volume label**:
+The disc's label string from the MakeMKV DRV scan line (`ROGUE_ONE`). A prefilled search query at most — never an output name, never a type.
+_Avoid_: disc title, disc name
+
 **Disc title**:
 One numbered video blob MakeMKV reports on a disc after the `--minlength` scan. A disc title is not an episode.
 _Avoid_: track, chapter
