@@ -104,7 +104,7 @@ Linux never transcodes. `lib/transcode-video.sh` is dead code and goes.
 
 ```text
 cd-rip-stack/
-├── mise.toml            # tools: python 3.13, uv. Nothing else — no task aliases.
+├── mise.toml            # tools: python 3.13, uv + install/update tasks
 ├── pyproject.toml       # deps: rich, beets, pylast, pillow, beetcamp, loguru; scripts: skive
 ├── README.md            # Linux setup + the Windows install spec, one document
 ├── CONTEXT.md
@@ -128,7 +128,10 @@ cd-rip-stack/
     └── transcode.py
 ```
 
-mise supplies Python and uv versions. Nothing more — a mise task per command would be a second door to the same room.
+mise supplies Python and uv versions, plus two lifecycle tasks (`install`,
+`update`) that wrap `uv tool install --editable .` (`update` ff-pulls first).
+Still no per-command aliases — a mise task per skive command would be a
+second door to the same room.
 
 Non-Python prerequisites, installed once by hand: `makemkv` (AUR, key in `~/.MakeMKV/settings.conf`), `cyanrip` (AUR), `flac` (metaflac), `ffmpeg` (ffprobe), `rsync`, NFS mounts reachable. HandBrake and MKVToolNix are Windows-side only now.
 

@@ -1,3 +1,11 @@
 [tools]
 python = "3.13"
 uv = "latest"
+
+[tasks.install]
+description = "install skive on PATH — editable, from this repo"
+run = "uv tool install --editable ."
+
+[tasks.update]
+description = "ff-pull this repo and refresh the skive install"
+run = "git pull --ff-only && uv tool install --editable ."

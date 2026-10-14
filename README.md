@@ -23,8 +23,8 @@ hand.
 Requires Python 3.13 and uv. If you use mise:
 
 ```bash
-mise install          # reads mise.toml: python 3.13, uv
-mise exec -- uv tool install --editable .
+mise run install      # tools + skive on PATH (editable, from this repo)
+mise run update       # ff-pull and refresh the install
 ```
 
 or, without mise, install uv by its own means and then:
@@ -33,8 +33,9 @@ or, without mise, install uv by its own means and then:
 uv tool install --editable .
 ```
 
-That puts `skive` on your PATH from this repo — re-run it after pulling. The
-venv carries rich (prompts/tables) plus the beets stack (tagging) and loguru.
+That puts `skive` on your PATH from this repo — `mise run update` (or the uv
+command again) after pulling. The venv carries rich (prompts/tables) plus the
+beets stack (tagging) and loguru.
 
 Non-Python prerequisites, installed once by hand:
 
@@ -302,7 +303,7 @@ Domain vocabulary lives in `CONTEXT.md`; the full rewrite spec in `SPEC.md`.
 
 ```text
 cd-rip-stack/
-├── mise.toml            # tools: python 3.13, uv. Nothing else.
+├── mise.toml            # tools: python 3.13, uv + install/update tasks
 ├── pyproject.toml       # deps: rich, beets, pylast, pillow, beetcamp, loguru; scripts: skive
 ├── README.md            # this file — Linux setup + the Windows install spec
 ├── CONTEXT.md
