@@ -157,7 +157,10 @@ a bare `-T` opens the title menu first, or a `-T` spec narrows straight to
 those titles. Longest title first, each title claims the
 nearest unused episode; a title close to two consecutive runtimes becomes a
 double (`S01E01-E02`, one file). Episodes already staged for that season are
-skipped, so a second disc proposes the next episodes. A title with no episode
+skipped, so a second disc proposes the next episodes — the table names what is
+already staged, and `c` there lists the show's staged files and, after a y/N,
+deletes them and rematches (the remedy when an earlier run mis-filed
+something). A title with no episode
 left lists as `→ extra` — fix it at the table with a row like `3=7`, `1=1-2`,
 or `2=e`; `q` aborts before the drive spins. When TMDB has no runtimes, skive
 asks for the first episode number and numbers the titles in order.

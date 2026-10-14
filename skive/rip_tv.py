@@ -53,6 +53,14 @@ def staged_eps(stage_dir: Path, display: str, season: int) -> set[int]:
     return staged
 
 
+def show_staging(stage_dir: Path, display: str) -> list[Path]:
+    """Every staged file belonging to one show: its episodes (any season,
+    singles and doubles) and its extras. The table's clear command deletes
+    exactly these."""
+    return [p for p in sorted(stage_dir.glob("*.mkv"))
+            if p.name.startswith(display + "_S") or p.name.startswith(display + " - ")]
+
+
 def build_candidates(episodes: list[tuple[int, str, int]], staged: set[int]) -> dict[int, tuple[int, str]]:
     """Build candidate episodes from TMDB, excluding staged.
 
@@ -506,6 +514,9 @@ def rip_tv(args) -> None:
     if preamble.disc > 0:
         # Already-promoted episodes live in the parent staging dir
         staged |= staged_eps(season_dir.parent, display, season)
+    if staged:
+        eps_str = ", ".join(f"E{e:02d}" for e in sorted(staged))
+        console.print(f"already staged: {eps_str} — c at the prompt clears the show's staging")
 
     # Build candidates (episodes with runtime, excluding staged)
     candidates = build_candidates(episodes, staged)
@@ -538,7 +549,7 @@ def rip_tv(args) -> None:
     # Confirm loop
     while True:
         print_table(display, season, titles_info, assignment, ep_names)
-        console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, q=quit): ", end="")
+        console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, c=clear staged, q=quit): ", end="")
         ans = Prompt.ask("") or ""
 
         if not ans:
@@ -546,6 +557,27 @@ def rip_tv(args) -> None:
         elif ans.lower() == "q":
             print("skive: quit — nothing ripped.", file=sys.stderr)
             sys.exit(1)
+        elif ans.lower() == "c":
+            doomed = show_staging(season_dir, display)
+            if preamble.disc > 0:
+                doomed += show_staging(season_dir.parent, display)
+            if not doomed:
+                console.print("nothing staged for this show")
+                continue
+            for f in doomed:
+                console.print(f"  {f.name}")
+            sure = Prompt.ask(f"delete {len(doomed)} staged file(s) for {display}? (y/N): ") or ""
+            if sure.lower() != "y":
+                continue
+            for f in doomed:
+                f.unlink()
+            staged = staged_eps(season_dir, display, season)
+            if preamble.disc > 0:
+                staged |= staged_eps(season_dir.parent, display, season)
+            candidates = build_candidates(episodes, staged)
+            if candidates:
+                assignment = match(titles_info, candidates)
+            # else: no runtimes — the sequential assignment stands
         else:
             # Apply fixes - rebuild title->ep mapping for clash check
             title_to_eps = {}

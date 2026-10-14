@@ -401,3 +401,85 @@ def mock_console():
     """Mock rich console for print_table tests."""
     with patch("skive.rip_tv.console") as m:
         yield m
+
+def test_show_staging_scopes_to_one_show(tmp_path):
+    """show_staging returns the show's episodes and extras, nothing else."""
+    from skive.rip_tv import show_staging
+    for name in ["Generation Kill (2008)_S01E01-E02.mkv",
+                 "Generation Kill (2008)_S02E03.mkv",
+                 "Generation Kill (2008) - Extra 01.mkv",
+                 "Other Show (1999)_S01E01.mkv",
+                 "B1_t00.mkv",
+                 "Generation Kill (2008).mkv"]:
+        (tmp_path / name).touch()
+    files = show_staging(tmp_path, "Generation Kill (2008)")
+    assert [f.name for f in files] == [
+        "Generation Kill (2008) - Extra 01.mkv",
+        "Generation Kill (2008)_S01E01-E02.mkv",
+        "Generation Kill (2008)_S02E03.mkv",
+    ]
+
+
+def _clear_staged_flow(tmp_path, monkeypatch, answers):
+    """Run rip tv over a poisoned staging dir; return the poisoned path."""
+    from unittest.mock import MagicMock, patch
+    from dataclasses import dataclass
+    from skive.tmdb import TMDBPick
+    from skive.rip_tv import rip_tv
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    stage = tmp_path / "rip" / "tv"
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    mock_titles = [TitleInfo(0, 21 * 60, 1, "dan", "", False),
+                   TitleInfo(1, 22 * 60, 1, "dan", "", False),
+                   TitleInfo(2, 23 * 60, 1, "dan", "", False)]
+    # fetch_season is mocked past its minutes->seconds conversion
+    episodes = [(1, "ep1", 21 * 60), (2, "ep2", 22 * 60), (3, "ep3", 23 * 60)]
+
+    poisoned = stage / "Show (2000)_S01E01-E02.mkv"
+    stage.mkdir(parents=True, exist_ok=True)
+    poisoned.touch()
+
+    prompt = MagicMock()
+    prompt.ask.side_effect = answers
+
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                            title="Show", year="2000", original_language="en", type="tv", id="5")):
+                        with patch("skive.rip_tv.Prompt", prompt):
+                            with patch("skive.rip_tv.fetch_season", return_value=episodes):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                        with patch("skive.rip_tv.rename_tv"):
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                try:
+                                                    rip_tv(FakeArgs())
+                                                except SystemExit as e:
+                                                    return poisoned, e.code
+    return poisoned, None
+
+
+def test_clear_staged_at_table_deletes_and_rips(tmp_path, monkeypatch):
+    """c + y at the table deletes the show's staged files and rips."""
+    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
+                                      ["1", "c", "y", ""])  # season, clear, yes, Enter=rip
+    assert not poisoned.exists()
+    assert rc == 0
+
+
+def test_clear_staged_declined_keeps_files(tmp_path, monkeypatch):
+    """Declining the clear leaves staging untouched."""
+    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
+                                      ["1", "c", "n", "q"])  # season, clear, no, quit
+    assert poisoned.exists()
+    assert rc == 1

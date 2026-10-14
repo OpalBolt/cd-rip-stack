@@ -66,7 +66,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
    - If both fit, the nearer wins; a tie goes to the single.
    - A winning pair stamps a double episode: one file, `S01E01-E02`, never split.
    - A title with no claim becomes an extra.
-5. **Confirm table** — printed in title-number order. Enter rips as proposed. Fix rows (`3=7`, `1=1-2`, `2=e`) re-point one title at a time, apply left-to-right, clash-checked; a rejected row changes nothing and the table re-prints. `q` aborts before the drive spins.
+5. **Confirm table** — printed in title-number order. Enter rips as proposed. Fix rows (`3=7`, `1=1-2`, `2=e`) re-point one title at a time, apply left-to-right, clash-checked; a rejected row changes nothing and the table re-prints. `c` lists the show's staged files (episodes and extras), deletes them after a y/N, and rematches — the in-flow reset for mis-filed staging. `q` aborts before the drive spins.
 6. **Sequential fallback** — only when TMDB gives zero runtimes: ask the first episode number, number titles in order.
 7. **`--extras`** — a bonus disc: no season, no table. Rips straight into the TV staging dir as `<Show (Year)> - Extra NN`, rolling past existing extras; a bare `-T` opens the title menu first (the only scan on this path). An aired special is not an extra; it is a season 0 episode through the normal branch.
 
