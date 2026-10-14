@@ -2,6 +2,7 @@
 
 import sys
 
+from skive import common
 from skive.makemkv import (
     build_selection, inject_profile, promote_staged, rename_staged, resolve_titles,
     rip_header, subtitle_note, rip_titles,
@@ -63,6 +64,8 @@ def rip_movie(args) -> None:
 
         log.phase_end()
         log.finish(worst_rc)
+        if worst_rc == 0:
+            common.eject_disc(preamble.disc, log)
         sys.exit(worst_rc)
     finally:
         # Clean up temp profile

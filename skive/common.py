@@ -104,6 +104,21 @@ class RipLog:
                    _elapsed(int((end - self._start).total_seconds())), status)
 
 
+def eject_disc(disc: int = 0, log: RipLog | None = None, run=subprocess.run) -> None:
+    """Best-effort tray eject — the swap-discs signal after a clean rip.
+
+    Failure is logged and swallowed: a stuck tray must never fail a rip that
+    already succeeded.
+    # ponytail: /dev/srN assumed to match makemkvcon's disc:N; parse lsscsi if drives ever swap.
+    """
+    try:
+        rc = run(["eject", f"/dev/sr{disc}"], capture_output=True, text=True).returncode
+    except FileNotFoundError:
+        rc = 127  # util-linux eject not installed
+    if log is not None:
+        log.note("eject", f"/dev/sr{disc} tray open" if rc == 0 else f"eject rc={rc} (ignored)")
+
+
 def ensure_mounted(mnt: str, export: str) -> None:
     """Mount an NFS export on demand, never unmount.
 
