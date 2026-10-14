@@ -74,12 +74,17 @@ def _parse_label(out: str, disc: int = 0) -> str:
     """Disc volume label from the DRV:N line, cleaned into a search query.
 
     The label is a search prefill, never a name: underscores become spaces,
-    whitespace collapses, nothing else. Empty when the disc reports no label.
+    whitespace collapses, and a trailing set marker (DISC1, DISC 2 OF 3,
+    SIDE A) is stripped — it is packaging, not title. Empty when the disc
+    reports no label.
     """
     for line in out.splitlines():
         m = re.match(rf'^DRV:{disc},2,\d+,\d+,"[^"]*","([^"]*)"', line)
         if m:
-            return re.sub(r"[ _]+", " ", m.group(1)).strip()
+            label = re.sub(r"[ _]+", " ", m.group(1))
+            label = re.sub(r"\s*[\(\[]?(?:(?:disc|disk)\s*\d+(?:\s*of\s*\d+)?|side\s*[a-d0-9])[\)\]]?\s*$",
+                           "", label, flags=re.IGNORECASE)
+            return label.strip()
     return ""
 
 

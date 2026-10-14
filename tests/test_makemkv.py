@@ -563,3 +563,18 @@ def test_scan_disc_label_absent():
     output = 'DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"\nTINFO:0,9,"0:21:00"\nTINFO:0,11,"1234567890"\n'
     _, label, _titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
     assert label == ""
+
+
+def test_scan_disc_label_strips_set_marker():
+    """Trailing DISC/SIDE markers are packaging, not title."""
+    from skive.makemkv import scan_disc
+
+    for raw, want in [
+        ("GENERATION_KILL_DISC1", "GENERATION KILL"),
+        ("SHOW DISC 2 OF 3", "SHOW"),
+        ("MOVIE_SIDE_A", "MOVIE"),
+        ("DISC1", ""),
+    ]:
+        output = f'DRV:0,2,999,12,"BD-RE ASUS","{raw}","x"\nTINFO:0,9,0,"1:26:43"\nTINFO:0,11,0,"5845346392"\n'
+        _, label, _titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+        assert label == want, raw
