@@ -57,11 +57,11 @@ def build_candidates(episodes: list[tuple[int, str, int]], staged: set[int]) -> 
     """Build candidate episodes from TMDB, excluding staged.
 
     Args:
-        episodes: List of (episode_number, name, runtime_minutes) from TMDB
+        episodes: List of (episode_number, name, runtime_seconds) from TMDB
         staged: Episodes already staged
 
     Returns:
-        Dict mapping episode_number -> (runtime_minutes, name), for episodes with runtime>0 and not staged
+        Dict mapping episode_number -> (runtime_seconds, name), for episodes with runtime>0 and not staged
     """
     candidates = {}
     for ep_num, name, rt in episodes:

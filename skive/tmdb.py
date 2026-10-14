@@ -255,7 +255,9 @@ def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:
         season: Season number (0 for specials)
 
     Returns:
-        List of (episode_number, name, runtime_minutes) sorted by episode_number.
+        List of (episode_number, name, runtime_seconds) sorted by episode_number.
+        TMDB reports minutes; they are converted to seconds here so the
+        duration matcher (which works in seconds) never sees mixed units.
         Episodes with no runtime are included with runtime=0.
 
     Raises:
@@ -273,7 +275,7 @@ def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:
     for ep in data.get("episodes", []):
         ep_num = ep.get("episode_number")
         name = ep.get("name", "")
-        runtime = ep.get("runtime") or 0
+        runtime = (ep.get("runtime") or 0) * 60  # TMDB minutes -> seconds
         if ep_num is not None:
             episodes.append((ep_num, name, runtime))
 

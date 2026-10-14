@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 
 from skive.tmdb import (
-    _http_get_json, fetch_by_id, parse_tmdbid, require_online, search_loop,
+    _http_get_json, fetch_by_id, fetch_season, parse_tmdbid, require_online,
+    search_loop,
 )
 
 # Create mocks that won't fail with rich
@@ -220,3 +221,27 @@ def test_search_loop_prefill_zero_results_prompts_typed():
             mock_prompt.ask.side_effect = ["typed", ""]
             pick = search_loop("movie", prefill="GARBAGE_LABEL")
             assert pick.title == "Alien"
+
+
+def test_fetch_season_returns_seconds():
+    """TMDB reports minutes; the matcher works in seconds (mixed units once
+    produced an all-extras table on Generation Kill)."""
+    mock_data = {"episodes": [
+        {"episode_number": 1, "name": "Get Some", "runtime": 66},
+        {"episode_number": 2, "name": "The Cradle of Civilization", "runtime": None},
+    ]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data):
+            eps = fetch_season("1432", 1)
+    assert eps == [(1, "Get Some", 66 * 60), (2, "The Cradle of Civilization", 0)]
+
+
+def test_fetch_season_feeds_matcher_in_seconds():
+    """A 65-minute episode claims a 1:05 title as a single, not an extra."""
+    from skive.rip_tv import build_candidates, match
+
+    episodes = [(1, "Get Some", 65 * 60), (2, "The Cradle of Civilization", 66 * 60)]
+    candidates = build_candidates(episodes, staged=set())
+    assignment = match([(0, 3905, 2_200_000_000), (4, 285, 100_000_000)], candidates)
+    assert assignment[0] == (1, 1)
+    assert assignment[4] == (0, 0)  # featurette -> extra
