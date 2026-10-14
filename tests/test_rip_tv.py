@@ -9,7 +9,7 @@ import pytest
 
 from skive.rip_tv import (
     staged_eps, build_candidates, match, parse_fix_rows, apply_fixes, map_str,
-    print_table, rename_tv, rip_tv, SINGLE_EPS, DOUBLE_EPS,
+    print_table, rename_tv, rip_tv, number_in_order, SINGLE_EPS, DOUBLE_EPS,
 )
 from skive.makemkv import scan_disc, TitleInfo
 
@@ -179,6 +179,56 @@ def test_fix_rows_already_staged():
 
     # Should be rejected
     assert not ok
+
+
+def test_number_in_order():
+    """Titles number sequentially in title order from the first episode."""
+    titles = [(0, 1260, 1), (1, 1300, 1), (2, 1250, 1)]
+    assert number_in_order(titles, 4) == {0: (4, 4), 1: (5, 5), 2: (6, 6)}
+
+
+def test_n_command_renumbers_in_order():
+    """`n=1` at the table replaces duration matching with title order.
+
+    Runtimes are near-identical, so match() guesses t0=E02/t1=E01 (nearest
+    duration, longest first). The user types n=1; the rip uses title order.
+    """
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    mock_titles = [TitleInfo(0, 1290, 1, "dan", "", False),
+                   TitleInfo(1, 1250, 1, "dan", "", False)]
+    mock_episodes = [(1, "ep1", 1250), (2, "ep2", 1290), (3, "ep3", 1250), (4, "ep4", 1290)]
+
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
+                    )):
+                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
+                            with patch("skive.rip_tv.staged_eps", return_value=set()):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                with patch("skive.rip_common.RipLog"):
+                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                        # season, then n=1 at the table, then Enter
+                                                        mock_prompt.ask.side_effect = ["", "n=1", ""]
+                                                        try:
+                                                            rip_tv(FakeArgs())
+                                                        except SystemExit:
+                                                            pass
+
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2)}
 
 
 def test_map_str():

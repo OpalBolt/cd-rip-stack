@@ -162,7 +162,12 @@ already staged, and `c` there lists the show's staged files and, after a y/N,
 deletes them and rematches (the remedy when an earlier run mis-filed
 something). A title with no episode
 left lists as `→ extra` — fix it at the table with a row like `3=7`, `1=1-2`,
-or `2=e`; `q` aborts before the drive spins. When TMDB has no runtimes, skive
+or `2=e`; `q` aborts before the drive spins. When a season's runtimes are
+near-identical (a short show — the table will name episodes that live on
+later discs), `n` at the table numbers the titles in order instead: bare `n`
+starts at the first episode not already staged (right for the next disc of a
+set), `n=4` starts at 4; fix rows still refine what `n` proposed (`2=e`,
+`2=4-5`). When TMDB has no runtimes, skive
 asks for the first episode number and numbers the titles in order.
 
 `--part` is refused for TV: episodes never merge. An aired special is not an

@@ -153,6 +153,22 @@ def match(titles: list[tuple[int, int, int]], candidates: dict[int, tuple[int, s
     return assignment
 
 
+def number_in_order(titles: list[tuple[int, int, int]], first_ep: int) -> dict[int, tuple[int, int]]:
+    """Number titles in title order: title i gets episode first_ep + i.
+
+    TV discs lay titles out in episode order; runtimes can't tell episodes
+    apart when a season's lengths are near-identical.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes)
+        first_ep: Episode number assigned to the first title
+
+    Returns:
+        Dict title_number -> (lo_ep, hi_ep)
+    """
+    return {t: (e, e) for e, (t, _, _) in enumerate(titles, start=first_ep)}
+
+
 def parse_fix_rows(spec: str) -> list[tuple[int, str, int, int]]:
     """Parse a comma-separated fix row spec (t=ep, t=ep-ep, or t=e).
 
@@ -537,11 +553,7 @@ def rip_tv(args) -> None:
             sys.exit(1)
 
         # Number titles in order
-        ep = firstep
-        assignment = {}
-        for t, _, _ in titles_info:
-            assignment[t] = (ep, ep)
-            ep += 1
+        assignment = number_in_order(titles_info, firstep)
     else:
         # Duration matching
         assignment = match(titles_info, candidates)
@@ -549,7 +561,7 @@ def rip_tv(args) -> None:
     # Confirm loop
     while True:
         print_table(display, season, titles_info, assignment, ep_names)
-        console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, c=clear staged, q=quit): ", end="")
+        console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, n[=first]=number in order, c=clear staged, q=quit): ", end="")
         ans = Prompt.ask("") or ""
 
         if not ans:
@@ -557,6 +569,27 @@ def rip_tv(args) -> None:
         elif ans.lower() == "q":
             print("skive: quit — nothing ripped.", file=sys.stderr)
             sys.exit(1)
+        elif ans.lower().startswith("n"):
+            # Renumber titles in order: duration matching is guesswork when a
+            # season's runtimes are near-identical (titles grab episodes that
+            # live on later discs of a multi-disc set).
+            m = re.match(r'^n=(\d+)$', ans.strip(), re.IGNORECASE)
+            if m:
+                first_ep = int(m.group(1))
+            else:
+                # Default: first episode of the season not already staged —
+                # right for the next disc of a set.
+                default_ep = min((e for e in ep_names if e not in staged), default=1)
+                console.print(f"first episode number on this disc [{default_ep}]: ", end="")
+                first_str = (Prompt.ask("") or str(default_ep)).strip()
+                try:
+                    first_ep = int(first_str)
+                except ValueError:
+                    first_ep = 0
+            if first_ep < 1:
+                print("skive: episode must be a number >= 1", file=sys.stderr)
+                continue
+            assignment = number_in_order(titles_info, first_ep)
         elif ans.lower() == "c":
             doomed = show_staging(season_dir, display)
             if preamble.disc > 0:
