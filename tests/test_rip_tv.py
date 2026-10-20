@@ -10,6 +10,7 @@ import pytest
 from skive.rip_tv import (
     staged_eps, build_candidates, match, parse_fix_rows, apply_fixes, map_str,
     print_table, rename_tv, rip_tv, number_in_order, SINGLE_EPS, DOUBLE_EPS,
+    tv_floor, sum_disqualified,
 )
 from skive.makemkv import scan_disc, TitleInfo
 
@@ -533,3 +534,230 @@ def test_clear_staged_declined_keeps_files(tmp_path, monkeypatch):
                                       ["1", "c", "n", "q"])  # season, clear, no, quit
     assert poisoned.exists()
     assert rc == 1
+
+
+def test_tv_floor():
+    """Floor never drops below 600s, never raises above minlength."""
+    assert tv_floor(120) == 600
+    assert tv_floor(3000) == 3000
+
+
+def test_sum_disqualified_generation_kill():
+    """11482 = 3932+3897+3653 exactly: title 3 is the play-all."""
+    titles = [(0, 3932, 1), (1, 3897, 1), (2, 3653, 1), (3, 11482, 1)]
+    assert sum_disqualified(titles) == {3}
+
+
+def test_sum_disqualified_clean_list():
+    """No subset sums -> nothing disqualified."""
+    titles = [(0, 2500, 1), (1, 2450, 1), (2, 2400, 1)]
+    assert sum_disqualified(titles) == set()
+
+
+def test_sum_disqualified_tolerance():
+    """±120s tolerance: sum +100s still disqualifies, +200s does not."""
+    plus_100 = [(0, 1000, 1), (1, 1500, 1), (2, 2600, 1)]
+    assert sum_disqualified(plus_100) == {2}
+
+    plus_200 = [(0, 1000, 1), (1, 1500, 1), (2, 2700, 1)]
+    assert sum_disqualified(plus_200) == set()
+
+
+def test_sum_disqualified_overlapping_playalls():
+    """Several play-alls on one disc all get disqualified."""
+    titles = [(0, 1000, 1), (1, 1000, 1), (2, 2000, 1), (3, 3000, 1), (4, 4000, 1)]
+    assert sum_disqualified(titles) == {2, 3, 4}
+
+
+def test_sum_disqualified_subset_size_cap():
+    """Sum of 7 components does not disqualify (subset must be 2..6)."""
+    titles = [(i, 600, 1) for i in range(7)] + [(7, 4200, 1)]
+    assert sum_disqualified(titles) == set()
+
+
+def test_floor_drops_short_titles_before_rip():
+    """Under-floor titles (30s menu loop) never reach the table or the rip.
+
+    Same patch set as test_n_command_renumbers_in_order; the short title is
+    gone from titles_info before matching, so total= and the assignment the
+    rip renames with only ever see the long title.
+    """
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    mock_titles = [TitleInfo(0, 2400, 1, "dan", "", False),
+                   TitleInfo(1, 30, 1, "dan", "", False)]  # 30s menu loop
+    mock_episodes = [(1, "ep1", 2400)]
+
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
+                    )):
+                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
+                            with patch("skive.rip_tv.staged_eps", return_value=set()):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
+                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                with patch("skive.rip_common.RipLog"):
+                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                        # season, then Enter=rip at the table
+                                                        mock_prompt.ask.side_effect = ["", ""]
+                                                        try:
+                                                            rip_tv(FakeArgs())
+                                                        except SystemExit:
+                                                            pass
+
+    # The 30s title is not counted in the rip and gets no assignment row.
+    assert mock_rip_titles.call_args.kwargs["total"] == 1
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1)}
+
+
+def test_playall_forced_to_extra_after_match():
+    """A play-all the matcher liked is forced back to extra before the table.
+
+    Title 2 (3550s) sits within 120s of t0+t1 (3500s) and would otherwise
+    claim the nearest episode; sum-disqualification pins it to (0, 0).
+    """
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    mock_titles = [TitleInfo(0, 1800, 1, "dan", "", False),
+                   TitleInfo(1, 1700, 1, "dan", "", False),
+                   TitleInfo(2, 3550, 1, "dan", "", False)]
+    mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
+
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
+                    )):
+                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
+                            with patch("skive.rip_tv.staged_eps", return_value=set()):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                with patch("skive.rip_common.RipLog"):
+                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                        # season, then Enter=rip at the table
+                                                        mock_prompt.ask.side_effect = ["", ""]
+                                                        try:
+                                                            rip_tv(FakeArgs())
+                                                        except SystemExit:
+                                                            pass
+
+    assert mock_rename_tv.call_args.args[3][2] == (0, 0)
+
+
+def test_playall_pin_survives_n_renumber():
+    """The `n` rebuild re-applies the play-all pin (Generation Kill shape).
+
+    Initial match would offer all four titles as episodes (t3's 11482s has no
+    near runtime); n=1 replaces that with title order 1-4, which would turn
+    the play-all into E4. The pin must survive the rebuild: t0-t2 -> E1-E3,
+    t3 -> extra.
+    """
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    mock_titles = [TitleInfo(0, 3932, 1, "dan", "", False),
+                   TitleInfo(1, 3897, 1, "dan", "", False),
+                   TitleInfo(2, 3653, 1, "dan", "", False),
+                   TitleInfo(3, 11482, 1, "dan", "", False)]
+    mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
+
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
+                    )):
+                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
+                            with patch("skive.rip_tv.staged_eps", return_value=set()):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                with patch("skive.rip_common.RipLog"):
+                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                        # season, then n=1 at the table, then Enter
+                                                        mock_prompt.ask.side_effect = ["", "n=1", ""]
+                                                        try:
+                                                            rip_tv(FakeArgs())
+                                                        except SystemExit:
+                                                            pass
+
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+
+
+def test_fix_row_can_assign_playall_to_episode():
+    """A typed fix row on a play-all sticks — the deliberate escape hatch.
+
+    Same Generation Kill disc as above, but the user accepts the initial
+    match and types `3=5`, deliberately making the play-all E5. Only the
+    automatic rebuilds re-pin; a fix row is never reverted.
+    """
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    mock_titles = [TitleInfo(0, 3932, 1, "dan", "", False),
+                   TitleInfo(1, 3897, 1, "dan", "", False),
+                   TitleInfo(2, 3653, 1, "dan", "", False),
+                   TitleInfo(3, 11482, 1, "dan", "", False)]
+    mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653),
+                     (4, "ep4", 3600), (5, "ep5", 3700)]
+
+    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
+                    )):
+                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
+                            with patch("skive.rip_tv.staged_eps", return_value=set()):
+                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
+                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+                                                with patch("skive.rip_common.RipLog"):
+                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                        # season, then 3=5 at the table, then Enter
+                                                        mock_prompt.ask.side_effect = ["", "3=5", ""]
+                                                        try:
+                                                            rip_tv(FakeArgs())
+                                                        except SystemExit:
+                                                            pass
+
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (5, 5)}

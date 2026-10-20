@@ -78,6 +78,61 @@ def build_candidates(episodes: list[tuple[int, str, int]], staged: set[int]) -> 
     return candidates
 
 
+def tv_floor(minlength: int) -> int:
+    """Lowest duration (seconds) a title needs to count as episode material.
+
+    MakeMKV's minlength only keeps fragments out; menu loops run minutes.
+    The floor is never below 600s.
+
+    Args:
+        minlength: Minimum title length in seconds the scan used
+
+    Returns:
+        Effective TV floor in seconds
+    """
+    return max(minlength, 600)
+
+
+def sum_disqualified(titles: list[tuple[int, int, int]]) -> set[int]:
+    """Titles that are play-alls: duration within ±120s of a subset sum.
+
+    A play-all's duration matches the sum of a subset of 2..6 of the OTHER
+    titles' durations. Only the summed title is disqualified; its components
+    stay eligible, and every qualifying title is returned. Runs on floored
+    titles so short menu loops can't produce false sums.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), already floored
+
+    Returns:
+        Set of title numbers that are play-alls
+    """
+    tol = 120
+    max_parts = 6
+
+    def has_summing_subset(components: list[int], target: int) -> bool:
+        """Pruned DFS over ascending components: any 2..6-subset sum ≈ target?"""
+        def dfs(start: int, count: int, total: int) -> bool:
+            if count >= 2 and abs(total - target) <= tol:
+                return True
+            if count == max_parts:
+                return False
+            for i in range(start, len(components)):
+                if total + components[i] > target + tol:
+                    break  # ascending: every later component overshoots too
+                if dfs(i + 1, count + 1, total + components[i]):
+                    return True
+            return False
+        return dfs(0, 0, 0)
+
+    disqualified: set[int] = set()
+    for number, secs, _ in titles:
+        others = sorted(d for n, d, _ in titles if n != number)
+        if has_summing_subset(others, secs):
+            disqualified.add(number)
+    return disqualified
+
+
 def match(titles: list[tuple[int, int, int]], candidates: dict[int, tuple[int, str]]) -> dict[int, tuple[int, int]]:
     """Greedy duration matching.
 
@@ -511,6 +566,22 @@ def rip_tv(args) -> None:
 
     titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
 
+    # TV floor: menu loops and fragments never make episodes. Dropped
+    # entirely — not eligible, not in the table, not ripped.
+    titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
+    playalls = sum_disqualified(titles_info)
+
+    def pin_playalls(a: dict[int, tuple[int, int]]) -> dict[int, tuple[int, int]]:
+        """Play-alls rip as extras whatever the matcher liked.
+
+        Re-applied after each automatic rebuild (initial match, `n`
+        renumber, `c` clear). Never applied after a fix row: `t=ep` typed at
+        the table is the deliberate escape hatch.
+        """
+        for t in playalls:
+            a[t] = (0, 0)
+        return a
+
     # Fetch season from TMDB
     if not pick.id or pick.id == "-":
         print("skive: the TMDB pick carries no id — cannot fetch episodes. re-pick or use --tmdbid tv:N.", file=sys.stderr)
@@ -553,10 +624,10 @@ def rip_tv(args) -> None:
             sys.exit(1)
 
         # Number titles in order
-        assignment = number_in_order(titles_info, firstep)
+        assignment = pin_playalls(number_in_order(titles_info, firstep))
     else:
         # Duration matching
-        assignment = match(titles_info, candidates)
+        assignment = pin_playalls(match(titles_info, candidates))
 
     # Confirm loop
     while True:
@@ -589,7 +660,7 @@ def rip_tv(args) -> None:
             if first_ep < 1:
                 print("skive: episode must be a number >= 1", file=sys.stderr)
                 continue
-            assignment = number_in_order(titles_info, first_ep)
+            assignment = pin_playalls(number_in_order(titles_info, first_ep))
         elif ans.lower() == "c":
             doomed = show_staging(season_dir, display)
             if preamble.disc > 0:
@@ -609,7 +680,7 @@ def rip_tv(args) -> None:
                 staged |= staged_eps(season_dir.parent, display, season)
             candidates = build_candidates(episodes, staged)
             if candidates:
-                assignment = match(titles_info, candidates)
+                assignment = pin_playalls(match(titles_info, candidates))
             # else: no runtimes — the sequential assignment stands
         else:
             # Apply fixes - rebuild title->ep mapping for clash check
