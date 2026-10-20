@@ -134,6 +134,28 @@ def test_tv_dvd_fast_scan_failure_falls_back_to_full_scan(tmp_path, monkeypatch,
     assert any("full-scan fallback" in str(c.args) for c in log.note.call_args_list)
 
 
+def test_tv_dvd_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, monkeypatch, capsys):
+    """Duplicate-duration fast scans (ADR 0002) discard the fast result and
+    escalate to the full MakeMKV scan — same path as the RuntimeError fallback."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    log = _mock_preamble_seams(monkeypatch)
+    ambiguous_durations = GK_DURATIONS + [3933]  # 3932 duplicate within ±1s
+    monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=ambiguous_durations))
+    full_titles = [TitleInfo(0, 3932, 100, "dan", "", False), TitleInfo(1, 3933, 90, "dan", "", False)]
+    rip_common.scan_disc.return_value = ("DVD-ROM", "GENERATION KILL", full_titles)
+    _mock_search(monkeypatch)
+
+    result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
+
+    rip_common.fast_scan_dvd.assert_called_once_with(0)
+    rip_common.scan_disc.assert_called_once()
+    assert result.fast_scan is False
+    assert result.scan_durations is None
+    assert result.titles_full == full_titles
+    assert "escalating to the full MakeMKV scan" in capsys.readouterr().err
+    assert any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
+
+
 def test_preamble_movies_never_fast_scan(tmp_path, monkeypatch):
     """Movies stay on the full scan even on a pressed DVD."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
-    TitleInfo, fast_scan_dvd, is_recordable, iso2b, purge_junk, scan_disc, sniff_disc,
+    TitleInfo, ambiguous, fast_scan_dvd, is_recordable, iso2b, purge_junk, scan_disc, sniff_disc,
 )
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
 
@@ -86,9 +86,18 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
             print(f"skive: fast scan failed ({e}) — falling back to the full MakeMKV scan", file=sys.stderr)
             log.note("scan", "fast scan failed — full-scan fallback")
         else:
-            fast_scan = True
-            titles_full = [TitleInfo(number=i, seconds=d, size=0, audio="", subtitles="", scrambled=False)
-                           for i, d in enumerate(scan_durations)]
+            if ambiguous(scan_durations):
+                # Escalation trigger (ADR 0002): duplicate/decoy/angle playlists
+                # that the fast path's duration join would mis-handle — discard
+                # the fast result and take the full scan path (same code path
+                # as the RuntimeError fallback below).
+                print("skive: fast scan found duplicate-duration titles — escalating to the full MakeMKV scan", file=sys.stderr)
+                log.note("scan", "duplicate durations — full-scan escalation")
+                scan_durations = None
+            else:
+                fast_scan = True
+                titles_full = [TitleInfo(number=i, seconds=d, size=0, audio="", subtitles="", scrambled=False)
+                               for i, d in enumerate(scan_durations)]
     if not fast_scan:
         _, label, titles_full = scan_disc(minlength, disc=disc)
 

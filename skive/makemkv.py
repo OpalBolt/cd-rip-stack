@@ -646,6 +646,17 @@ def fast_scan_dvd(disc: int, run=subprocess.run) -> list[int]:
             print(f"skive: umount {mnt} failed: {umount.stderr.strip()}", file=sys.stderr)
 
 
+def ambiguous(durations: list[int]) -> bool:
+    """True when any two fast-scan durations differ by <=1s.
+
+    The escalation trigger (ADR 0002): duplicate/decoy/angle playlists the
+    fast path's duration join cannot tell apart, so the disc is re-read by
+    the full MakeMKV scan instead of ripping junk as content.
+    """
+    s = sorted(durations)
+    return any(b - a <= 1 for a, b in zip(s, s[1:]))
+
+
 def _getch() -> str:
     """Read one key from stdin (raw termios); arrows -> UP/DOWN."""
     import termios

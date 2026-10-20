@@ -795,3 +795,16 @@ def test_fast_scan_dvd_umount_failure_warns_but_scan_stands(capsys):
     with pytest.raises(RuntimeError, match="lsdvd failed"):
         fast_scan_dvd(0, run=fake_run_busy_bad_lsdvd)
     assert "umount /mnt/skive-d0 failed: not mounted" in capsys.readouterr().err
+
+
+def test_ambiguous_escalation_trigger():
+    """ambiguous (ADR 0002): True when any two durations are within ±1s —
+    duplicate/decoy/angle playlists the fast path must not rip by join."""
+    from skive.makemkv import ambiguous
+
+    assert ambiguous([100, 400, 100]) is True      # exact duplicate
+    assert ambiguous([100, 101]) is True           # ±1s
+    assert ambiguous([100, 102]) is False          # 2s apart is fine
+    assert ambiguous([100]) is False               # single title
+    assert ambiguous([]) is False                  # no titles
+    assert ambiguous([100, 101, 500]) is True      # near-dup among many
