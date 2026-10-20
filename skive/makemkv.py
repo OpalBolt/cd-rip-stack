@@ -556,6 +556,96 @@ def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, s
     return media, label, titles
 
 
+def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str]:
+    """Media token + volume label from the DRV line, WITHOUT the title scan.
+
+    `makemkvcon -r info` prints every DRV line up front and only then spends
+    minutes scanning titles, so the process is killed as soon as this disc's
+    DRV line has been read — media and label are both on it, and the existing
+    parsers (_parse_media / _parse_label) do the parsing. Honors MAKEMKV_INFO
+    the way _info does (replay via shell, no kill).
+
+    Args:
+        run: process spawner for monkeypatching (default subprocess.Popen)
+        disc: Disc number whose DRV line to wait for
+
+    Returns:
+        (media token, cleaned volume label); ("", "") when no disc
+    """
+    override = os.environ.get("MAKEMKV_INFO")
+    if override:
+        # Replay captured dump via the command in override
+        out = subprocess.run(override, shell=True, capture_output=True, text=True).stdout
+        return _parse_media(out, disc), _parse_label(out, disc)
+    proc = run(["makemkvcon", "-r", "info", f"disc:{disc}"],
+               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    drv_line = ""
+    try:
+        for line in proc.stdout:
+            if line.startswith(f"DRV:{disc},"):
+                drv_line = line
+                break
+    finally:
+        proc.kill()
+        proc.wait()
+    return _parse_media(drv_line, disc), _parse_label(drv_line, disc)
+
+
+def parse_lsdvd(out: str) -> list[int]:
+    """Title durations in seconds (title order) from lsdvd's default output.
+
+    lsdvd numbers titles 1-based; the list is positional (callers use 0-based
+    indices). Lines without a `Title: N, Length: H:MM:SS` shape — the Disc
+    Title header, chapters garbage — are ignored.
+    """
+    durations: list[int] = []
+    for line in out.splitlines():
+        m = re.match(r'^\s*Title:\s*\d+,\s*Length:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', line)
+        if m:
+            durations.append(round(int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                                   + float(m.group(3))))
+    return durations
+
+
+def fast_scan_dvd(disc: int, run=subprocess.run) -> list[int]:
+    """DVD title durations in seconds via a read-only UDF mount + lsdvd.
+
+    Seconds-long alternative to the full makemkvcon title scan. ALWAYS
+    unmounts (try/finally); a nonzero umount rc prints one stderr warning
+    (a stuck mount would otherwise surface as a confusing eject failure)
+    but never masks the scan's own result. Any failed command or an empty
+    title list raises RuntimeError — the caller decides the fallback.
+
+    Args:
+        disc: Disc number (device /dev/sr{disc}, matching eject_disc)
+        run: subprocess.run callable for monkeypatching
+
+    Returns:
+        Durations in scan order (positional; callers use 0-based indices)
+    """
+    dev = f"/dev/sr{disc}"
+    mnt = f"/mnt/skive-d{disc}"
+    mkdir = run(["sudo", "mkdir", "-p", mnt], capture_output=True, text=True)
+    if mkdir.returncode != 0:
+        raise RuntimeError(f"mkdir {mnt} failed: {mkdir.stderr.strip()}")
+    try:
+        mounted = run(["sudo", "mount", "-t", "udf", "-o", "ro", dev, mnt],
+                      capture_output=True, text=True)
+        if mounted.returncode != 0:
+            raise RuntimeError(f"mount {dev} read-only at {mnt} failed: {mounted.stderr.strip()}")
+        result = run(["lsdvd", mnt], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"lsdvd failed on {mnt}: {result.stderr.strip()}")
+        durations = parse_lsdvd(result.stdout)
+        if not durations:
+            raise RuntimeError(f"lsdvd reported no titles on {mnt}")
+        return durations
+    finally:
+        umount = run(["sudo", "umount", mnt], capture_output=True, text=True)
+        if umount.returncode != 0:
+            print(f"skive: umount {mnt} failed: {umount.stderr.strip()}", file=sys.stderr)
+
+
 def _getch() -> str:
     """Read one key from stdin (raw termios); arrows -> UP/DOWN."""
     import termios

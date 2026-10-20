@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted, sanitize
-from skive.makemkv import TitleInfo, is_recordable, iso2b, purge_junk, scan_disc
+from skive.makemkv import (
+    TitleInfo, fast_scan_dvd, is_recordable, iso2b, purge_junk, scan_disc, sniff_disc,
+)
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
 
 
@@ -24,6 +26,8 @@ class Preamble:
     minlength: int
     keep: str
     disc: int
+    fast_scan: bool = False
+    scan_durations: list[int] | None = None  # durations in scan order, fast path only
 
 
 def rip_preamble(kind: str, script: str, args) -> Preamble:
@@ -48,7 +52,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log.start()
 
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-    media, label, titles_full = scan_disc(minlength, disc=disc)
+    media, label = sniff_disc(disc=disc)
     if not media:
         print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
         sys.exit(1)
@@ -65,6 +69,28 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
             sys.exit(1)
     else:
         log.note("media", f"media={media}")
+
+    # Fast path (ADR 0002, DVD half): TV + pressed DVD + no -T/--extras gates
+    # on lsdvd durations in seconds; movies, Blu-ray and flagged runs stay on
+    # the full scan. lsdvd title numbers never match MakeMKV's, so the rip
+    # joins staged files back by duration (rip_tv.rename_tv_fast).
+    fast_scan = False
+    scan_durations: list[int] | None = None
+    titles_full: list[TitleInfo] = []
+    if (kind == "tv" and media.startswith("DVD")
+            and getattr(args, "titles", None) is None
+            and not getattr(args, "extras", False)):
+        try:
+            scan_durations = fast_scan_dvd(disc)
+        except RuntimeError as e:
+            print(f"skive: fast scan failed ({e}) — falling back to the full MakeMKV scan", file=sys.stderr)
+            log.note("scan", "fast scan failed — full-scan fallback")
+        else:
+            fast_scan = True
+            titles_full = [TitleInfo(number=i, seconds=d, size=0, audio="", subtitles="", scrambled=False)
+                           for i, d in enumerate(scan_durations)]
+    if not fast_scan:
+        _, label, titles_full = scan_disc(minlength, disc=disc)
 
     purge_junk(stage_dirs)
     require_online()
@@ -86,4 +112,5 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log.name = display
 
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
-    return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv, minlength, keep, disc)
+    return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv,
+                    minlength, keep, disc, fast_scan=fast_scan, scan_durations=scan_durations)

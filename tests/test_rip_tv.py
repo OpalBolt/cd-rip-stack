@@ -11,6 +11,7 @@ from skive.rip_tv import (
     staged_eps, parse_range, next_unstaged, assign_range, range_mismatch_note,
     range_past_end_note, parse_fix_rows, apply_fixes, map_str, print_table,
     rename_tv, rip_tv, tv_floor, sum_disqualified, audit_ratio, audit_cell,
+    rename_tv_fast, episode_target,
 )
 from skive.makemkv import scan_disc, TitleInfo
 from rich.console import Console
@@ -200,7 +201,9 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, stag
     prompt = MagicMock()
     prompt.ask.side_effect = answers
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -496,7 +499,9 @@ def test_extras_flow():
 
     args = FakeArgs()
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -543,7 +548,9 @@ def test_rip_only_requested_titles_that_survived_scan():
                    TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -633,7 +640,9 @@ def _clear_staged_flow(tmp_path, monkeypatch, answers):
     prompt = MagicMock()
     prompt.ask.side_effect = answers
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -727,7 +736,9 @@ def test_floor_drops_short_titles_before_rip():
                    TitleInfo(1, 30, 1, "dan", "", False)]  # 30s menu loop
     mock_episodes = [(1, "ep1", 2400)]
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -775,7 +786,9 @@ def test_playall_forced_to_extra():
                    TitleInfo(2, 3550, 1, "dan", "", False)]
     mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -822,7 +835,9 @@ def test_playall_pin_survives_n_reask():
                    TitleInfo(3, 11482, 1, "dan", "", False)]
     mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -870,7 +885,9 @@ def test_fix_row_can_assign_playall_to_episode():
     mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653),
                      (4, "ep4", 3600), (5, "ep5", 3700)]
 
-    with patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
@@ -893,3 +910,260 @@ def test_fix_row_can_assign_playall_to_episode():
                                                             pass
 
     assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (5, 5)}
+
+
+# --- Fast scan: duration join + rename (ADR 0002, DVD half) ---
+
+GK_DURATIONS = [3932, 3897, 3653, 11482]
+
+
+def _ffprobe_run(durations: dict[str, int]):
+    """Fake subprocess.run: ffprobe returns the mapped duration for a file."""
+    def fake_run(cmd, **kwargs):
+        assert cmd[:1] == ["ffprobe"]
+        name = Path(cmd[-1]).name
+        return Mock(returncode=0, stdout=f"{durations[name]}\n")
+    return fake_run
+
+
+def test_rename_tv_fast_happy_path(tmp_path):
+    """Four GK junk files join by duration: three episodes + one extra named."""
+    for n, dur in enumerate(GK_DURATIONS):
+        (tmp_path / f"GENERATION_KILL_t{n}.mkv").touch()
+
+    rename_tv_fast("Show (2000)", tmp_path, 1,
+                   {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)},
+                   GK_DURATIONS, run=_ffprobe_run({f"GENERATION_KILL_t{n}.mkv": d
+                                                   for n, d in enumerate(GK_DURATIONS)}))
+
+    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
+    assert (tmp_path / "Show (2000)_S01E02.mkv").exists()
+    assert (tmp_path / "Show (2000)_S01E03.mkv").exists()
+    assert (tmp_path / "Show (2000) - Extra 01.mkv").exists()
+
+
+def test_rename_tv_fast_duplicate_duration_keeps_lowest_tnn(tmp_path, capsys):
+    """Two staged files within ±1s of one title: lowest _tNN wins, the loser
+    is warned and stays junk-labeled."""
+    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
+    (tmp_path / "GENERATION_KILL_t05.mkv").touch()  # duplicate/decoy of t00
+
+    rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 1)}, [3932],
+                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932,
+                                     "GENERATION_KILL_t05.mkv": 3932}))
+
+    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
+    assert (tmp_path / "GENERATION_KILL_t05.mkv").exists()  # loser stays junk
+    err = capsys.readouterr().err
+    assert "t05" in err
+    assert err.count("GENERATION_KILL_t05") == 1  # one warning, not one per join
+
+
+def test_rename_tv_fast_second_claimant_never_warned_as_loser(tmp_path, capsys):
+    """Two scanner titles share a duration, two staged files: the file title 1
+    claims gets renamed — it was never a loser, so no junk warning. One
+    disposition per staged file."""
+    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
+    (tmp_path / "GENERATION_KILL_t01.mkv").touch()
+
+    ok = rename_tv_fast("Show (2000)", tmp_path, 1,
+                        {0: (1, 1), 1: (2, 2)}, [3932, 3932],
+                        run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932,
+                                          "GENERATION_KILL_t01.mkv": 3932}))
+
+    assert ok is True
+    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
+    assert (tmp_path / "Show (2000)_S01E02.mkv").exists()
+    err = capsys.readouterr().err
+    assert "junk-labeled" not in err  # title 1 claimed it — no loser warning
+    assert "GENERATION_KILL → Show (2000)_S01E01" in err
+    assert "GENERATION_KILL → Show (2000)_S01E02" in err
+
+
+def test_rename_tv_fast_double_loser_warned_once(tmp_path, capsys):
+    """A file losing two same-duration joins is warned exactly once, in the
+    single post-join pass — not once per losing title."""
+    for n in range(3):
+        (tmp_path / f"GENERATION_KILL_t{n:02d}.mkv").touch()
+
+    rename_tv_fast("Show (2000)", tmp_path, 1,
+                   {0: (1, 1), 1: (2, 2)}, [3932, 3932],
+                   run=_ffprobe_run({f"GENERATION_KILL_t{n:02d}.mkv": 3932
+                                     for n in range(3)}))
+
+    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
+    assert (tmp_path / "Show (2000)_S01E02.mkv").exists()
+    assert (tmp_path / "GENERATION_KILL_t02.mkv").exists()  # loser stays junk
+    assert capsys.readouterr().err.count("GENERATION_KILL_t02") == 1
+
+
+def test_rename_tv_fast_unjoinable_file_stays_junk(tmp_path, capsys):
+    """A staged file within no scanner title's ±1s is warned and left alone."""
+    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
+    (tmp_path / "GENERATION_KILL_t09.mkv").touch()  # 500s menu loop: unjoinable
+
+    rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 1)}, [3932],
+                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932,
+                                     "GENERATION_KILL_t09.mkv": 500}))
+
+    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
+    assert (tmp_path / "GENERATION_KILL_t09.mkv").exists()
+    assert "matches no scanned title" in capsys.readouterr().err
+
+
+def test_rename_tv_fast_missing_episode_aborts_before_any_rename(tmp_path, capsys):
+    """An eligible title without a staged file returns False and renames NOTHING."""
+    (tmp_path / "GENERATION_KILL_t00.mkv").touch()  # only title 0's file
+
+    ok = rename_tv_fast("Show (2000)", tmp_path, 1,
+                        {0: (1, 1), 2: (3, 3)},  # title 2 -> E3 has no file
+                        [3932, 3897, 3653],
+                        run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932}))
+
+    assert ok is False
+    err = capsys.readouterr().err
+    assert "title 2 (E03) has no staged file — rename aborted" in err
+    assert (tmp_path / "GENERATION_KILL_t00.mkv").exists()  # nothing renamed
+    assert not (tmp_path / "Show (2000)_S01E01.mkv").exists()
+
+
+def test_rename_tv_fast_missing_double_names_the_range(tmp_path, capsys):
+    """The abort line names a double assignment as E01-E02."""
+    ok = rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 2)}, [3932],
+                        run=_ffprobe_run({}))
+    assert ok is False
+    assert "title 0 (E01-E02)" in capsys.readouterr().err
+
+
+def test_rename_tv_fast_unmatched_extra_warns_without_abort(tmp_path, capsys):
+    """An extra (lo=0) with no staged file only warns; episodes still rename."""
+    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
+
+    rename_tv_fast("Show (2000)", tmp_path, 1,
+                   {0: (1, 1), 3: (0, 0)},  # title 3 extra: file never ripped
+                   [3932, 3897, 3653, 11482],
+                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932}))
+
+    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
+    assert "title 3" not in capsys.readouterr().err
+
+
+def test_rename_tv_fast_never_clobbers(tmp_path, capsys):
+    """An existing episode target wins; the joined file stays junk-labeled."""
+    (tmp_path / "Show (2000)_S01E01.mkv").write_text("existing")
+    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
+
+    rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 1)}, [3932],
+                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932}))
+
+    assert (tmp_path / "Show (2000)_S01E01.mkv").read_text() == "existing"
+    assert (tmp_path / "GENERATION_KILL_t00.mkv").exists()
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_episode_target_singles_doubles_and_seasons():
+    """The shared target helper names singles, doubles and specials."""
+    stage = Path("/stage")
+    assert episode_target(stage, "Show (2000)", 1, 3, 3) == stage / "Show (2000)_S01E03.mkv"
+    assert episode_target(stage, "Show (2000)", 1, 1, 2) == stage / "Show (2000)_S01E01-E02.mkv"
+    assert episode_target(stage, "Show (2000)", 0, 5, 5) == stage / "Show (2000)_S00E05.mkv"
+
+
+def test_fast_scan_rip_rips_all_at_floor_and_joins(tmp_path, monkeypatch):
+    """Fast-path rip_tv: rip_titles(None, ..., tv_floor) and rename_tv_fast
+    with the scanner durations — never the full-scan rename_tv."""
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", return_value=GK_DURATIONS), \
+            patch("skive.rip_common.scan_disc") as mock_scan_disc, \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
+            patch("skive.rip_tv.rename_tv") as mock_rename_tv, \
+            patch("skive.rip_tv.rename_tv_fast") as mock_rename_fast, \
+            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 0
+    mock_scan_disc.assert_not_called()  # the fast scan gated the disc
+
+    rip_args = mock_rip_titles.call_args
+    assert rip_args.args[0] is None  # rip all in one call
+    assert rip_args.args[2] == tv_floor(120) == 600  # MakeMKV minlength = TV floor
+    assert rip_args.kwargs["total"] == 4
+
+    mock_rename_tv.assert_not_called()
+    fast_args = mock_rename_fast.call_args.args
+    assert fast_args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}  # play-all extra
+    assert fast_args[4] == GK_DURATIONS
+
+
+def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
+    """rename_tv_fast returning False: the caller logs the abort, closes the
+    log with rc 1, and exits 1 — before promote, subtitle note, or eject.
+    Nothing is renamed."""
+    from skive.tmdb import TMDBPick
+
+    @dataclass
+    class FakeArgs:
+        titles = None
+        extras = False
+        tmdbid = None
+        verified = True
+
+    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
+    stage = tmp_path / "rip" / "tv"
+    stage.mkdir(parents=True, exist_ok=True)
+    (stage / "B1_t00.mkv").touch()
+    (stage / "B1_t01.mkv").touch()
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+            patch("skive.rip_common.fast_scan_dvd", return_value=GK_DURATIONS), \
+            patch("skive.rip_common.scan_disc") as mock_scan_disc, \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_common.RipLog") as mock_log, \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rename_tv_fast", return_value=False) as mock_rename_fast, \
+            patch("skive.rip_tv.promote_staged") as mock_promote, \
+            patch("skive.rip_tv.subtitle_note", return_value="subs=dan") as mock_subs:
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 1
+    mock_scan_disc.assert_not_called()  # the fast scan gated the disc
+    mock_rename_fast.assert_called_once()
+    log = mock_log.return_value
+    log.note.assert_any_call("rename", "join aborted — an episode's staged file is missing")
+    log.phase_end.assert_called_once()  # the abort reaches rip.log ...
+    log.finish.assert_called_once_with(1)  # ... with a final total line
+    mock_promote.assert_not_called()  # stopped at the rename gate
+    mock_subs.assert_not_called()
+    assert sorted(p.name for p in stage.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
