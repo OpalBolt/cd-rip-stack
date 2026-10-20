@@ -7,7 +7,7 @@ from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import (
-    TitleInfo, ambiguous, fast_scan_dvd, is_recordable, iso2b, purge_junk, scan_disc, sniff_disc,
+    TitleInfo, ambiguous, fast_scan_bluray, fast_scan_dvd, is_recordable, iso2b, purge_junk, scan_disc, sniff_disc,
 )
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
 
@@ -70,18 +70,21 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     else:
         log.note("media", f"media={media}")
 
-    # Fast path (ADR 0002, DVD half): TV + pressed DVD + no -T/--extras gates
-    # on lsdvd durations in seconds; movies, Blu-ray and flagged runs stay on
-    # the full scan. lsdvd title numbers never match MakeMKV's, so the rip
-    # joins staged files back by duration (rip_tv.rename_tv_fast).
+    # Fast path (ADR 0002): TV + pressed video disc + no -T/--extras gates on
+    # scanner durations in seconds — lsdvd (mounted DVD) or `ffprobe bluray:`
+    # (device listing, DRM-free). Recordable BD already exits at the gate
+    # above, so only pressed BD reaches the fast scan. Movies and flagged runs
+    # stay on the full scan. Scanner title numbers never match MakeMKV's, so
+    # the rip joins staged files back by duration (rip_tv.rename_tv_fast).
     fast_scan = False
     scan_durations: list[int] | None = None
     titles_full: list[TitleInfo] = []
-    if (kind == "tv" and media.startswith("DVD")
+    if (kind == "tv" and media.startswith(("DVD", "BD"))
             and getattr(args, "titles", None) is None
             and not getattr(args, "extras", False)):
+        scanner = fast_scan_dvd if media.startswith("DVD") else fast_scan_bluray
         try:
-            scan_durations = fast_scan_dvd(disc)
+            scan_durations = scanner(disc)
         except RuntimeError as e:
             print(f"skive: fast scan failed ({e}) — falling back to the full MakeMKV scan", file=sys.stderr)
             log.note("scan", "fast scan failed — full-scan fallback")

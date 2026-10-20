@@ -1,5 +1,6 @@
 """Tests for MakeMKV functions."""
 
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, call, patch
@@ -795,6 +796,127 @@ def test_fast_scan_dvd_umount_failure_warns_but_scan_stands(capsys):
     with pytest.raises(RuntimeError, match="lsdvd failed"):
         fast_scan_dvd(0, run=fake_run_busy_bad_lsdvd)
     assert "umount /mnt/skive-d0 failed: not mounted" in capsys.readouterr().err
+
+
+# --- Blu-ray fast scan (ADR 0002, BD half) ---
+
+FFPROBE_BLURAY = """[bluray @ 0x55d1c2a4f6c0] 4 playable titles found
+[bluray @ 0x55d1c2a4f6c0] title 0 duration: 01:05:32.00
+[bluray @ 0x55d1c2a4f6c0] title 1 duration: 01:04:57.00
+[bluray @ 0x55d1c2a4f6c0] title 2 duration: 01:00:53.00
+[bluray @ 0x55d1c2a4f6c0] title 3 duration: 03:11:22.00
+"""
+
+
+def test_parse_ffprobe_bluray_captured_shape():
+    """The captured ffprobe bluray: listing parses to durations in seconds."""
+    from skive.makemkv import parse_ffprobe_bluray
+
+    assert parse_ffprobe_bluray(FFPROBE_BLURAY) == [3932, 3897, 3653, 11482]
+
+
+def test_parse_ffprobe_bluray_bare_durations_keep_listed_order():
+    """Builds without the `title N` prefix parse positionally."""
+    from skive.makemkv import parse_ffprobe_bluray
+
+    out = """[bluray @ 0x55d1c2a4f6c0] 4 playable titles found
+[bluray @ 0x55d1c2a4f6c0] duration: 01:05:32.00
+[bluray @ 0x55d1c2a4f6c0] duration: 01:04:57.00
+[bluray @ 0x55d1c2a4f6c0] duration: 01:00:53.00
+[bluray @ 0x55d1c2a4f6c0] duration: 03:11:22.00
+"""
+    assert parse_ffprobe_bluray(out) == [3932, 3897, 3653, 11482]
+
+
+def test_parse_ffprobe_bluray_sorts_by_title_number():
+    """When `title N` is present, output order follows N, not print order."""
+    from skive.makemkv import parse_ffprobe_bluray
+
+    out = ("[bluray @ 0x55d1c2a4f6c0] title 2 duration: 01:00:53.00\n"
+           "[bluray @ 0x55d1c2a4f6c0] title 0 duration: 01:05:32.00\n"
+           "[bluray @ 0x55d1c2a4f6c0] title 3 duration: 03:11:22.00\n"
+           "[bluray @ 0x55d1c2a4f6c0] title 1 duration: 01:04:57.00\n")
+    assert parse_ffprobe_bluray(out) == [3932, 3897, 3653, 11482]
+
+
+def test_parse_ffprobe_bluray_garbage_ignored_including_duration_header():
+    """Non-duration lines and ffprobe's capital-`Duration:` input probe are ignored."""
+    from skive.makemkv import parse_ffprobe_bluray
+
+    out = ("not bluray output at all\n"
+           "[bluray @ 0x55d1c2a4f6c0] 4 playable titles found\n"
+           "Duration: 00:05:00.04, start: 0.000000, bitrate: 9900 kb/s\n")
+    assert parse_ffprobe_bluray(out) == []
+
+
+def test_parse_ffprobe_bluray_fractional_seconds_round_to_int():
+    """Optional fractional seconds round to int, prefix or not."""
+    from skive.makemkv import parse_ffprobe_bluray
+
+    titled = "[bluray @ 0x55d1c2a4f6c0] title 0 duration: 00:21:00.750\n"
+    bare = "[bluray @ 0x55d1c2a4f6c0] duration: 00:21:00.750\n"
+    assert parse_ffprobe_bluray(titled) == [1261]
+    assert parse_ffprobe_bluray(bare) == [1261]
+
+
+def test_fast_scan_bluray_command_and_result():
+    """No mount, no sudo: one timeout-wrapped ffprobe call on the device."""
+    from skive.makemkv import fast_scan_bluray
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        # Real ffprobe prints the listing via av_log, i.e. stderr.
+        return Mock(returncode=0, stdout="", stderr=FFPROBE_BLURAY)
+
+    assert fast_scan_bluray(0, run=fake_run) == [3932, 3897, 3653, 11482]
+    assert calls[0][0] == ["ffprobe", "-hide_banner", "bluray:/dev/sr0"]
+    assert calls[0][1] == {"capture_output": True, "text": True, "timeout": 60}
+
+    fast_scan_bluray(2, run=fake_run, timeout=30)
+    assert calls[1][0] == ["ffprobe", "-hide_banner", "bluray:/dev/sr2"]
+    assert calls[1][1]["timeout"] == 30
+
+
+def test_fast_scan_bluray_timeout_raises_runtime_error():
+    """A hung listing (opening the longest playlist) raises, not blocks."""
+    from skive.makemkv import fast_scan_bluray
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 60)
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        fast_scan_bluray(0, run=fake_run)
+
+
+def test_fast_scan_bluray_nonzero_rc_raises():
+    """A failed bluray probe raises for the caller's full-scan fallback."""
+    from skive.makemkv import fast_scan_bluray
+
+    fake_run = Mock(return_value=Mock(returncode=1, stdout="", stderr="AACS error"))
+    with pytest.raises(RuntimeError, match="failed"):
+        fast_scan_bluray(0, run=fake_run)
+
+
+def test_fast_scan_bluray_missing_ffprobe_raises():
+    """FileNotFoundError (no ffprobe installed) becomes the caller's RuntimeError."""
+    from skive.makemkv import fast_scan_bluray
+
+    def fake_run(cmd, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    with pytest.raises(RuntimeError, match="ffprobe unavailable"):
+        fast_scan_bluray(0, run=fake_run)
+
+
+def test_fast_scan_bluray_empty_listing_raises():
+    """rc 0 with no parseable titles raises — nothing to gate the rip on."""
+    from skive.makemkv import fast_scan_bluray
+
+    fake_run = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+    with pytest.raises(RuntimeError, match="no titles"):
+        fast_scan_bluray(0, run=fake_run)
 
 
 def test_ambiguous_escalation_trigger():

@@ -646,6 +646,70 @@ def fast_scan_dvd(disc: int, run=subprocess.run) -> list[int]:
             print(f"skive: umount {mnt} failed: {umount.stderr.strip()}", file=sys.stderr)
 
 
+# --- Blu-ray fast scan (ADR 0002, BD half) ---
+
+def parse_ffprobe_bluray(out: str) -> list[int]:
+    """Blu-ray playlist durations in seconds (listed order) from ffprobe's
+    `bluray:` device listing (`ffprobe -hide_banner bluray:/dev/srN`).
+
+    Lines look like `[bluray @ 0x55d1...] title 0 duration: 01:05:32.00`; some
+    ffprobe builds print a bare `duration:` without the `title N` prefix, so
+    both shapes parse (case-sensitive: ffprobe's capital-`Duration:` input
+    probe header must not match). Numbered titles order by their N, bare
+    lines keep listed order; a mix of both is unexpected, and any `title N`
+    line makes the numbered lines win (bare ones are dropped). Anything else
+    is ignored; garbage -> [].
+    """
+    titled: list[tuple[int, int]] = []
+    bare: list[int] = []
+    for line in out.splitlines():
+        m = re.search(r'title\s+(\d+)\s+duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', line)
+        if m:
+            secs = round(int(m.group(2)) * 3600 + int(m.group(3)) * 60 + float(m.group(4)))
+            titled.append((int(m.group(1)), secs))
+            continue
+        m = re.search(r'duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', line)
+        if m:
+            bare.append(round(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))))
+    if titled:
+        return [secs for _, secs in sorted(titled, key=lambda e: e[0])]
+    return bare
+
+
+def fast_scan_bluray(disc: int, run=subprocess.run, timeout: int = 60) -> list[int]:
+    """Blu-ray playlist durations in seconds via `ffprobe bluray:` on the device.
+
+    The listing is DRM-free — no mount, no sudo, no AACS keys — so a Blu-ray
+    TV rip starts fast like a DVD one. TIMEOUT-wrapped: the listing's tail can
+    hang trying to open the longest playlist. Any failure (timeout, missing
+    ffprobe, nonzero rc, empty listing) raises RuntimeError — the caller falls
+    back to the full scan, same as the DVD fast scan.
+
+    Args:
+        disc: Disc number (device /dev/sr{disc}, matching fast_scan_dvd)
+        run: subprocess.run callable for monkeypatching
+        timeout: Seconds before the listing is abandoned
+
+    Returns:
+        Durations in scan order (positional; callers use 0-based indices)
+    """
+    cmd = ["ffprobe", "-hide_banner", f"bluray:/dev/sr{disc}"]
+    try:
+        result = run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"ffprobe bluray listing timed out after {timeout}s")
+    except FileNotFoundError as e:
+        raise RuntimeError(f"ffprobe unavailable: {e}")
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe bluray listing failed: {result.stderr.strip()}")
+    # The listing is av_log output (stderr) on real ffprobe builds; parse both
+    # streams so either captured shape replays.
+    durations = parse_ffprobe_bluray(f"{result.stdout}\n{result.stderr}")
+    if not durations:
+        raise RuntimeError("ffprobe bluray listing reported no titles")
+    return durations
+
+
 def ambiguous(durations: list[int]) -> bool:
     """True when any two fast-scan durations differ by <=1s.
 
