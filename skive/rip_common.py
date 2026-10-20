@@ -70,16 +70,18 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     else:
         log.note("media", f"media={media}")
 
-    # Fast path (ADR 0002): TV + pressed video disc + no -T/--extras gates on
-    # scanner durations in seconds — lsdvd (mounted DVD) or `ffprobe bluray:`
-    # (device listing, DRM-free). Recordable BD already exits at the gate
-    # above, so only pressed BD reaches the fast scan. Movies and flagged runs
-    # stay on the full scan. Scanner title numbers never match MakeMKV's, so
-    # the rip joins staged files back by duration (rip_tv.rename_tv_fast).
+    # Fast path (ADR 0002): movie/TV + pressed video disc + no -T/--extras
+    # gates on scanner durations in seconds — lsdvd (mounted DVD) or
+    # `ffprobe bluray:` (device listing, DRM-free). Recordable BD already
+    # exits at the gate above, so only pressed BD reaches the fast scan.
+    # Flagged runs (-T menu/spec, --extras) stay on the full scan. Scanner
+    # title numbers never match MakeMKV's, so TV joins staged files back by
+    # duration (rip_tv.rename_tv_fast); movies rip all and keep MakeMKV's own
+    # _tNN numbers (rename_staged is join-free).
     fast_scan = False
     scan_durations: list[int] | None = None
     titles_full: list[TitleInfo] = []
-    if (kind == "tv" and media.startswith(("DVD", "BD"))
+    if (kind in ("tv", "movie") and media.startswith(("DVD", "BD"))
             and getattr(args, "titles", None) is None
             and not getattr(args, "extras", False)):
         scanner = fast_scan_dvd if media.startswith("DVD") else fast_scan_bluray
@@ -126,3 +128,20 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
     return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv,
                     minlength, keep, disc, fast_scan=fast_scan, scan_durations=scan_durations)
+
+
+def fast_scan_header(display: str, n: int) -> str:
+    """Two-line rip header for fast-scan runs (ADR 0002).
+
+    Fast-scan infos carry size 0 and no audio, so this omits the size/audio
+    lines that makemkv.rip_header would fill with 0.0 B and '?'.
+
+    Args:
+        display: Sanitized display title shown on the header's first line.
+        n: Number of titles reported on the second line.
+
+    Returns:
+        The header string passed to makemkv.rip_titles.
+    """
+    return (f"{display}\n"
+            f"  titles: {n} (fast scan — no size/audio preview)")

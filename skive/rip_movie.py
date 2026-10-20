@@ -7,7 +7,7 @@ from skive.makemkv import (
     build_selection, inject_profile, promote_staged, rename_staged, resolve_titles,
     rip_header, subtitle_note, rip_titles,
 )
-from skive.rip_common import rip_preamble
+from skive.rip_common import fast_scan_header, rip_preamble
 
 
 def rip_movie(args) -> None:
@@ -37,16 +37,28 @@ def rip_movie(args) -> None:
     # Inject profile
     profile_path = inject_profile(sel)
     try:
-        # Bare -T opens the menu over the gate scan; no -T rips all titles
-        # (Blu-ray: scrambled decoy titles are skipped by default)
-        titles = resolve_titles(args.titles, titles_full, preamble.media)
-
         # Rip phase
         preexisting = set(stage_movie.glob("*.mkv"))
         log.phase("rip")
-        infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
-        worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
-                              total=len(titles_full), infos=infos, header=rip_header(display, infos))
+        if preamble.fast_scan:
+            # Fast scan (ADR 0002): durations only, so rip all in one call —
+            # the ±1s escalation already filtered decoys, and rename_staged
+            # keeps MakeMKV's own _tNN numbers (no duration join needed).
+            # minlength unchanged: movies have no episode floor, so
+            # RIP_MINLENGTH stays the gate (a 10-minute short must still rip).
+            # Synthesized infos carry size 0 and no audio, so mirror the TV
+            # fast path's two-line header instead of rip_header's 0.0 B / ?.
+            header = fast_scan_header(display, len(titles_full))
+            worst_rc = rip_titles(None, profile_path, minlength, stage_movie, disc=preamble.disc,
+                                  total=len(titles_full), infos=titles_full, header=header)
+        else:
+            # Bare -T opens the menu over the gate scan; no -T rips all titles
+            # (Blu-ray: scrambled decoy titles are skipped by default)
+            titles = resolve_titles(args.titles, titles_full, preamble.media)
+
+            infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
+            worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
+                                  total=len(titles_full), infos=infos, header=rip_header(display, infos))
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")

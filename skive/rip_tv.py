@@ -15,7 +15,7 @@ from skive.makemkv import (
     CONFIG_DIR, build_selection, inject_profile, promote_staged, rename_staged,
     resolve_titles, rip_header, subtitle_note, rip_titles, hsize,
 )
-from skive.rip_common import rip_preamble
+from skive.rip_common import fast_scan_header, rip_preamble
 from skive.tmdb import fetch_season
 
 console = Console()
@@ -883,8 +883,7 @@ def rip_tv(args) -> None:
             # Fast scan: MakeMKV's title set is shaped by the same floor the
             # scanner list used, so rip all in one call and join the staged
             # files back to scanner titles by duration at rename time.
-            header = (f"{display}\n"
-                      f"  titles: {len(titles_info)} (fast scan — no size/audio preview)")
+            header = fast_scan_header(display, len(titles_info))
             worst_rc = rip_titles(None, profile_path, tv_floor(minlength), season_dir, disc=preamble.disc,
                                   total=len(titles_info), infos=titles_full, header=header)
         else:
