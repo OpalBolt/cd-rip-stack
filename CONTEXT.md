@@ -21,22 +21,39 @@ The disc's label string from the MakeMKV DRV scan line (`ROGUE_ONE`). A prefille
 _Avoid_: disc title, disc name
 
 **Disc title**:
-One numbered video blob MakeMKV reports on a disc after the `--minlength` scan. A disc title is not an episode.
+One numbered video blob the disc scan reports — lsdvd/ffprobe on the fast path, MakeMKV when the scan escalates. A disc title is not an episode.
 _Avoid_: track, chapter
+
+**Fast scan**:
+The default disc read: mounted `lsdvd` (DVD) or `ffprobe bluray:` (BD). Yields titles as durations in seconds, in ~seconds — no sizes, no MakeMKV numbers.
+_Avoid_: quick scan, pre-scan
+
+**Full scan**:
+The fallback `makemkvcon info` run, fired only when the fast scan finds two titles within ±1s (duplicates/decoy obfuscation) or a movie `-T` menu is requested. Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
+_Avoid_: deep scan, makemkv scan
+
+**Eligible title**:
+A disc title that can become an episode: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the range prompt's count and the position assignment.
+_Avoid_: candidate title
+
+**Play-all title**:
+A disc title whose duration equals the sum of a subset of other eligible titles (±120s) — a compilation, never an episode. Auto-marked extra.
+_Avoid_: compilation, sum title
 
 **Season**:
 A TMDB-numbered season of a TV show. Season 0 is specials. Never inferred from disc structure.
 _Avoid_: volume, part
 
 **Episode**:
-One aired unit of a TV show, numbered `S02E05` per TMDB. Numbers come from duration matching or the sequential fallback — never from disc title numbers, never from command-line flags.
+One aired unit of a TV show, numbered `S02E05` per TMDB. Numbers come from the stated episode range plus disc position — never from disc title numbers, never from command-line flags.
 _Avoid_: title
 
-**Duration matching**:
-The pre-rip proposal assigning each disc title to the nearest-runtime unmatched episode, largest title first. A proposal only — confirmed or corrected at the table, never final.
+**Ratio audit**:
+The per-title sanity check: disc duration ÷ TMDB runtime. Green when the ratio fits the PAL fingerprint (~0.92–1.04 — PAL discs run ~4–5% short); yellow otherwise. Durations grade assignments; they never make them.
+_Avoid_: duration matching
 
 **Episode map**:
-The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by duration matching or the sequential fallback; corrected at the table with fix rows, never hand-authored.
+The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by the range prompt plus position assignment; corrected at the table with fix rows, never hand-authored.
 _Avoid_: mapping string
 
 **Season folder**:
