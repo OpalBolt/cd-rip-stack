@@ -1,4 +1,4 @@
-"""TV rip orchestration: season prompt, duration matching, confirm table."""
+"""TV rip orchestration: season prompt, episode-range assignment, confirm table."""
 
 import re
 import sys
@@ -17,10 +17,6 @@ from skive.rip_common import rip_preamble
 from skive.tmdb import fetch_season
 
 console = Console()
-
-# Constants ported from bash
-SINGLE_EPS = 600  # seconds
-DOUBLE_EPS = 300  # seconds
 
 
 def staged_eps(stage_dir: Path, display: str, season: int) -> set[int]:
@@ -59,23 +55,6 @@ def show_staging(stage_dir: Path, display: str) -> list[Path]:
     exactly these."""
     return [p for p in sorted(stage_dir.glob("*.mkv"))
             if p.name.startswith(display + "_S") or p.name.startswith(display + " - ")]
-
-
-def build_candidates(episodes: list[tuple[int, str, int]], staged: set[int]) -> dict[int, tuple[int, str]]:
-    """Build candidate episodes from TMDB, excluding staged.
-
-    Args:
-        episodes: List of (episode_number, name, runtime_seconds) from TMDB
-        staged: Episodes already staged
-
-    Returns:
-        Dict mapping episode_number -> (runtime_seconds, name), for episodes with runtime>0 and not staged
-    """
-    candidates = {}
-    for ep_num, name, rt in episodes:
-        if rt > 0 and ep_num not in staged:
-            candidates[ep_num] = (rt, name)
-    return candidates
 
 
 def tv_floor(minlength: int) -> int:
@@ -133,95 +112,130 @@ def sum_disqualified(titles: list[tuple[int, int, int]]) -> set[int]:
     return disqualified
 
 
-def match(titles: list[tuple[int, int, int]], candidates: dict[int, tuple[int, str]]) -> dict[int, tuple[int, int]]:
-    """Greedy duration matching.
+def parse_range(s: str) -> tuple[int, int] | None:
+    """Parse a stated episode range: "N" -> (N, N), "N-M" -> (N, M).
 
-    Titles sorted longest-first. Each claims nearest-runtime unmatched episode.
-    Single competes within SINGLE_EPS.
-    Consecutive pair competes on sum of runtimes; pair wins only if its distance < best single distance.
-    No claim -> extra (lo=hi=0).
+    None for anything unparseable or invalid (N < 1, M < N). Whitespace
+    around the numbers is tolerated.
 
     Args:
-        titles: List of (title_number, duration_seconds, size_bytes)
-        candidates: Dict episode_number -> (runtime_seconds, name)
+        s: Raw answer from the range prompt
 
     Returns:
-        Dict title_number -> (lo_ep, hi_ep). lo==hi==0 means extra.
+        (first, last) episode numbers, or None
     """
-    eps_by_num = list(candidates.keys())
+    s = s.strip()
+    m = re.match(r'^(\d+)$', s)
+    if m:
+        n = int(m.group(1))
+        return (n, n) if n >= 1 else None
+    m = re.match(r'^(\d+)\s*-\s*(\d+)$', s)
+    if m:
+        n, k = int(m.group(1)), int(m.group(2))
+        return (n, k) if n >= 1 and k >= n else None
+    return None
 
-    assignment = {}
-    used_eps = set()  # Track used episodes separately
 
-    # Sort titles by duration descending (longest first)
-    sorted_titles = sorted(titles, key=lambda x: -x[1])
+def next_unstaged(ep_names: dict[int, str], staged: set[int]) -> int:
+    """Where this disc's numbering starts: the smallest named episode not
+    already staged.
 
-    for t, t_secs, _ in sorted_titles:
-        best_single = None
-        best_single_dist = None
+    Every named episode staged (or nothing named at all): continue past the
+    highest staged one. Nothing staged: the season starts at 1.
 
-        # Try each available single episode
-        for e in eps_by_num:
-            if e in used_eps:
-                continue
-            ep_secs = candidates[e][0]
-            d = abs(t_secs - ep_secs)
-            if d <= SINGLE_EPS:
-                if best_single is None or d < best_single_dist:
-                    best_single = e
-                    best_single_dist = d
+    Args:
+        ep_names: episode_number -> name from TMDB
+        staged: Episode numbers already staged
 
-        best_pair = None
-        best_pair_dist = None
+    Returns:
+        First episode number to offer
+    """
+    for e in sorted(ep_names):
+        if e not in staged:
+            return e
+    return max(staged, default=0) + 1
 
-        # Try consecutive pairs
-        for e in eps_by_num:
-            if e not in candidates:
-                continue
-            if (e + 1) not in candidates:
-                continue
-            if e in used_eps:
-                continue
-            if (e + 1) in used_eps:
-                continue
 
-            pair_rt = candidates[e][0] + candidates[e + 1][0]
-            d = abs(t_secs - pair_rt)
-            if d <= DOUBLE_EPS:
-                if best_pair is None or d < best_pair_dist:
-                    best_pair = (e, e + 1)
-                    best_pair_dist = d
+def assign_range(titles: list[tuple[int, int, int]], playalls: set[int], lo: int, hi: int) -> dict[int, tuple[int, int]]:
+    """Assign eligible titles, in disc order, to the stated episode range.
 
-        # Choose best: pair if nearer than single, else single
-        if best_pair and (best_single is None or best_pair_dist < best_single_dist):
-            lo, hi = best_pair
-            used_eps.add(lo)
-            used_eps.add(hi)
-            assignment[t] = (lo, hi)
-        elif best_single is not None:
-            e = best_single
-            used_eps.add(e)
-            assignment[t] = (e, e)
+    Eligible titles are `titles` minus the play-alls; the i-th one gets
+    episode lo + i. More eligible titles than the range covers: the tail is
+    extra. Fewer: the range is only partly covered. Play-alls are always
+    extra. Episode identity is what the user stated plus disc position;
+    durations never choose.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        playalls: Title numbers disqualified as play-alls
+        lo: First episode number of the stated range
+        hi: Last episode number of the stated range
+
+    Returns:
+        Dict title_number -> (lo_ep, hi_ep) covering every title
+    """
+    assignment: dict[int, tuple[int, int]] = {}
+    pos = 0
+    for t, _, _ in titles:
+        if t in playalls:
+            assignment[t] = (0, 0)
+        elif pos < hi - lo + 1:
+            assignment[t] = (lo + pos, lo + pos)
+            pos += 1
         else:
-            assignment[t] = (0, 0)  # Extra
-
+            assignment[t] = (0, 0)
     return assignment
 
 
-def number_in_order(titles: list[tuple[int, int, int]], first_ep: int) -> dict[int, tuple[int, int]]:
-    """Number titles in title order: title i gets episode first_ep + i.
+def range_mismatch_note(titles: list[tuple[int, int, int]], playalls: set[int], lo: int, hi: int) -> str | None:
+    """One-line warning when the eligible titles don't fill the stated range.
 
-    TV discs lay titles out in episode order; runtimes can't tell episodes
-    apart when a season's lengths are near-identical.
+    Names the fix-row escape and the `n` re-ask; the table stays the single
+    place where the user corrects the map.
 
     Args:
-        titles: List of (title_number, duration_seconds, size_bytes)
-        first_ep: Episode number assigned to the first title
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        playalls: Title numbers disqualified as play-alls
+        lo: First episode number of the stated range
+        hi: Last episode number of the stated range
 
     Returns:
-        Dict title_number -> (lo_ep, hi_ep)
+        The warning line, or None when the counts line up or there are no
+        eligible titles
     """
-    return {t: (e, e) for e, (t, _, _) in enumerate(titles, start=first_ep)}
+    eligible = [t for t, _, _ in titles if t not in playalls]
+    if not eligible:
+        return None
+    size = hi - lo + 1
+    if len(eligible) == size:
+        return None
+    if len(eligible) > size:
+        extra = eligible[size]
+        return (f"eligible titles: {len(eligible)} but {lo}-{hi} covers {size} — "
+                f"title {extra} left extra; fix with {extra}=e or n to re-ask")
+    return (f"eligible titles: {len(eligible)} but {lo}-{hi} covers {size} — "
+            f"episodes {lo + len(eligible)}-{hi} unassigned; fix with a double like "
+            f"{eligible[-1]}={lo + len(eligible)}-{hi} or n to re-ask")
+
+
+def range_past_end_note(hi: int, max_ep: int) -> str | None:
+    """Warning when the stated range runs past the TMDB season's last episode.
+
+    The stated range is truth (ADR 0001) and TMDB seasons can be incomplete,
+    so this never rejects or clamps — it only warns: a silent S01E99 on a
+    3-episode season is a typo trap.
+
+    Args:
+        hi: Last episode number of the stated range
+        max_ep: Last episode number the TMDB season lists (0 = unknown)
+
+    Returns:
+        The warning line, or None when the range fits or the size is unknown
+    """
+    if max_ep > 0 and hi > max_ep:
+        return (f"stated range ends at E{hi} but the season lists {max_ep} "
+                f"episodes — check the table")
+    return None
 
 
 def parse_fix_rows(spec: str) -> list[tuple[int, str, int, int]]:
@@ -572,11 +586,11 @@ def rip_tv(args) -> None:
     playalls = sum_disqualified(titles_info)
 
     def pin_playalls(a: dict[int, tuple[int, int]]) -> dict[int, tuple[int, int]]:
-        """Play-alls rip as extras whatever the matcher liked.
+        """Play-alls rip as extras whatever the stated range said.
 
-        Re-applied after each automatic rebuild (initial match, `n`
-        renumber, `c` clear). Never applied after a fix row: `t=ep` typed at
-        the table is the deliberate escape hatch.
+        Re-applied after each automatic rebuild (initial assignment, `n`
+        re-ask). Never applied after a fix row: `t=ep` typed at the table is
+        the deliberate escape hatch.
         """
         for t in playalls:
             a[t] = (0, 0)
@@ -595,6 +609,7 @@ def rip_tv(args) -> None:
 
     # Build episodes dict
     ep_names = {ep: name for ep, name, _ in episodes}
+    max_ep = max(ep_names.keys()) if ep_names else 0
 
     # Get staged episodes
     staged = staged_eps(season_dir, display, season)
@@ -605,34 +620,41 @@ def rip_tv(args) -> None:
         eps_str = ", ".join(f"E{e:02d}" for e in sorted(staged))
         console.print(f"already staged: {eps_str} — c at the prompt clears the show's staging")
 
-    # Build candidates (episodes with runtime, excluding staged)
-    candidates = build_candidates(episodes, staged)
+    def ask_range() -> tuple[int, int]:
+        """One pre-filled prompt states which episodes this disc carries.
 
-    # Check for zero runtimes
-    if not candidates:
-        log.note("match", "no TMDB runtimes for this season — numbering titles in order")
-        # Sequential fallback
-        console.print("first episode number on this disc [1]: ", end="")
-        firstep_str = Prompt.ask("") or "1"
-        try:
-            firstep = int(firstep_str)
-        except ValueError:
-            print("skive: episode must be a number >= 1", file=sys.stderr)
+        The pre-fill starts at the first episode not yet staged and spans one
+        episode per eligible title; Enter takes it. Unparseable answers
+        re-ask.
+        """
+        eligible = len(titles_info) - len(playalls)
+        if eligible == 0:
+            print("skive: no eligible titles on this disc", file=sys.stderr)
             sys.exit(1)
-        if firstep < 1:
-            print("skive: episode must be a number >= 1", file=sys.stderr)
-            sys.exit(1)
+        first = next_unstaged(ep_names, staged)
+        prefill = str(first) if eligible == 1 else f"{first}-{first + eligible - 1}"
+        while True:
+            console.print(f"episodes on this disc [{prefill}]: ", end="")
+            rng = parse_range((Prompt.ask("") or prefill).strip())
+            if rng is not None:
+                return rng
 
-        # Number titles in order
-        assignment = pin_playalls(number_in_order(titles_info, firstep))
-    else:
-        # Duration matching
-        assignment = pin_playalls(match(titles_info, candidates))
+    def build_note(lo: int, hi: int) -> str | None:
+        """Mismatch and past-the-season-end warnings, joined to one print."""
+        lines = [ln for ln in (range_mismatch_note(titles_info, playalls, lo, hi),
+                               range_past_end_note(hi, max_ep)) if ln]
+        return "\n".join(lines) if lines else None
+
+    lo, hi = ask_range()
+    assignment = pin_playalls(assign_range(titles_info, playalls, lo, hi))
+    note = build_note(lo, hi)
 
     # Confirm loop
     while True:
+        if note:
+            console.print(note)
         print_table(display, season, titles_info, assignment, ep_names)
-        console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, n[=first]=number in order, c=clear staged, q=quit): ", end="")
+        console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, n=episode range, c=clear staged, q=quit): ", end="")
         ans = Prompt.ask("") or ""
 
         if not ans:
@@ -641,26 +663,11 @@ def rip_tv(args) -> None:
             print("skive: quit — nothing ripped.", file=sys.stderr)
             sys.exit(1)
         elif ans.lower().startswith("n"):
-            # Renumber titles in order: duration matching is guesswork when a
-            # season's runtimes are near-identical (titles grab episodes that
-            # live on later discs of a multi-disc set).
-            m = re.match(r'^n=(\d+)$', ans.strip(), re.IGNORECASE)
-            if m:
-                first_ep = int(m.group(1))
-            else:
-                # Default: first episode of the season not already staged —
-                # right for the next disc of a set.
-                default_ep = min((e for e in ep_names if e not in staged), default=1)
-                console.print(f"first episode number on this disc [{default_ep}]: ", end="")
-                first_str = (Prompt.ask("") or str(default_ep)).strip()
-                try:
-                    first_ep = int(first_str)
-                except ValueError:
-                    first_ep = 0
-            if first_ep < 1:
-                print("skive: episode must be a number >= 1", file=sys.stderr)
-                continue
-            assignment = pin_playalls(number_in_order(titles_info, first_ep))
+            # Re-state the range (`n=5` spells the same as bare `n`; any
+            # =-suffix is ignored): disc order stands, the stated range rules.
+            lo, hi = ask_range()
+            assignment = pin_playalls(assign_range(titles_info, playalls, lo, hi))
+            note = build_note(lo, hi)
         elif ans.lower() == "c":
             doomed = show_staging(season_dir, display)
             if preamble.disc > 0:
@@ -675,22 +682,21 @@ def rip_tv(args) -> None:
                 continue
             for f in doomed:
                 f.unlink()
+            # No re-assignment: the map comes from the stated range, not from
+            # staging. The refreshed set only steers the next pre-fill.
             staged = staged_eps(season_dir, display, season)
             if preamble.disc > 0:
                 staged |= staged_eps(season_dir.parent, display, season)
-            candidates = build_candidates(episodes, staged)
-            if candidates:
-                assignment = pin_playalls(match(titles_info, candidates))
-            # else: no runtimes — the sequential assignment stands
         else:
             # Apply fixes - rebuild title->ep mapping for clash check
             title_to_eps = {}
-            for t, (lo, hi) in assignment.items():
-                if lo != 0:
-                    for e in range(lo, hi + 1):
+            for t, (elo, ehi) in assignment.items():
+                if elo != 0:
+                    for e in range(elo, ehi + 1):
                         title_to_eps[e] = t
-            max_ep = max(ep_names.keys()) if ep_names else 0
             apply_fixes(assignment, [t for t, _, _ in titles_info], staged, ans, max_ep, title_to_eps)
+            # A fix row is the user speaking; the automated note does not repeat.
+            note = None
 
     # Selection string + profile injection
     keep = preamble.keep
