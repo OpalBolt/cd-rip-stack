@@ -10,9 +10,11 @@ import pytest
 from skive.rip_tv import (
     staged_eps, parse_range, next_unstaged, assign_range, range_mismatch_note,
     range_past_end_note, parse_fix_rows, apply_fixes, map_str, print_table,
-    rename_tv, rip_tv, tv_floor, sum_disqualified,
+    rename_tv, rip_tv, tv_floor, sum_disqualified, audit_ratio, audit_cell,
 )
 from skive.makemkv import scan_disc, TitleInfo
+from rich.console import Console
+from rich.table import Table
 
 
 # Episode identity: stated range + disc position (ADR 0001)
@@ -301,6 +303,67 @@ def test_map_str():
     """Serialize assignment."""
     assignment = {0: (1, 1), 1: (2, 3), 2: (0, 0)}
     assert map_str(assignment) == "0=1,1=2-3,2=e"
+
+
+# Durations grade assignments, they never change them (ADR 0001)
+def test_audit_ratio():
+    """disc ÷ tmdb at 2dp; unknown sides are None."""
+    assert audit_ratio(3932, 4140) == 0.95
+    assert audit_ratio(3897, 4080) == 0.96  # 0.9551 — round() gives 0.96
+    assert audit_ratio(3653, 3840) == 0.95
+    assert audit_ratio(3932, 0) is None  # TMDB has no runtime
+    assert audit_ratio(0, 4140) is None
+    assert audit_ratio(-1, 4140) is None
+
+
+def test_audit_cell():
+    """In-band green, out-of-band yellow; extras and missing runtimes blank.
+
+    A double audits against the sum of both runtimes.
+    """
+    assert audit_cell(3932, 1, 1, {1: 4140}) == ("0.95", "green")
+    assert audit_cell(6000, 1, 1, {1: 4000}) == ("1.50", "yellow")
+    assert audit_cell(3932, 0, 0, {1: 4140}) is None  # extra: blank
+    assert audit_cell(3932, 1, 1, {}) is None  # episode not in season: blank
+    assert audit_cell(3932, 1, 1, {1: 0}) is None  # TMDB runtime missing: blank
+    assert audit_cell(7800, 1, 2, {1: 3900, 2: 3900}) == ("1.00", "green")  # double sums
+
+
+def test_audit_band_edges_inclusive():
+    """The PAL band grades the exact quotient: 0.92..1.04 green, just outside
+    yellow — even when the 2dp text rounds back onto an edge."""
+    assert audit_cell(9200, 1, 1, {1: 10000}) == ("0.92", "green")
+    assert audit_cell(10400, 1, 1, {1: 10000}) == ("1.04", "green")
+    assert audit_cell(9190, 1, 1, {1: 10000}) == ("0.92", "yellow")  # 0.919
+    assert audit_cell(10410, 1, 1, {1: 10000}) == ("1.04", "yellow")  # 1.041
+
+
+def test_print_table_audit_column_generation_kill(mock_console):
+    """Generation Kill disc 1 renders 0.95/0.96/0.95 green; the play-all's
+    audit cell stays blank."""
+    titles = [(0, 3932, 1), (1, 3897, 1), (2, 3653, 1), (3, 11482, 1)]
+    assignment = {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+    ep_names = {1: "Get Some", 2: "The Cradle", 3: "Sic(vis)"}
+    ep_runtimes = {1: 4140, 2: 4080, 3: 3840}
+
+    print_table("Generation Kill (2008)", 1, titles, assignment, ep_names, ep_runtimes)
+
+    mock_console.print.assert_called()
+    table = next(c.args[0] for c in mock_console.print.call_args_list
+                 if c.args and isinstance(c.args[0], Table))
+
+    plain = Console(record=True, width=100)
+    plain.print(table)
+    text = plain.export_text()
+    assert "audit" in text
+    assert text.count("0.95") == 2 and "0.96" in text  # the three episode rows
+    extra = next(ln for ln in text.splitlines() if "3:11:22" in ln)  # t3 row
+    assert "0.95" not in extra and "0.96" not in extra  # extra audits blank
+
+    styled = Console(record=True, width=100, color_system="standard")
+    styled.print(table)
+    # Exactly the three ratio cells are green; nothing else in the table is.
+    assert styled.export_text(styles=True).count("\x1b[32m") == 3
 
 
 def test_naming_doubles():

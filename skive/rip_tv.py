@@ -7,6 +7,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
+from rich.text import Text
 
 from skive import common
 from skive.makemkv import (
@@ -396,8 +397,61 @@ def map_str(assignment: dict[int, tuple[int, int]]) -> str:
     return ",".join(parts)
 
 
+RATIO_GREEN = (0.92, 1.04)
+"""Inclusive disc/TMDB duration ratio band that reads green (PAL discs run
+~4-5% short, so the low edge sits below 0.95)."""
+
+
+def audit_ratio(disc_secs: int, tmdb_secs: int) -> float | None:
+    """Disc ÷ TMDB duration ratio at 2dp; None when either side is unknown.
+
+    Durations grade assignments, they never change them (ADR 0001).
+
+    Args:
+        disc_secs: Disc title duration in seconds
+        tmdb_secs: TMDB runtime in seconds
+
+    Returns:
+        disc / tmdb rounded to 2 decimals, or None when either is <= 0
+    """
+    if tmdb_secs <= 0 or disc_secs <= 0:
+        return None
+    return round(disc_secs / tmdb_secs, 2)
+
+
+def audit_cell(secs: int, lo: int, hi: int, ep_runtimes: dict[int, int]) -> tuple[str, str] | None:
+    """Full audit cell for one title: (ratio text, rich style); None = blank.
+
+    Assigned titles (lo >= 1) audit against the summed TMDB runtimes lo..hi
+    (a double against both); any episode in the range without a runtime (>0)
+    blanks the cell — never a false yellow. Extras (lo == 0) are blank. The
+    band grades the exact disc/tmdb quotient; the text shows the 2dp value.
+
+    Args:
+        secs: Disc title duration in seconds
+        lo: First assigned episode number (0 = extra)
+        hi: Last assigned episode number
+        ep_runtimes: episode_number -> TMDB runtime seconds
+
+    Returns:
+        (f"{ratio:.2f}", "green" or "yellow"), or None when blank
+    """
+    if lo < 1:
+        return None
+    runtimes = [ep_runtimes.get(e, 0) for e in range(lo, hi + 1)]
+    if any(rt <= 0 for rt in runtimes):
+        return None
+    total = sum(runtimes)
+    if secs <= 0 or total <= 0:
+        return None
+    exact = secs / total
+    inside = RATIO_GREEN[0] <= exact <= RATIO_GREEN[1]
+    return (f"{exact:.2f}", "green" if inside else "yellow")
+
+
 def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
-                assignment: dict[int, tuple[int, int]], ep_names: dict[int, str]) -> None:
+                assignment: dict[int, tuple[int, int]], ep_names: dict[int, str],
+                ep_runtimes: dict[int, int]) -> None:
     """Print the confirmation table in title-number order.
 
     Args:
@@ -406,6 +460,7 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
         titles: List of (title, secs, bytes)
         assignment: title -> (lo, hi) mapping
         ep_names: episode_number -> name mapping
+        ep_runtimes: episode_number -> TMDB runtime seconds
     """
     season_str = f"{season:02d}"
     console.print(f"\n{display} — season {season_str}")
@@ -414,6 +469,7 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
     table.add_column("title", style="cyan", width=6)
     table.add_column("duration", style="white", width=9)
     table.add_column("size", style="dim", width=9)
+    table.add_column("audit", width=6)
     table.add_column("assignment", style="yellow")
 
     for t, secs, size in sorted(titles, key=lambda x: x[0]):
@@ -426,6 +482,9 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
         sz = hsize(size)
 
         lo, hi = assignment.get(t, (0, 0))
+        audit = audit_cell(secs, lo, hi, ep_runtimes)
+        audit_str = Text(audit[0], style=audit[1]) if audit else ""
+
         if lo == 0:
             assign_str = "→ extra"
         else:
@@ -438,7 +497,7 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
             else:
                 assign_str = f"→ {code}"
 
-        table.add_row(str(t), dur, sz, assign_str)
+        table.add_row(str(t), dur, sz, audit_str, assign_str)
 
     console.print(table)
 
@@ -609,6 +668,7 @@ def rip_tv(args) -> None:
 
     # Build episodes dict
     ep_names = {ep: name for ep, name, _ in episodes}
+    ep_runtimes = {ep: rt for ep, _, rt in episodes}
     max_ep = max(ep_names.keys()) if ep_names else 0
 
     # Get staged episodes
@@ -653,7 +713,7 @@ def rip_tv(args) -> None:
     while True:
         if note:
             console.print(note)
-        print_table(display, season, titles_info, assignment, ep_names)
+        print_table(display, season, titles_info, assignment, ep_names, ep_runtimes)
         console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, n=episode range, c=clear staged, q=quit): ", end="")
         ans = Prompt.ask("") or ""
 
