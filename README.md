@@ -109,8 +109,8 @@ Both `rip movie` and `rip tv` share the same behavior:
    becomes the exit code.
 6. **Rename** — junk labels become `<Title> (Year)_tNN[.pN].mkv` (titles),
    `<Title> (Year) - Extra NN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
-7. **Eject** — a clean rip (exit code 0) opens the tray: the swap-discs
-   signal. A partial rip keeps the disc for inspection.
+7. **Done** — a clean rip (exit code 0) just finishes; eject and swap
+   discs by hand.
 
 `-T/--titles` takes `all` (the default), a single number, a range `N-M`, or a
 comma list like `0,5-7`. Bare `-T` (no value) opens an interactive menu to
@@ -189,7 +189,7 @@ MusicBrainz lookup matches several releases, skive lists them, asks for a
 number, and re-runs with `-R <n>`.
 
 Rips land in `/mnt/music/rip/` (mounted on demand from `NFS_MUSIC`). A clean
-rip ejects the tray.
+rip just finishes — swap discs by hand.
 
 ### tag
 

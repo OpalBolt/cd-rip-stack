@@ -53,7 +53,7 @@ One-time migration: move whatever sits in `rip/` and `rip/TV/` today into `rip/m
 8. **Rename** — junk labels become `<Name (Year)>_tNN[.pN].mkv` (titles), `<Name (Year)> - Extra NN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
 9. **Subtitle note** — after the rip, `ffprobe` reads which subtitle languages landed in the staged MKVs. The note goes to stderr and `rip.log`.
 10. **`rip.log`** — the same 8 columns as today (`start end script software name phase m:ss status`), one line per phase, a total line on exit. Simple and resilient.
-11. **Eject** — a clean rip (exit 0) opens the tray as the swap-discs signal; a partial rip keeps the disc for inspection. `rip music` ejects on success too.
+11. **Eject is manual** — a clean rip (exit 0) just finishes; the user swaps discs by hand. Auto-eject assumed `disc:N` equals `/dev/srN`, which opens the wrong tray with parallel drives.
 
 ## TV flow (preserved 1:1)
 
@@ -76,7 +76,7 @@ The matcher self-tests port to pytest with the same fixtures: greedy order, near
 
 Whipper is dropped. cyanrip is the only engine (secure rip, AccurateRip, drive offset — and it writes ReplayGain 2.0 true-peak tags at rip time, so nothing recomputes gain later; the beets `replaygain` plugin is deleted).
 
-1. `skive rip music [offset] [flags…]` mounts `/mnt/music` on demand, then runs cyanrip inside `/mnt/music/rip/` with `-s <offset>` and any passed-through flags (`-N`, `-R x`, …). No local `~/media/audio` tree exists anymore. On a clean exit the tray ejects.
+1. `skive rip music [offset] [flags…]` mounts `/mnt/music` on demand, then runs cyanrip inside `/mnt/music/rip/` with `-s <offset>` and any passed-through flags (`-N`, `-R x`, …). No local `~/media/audio` tree exists anymore. A clean exit just finishes; the user swaps discs by hand.
 2. When cyanrip exits 1 on "Multiple releases found", prompt for a release and re-run with `-R <n>`. That exit is not a failure.
 3. The rip-log name comes from the newest FLAC's ALBUM tag.
 4. `skive tag` runs beets on `/mnt/music/rip/`, moving and sorting straight into `/mnt/music/library/`. beets (plus `pylast`, `pillow`, `beetcamp` for the plugins) lives in this project's venv. The beets config moves to `config/beets-config.yaml` with the `replaygain` line removed; the plugin set is otherwise unchanged (fetchart, embedart, lastgenre, ftintitle, scrub, the, zero, musicbrainz, bandcamp).
