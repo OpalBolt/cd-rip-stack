@@ -10,7 +10,6 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from skive import common
 from skive.makemkv import (
     CONFIG_DIR, build_selection, inject_profile, promote_staged, rename_staged,
     resolve_titles, rip_header, subtitle_note, rip_titles, hsize,
@@ -709,8 +708,6 @@ def rip_tv(args) -> None:
 
         log.phase_end()
         log.finish(worst_rc)
-        if worst_rc == 0:
-            common.eject_disc(preamble.disc, log)
         sys.exit(worst_rc)
 
     # Season prompt
@@ -915,8 +912,6 @@ def rip_tv(args) -> None:
 
         log.phase_end()
         log.finish(worst_rc)
-        if worst_rc == 0:
-            common.eject_disc(preamble.disc, log)
         sys.exit(worst_rc)
     finally:
         profile_path.unlink(missing_ok=True)

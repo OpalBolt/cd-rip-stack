@@ -15,7 +15,7 @@ def _mock_preamble_seams(monkeypatch, media="DVD-ROM"):
     log = Mock()
     monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))
     monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=(media, "")))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=(media, "", "")))
     # Default: the fast scan fails, so tests land on the full-scan fallback
     # exactly like the pre-fast-scan flow. Fast-path tests override this.
     monkeypatch.setattr(rip_common, "fast_scan_dvd",
@@ -105,20 +105,37 @@ def test_tv_dvd_fast_scan_synthesizes_titles(tmp_path, monkeypatch):
     """TV + DVD + no flags: lsdvd durations become 0-based TitleInfos, size 0."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "GENERATION KILL")))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "GENERATION KILL", "")))
     monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=GK_DURATIONS))
     monkeypatch.setattr(rip_common, "search_loop",
                         Mock(return_value=TMDBPick("Show", "-", "-", "tv", "7")))
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
 
-    rip_common.fast_scan_dvd.assert_called_once_with(0)
+    rip_common.fast_scan_dvd.assert_called_once_with(0, "/dev/sr0")
     rip_common.scan_disc.assert_not_called()
     assert result.fast_scan is True
     assert result.scan_durations == GK_DURATIONS
+    assert result.device == "/dev/sr0"  # fallback: sniff printed no path
     assert [(t.number, t.seconds) for t in result.titles_full] == list(enumerate(GK_DURATIONS))
     assert all(t.size == 0 and not t.audio and not t.subtitles and not t.scrambled
                for t in result.titles_full)
+
+
+def test_preamble_device_from_drv_line_reaches_scanner(tmp_path, monkeypatch):
+    """The real device from sniff_disc flows to the scanner — NOT the
+    /dev/sr{disc} guess — and onto the Preamble for the rip callers."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    _mock_preamble_seams(monkeypatch)
+    monkeypatch.setattr(rip_common, "sniff_disc",
+                        Mock(return_value=("DVD-ROM", "GENERATION KILL", "/dev/sr1")))
+    monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=GK_DURATIONS))
+    _mock_search(monkeypatch)
+
+    result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
+
+    rip_common.fast_scan_dvd.assert_called_once_with(0, "/dev/sr1")
+    assert result.device == "/dev/sr1"
 
 
 def test_tv_dvd_fast_scan_failure_falls_back_to_full_scan(tmp_path, monkeypatch, capsys):
@@ -152,7 +169,7 @@ def test_tv_dvd_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mo
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
 
-    rip_common.fast_scan_dvd.assert_called_once_with(0)
+    rip_common.fast_scan_dvd.assert_called_once_with(0, "/dev/sr0")
     rip_common.scan_disc.assert_called_once()
     assert result.fast_scan is False
     assert result.scan_durations is None
@@ -169,17 +186,18 @@ def test_tv_bd_fast_scan_synthesizes_titles(tmp_path, monkeypatch):
     TitleInfos via fast_scan_bluray — never the DVD scanner."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("BD-ROM", "SOME SHOW")))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("BD-ROM", "SOME SHOW", "")))
     monkeypatch.setattr(rip_common, "fast_scan_bluray", Mock(return_value=GK_DURATIONS))
     _mock_search(monkeypatch)
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
 
-    rip_common.fast_scan_bluray.assert_called_once_with(0)
+    rip_common.fast_scan_bluray.assert_called_once_with(0, "/dev/sr0")
     rip_common.fast_scan_dvd.assert_not_called()
     rip_common.scan_disc.assert_not_called()
     assert result.fast_scan is True
     assert result.scan_durations == GK_DURATIONS
+    assert result.device == "/dev/sr0"
     assert [(t.number, t.seconds) for t in result.titles_full] == list(enumerate(GK_DURATIONS))
 
 
@@ -189,7 +207,7 @@ def test_tv_bd_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mon
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     log = _mock_preamble_seams(monkeypatch)
     ambiguous_durations = GK_DURATIONS + [3933]  # 3932 duplicate within ±1s
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("BD-ROM", "SOME SHOW")))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("BD-ROM", "SOME SHOW", "")))
     monkeypatch.setattr(rip_common, "fast_scan_bluray", Mock(return_value=ambiguous_durations))
     full_titles = [TitleInfo(0, 3932, 100, "dan", "", False), TitleInfo(1, 3933, 90, "dan", "", False)]
     rip_common.scan_disc.return_value = ("BD-ROM", "SOME SHOW", full_titles)
@@ -197,7 +215,7 @@ def test_tv_bd_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mon
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
 
-    rip_common.fast_scan_bluray.assert_called_once_with(0)
+    rip_common.fast_scan_bluray.assert_called_once_with(0, "/dev/sr0")
     rip_common.scan_disc.assert_called_once()
     assert result.fast_scan is False
     assert result.scan_durations is None
@@ -210,14 +228,14 @@ def test_tv_bd_fast_scan_failure_falls_back_to_full_scan(tmp_path, monkeypatch, 
     """A RuntimeError from the BD fast scan warns once and runs the full scan."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("BD-ROM", "SOME SHOW")))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("BD-ROM", "SOME SHOW", "")))
     full_titles = [TitleInfo(0, 3932, 100, "dan", "", False)]
     rip_common.scan_disc.return_value = ("BD-ROM", "SOME SHOW", full_titles)
     _mock_search(monkeypatch)
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
 
-    rip_common.fast_scan_bluray.assert_called_once_with(0)
+    rip_common.fast_scan_bluray.assert_called_once_with(0, "/dev/sr0")
     assert result.fast_scan is False
     assert result.scan_durations is None
     assert result.titles_full == full_titles
@@ -244,7 +262,7 @@ def test_movie_dvd_fast_scan_synthesizes_titles(tmp_path, monkeypatch):
 
     result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
 
-    rip_common.fast_scan_dvd.assert_called_once_with(0)
+    rip_common.fast_scan_dvd.assert_called_once_with(0, "/dev/sr0")
     rip_common.scan_disc.assert_not_called()
     assert result.fast_scan is True
     assert result.scan_durations == GK_DURATIONS
@@ -261,7 +279,7 @@ def test_movie_bd_fast_scan_uses_bluray_scanner(tmp_path, monkeypatch):
 
     result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
 
-    rip_common.fast_scan_bluray.assert_called_once_with(0)
+    rip_common.fast_scan_bluray.assert_called_once_with(0, "/dev/sr0")
     rip_common.fast_scan_dvd.assert_not_called()
     rip_common.scan_disc.assert_not_called()
     assert result.fast_scan is True
@@ -363,7 +381,7 @@ def test_preamble_no_disc_sniff_exits(tmp_path, monkeypatch, capsys):
     """An empty sniff keeps the existing no-disc exit, before any scan."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("", "")))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("", "", "")))
 
     with pytest.raises(SystemExit) as e:
         rip_common.rip_preamble("tv", "skive rip tv", _tv_args())

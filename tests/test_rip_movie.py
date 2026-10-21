@@ -49,7 +49,7 @@ def test_rip_movie_refuses_recordable():
     """Test burned disc refuses without --verified."""
     args = FakeArgs(verified=False)
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -73,7 +73,7 @@ def test_rip_movie_allows_recordable_with_verified():
         id="12345",
     )
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -95,7 +95,7 @@ def test_rip_movie_no_disc():
     """Test no disc detected."""
     args = FakeArgs()
 
-    with patch("skive.rip_common.sniff_disc", return_value=("", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             try:
@@ -109,7 +109,7 @@ def test_rip_movie_tmdbid():
     """Test --tmdbid skips search."""
     args = FakeArgs(tmdbid="movie:12345")
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -145,7 +145,7 @@ def test_rip_movie_extras():
         id="1",
     )
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -179,7 +179,7 @@ def test_rip_movie_part():
         id="1",
     )
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -212,7 +212,7 @@ def test_rip_movie_worst_rc_exits():
         id="1",
     )
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -241,7 +241,7 @@ def test_rip_movie_rip_failure_notes():
         id="1",
     )
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -262,14 +262,12 @@ def test_rip_movie_rip_failure_notes():
                                             # Check the rip note was made
                                             log_instance.note.assert_any_call("rip", "makemkvcon rc=1 — partial rip, renaming what completed")
 
-def test_rip_movie_ejects_on_clean_rip():
-    """A rc=0 rip opens the tray (the swap-discs signal)."""
-    from skive import common
-
+def test_rip_movie_clean_rip_exits_0():
+    """A rc=0 rip finishes the flow (log/finish) and exits 0."""
     args = FakeArgs(verified=True)
     mock_pick = TMDBPick(title="Test Movie", year="2020", original_language="en", type="movie", id="12345")
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -284,18 +282,14 @@ def test_rip_movie_ejects_on_clean_rip():
                                                 rip_movie(args)
                                             except SystemExit as e:
                                                 assert e.code == 0
-    common.eject_disc.assert_called_once()
-    assert common.eject_disc.call_args.args[0] == 0
 
 
-def test_rip_movie_keeps_tray_closed_on_failed_rip():
-    """A partial rip (rc!=0) does not eject — the disc stays for inspection."""
-    from skive import common
-
+def test_rip_movie_partial_rip_exits_1():
+    """A partial rip (rc!=0) still exits 1 after renaming what completed."""
     args = FakeArgs()
     mock_pick = TMDBPick(title="Test Movie", year="2020", original_language="en", type="movie", id="12345")
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -310,7 +304,6 @@ def test_rip_movie_keeps_tray_closed_on_failed_rip():
                                                 rip_movie(args)
                                             except SystemExit as e:
                                                 assert e.code == 1
-    common.eject_disc.assert_not_called()
 
 
 # --- Fast-scan rip flow (ADR 0002, issue 07) ---
@@ -334,7 +327,7 @@ def test_rip_movie_fast_scan_rips_all_with_two_line_header(monkeypatch):
         id="1",
     )
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])) as mock_scan, \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.purge_junk"), \

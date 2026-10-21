@@ -201,7 +201,7 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, stag
     prompt = MagicMock()
     prompt.ask.side_effect = answers
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -499,7 +499,7 @@ def test_extras_flow():
 
     args = FakeArgs()
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
@@ -548,7 +548,7 @@ def test_rip_only_requested_titles_that_survived_scan():
                    TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -640,7 +640,7 @@ def _clear_staged_flow(tmp_path, monkeypatch, answers):
     prompt = MagicMock()
     prompt.ask.side_effect = answers
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -736,7 +736,7 @@ def test_floor_drops_short_titles_before_rip():
                    TitleInfo(1, 30, 1, "dan", "", False)]  # 30s menu loop
     mock_episodes = [(1, "ep1", 2400)]
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -786,7 +786,7 @@ def test_playall_forced_to_extra():
                    TitleInfo(2, 3550, 1, "dan", "", False)]
     mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -835,7 +835,7 @@ def test_playall_pin_survives_n_reask():
                    TitleInfo(3, 11482, 1, "dan", "", False)]
     mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -885,7 +885,7 @@ def test_fix_row_can_assign_playall_to_episode():
     mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653),
                      (4, "ep4", 3600), (5, "ep5", 3700)]
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
@@ -1085,7 +1085,7 @@ def test_fast_scan_rip_rips_all_at_floor_and_joins(tmp_path, monkeypatch):
     prompt = MagicMock()
     prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", return_value=GK_DURATIONS), \
             patch("skive.rip_common.scan_disc") as mock_scan_disc, \
             patch("skive.rip_common.ensure_mounted"), \
@@ -1119,7 +1119,7 @@ def test_fast_scan_rip_rips_all_at_floor_and_joins(tmp_path, monkeypatch):
 
 def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
     """rename_tv_fast returning False: the caller logs the abort, closes the
-    log with rc 1, and exits 1 — before promote, subtitle note, or eject.
+    log with rc 1, and exits 1 — before promote or the subtitle note.
     Nothing is renamed."""
     from skive.tmdb import TMDBPick
 
@@ -1138,7 +1138,7 @@ def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
     (stage / "B1_t00.mkv").touch()
     (stage / "B1_t01.mkv").touch()
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "")), \
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", return_value=GK_DURATIONS), \
             patch("skive.rip_common.scan_disc") as mock_scan_disc, \
             patch("skive.rip_common.ensure_mounted"), \

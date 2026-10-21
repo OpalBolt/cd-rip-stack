@@ -20,6 +20,3 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = ["pytest"]
-
-[tool.pytest.ini_options]
-markers = ["real_eject: run the real eject_disc (test injects its own run)"]

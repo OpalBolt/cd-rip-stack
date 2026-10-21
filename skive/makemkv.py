@@ -88,6 +88,19 @@ def _parse_label(out: str, disc: int = 0) -> str:
     return ""
 
 
+def _parse_device(out: str, disc: int = 0) -> str:
+    """Device path from the DRV:N line (third quoted field), or "" if absent.
+
+    makemkvcon reports the real device on its own DRV line; the common
+    disc:N -> /dev/srN guess is wrong with mixed/parallel drives.
+    """
+    for line in out.splitlines():
+        m = re.match(rf'^DRV:{disc},2,\d+,\d+,"[^"]*","[^"]*","([^"]*)"', line)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def drive_media(run=subprocess.run) -> str:
     """Get disc:0's media type token.
 
@@ -556,27 +569,30 @@ def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, s
     return media, label, titles
 
 
-def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str]:
-    """Media token + volume label from the DRV line, WITHOUT the title scan.
+def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str, str]:
+    """Media token + volume label + device path from the DRV line, WITHOUT the
+    title scan.
 
     `makemkvcon -r info` prints every DRV line up front and only then spends
     minutes scanning titles, so the process is killed as soon as this disc's
-    DRV line has been read — media and label are both on it, and the existing
-    parsers (_parse_media / _parse_label) do the parsing. Honors MAKEMKV_INFO
-    the way _info does (replay via shell, no kill).
+    DRV line has been read — media, label, and device are all on it, and the
+    existing parsers (_parse_media / _parse_label / _parse_device) do the
+    parsing. Honors MAKEMKV_INFO the way _info does (replay via shell, no
+    kill).
 
     Args:
         run: process spawner for monkeypatching (default subprocess.Popen)
         disc: Disc number whose DRV line to wait for
 
     Returns:
-        (media token, cleaned volume label); ("", "") when no disc
+        (media token, cleaned volume label, device path); ("", "", "") when
+        no disc
     """
     override = os.environ.get("MAKEMKV_INFO")
     if override:
         # Replay captured dump via the command in override
         out = subprocess.run(override, shell=True, capture_output=True, text=True).stdout
-        return _parse_media(out, disc), _parse_label(out, disc)
+        return _parse_media(out, disc), _parse_label(out, disc), _parse_device(out, disc)
     proc = run(["makemkvcon", "-r", "info", f"disc:{disc}"],
                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     drv_line = ""
@@ -588,7 +604,7 @@ def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str]:
     finally:
         proc.kill()
         proc.wait()
-    return _parse_media(drv_line, disc), _parse_label(drv_line, disc)
+    return _parse_media(drv_line, disc), _parse_label(drv_line, disc), _parse_device(drv_line, disc)
 
 
 def parse_lsdvd(out: str) -> list[int]:
@@ -607,32 +623,34 @@ def parse_lsdvd(out: str) -> list[int]:
     return durations
 
 
-def fast_scan_dvd(disc: int, run=subprocess.run) -> list[int]:
+def fast_scan_dvd(disc: int, device: str, run=subprocess.run) -> list[int]:
     """DVD title durations in seconds via a read-only UDF mount + lsdvd.
 
     Seconds-long alternative to the full makemkvcon title scan. ALWAYS
     unmounts (try/finally); a nonzero umount rc prints one stderr warning
-    (a stuck mount would otherwise surface as a confusing eject failure)
+    (a stuck mount would keep the drive busy before it is used again)
     but never masks the scan's own result. Any failed command or an empty
     title list raises RuntimeError — the caller decides the fallback.
 
     Args:
-        disc: Disc number (device /dev/sr{disc}, matching eject_disc)
+        disc: Disc number — keys the mountpoint (/mnt/skive-d{disc}) so
+            parallel drives never share one
+        device: Mount source — the real device path from makemkvcon's DRV
+            line (e.g. /dev/sr1), not a disc:N -> /dev/srN guess
         run: subprocess.run callable for monkeypatching
 
     Returns:
         Durations in scan order (positional; callers use 0-based indices)
     """
-    dev = f"/dev/sr{disc}"
     mnt = f"/mnt/skive-d{disc}"
     mkdir = run(["sudo", "mkdir", "-p", mnt], capture_output=True, text=True)
     if mkdir.returncode != 0:
         raise RuntimeError(f"mkdir {mnt} failed: {mkdir.stderr.strip()}")
     try:
-        mounted = run(["sudo", "mount", "-t", "udf", "-o", "ro", dev, mnt],
+        mounted = run(["sudo", "mount", "-t", "udf", "-o", "ro", device, mnt],
                       capture_output=True, text=True)
         if mounted.returncode != 0:
-            raise RuntimeError(f"mount {dev} read-only at {mnt} failed: {mounted.stderr.strip()}")
+            raise RuntimeError(f"mount {device} read-only at {mnt} failed: {mounted.stderr.strip()}")
         result = run(["lsdvd", mnt], capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"lsdvd failed on {mnt}: {result.stderr.strip()}")
@@ -676,7 +694,7 @@ def parse_ffprobe_bluray(out: str) -> list[int]:
     return bare
 
 
-def fast_scan_bluray(disc: int, run=subprocess.run, timeout: int = 60) -> list[int]:
+def fast_scan_bluray(disc: int, device: str, run=subprocess.run, timeout: int = 60) -> list[int]:
     """Blu-ray playlist durations in seconds via `ffprobe bluray:` on the device.
 
     The listing is DRM-free — no mount, no sudo, no AACS keys — so a Blu-ray
@@ -686,14 +704,17 @@ def fast_scan_bluray(disc: int, run=subprocess.run, timeout: int = 60) -> list[i
     back to the full scan, same as the DVD fast scan.
 
     Args:
-        disc: Disc number (device /dev/sr{disc}, matching fast_scan_dvd)
+        disc: Disc number (call-site symmetry with fast_scan_dvd; ffprobe
+            addresses the drive by device alone)
+        device: Device path from makemkvcon's DRV line (e.g. /dev/sr1),
+            not a disc:N -> /dev/srN guess
         run: subprocess.run callable for monkeypatching
         timeout: Seconds before the listing is abandoned
 
     Returns:
         Durations in scan order (positional; callers use 0-based indices)
     """
-    cmd = ["ffprobe", "-hide_banner", f"bluray:/dev/sr{disc}"]
+    cmd = ["ffprobe", "-hide_banner", f"bluray:{device}"]
     try:
         result = run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

@@ -26,6 +26,7 @@ class Preamble:
     minlength: int
     keep: str
     disc: int
+    device: str = ""  # real device from the DRV line, or the /dev/srN fallback
     fast_scan: bool = False
     scan_durations: list[int] | None = None  # durations in scan order, fast path only
 
@@ -52,10 +53,14 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log.start()
 
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
-    media, label = sniff_disc(disc=disc)
+    media, label, device = sniff_disc(disc=disc)
     if not media:
         print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
         sys.exit(1)
+    # makemkvcon's DRV line carries the real device; only fall back to the
+    # disc:N -> /dev/srN guess when the line printed no path (with parallel
+    # drives the guess can point at the OTHER disc).
+    device = device or f"/dev/sr{disc}"
 
     if is_recordable(media):
         if args.verified:
@@ -86,7 +91,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
             and not getattr(args, "extras", False)):
         scanner = fast_scan_dvd if media.startswith("DVD") else fast_scan_bluray
         try:
-            scan_durations = scanner(disc)
+            scan_durations = scanner(disc, device)
         except RuntimeError as e:
             print(f"skive: fast scan failed ({e}) — falling back to the full MakeMKV scan", file=sys.stderr)
             log.note("scan", "fast scan failed — full-scan fallback")
@@ -127,7 +132,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
 
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
     return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv,
-                    minlength, keep, disc, fast_scan=fast_scan, scan_durations=scan_durations)
+                    minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations)
 
 
 def fast_scan_header(display: str, n: int) -> str:

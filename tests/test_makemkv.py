@@ -616,6 +616,24 @@ def test_parse_lsdvd_missing_disc_title_and_fractional_seconds():
     assert parse_lsdvd(out) == [1261, 1815]
 
 
+def test_parse_device_third_quoted_field():
+    """_parse_device returns the DRV line's third quoted field."""
+    from skive.makemkv import _parse_device
+
+    drv = 'DRV:0,2,999,12,"DVD-ROM PIONEER BD-RW BDR-209","LABEL","/dev/sr0"'
+    assert _parse_device(drv) == "/dev/sr0"
+    assert _parse_device(drv, disc=1) == ""  # another disc's line does not match
+
+
+def test_parse_device_absent_or_empty_is_blank():
+    """A missing device field, an empty-drive line, or no DRV line -> ""."""
+    from skive.makemkv import _parse_device
+
+    assert _parse_device('DRV:0,2,999,12,"DVD-ROM","LABEL",""') == ""
+    assert _parse_device('DRV:0,256,999,0,"","",""') == ""
+    assert _parse_device("") == ""
+
+
 def _popen_recorder(lines):
     """Fake Popen: yields lines from stdout, then refuses further reads (a live
     process would block) — proving sniff stops at the DRV line and kills."""
@@ -655,7 +673,7 @@ def _popen_recorder(lines):
 
 
 def test_sniff_disc_kills_after_drv_line():
-    """sniff stops at this disc's DRV line: media+label parsed, process killed."""
+    """sniff stops at this disc's DRV line: media+label+device parsed, killed."""
     from skive.makemkv import sniff_disc
 
     lines = [
@@ -664,20 +682,20 @@ def test_sniff_disc_kills_after_drv_line():
     ]
     fake_popen, created = _popen_recorder(lines)
 
-    media, label = sniff_disc(run=fake_popen, disc=1)
+    media, label, device = sniff_disc(run=fake_popen, disc=1)
 
-    assert (media, label) == ("DVD-ROM", "GENERATION KILL")
+    assert (media, label, device) == ("DVD-ROM", "GENERATION KILL", "/dev/sr1")
     assert created[0].cmd == ["makemkvcon", "-r", "info", "disc:1"]
     assert created[0].killed and created[0].waited
 
 
 def test_sniff_disc_no_disc():
-    """An empty-drive DRV line parses to (\"\", \"\")."""
+    """An empty-drive DRV line parses to (\"\", \"\", \"\")."""
     from skive.makemkv import sniff_disc
 
     fake_popen, created = _popen_recorder(['DRV:0,256,999,0,"","",""\n'])
 
-    assert sniff_disc(run=fake_popen, disc=0) == ("", "")
+    assert sniff_disc(run=fake_popen, disc=0) == ("", "", "")
     assert created[0].killed
 
 
@@ -691,7 +709,7 @@ def test_sniff_disc_env_override_replays_without_popen():
         raise AssertionError("Popen must not be spawned when MAKEMKV_INFO is set")
 
     with patch.dict("os.environ", {"MAKEMKV_INFO": f"printf '%s\\n' '{drv}'"}):
-        assert sniff_disc(run=fail) == ("BD-ROM", "MOVIE")
+        assert sniff_disc(run=fail) == ("BD-ROM", "MOVIE", "/dev/sr0")
 
 
 def test_fast_scan_dvd_command_order_and_result():
@@ -706,12 +724,31 @@ def test_fast_scan_dvd_command_order_and_result():
             return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
         return Mock(returncode=0, stdout="")
 
-    assert fast_scan_dvd(0, run=fake_run) == [3932, 3897, 3653, 11482]
+    assert fast_scan_dvd(0, "/dev/sr0", run=fake_run) == [3932, 3897, 3653, 11482]
     assert [c[0] for c in calls] == ["sudo", "sudo", "lsdvd", "sudo"]
     assert calls[0][1:] == ["mkdir", "-p", "/mnt/skive-d0"]
     assert calls[1][1:] == ["mount", "-t", "udf", "-o", "ro", "/dev/sr0", "/mnt/skive-d0"]
     assert calls[2] == ["lsdvd", "/mnt/skive-d0"]
     assert calls[3][1:] == ["umount", "/mnt/skive-d0"]
+
+
+def test_fast_scan_dvd_mounts_given_device_not_dev_sr_disc():
+    """The mount source is the GIVEN device (the DRV line's path), while the
+    mountpoint stays keyed by the disc number — parallel drives never read
+    (or lock) each other."""
+    from skive.makemkv import fast_scan_dvd
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "lsdvd":
+            return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
+        return Mock(returncode=0, stdout="")
+
+    assert fast_scan_dvd(7, "/dev/sr1", run=fake_run) == [3932, 3897, 3653, 11482]
+    assert calls[1][1:] == ["mount", "-t", "udf", "-o", "ro", "/dev/sr1", "/mnt/skive-d7"]
+    assert calls[3][1:] == ["umount", "/mnt/skive-d7"]
 
 
 def test_fast_scan_dvd_mount_failure_still_unmounts():
@@ -727,7 +764,7 @@ def test_fast_scan_dvd_mount_failure_still_unmounts():
         return Mock(returncode=0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="mount .* failed"):
-        fast_scan_dvd(0, run=fake_run)
+        fast_scan_dvd(0, "/dev/sr0", run=fake_run)
     assert calls[-1][1:] == ["umount", "/mnt/skive-d0"]
 
 
@@ -742,7 +779,7 @@ def test_fast_scan_dvd_lsdvd_failure_and_empty_titles_raise():
 
     calls = []
     with pytest.raises(RuntimeError, match="lsdvd failed"):
-        fast_scan_dvd(0, run=lambda cmd, **kw: (calls.append(cmd), fake_run_rc(cmd, **kw))[1])
+        fast_scan_dvd(0, "/dev/sr0", run=lambda cmd, **kw: (calls.append(cmd), fake_run_rc(cmd, **kw))[1])
     assert calls[-1][1:] == ["umount", "/mnt/skive-d0"]
 
     def fake_run_empty(cmd, **kwargs):
@@ -751,7 +788,7 @@ def test_fast_scan_dvd_lsdvd_failure_and_empty_titles_raise():
         return Mock(returncode=0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="no titles"):
-        fast_scan_dvd(0, run=fake_run_empty)
+        fast_scan_dvd(0, "/dev/sr0", run=fake_run_empty)
 
 
 def test_fast_scan_dvd_mkdir_failure():
@@ -767,7 +804,7 @@ def test_fast_scan_dvd_mkdir_failure():
         return Mock(returncode=0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="mkdir .* failed"):
-        fast_scan_dvd(2, run=fake_run)
+        fast_scan_dvd(2, "/dev/sr2", run=fake_run)
     assert [c[:2] for c in calls] == [["sudo", "mkdir"]]
 
 
@@ -783,7 +820,7 @@ def test_fast_scan_dvd_umount_failure_warns_but_scan_stands(capsys):
             return Mock(returncode=32, stdout="", stderr="target is busy")
         return Mock(returncode=0, stdout="", stderr="")
 
-    assert fast_scan_dvd(0, run=fake_run_busy) == [3932, 3897, 3653, 11482]
+    assert fast_scan_dvd(0, "/dev/sr0", run=fake_run_busy) == [3932, 3897, 3653, 11482]
     assert "umount /mnt/skive-d0 failed: target is busy" in capsys.readouterr().err
 
     def fake_run_busy_bad_lsdvd(cmd, **kwargs):
@@ -794,7 +831,7 @@ def test_fast_scan_dvd_umount_failure_warns_but_scan_stands(capsys):
         return Mock(returncode=0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="lsdvd failed"):
-        fast_scan_dvd(0, run=fake_run_busy_bad_lsdvd)
+        fast_scan_dvd(0, "/dev/sr0", run=fake_run_busy_bad_lsdvd)
     assert "umount /mnt/skive-d0 failed: not mounted" in capsys.readouterr().err
 
 
@@ -870,13 +907,28 @@ def test_fast_scan_bluray_command_and_result():
         # Real ffprobe prints the listing via av_log, i.e. stderr.
         return Mock(returncode=0, stdout="", stderr=FFPROBE_BLURAY)
 
-    assert fast_scan_bluray(0, run=fake_run) == [3932, 3897, 3653, 11482]
+    assert fast_scan_bluray(0, "/dev/sr0", run=fake_run) == [3932, 3897, 3653, 11482]
     assert calls[0][0] == ["ffprobe", "-hide_banner", "bluray:/dev/sr0"]
     assert calls[0][1] == {"capture_output": True, "text": True, "timeout": 60}
 
-    fast_scan_bluray(2, run=fake_run, timeout=30)
+    fast_scan_bluray(2, "/dev/sr2", run=fake_run, timeout=30)
     assert calls[1][0] == ["ffprobe", "-hide_banner", "bluray:/dev/sr2"]
     assert calls[1][1]["timeout"] == 30
+
+
+def test_fast_scan_bluray_probes_given_device_not_dev_sr_disc():
+    """ffprobe addresses the GIVEN device (the DRV line's path), never the
+    disc:N -> /dev/srN guess — parallel drives probe their own disc."""
+    from skive.makemkv import fast_scan_bluray
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return Mock(returncode=0, stdout="", stderr=FFPROBE_BLURAY)
+
+    assert fast_scan_bluray(7, "/dev/sr1", run=fake_run) == [3932, 3897, 3653, 11482]
+    assert calls[0] == ["ffprobe", "-hide_banner", "bluray:/dev/sr1"]
 
 
 def test_fast_scan_bluray_timeout_raises_runtime_error():
@@ -887,7 +939,7 @@ def test_fast_scan_bluray_timeout_raises_runtime_error():
         raise subprocess.TimeoutExpired(cmd, 60)
 
     with pytest.raises(RuntimeError, match="timed out"):
-        fast_scan_bluray(0, run=fake_run)
+        fast_scan_bluray(0, "/dev/sr0", run=fake_run)
 
 
 def test_fast_scan_bluray_nonzero_rc_raises():
@@ -896,7 +948,7 @@ def test_fast_scan_bluray_nonzero_rc_raises():
 
     fake_run = Mock(return_value=Mock(returncode=1, stdout="", stderr="AACS error"))
     with pytest.raises(RuntimeError, match="failed"):
-        fast_scan_bluray(0, run=fake_run)
+        fast_scan_bluray(0, "/dev/sr0", run=fake_run)
 
 
 def test_fast_scan_bluray_missing_ffprobe_raises():
@@ -907,7 +959,7 @@ def test_fast_scan_bluray_missing_ffprobe_raises():
         raise FileNotFoundError(2, "No such file or directory", cmd[0])
 
     with pytest.raises(RuntimeError, match="ffprobe unavailable"):
-        fast_scan_bluray(0, run=fake_run)
+        fast_scan_bluray(0, "/dev/sr0", run=fake_run)
 
 
 def test_fast_scan_bluray_empty_listing_raises():
@@ -916,7 +968,7 @@ def test_fast_scan_bluray_empty_listing_raises():
 
     fake_run = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
     with pytest.raises(RuntimeError, match="no titles"):
-        fast_scan_bluray(0, run=fake_run)
+        fast_scan_bluray(0, "/dev/sr0", run=fake_run)
 
 
 def test_ambiguous_escalation_trigger():

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from rich.prompt import Prompt
 
-from skive import common
 from skive.common import RipLog, ensure_mounted
 
 
@@ -71,8 +70,6 @@ def rip_music(args) -> None:
     log.name = name
 
     log.finish(rc)
-    if rc == 0:
-        common.eject_disc(0, log)
     sys.exit(rc)
 
 
