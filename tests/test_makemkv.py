@@ -377,3 +377,48 @@ def test_run_with_progress_success_replays_nothing(verbosity, capsys):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 0
     assert "drive chatter" not in capsys.readouterr().err
+
+
+# -- three-line status block ---------------------------------------------------
+
+def test_status_block_renders_both_lines():
+    """Lines 1/2: what + drive, then phase · title x/y · sizes · disc · ETA."""
+    from skive.makemkv import status_block
+    line1, line2 = status_block(
+        what="Movie (2020)", drive="disc:0", phase="Saving to MKV file 1/3",
+        title_x=2, title_y=5, cur="1.2 GiB", total="4.0 GiB",
+        disc="6.4 GiB/31.0 GiB", eta="3:07")
+    assert line1 == "Movie (2020) — disc:0"
+    assert line2 == ("Saving to MKV file 1/3 · title 2/5"
+                     " · 1.2 GiB / 4.0 GiB · disc 6.4 GiB/31.0 GiB · ETA 3:07")
+
+
+def test_status_block_omits_unknown_segments():
+    """Without size/ETA inputs the segments disappear (fast scans, sizeless rips)."""
+    from skive.makemkv import status_block
+    line1, line2 = status_block(what="Show (2021)", drive="disc:1",
+                                phase="", title_x=0, title_y=1)
+    assert line1 == "Show (2021) — disc:1"
+    assert line2 == "starting · title 0/1"
+
+
+def test_fmt_eta():
+    """_fmt_eta: m:ss under an hour, h:mm:ss above, never negative."""
+    from skive.makemkv import _fmt_eta
+    assert _fmt_eta(0) == "0:00"
+    assert _fmt_eta(187) == "3:07"
+    assert _fmt_eta(3723) == "1:02:03"
+    assert _fmt_eta(-5) == "0:00"
+
+
+def test_run_with_progress_leaves_final_summary_line(verbosity, capsys):
+    """On exit the Live region clears; one static line records the outcome."""
+    verbosity(0)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
+            ["PRGV:32768,65536,65536"], rc=0)):
+        rc = _run_with_progress(["makemkvcon", "mkv", "disc:1"], "all titles",
+                                total_titles=2, sizes=[30 * 1024**3, 1024**3])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "all titles: done · title 0/2 · disc 31.0 GiB/31.0 GiB" in err
+    assert "PRGV" not in err  # the block itself never leaks into the capture

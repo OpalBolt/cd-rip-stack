@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -67,41 +68,123 @@ def rip_header(display: str, infos: list["TitleInfo"]) -> str:
             f"  subs:  {','.join(subs) or 'none'}")
 
 
+def status_block(what: str, drive: str, phase: str, title_x: int, title_y: int,
+                 cur: str = "", total: str = "", disc: str = "", eta: str = "") -> tuple[str, str]:
+    """Render lines 1 and 2 of the rip status block (the bar is line 3).
+
+    Line 1 is what is being ripped: display title and drive. Line 2 is the
+    detail: phase · title x/y · cur / total · disc · ETA. The size, disc, and
+    ETA segments appear only when known (empty-string inputs), so fast scans
+    and sizeless rips get a shorter line instead of invented numbers.
+
+    Args:
+        what: Display title being ripped (the header's first line).
+        drive: Drive designator, e.g. "disc:0".
+        phase: Current makemkvcon phase (PRGT/PRGC value), "" before the first.
+        title_x: Title currently being saved (1-based; 0 before the first).
+        title_y: Total titles in this rip.
+        cur: Ripped bytes of the current title, human-readable, or "" if unknown.
+        total: Estimated size of the current title, human-readable, or "" if unknown.
+        disc: Whole-disc bytes "done/total", human-readable, or "" if unknown.
+        eta: Human-readable ETA, or "" if unknown.
+
+    Returns:
+        (line1, line2) as plain strings.
+    """
+    line1 = f"{what} — {drive}"
+    bits = [phase or "starting", f"title {title_x}/{title_y}"]
+    if cur or total:
+        bits.append(f"{cur} / {total}")
+    if disc:
+        bits.append(f"disc {disc}")
+    if eta:
+        bits.append(f"ETA {eta}")
+    return line1, " · ".join(bits)
+
+
+def _fmt_eta(seconds: float) -> str:
+    """Format a duration as m:ss, or h:mm:ss once it passes an hour."""
+    s = max(0, int(seconds))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
 def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                        sizes: list[int] | None = None, header: str | None = None,
                        log=None) -> int:
-    """Run makemkvcon with --progress=-same and drive a rich progress bar.
+    """Run makemkvcon with --progress=-same and drive the status block.
 
-    Parses robot output: PRGV (values), PRGT (phase name), MSG (messages).
-    sizes (estimated bytes per title, in rip order) drives a live GiB column:
-    ripped ≈ estimated size × progress fraction.
+    The block is a rich Live region of three lines under the static disc
+    summary header: line 1 what is being ripped (display title + drive),
+    line 2 the detail (phase · title x/y · current/total size · disc total ·
+    ETA), line 3 the progress bar. The Live region clears on exit and one
+    static summary line records the outcome, so no stale bar is left on
+    screen.
+
+    Parses robot output: PRGV (values), PRGT (phase name), PRGC (sub-task),
+    MSG (messages). sizes (estimated bytes per title, in rip order) drives
+    the live GiB figures: ripped ≈ estimated size × progress fraction; the
+    ETA is a simple elapsed-rate projection from bytes done/bytes total.
     Every output line lands verbatim in the run's raw log (log.raw). Console
     verbosity (common.VERBOSITY) gates only the printing: MSG lines show at
     -v, raw/unknown lines at -vv, and anything the level hid is replayed
-    verbatim to stderr when makemkvcon fails (story 7).
+    verbatim to stderr when makemkvcon fails (story 7). At level 0 the block
+    is the only thing moving on screen; at level ≥1 tool lines print through
+    the same console inside the live context, landing above the block.
     """
+    from rich.console import Group
+    from rich.live import Live
     from rich.progress import (
         BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn,
     )
+    from rich.text import Text
     cmd = cmd[:1] + ["--progress=-same"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     est_total = sum(sizes) if sizes else 0
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
-    with Progress(
+    console = Console(file=sys.stderr)
+    if header:
+        console.print(header, highlight=False)  # static, above the Live region
+    what = header.split("\n", 1)[0] if header else desc
+    drive = next((a for a in cmd if a.startswith("disc:")), "?")
+    phase = ""
+    cur_title = 0
+    cur_size = sizes[0] if sizes else 0
+    cur_done = tot_done = 0
+    started = time.monotonic()
+
+    l1, l2 = Text(style="bold"), Text()
+    progress = Progress(
+        # desc stays static on the bar line: line 1/2 now carry what + phase.
         TextColumn("[bold]{task.description}"),
         BarColumn(),
         TextColumn("{task.percentage:>5.1f}%"),
-        TextColumn("{task.fields[gb]}"),
         TimeElapsedColumn(),
         TextColumn("ETA"),
         TimeRemainingColumn(),
-        console=Console(file=sys.stderr),
-    ) as progress:
-        if header:
-            progress.console.print(header, highlight=False)
-        task = progress.add_task(desc, total=65536, gb="")
-        cur_title = 0
+        console=console,
+    )
+    task = progress.add_task(desc, total=65536)
+
+    def redraw(eta: str = "") -> None:
+        """Refresh the two text lines of the status block."""
+        l1.plain, l2.plain = status_block(
+            what=what, drive=drive, phase=phase, title_x=cur_title,
+            title_y=total_titles,
+            cur=hsize(cur_done) if est_total else "",
+            total=hsize(cur_size) if est_total else "",
+            disc=f"{hsize(tot_done)}/{hsize(est_total)}" if est_total else "",
+            eta=eta)
+
+    live = Live(Group(l1, l2, progress), console=console, transient=True)
+
+    def live_refresh() -> None:
+        """Re-render the block after a phase-only change (no bar update)."""
+        live.refresh()
+
+    with live:
         for line in proc.stdout:
             line = line.rstrip()
             if log is not None:
@@ -110,35 +193,41 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                 parts = line[5:].split(",")
                 if len(parts) == 3 and all(p.isdigit() for p in parts):
                     tot = int(parts[2]) or 65536
-                    gb = ""
+                    eta = ""
                     if est_total:
                         # ponytail: byte counts are est size × PRGV fraction, not real
                         # file sizes; stat the staged .mkv if precision ever matters.
                         cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
                         cur_done = int(cur_size * int(parts[0]) / tot)
                         tot_done = int(est_total * int(parts[1]) / tot)
-                        gb = f"{hsize(cur_done)}/{hsize(cur_size)} · disc {hsize(tot_done)}/{hsize(est_total)}"
+                        if tot_done:
+                            elapsed = time.monotonic() - started
+                            eta = _fmt_eta(elapsed * (est_total - tot_done) / tot_done)
+                    redraw(eta)
                     # Clamp below total: rich freezes elapsed/ETA once a task
                     # finishes, and makemkvcon hits 100% on quick sub-phases.
-                    progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot, gb=gb)
+                    progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot)
             elif line.startswith("PRGC:"):
                 # New sub-task; "Saving to MKV file" marks the start of each title
                 val = _qval(line)
                 if "Saving to MKV file" in val:
                     cur_title += 1
-                    val = f"title {cur_title}/{total_titles} — {val}"
-                progress.update(task, description=f"{desc} — {val}")
+                phase = val.strip()
+                redraw()
+                live_refresh()
             elif line.startswith("PRGT:"):
-                progress.update(task, description=f"{desc} — {_qval(line)}")
+                phase = _qval(line).strip()
+                redraw()
+                live_refresh()
             elif line.startswith("MSG:"):
                 if verbose >= 1:
-                    progress.console.print(_qval(line), highlight=False)
+                    console.print(_qval(line), highlight=False)
                 else:
                     hidden.append(line)
             elif line:
                 # Pass through anything else makemkvcon prints (drive/errors/etc.)
                 if verbose >= 2:
-                    progress.console.print(line, highlight=False)
+                    console.print(line, highlight=False)
                 else:
                     hidden.append(line)
     rc = proc.wait()
@@ -147,6 +236,11 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         # verbatim so a crash still tells the operator what the tool said.
         for line in hidden:
             print(line, file=sys.stderr)
+    outcome = "done" if rc == 0 else f"failed (rc={rc})"
+    summary = f"{desc}: {outcome} · title {cur_title}/{total_titles}"
+    if est_total:
+        summary += f" · disc {hsize(tot_done)}/{hsize(est_total)}"
+    console.print(summary, highlight=False)
     return rc
 
 
