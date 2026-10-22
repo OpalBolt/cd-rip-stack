@@ -176,7 +176,11 @@ def test_apply_rip_done_renamed_and_retreed(tmp_path, capsys):
     assert (lossless / "movies" / "Movie (2001)" / "Movie (2001)_t01.p2.mkv").exists()
     assert (lossless / "tv" / "Show (2020)" / "Show (2020)_S01E01.mkv").exists()
     assert (lossless / "tv" / "Show (2020)" / "Show (2020)_S01E01-E02.mkv").exists()
-    assert (lossless / "tv" / "Show (2020)" / "Show (2020) - Extra 02.mkv").exists()
+    # a bare extra in the flat rip-DONE context is a guess the name cannot
+    # support: carried to the lossless root, reported, never re-treed
+    assert (lossless / "Show (2020) - Extra 02.mkv").exists()
+    assert (f"skip {lossless}/Show (2020) - Extra 02.mkv"
+            f" (ambiguous extra (no type dir: tv or movies?) -- left in place)") in out
     # junk rides the rename but is reported, never re-treed
     assert not junk.exists()
     assert (lossless / "B1_t00.mkv").exists()
@@ -394,3 +398,226 @@ def test_dry_run_then_apply_matches_apply_directly(tmp_path, capsys):
     for line in lines(dry_lines):
         if line.startswith("would move"):
             assert line.removeprefix("would ") in out  # the plan is what executed
+
+
+# -- flat-context extras are ambiguous, typed extras are positional -----------------
+def test_flat_context_extra_reported_ambiguous_and_kept(tmp_path, capsys):
+    # merge mode: rip-DONE child and lossless-root straggler are both flat --
+    # movie extras and TV extras share the name, no type dir positions them
+    mkfile(tmp_path / "lossless" / "movies" / "Old (2000)" / "Old (2000)_t01.mkv")
+    done_extra = mkfile(tmp_path / "rip-DONE" / "Movie (2001) - Extra 02.mkv")
+    root_extra = mkfile(tmp_path / "lossless" / "Show (2020) - Extra 03.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert done_extra.exists() and root_extra.exists()  # reported, never re-treed
+    assert (tmp_path / "rip-DONE").exists()  # the kept extra keeps rip-DONE alive
+    assert (f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?)"
+            f" -- left in place)") in out
+    assert (f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?)"
+            f" -- left in place)") in out
+
+
+def test_typed_context_extra_keeps_positional_type(tmp_path, capsys):
+    extra = mkfile(tmp_path / "rip" / "tv" / "Show (2020) - Extra 02.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (tmp_path / "rip" / "tv" / "Show (2020)"
+            / "Show (2020) - Extra 02.mkv").exists()  # type dir owns the type
+    assert not extra.exists()
+    assert "ambiguous" not in out
+
+
+# -- symlinks are never followed out of the root -------------------------------------
+def symlink_case(tmp_path):
+    """A managed root under tmp_path/'videos' plus an outside dir to guard."""
+    root, outside = tmp_path / "videos", tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (outside / "keep.txt").write_bytes(b"keep")
+    return root, outside
+
+
+def snapshot(outside):
+    """Everything visible outside the root: (name, bytes) per entry."""
+    return sorted((p.name, p.stat().st_size) for p in outside.iterdir())
+
+
+def assert_untouched(out, outside, before):
+    """Nothing outside the root appeared, vanished, or changed; and the plan
+    executed no moves or prunes at all."""
+    assert snapshot(outside) == before
+    assert "would move" not in out and "\nmove " not in out
+    assert "would prune" not in out and "\nprune " not in out
+
+
+def test_symlinked_lossless_root_is_skipped_never_followed(tmp_path, capsys):
+    root, outside = symlink_case(tmp_path)
+    mkfile(root / "rip-DONE" / "Movie (2001)_t01.mkv")
+    (root / "lossless").symlink_to(outside, target_is_directory=True)
+
+    for apply in (False, True):
+        before = snapshot(outside)
+        rc = run(root, apply=apply)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert_untouched(out, outside, before)
+        # the managed root itself and its would-be move sources are refused
+        assert f"skip {root}/lossless (path traverses a symlink -- left in place)" in out
+        assert (f"skip {root}/rip-DONE/Movie (2001)_t01.mkv"
+                f" (path traverses a symlink -- left in place)") in out
+        assert (root / "rip-DONE" / "Movie (2001)_t01.mkv").exists()
+        assert (root / "lossless").is_symlink()
+
+
+def test_symlinked_rip_done_is_skipped_never_followed(tmp_path, capsys):
+    root, outside = symlink_case(tmp_path)
+    mkfile(outside / "Movie (2001)_t01.mkv")
+    (root / "rip-DONE").symlink_to(outside, target_is_directory=True)
+
+    for apply in (False, True):
+        before = snapshot(outside)
+        rc = run(root, apply=apply)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert_untouched(out, outside, before)
+        assert f"skip {root}/rip-DONE (path traverses a symlink -- left in place)" in out
+        assert not (root / "lossless").exists()  # the carry was refused
+        assert (root / "rip-DONE").is_symlink()
+
+
+def test_symlinked_rip_type_dir_is_skipped_never_followed(tmp_path, capsys):
+    root, outside = symlink_case(tmp_path)
+    (root / "rip").mkdir()
+    mkfile(outside / "Movie (2002)_t00.mkv")
+    (root / "rip" / "movies").symlink_to(outside, target_is_directory=True)
+
+    for apply in (False, True):
+        before = snapshot(outside)
+        rc = run(root, apply=apply)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert_untouched(out, outside, before)
+        assert (f"skip {root}/rip/movies/Movie (2002)_t00.mkv"
+                f" (path traverses a symlink -- left in place)") in out
+        assert (root / "rip" / "movies").is_symlink()
+
+
+def test_symlinked_title_dir_inside_lossless_is_skipped_never_followed(tmp_path, capsys):
+    root, outside = symlink_case(tmp_path)
+    (root / "lossless" / "tv").mkdir(parents=True)
+    (root / "lossless" / "tv" / "Show (2020)").symlink_to(outside,
+                                                          target_is_directory=True)
+    mkfile(root / "rip-DONE" / "Show (2020)_S01E01.mkv")
+
+    for apply in (False, True):
+        before = snapshot(outside)
+        rc = run(root, apply=apply)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert_untouched(out, outside, before)
+        assert (f"skip {root}/rip-DONE/Show (2020)_S01E01.mkv"
+                f" (path traverses a symlink -- left in place)") in out
+        assert (root / "rip-DONE" / "Show (2020)_S01E01.mkv").exists()
+        assert (root / "lossless" / "tv" / "Show (2020)").is_symlink()
+
+
+def test_symlink_report_names_the_hazard_not_a_collision_through_it(tmp_path, capsys):
+    # overwrite bait: the symlinked title dir already contains the colliding
+    # name; the skip must cite the symlink, not a "target exists" through it
+    root, outside = symlink_case(tmp_path)
+    (root / "lossless" / "tv").mkdir(parents=True)
+    (root / "lossless" / "tv" / "Show (2020)").symlink_to(outside,
+                                                          target_is_directory=True)
+    mkfile(outside / "Show (2020)_S01E01.mkv", b"bait")
+    mkfile(root / "rip-DONE" / "Show (2020)_S01E01.mkv", b"stray")
+
+    for apply in (False, True):
+        before = snapshot(outside)
+        rc = run(root, apply=apply)
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert_untouched(out, outside, before)
+        assert (outside / "Show (2020)_S01E01.mkv").read_bytes() == b"bait"
+        assert (f"skip {root}/rip-DONE/Show (2020)_S01E01.mkv"
+                f" (path traverses a symlink -- left in place)") in out
+        assert "target exists" not in out
+
+
+# -- apply-time robustness ------------------------------------------------------------
+def test_failed_move_leaves_no_scaffold(tmp_path, capsys, monkeypatch):
+    def boom(self, target):
+        raise OSError("nope")
+
+    monkeypatch.setattr(pathlib.Path, "rename", boom)
+    flat1 = mkfile(tmp_path / "rip" / "movies" / "Movie (2002)_t00.mkv")
+    flat2 = mkfile(tmp_path / "rip" / "movies" / "Movie (2002)_t01.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert flat1.exists() and flat2.exists()  # reported, left in place
+    assert not (tmp_path / "rip" / "movies" / "Movie (2002)").exists()
+    assert out.count("move failed: nope") == 2
+    assert f"skip {flat1} (move failed: nope -- left in place)" in out
+
+
+def test_failed_carry_reports_dependents_at_real_location(tmp_path, capsys,
+                                                          monkeypatch):
+    def boom(self, target):
+        raise OSError("nope")
+
+    monkeypatch.setattr(pathlib.Path, "rename", boom)
+    log = mkfile(tmp_path / "rip-DONE" / "rip.log", b"old text log")
+    flat = mkfile(tmp_path / "rip-DONE" / "Movie (2001)_t01.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert log.exists() and flat.exists()  # the carry failed, so nothing moved
+    assert not (tmp_path / "lossless").exists()  # its scaffold was un-built too
+    # the plan's virtual lossless/ citations are re-pointed at rip-DONE
+    assert (f"skip {log} (old text rip.log -- left unread -- left in place)") in out
+    assert f"skip {flat} (move failed: nope -- left in place)" in out
+    assert f"skip {tmp_path}/rip-DONE (move failed: nope -- left in place)" in out
+    assert "lossless" not in out  # no virtual in-root citation survives
+
+
+# -- strays that were silently unreported ---------------------------------------------
+def test_stray_dir_at_lossless_root_reported_and_kept(tmp_path, capsys):
+    mkfile(tmp_path / "lossless" / "movies" / "Old (2000)" / "Old (2000)_t01.mkv")
+    stray = mkfile(tmp_path / "lossless" / "Random Stuff" / "file.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert stray.exists()
+    assert (f"skip {tmp_path}/lossless/Random Stuff"
+            f" (unexpected shape -- left in place)") in out
+    assert f"skip {tmp_path}/lossless/movies" not in out  # type dirs are structural
+
+
+def test_stray_file_in_tv_merge_reported_and_keeps_tv_alive(tmp_path, capsys):
+    mkfile(tmp_path / "library" / "TV" / "Show (2010)"
+           / "Show (2010) - S01E01.mkv")
+    stray = mkfile(tmp_path / "library" / "TV" / "rip.log", b"old text log")
+    mkfile(tmp_path / "library" / "tv" / "ShowB (2013)" / "b.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (tmp_path / "library" / "tv" / "Show (2010)"
+            / "Show (2010) - S01E01.mkv").exists()  # the tree merges
+    assert stray.read_bytes() == b"old text log"  # reported, not carried into tv/
+    assert f"skip {stray} (unexpected shape -- left in place)" in out
+    assert (tmp_path / "library" / "TV").exists()  # the stray keeps TV/ alive
+    assert f"prune {tmp_path}/library/TV" not in out

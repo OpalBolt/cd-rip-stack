@@ -14,7 +14,9 @@ Old shape -> new shape:
 Dry-run by default: prints every move it WOULD make; --apply executes.
 Idempotent: a migrated tree yields zero moves. Anything unclassifiable --
 junk labels, unparseable or yearless names, target collisions, unexpected
-shapes -- is reported and left in place: never touched, never overwritten.
+shapes, bare " - Extra NN" names in a flat context, paths that would
+traverse a symlink -- is reported and left in place: never touched, never
+overwritten, never followed outside the root.
 Old text rip.log files are left in place, unread. After the moves (apply
 only) now-empty d{disc} dirs and empty title folders under rip/, lossless/
 and library/ are pruned; the managed roots themselves are never removed.
@@ -42,6 +44,24 @@ import transcode  # staged-name contracts: _RX_TITLE, _RX_EP, _RX_EXTRA
 _JUNK = re.compile(r"^[A-Z][0-9]+_t\d+\.mkv$")
 _YEAR = re.compile(r"\(\d{4}\)$")  # transcode's junk guard: a title must carry a year
 _DISC = re.compile(r"^d\d+$")  # drive subdir, old and new staging shapes alike
+_TYPE_DIRS = ("movies", "tv")  # structural children of lossless/
+
+
+def _through_symlink(root: Path, p: Path) -> bool:
+    """True when any component of p below root is a symlink: mkdir/rename/
+    rmdir on p could then land outside the managed tree. Components are
+    checked one by one -- planned dst paths may not exist yet, so a
+    resolve() containment check cannot see them."""
+    try:
+        rel = p.relative_to(root)
+    except ValueError:
+        return True
+    cur = root
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return True
+    return False
 
 
 def parse_name(name: str) -> tuple[str, bool] | str:
@@ -53,8 +73,10 @@ def parse_name(name: str) -> tuple[str, bool] | str:
 
     Type is read from the filename -- rip-DONE is flat, so there is no type
     dir to consult: episodes (_SNNENN[-ENN]) and extras (" - Extra NN") are
-    TV; _tNN titles are movies. A legacy _eNN extra title also parses as a
-    movie extra, matching transcode's everything-not-TV-is-a-movie rule.
+    TV; _tNN titles are movies. Extras also parse as TV, but a FLAT extra is
+    refused by the planner: movie extras and TV extras share the name, and
+    only a type dir can position one. A legacy _eNN extra title also parses
+    as a movie extra, matching transcode's everything-not-TV-is-a-movie rule.
     """
     if _JUNK.match(name):
         return "junk label"
@@ -71,32 +93,57 @@ def parse_name(name: str) -> tuple[str, bool] | str:
 
 class Plan:
     """The migration plan: moves (src -> dst), prune candidates, skip-report
-    lines, and how many inspected files were already in their final place.
+    entries, and how many inspected files were already in their final place.
+    Skips are (path, reason) pairs rendered at print time, so apply can
+    re-point entries recorded against a virtual path when the carrying
+    rename that would have created it failed (report the real location).
     dst_seen remembers every planned destination so two moves never target
-    the same path (idempotence depends on never overwriting)."""
+    the same path (idempotence depends on never overwriting). move()/prune()
+    refuse any path that traverses a symlink below the root -- mkdir/rename/
+    rmdir through it could act outside the managed tree -- and report the
+    refusal, returning False so dependents are not planned either."""
 
-    def __init__(self) -> None:
+    def __init__(self, root: Path) -> None:
+        self.root = root
         self.moves: list[tuple[Path, Path]] = []
         self.prunes: list[Path] = []
-        self.skips: list[str] = []
+        self.skips: list[tuple[Path, str]] = []
         self.already = 0
         self.dst_seen: set[Path] = set()
 
+    def move(self, src: Path, dst: Path) -> bool:
+        """Plan src -> dst; False (and a skip line) when refused: a path
+        that traverses a symlink, or a target that exists on disk or is
+        already claimed by this run. The symlink check comes first so the
+        report names the hazard, not a collision visible only through it."""
+        if _through_symlink(self.root, src) or _through_symlink(self.root, dst):
+            self.skips.append((src, "path traverses a symlink"))
+            return False
+        if dst.exists() or dst in self.dst_seen:
+            self.skips.append((src, "target exists"))
+            return False
+        self.dst_seen.add(dst)
+        self.moves.append((src, dst))
+        return True
+
+    def prune(self, d: Path) -> bool:
+        """Plan d for rmdir; False (and a skip line) when refused."""
+        if _through_symlink(self.root, d):
+            self.skips.append((d, "path traverses a symlink"))
+            return False
+        self.prunes.append(d)
+        return True
+
 
 def _plan_file_move(plan: Plan, src: Path, dst_dir: Path) -> None:
-    """Plan src -> dst_dir/src.name; a target that exists on disk or is
-    already claimed by this run is reported and the source left in place."""
-    dst = dst_dir / src.name
-    if dst.exists() or dst in plan.dst_seen:
-        plan.skips.append(f"skip {src} (target exists -- left in place)")
-        return
-    plan.dst_seen.add(dst)
-    plan.moves.append((src, dst))
+    """Plan src -> dst_dir/src.name via Plan.move (collision and symlink
+    checks; refusals are reported and the source left in place)."""
+    plan.move(src, dst_dir / src.name)
 
 
 def _report_unparsed(plan: Plan, f: Path, parsed: str) -> None:
     reason = "old text rip.log -- left unread" if f.name == "rip.log" else parsed
-    plan.skips.append(f"skip {f} ({reason} -- left in place)")
+    plan.skips.append((f, reason))
 
 
 def _plan_library(root: Path, plan: Plan) -> None:
@@ -116,7 +163,7 @@ def _plan_library(root: Path, plan: Plan) -> None:
         if entry.is_dir():
             _plan_file_move(plan, entry, lib / "movies")
         else:
-            plan.skips.append(f"skip {entry} (not a folder -- left in place)")
+            plan.skips.append((entry, "not a folder"))
 
 
 def _plan_library_tv(root: Path, plan: Plan) -> None:
@@ -127,7 +174,7 @@ def _plan_library_tv(root: Path, plan: Plan) -> None:
     lib = root / "library"
     tv, tv_old = lib / "tv", lib / "TV"
     if tv_old.exists() and not tv_old.is_dir():
-        plan.skips.append(f"skip {tv_old} (not a folder -- left in place)")
+        plan.skips.append((tv_old, "not a folder"))
         return
     if not tv_old.is_dir():
         return
@@ -136,12 +183,17 @@ def _plan_library_tv(root: Path, plan: Plan) -> None:
             plan.already += 1  # same dir under two spellings: already migrated
             return
         for child in sorted(tv_old.iterdir()):
+            if child.is_file():
+                # typically an old rip.log stray: report, keep, and let it
+                # keep TV/ alive rather than carrying it into the new tree
+                plan.skips.append((child, "unexpected shape"))
+                continue
             _plan_file_move(plan, child, tv)
         moved = {s for s, _ in plan.moves}
         if all(c in moved for c in tv_old.iterdir()):
-            plan.prunes.append(tv_old)  # everything merges away: TV empties out
+            plan.prune(tv_old)  # everything merges away: TV empties out
     else:
-        plan.moves.append((tv_old, tv))
+        plan.move(tv_old, tv)
 
 
 def _title_dir(lossless_root: Path, title: str, is_tv: bool) -> Path:
@@ -152,15 +204,20 @@ def _plan_lossless_child(root: Path, plan: Plan, child: Path) -> None:
     """One rip-DONE child in merge mode (lossless/ already exists): a flat
     staged file re-trees straight to its final lossless/<type>/<Title>/
     folder; anything else is reported and left in rip-DONE (so rip-DONE is
-    only pruned once it holds nothing)."""
+    only pruned once it holds nothing). A bare " - Extra NN" file is
+    reported as ambiguous instead of guessed: with no type dir, movie extra
+    and TV extra share the name."""
     if not child.is_file():
-        plan.skips.append(f"skip {child} (unexpected shape -- left in place)")
+        plan.skips.append((child, "unexpected shape"))
         return
     parsed = parse_name(child.name)
     if isinstance(parsed, str):
         _report_unparsed(plan, child, parsed)
         return
     title, is_tv = parsed
+    if is_tv and transcode._RX_EXTRA.match(child.name):
+        plan.skips.append((child, "ambiguous extra (no type dir: tv or movies?)"))
+        return
     _plan_file_move(plan, child, _title_dir(root / "lossless", title, is_tv))
 
 
@@ -168,7 +225,9 @@ def _plan_flat_children(root: Path, plan: Plan, listing: Path, virtual: Path) ->
     """Re-tree the flat files of one directory. `listing` is where the files
     live now; `virtual` where the dir sits once earlier planned renames ran
     (rip-DONE -> lossless), so printed plan lines show the real sequential
-    result. Subdirectories are not flat files: they ride along silently."""
+    result. Subdirectories are not flat files: they ride along silently.
+    A bare " - Extra NN" file is reported as ambiguous instead of guessed:
+    with no type dir, movie extra and TV extra share the name."""
     for child in sorted(listing.iterdir()):
         if not child.is_file():
             continue
@@ -179,6 +238,10 @@ def _plan_flat_children(root: Path, plan: Plan, listing: Path, virtual: Path) ->
             _report_unparsed(plan, virtual / child.name, parsed)
             continue
         title, is_tv = parsed
+        if is_tv and transcode._RX_EXTRA.match(child.name):
+            plan.skips.append((virtual / child.name,
+                               "ambiguous extra (no type dir: tv or movies?)"))
+            continue
         _plan_file_move(plan, virtual / child.name,
                         _title_dir(root / "lossless", title, is_tv))
 
@@ -192,22 +255,30 @@ def _plan_done(root: Path, plan: Plan) -> None:
     re-tree too."""
     done, lossless = root / "rip-DONE", root / "lossless"
     if done.exists() and not done.is_dir():
-        plan.skips.append(f"skip {done} (not a folder -- left in place)")
+        plan.skips.append((done, "not a folder"))
     elif done.is_dir() and lossless.is_dir():
         for child in sorted(done.iterdir()):
             _plan_lossless_child(root, plan, child)
         moved = {s for s, _ in plan.moves}
         if all(c in moved for c in done.iterdir()):
-            plan.prunes.append(done)
+            plan.prune(done)
     elif done.is_dir():
         if lossless.exists():
-            plan.skips.append(
-                f"skip {done} (lossless exists but is not a folder -- left in place)")
-        else:
-            plan.moves.append((done, lossless))
+            plan.skips.append((done, "lossless exists but is not a folder"))
+        elif plan.move(done, lossless):
+            # dependents are planned only when the carrying rename was: if it
+            # was refused (symlinked path), the virtual lossless/ paths would
+            # be fiction
             _plan_flat_children(root, plan, listing=done, virtual=lossless)
     if lossless.is_dir():
-        _plan_flat_children(root, plan, listing=lossless, virtual=lossless)
+        if _through_symlink(root, lossless):
+            plan.skips.append((lossless, "path traverses a symlink"))
+        else:
+            for child in sorted(lossless.iterdir()):
+                if child.is_dir() and child.name not in _TYPE_DIRS:
+                    # a stray dir at the lossless root is nobody's title tree
+                    plan.skips.append((child, "unexpected shape"))
+            _plan_flat_children(root, plan, listing=lossless, virtual=lossless)
 
 
 def _plan_staging_file(root: Path, plan: Plan, f: Path, type_name: str) -> None:
@@ -229,7 +300,7 @@ def _count_new_shape(plan: Plan, title_dir: Path) -> None:
         if not f.name.endswith(".mkv"):
             return
         if _JUNK.match(f.name):
-            plan.skips.append(f"skip {f} (junk label -- left in place)")
+            plan.skips.append((f, "junk label"))
         else:
             plan.already += 1
 
@@ -241,7 +312,7 @@ def _count_new_shape(plan: Plan, title_dir: Path) -> None:
                 if f.is_file():
                     count_file(f)
         else:
-            plan.skips.append(f"skip {e} (unexpected shape -- left in place)")
+            plan.skips.append((e, "unexpected shape"))
 
 
 def _plan_rip(root: Path, plan: Plan) -> None:
@@ -269,13 +340,11 @@ def _plan_rip(root: Path, plan: Plan) -> None:
                     if f.is_file():
                         _plan_staging_file(root, plan, f, typedir.name)
                     else:
-                        plan.skips.append(
-                            f"skip {f} (unexpected shape -- left in place)")
+                        plan.skips.append((f, "unexpected shape"))
             elif _YEAR.search(level1.name):
                 _count_new_shape(plan, level1)
             else:
-                plan.skips.append(
-                    f"skip {level1} (unexpected shape -- left in place)")
+                plan.skips.append((level1, "unexpected shape"))
 
 
 def _scan_prune(d: Path, moved: set[Path], plan: Plan) -> bool:
@@ -289,7 +358,7 @@ def _scan_prune(d: Path, moved: set[Path], plan: Plan) -> bool:
             continue
         empty = False
     if empty:
-        plan.prunes.append(d)
+        plan.prune(d)
     return empty
 
 
@@ -309,23 +378,50 @@ def _plan_prunes(root: Path, plan: Plan) -> None:
                         _scan_prune(e, moved, plan)
 
 
+def _real_path(p: Path, failed: list[tuple[Path, Path]]) -> Path:
+    """p re-pointed at the real on-disk location: when a carrying rename
+    src -> dst failed, planned paths under dst still rest under src."""
+    for dst, src in failed:
+        if p == dst or dst in p.parents:
+            return src / p.relative_to(dst)
+    return p
+
+
 def _apply(plan: Plan) -> tuple[int, int]:
     """Execute the plan: every move is a rename into a mkdir'd parent, a
-    re-checked target, and never an overwrite; prunes are rmdir, which the
-    OS refuses on a non-empty dir. Returns (moved, pruned)."""
+    re-checked target, and never an overwrite; a failed move un-does the
+    scaffold dirs its mkdir created (only while empty); prunes are rmdir,
+    which the OS refuses on a non-empty dir. Returns (moved, pruned)."""
     moved = 0
+    failed_carries: list[tuple[Path, Path]] = []  # (virtual dst, real src)
     for src, dst in plan.moves:
+        created: list[Path] = []  # scaffold this attempt mkdirs, deepest first
         try:
+            d = dst.parent
+            while not d.exists() and d != d.parent:
+                created.append(d)
+                d = d.parent
             dst.parent.mkdir(parents=True, exist_ok=True)
             if dst.exists():
-                plan.skips.append(f"skip {src} (target exists -- left in place)")
+                plan.skips.append((src, "target exists"))
                 continue
             src.rename(dst)
         except OSError as e:
-            plan.skips.append(f"skip {src} (move failed: {e} -- left in place)")
+            plan.skips.append((src, f"move failed: {e}"))
+            for d in created:
+                try:
+                    d.rmdir()
+                except OSError:
+                    break  # a parent of an unremovable dir is not empty either
+            failed_carries.append((dst, src))
             continue
         moved += 1
         print(f"move {src} -> {dst}")
+    if failed_carries:
+        # a failed carrying rename leaves its dependents where they really
+        # are: cite the pre-rename location, not the virtual in-root path
+        plan.skips = [(_real_path(p, failed_carries), reason)
+                      for p, reason in plan.skips]
     pruned = 0
     for d in plan.prunes:
         try:
@@ -347,11 +443,10 @@ def run_migration(root: Path, apply_mode: bool) -> int:
                for n in ("library", "rip", "rip-DONE", "lossless", "issues")):
         print(f"nothing to do under {root}")
         return 0
-    plan = Plan()
+    plan = Plan(root)
     if (root / "rip.log").is_file():
         # old text log: left in place, unread (report only, per contract)
-        plan.skips.append(
-            f"skip {root / 'rip.log'} (old text rip.log -- left unread -- left in place)")
+        plan.skips.append((root / "rip.log", "old text rip.log -- left unread"))
     _plan_library(root, plan)
     _plan_library_tv(root, plan)
     _plan_done(root, plan)
@@ -366,8 +461,8 @@ def run_migration(root: Path, apply_mode: bool) -> int:
             print(f"would move {src} -> {dst}")
         for d in plan.prunes:
             print(f"would prune {d}")
-    for line in plan.skips:
-        print(line)
+    for p, reason in plan.skips:
+        print(f"skip {p} ({reason} -- left in place)")
 
     n_moves = moved if apply_mode else len(plan.moves)
     n_prunes = pruned if apply_mode else len(plan.prunes)
