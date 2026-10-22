@@ -125,8 +125,11 @@ def test_movie_preamble_returns_shared_values(tmp_path, monkeypatch):
     assert result.display == "Movie-Title (2020)"
     assert result.minlength == 90
     assert result.keep == "fra"
-    assert result.stage_movie.is_dir() and result.stage_tv.is_dir()
-    rip_common.purge_junk.assert_called_once_with([result.stage_movie, result.stage_tv])
+    # Title staging: rip/movies/<Name (Year)>/d{disc} (CONTEXT.md: Staging)
+    assert result.title_dir == tmp_path / "rip" / "movies" / "Movie-Title (2020)"
+    assert result.stage == result.title_dir / "d0"
+    assert result.title_dir.is_dir() and result.stage.is_dir()
+    rip_common.purge_junk.assert_called_once_with([result.title_dir, result.stage])
     log.start.assert_called_once_with()
     # The forced fast-scan fallback (see _mock_preamble_seams) adds a scan
     # note; the media note must still be among them.
@@ -148,7 +151,7 @@ def test_preamble_passes_volume_label_as_prefill(tmp_path, monkeypatch):
     search.assert_called_once_with("movie", prefill="ROGUE ONE")
 
 
-def test_tv_preamble_resolves_tmdb_id_and_preserves_stage_order(tmp_path, monkeypatch):
+def test_tv_preamble_resolves_tmdb_id_and_creates_title_staging(tmp_path, monkeypatch):
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
     pick = TMDBPick("Show", "-", "-", "tv", "7")
@@ -161,9 +164,66 @@ def test_tv_preamble_resolves_tmdb_id_and_preserves_stage_order(tmp_path, monkey
 
     rip_common.parse_tmdbid.assert_called_once_with("tv:7", "tv")
     rip_common.fetch_by_id.assert_called_once_with("tv", "7")
-    rip_common.purge_junk.assert_called_once_with([result.stage_tv, result.stage_movie])
+    assert result.title_dir == tmp_path / "rip" / "tv" / "Show"
+    assert result.stage == result.title_dir / "d0"
+    assert result.stage.is_dir()
+    rip_common.purge_junk.assert_called_once_with([result.title_dir, result.stage])
     assert result.display == "Show"
     assert result.keep == ""
+
+
+def test_preamble_mkdirs_title_staging_only_after_tmdb_pick(tmp_path, monkeypatch):
+    """Preamble order (spec: Share layout): mount → sniff → gates → TMDB pick →
+    mkdir the title staging. Nothing exists under rip/ until the pick has named
+    the title folder."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    _mock_preamble_seams(monkeypatch)
+    seen = {}
+
+    def noting_pick(kind, prefill=""):
+        seen["rip_exists_at_pick"] = (tmp_path / "rip").exists()
+        return TMDBPick("Show", "2000", "en", "tv", "7")
+
+    monkeypatch.setattr(rip_common, "search_loop", noting_pick)
+
+    result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
+
+    assert seen["rip_exists_at_pick"] is False
+    assert (tmp_path / "rip").is_dir()  # created afterwards, by the staging mkdir
+    assert result.title_dir == tmp_path / "rip" / "tv" / "Show (2000)"
+    assert result.stage == result.title_dir / "d0"
+
+
+def test_preamble_junk_purge_scoped_to_title_folder(tmp_path, monkeypatch):
+    """The preamble's junk purge sweeps only this title's tree: title folder +
+    this run's d{disc}. A sibling title's junk and a parallel drive's d{disc}
+    junk survive (show-scoped purge, spec: Share layout)."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
+    monkeypatch.setattr(rip_common, "fast_scan_dvd",
+                        Mock(side_effect=RuntimeError("tests force the full-scan fallback")))
+    monkeypatch.setattr(rip_common, "fast_scan_bluray",
+                        Mock(side_effect=RuntimeError("tests force the full-scan fallback")))
+    monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=("DVD-ROM", "", [])))
+    monkeypatch.setattr(rip_common, "require_online", Mock())
+    monkeypatch.setattr(rip_common, "search_loop",
+                        Mock(return_value=TMDBPick("Show", "2000", "en", "tv", "7")))
+
+    sibling = tmp_path / "rip" / "tv" / "Other Show (1999)"
+    sibling.mkdir(parents=True)
+    (sibling / "B1_t00.mkv").touch()  # another title's stale junk
+    parallel = tmp_path / "rip" / "tv" / "Show (2000)" / "d1"
+    parallel.mkdir(parents=True)
+    (parallel / "B9_t03.mkv").touch()  # a parallel drive's in-flight junk
+
+    result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
+
+    # This run's own d0 would-be junk is swept (nothing to assert — it starts
+    # empty); everything outside the title folder + own d{disc} survives.
+    assert (sibling / "B1_t00.mkv").exists()
+    assert (parallel / "B9_t03.mkv").exists()
+    assert result.stage == tmp_path / "rip" / "tv" / "Show (2000)" / "d0"
 
 
 # --- DVD fast-scan gate (ADR 0002, DVD half) ---

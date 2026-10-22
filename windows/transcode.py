@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
-"""Standalone Windows transcode — batch re-encode rip\\ staging into the Jellyfin library.
+"""Standalone Windows transcode — batch re-encode rip\\ staging into the Jellyfin
+library (or, with --retry, re-run items from the issues\\ quarantine).
 
 Port of windows/transcode-video.ps1 to stdlib-only Python (3.10+; runs on a
 clean `python.exe`, no rich, no skive imports). The whole Windows install spec
 is: winget Python 3, HandBrake (CLI reachable), MKVToolNix, ffmpeg (ffprobe),
 and the share mapped (default `Z:\\`, `$env:VIDEOS` overrides).
 
-The staging subdirectory decides the type: anything under `rip\\{TV,tv}` is TV
-(no main-feature pick, no merging); everything else is a movie. Video is
-re-encoded, audio copied. Main features and TV episodes ship with ZERO subtitle
-tracks (the inline subtitle pass extracts them to SRT sidecars beside the
-encode); extras keep every track embedded.
+The input tree is `rip\\` (staging) or, with --retry, `issues\\` (quarantine).
+The first path segment under it decides the type: `rip\\tv` (or `rip\\TV`) is
+TV (no main-feature pick, no merging); everything else is a movie. Titles rest
+at either depth — promoted in the title folder (`rip\\movies\\Name (Year)\\`) or
+fresh in the drive subdir (`rip\\movies\\Name (Year)\\d1\\`) — and the walk finds
+both. Video is re-encoded, audio copied. Main features and TV episodes ship
+with ZERO subtitle tracks (the inline subtitle pass extracts them to SRT
+sidecars beside the encode); extras keep every track embedded.
 
-Usage:  python transcode.py [-k] [-e x265|nvenc|qsv|vce] [-w DIR] [-v|-vv] [prefix...]
+Ships go to `library\\movies\\<Name>\\` and `library\\tv\\<Name>\\Season NN\\`;
+-Keep parks sources under `lossless\\<type>\\<Name (Year)>\\`; failures are
+quarantined to `issues\\<type>\\<Name (Year)>\\` with the run's log evidence.
+
+Usage:  python transcode.py [-k] [--retry] [-e x265|nvenc|qsv|vce] [-w DIR] [-v|-vv] [prefix...]
 """
 
 import argparse
@@ -311,11 +319,19 @@ def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
     return ""
 
 
-def _scan(rip_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
-    """Walk rip\\ for .mkv files; return parsed items + which prefixes hit."""
+def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
+    """Walk the input tree (rip\\ staging, or issues\\ with --retry) for .mkv
+    files; return parsed items + which prefixes hit.
+
+    Type detection is positional: the first path segment under the input root
+    is the type — `tv` (or legacy `TV`) is TV, anything else a movie. Titles
+    rest at either depth — promoted at <type>/<Name (Year)>/<file>.mkv or
+    fresh in the drive subdir <type>/<Name (Year)>/d{disc}/<file>.mkv — and
+    one rglob finds both.
+    """
     items: list[Item] = []
     want_hit: set[str] = set()
-    root = Path(rip_dir)
+    root = Path(input_dir)
     for f in sorted(root.rglob("*.mkv")):
         if not f.is_file():
             continue
@@ -504,26 +520,61 @@ def _copy2(src: str, dst: str) -> None:
     shutil.copystat(src, dst)
 
 
-def _archive(src: str, done_dir: str, rip_dir: str, keep: bool) -> None:
-    """-Keep parks the lossless source in rip-DONE (never clobbering); else delete."""
+def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> None:
+    """-Keep parks the lossless source under lossless/<type>/<Name (Year)>
+    (CONTEXT.md: Lossless folder — never clobbering, never auto-deleted);
+    else delete."""
     if not keep:
         _rmf(src)
         return
-    d = os.path.join(done_dir, os.path.basename(src))
-    if os.path.exists(d):
-        print(f"--keep: {d} already exists -- source left in {rip_dir}", file=sys.stderr)
+    d = os.path.join(lossless_root, "tv" if item.is_tv else "movies", item.movie)
+    os.makedirs(d, exist_ok=True)
+    dest = os.path.join(d, os.path.basename(src))
+    if os.path.exists(dest):
+        print(f"--keep: {dest} already exists -- source left in {os.path.dirname(src)}", file=sys.stderr)
     else:
-        shutil.move(src, d)
+        shutil.move(src, dest)
 
 
-def _quarantine(src: str, issues_dir: str) -> None:
-    """Sources that must not be lost wait in rip-ISSUES (never clobbering)."""
-    os.makedirs(issues_dir, exist_ok=True)
-    d = os.path.join(issues_dir, os.path.basename(src))
-    if os.path.exists(d):
-        print(f"quarantine: {d} already exists -- source left in place", file=sys.stderr)
+def _quarantine(src: str, item: Item, issues_root: str, log: RipLog) -> None:
+    """Sources that must not be lost wait in issues/<type>/<Name (Year)>
+    (CONTEXT.md: Issues folder, never clobbering), together with this run's
+    log evidence."""
+    d = os.path.join(issues_root, "tv" if item.is_tv else "movies", item.movie)
+    os.makedirs(d, exist_ok=True)
+    dest = os.path.join(d, os.path.basename(src))
+    if os.path.exists(dest):
+        print(f"quarantine: {dest} already exists -- source left in place", file=sys.stderr)
     else:
-        shutil.move(src, d)
+        shutil.move(src, dest)
+    _copy_run_evidence(log, d)
+
+
+def _copy_run_evidence(log: RipLog, dest_dir: str) -> None:
+    """Copy the run's evidence beside a quarantined source: the run's lines
+    from logs/rip.jsonl (selected by the run field) are appended to the
+    folder's rip.jsonl, and the run's raw log is copied in when it still
+    exists (a clean exit deletes it; a failure keeps it)."""
+    kept: list[str] = []
+    try:
+        with open(log._run_log, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get("run") == log.run:
+                    kept.append(json.dumps(obj, ensure_ascii=False))
+    except OSError:
+        pass
+    if kept:
+        with open(os.path.join(dest_dir, "rip.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write("\n".join(kept) + "\n")
+    if os.path.exists(log._raw_log):
+        shutil.copy2(log._raw_log, os.path.join(dest_dir, os.path.basename(log._raw_log)))
 
 
 def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
@@ -546,15 +597,17 @@ def _ship_sidecars(side_dir: str, dest_dir: str, res) -> None:
     shutil.rmtree(side_dir, ignore_errors=True)
 
 
-def _fail_quarantine(log: RipLog, paths: list[str], issues_dir: str,
+def _fail_quarantine(log: RipLog, items: list[Item], issues_root: str,
                      label: str, notes: list[str]) -> None:
-    """Pass failed but the encode shipped subless: sources wait in rip-ISSUES."""
+    """Pass failed but the encode shipped subless: sources wait in their
+    issues/<type>/<Name (Year)> folder with the run's evidence."""
     fails = "; ".join(n for n in notes if n.startswith("FAIL"))
     log.note("subs", f"FAIL subtitle pass: {label} -- {fails}")
+    folder = os.path.join(issues_root, "tv" if items[0].is_tv else "movies", items[0].movie)
     print(f"FAILED (subtitle pass): {label} -- encode shipped subless, "
-          f"sources quarantined to {issues_dir}", file=sys.stderr)
-    for p in paths:
-        _quarantine(p, issues_dir)
+          f"sources quarantined to {folder}", file=sys.stderr)
+    for item in items:
+        _quarantine(item.path, item, issues_root, log)
 
 
 def run_transcode(args) -> int:
@@ -567,10 +620,14 @@ def run_transcode(args) -> int:
             file=sys.stderr,
         )
         return 1
-    rip_dir = os.path.join(vid, "rip")
+    # --retry re-runs quarantined items: the input tree is issues/ instead of
+    # rip/ (CONTEXT.md: Issues folder). Success ships/archives exactly like a
+    # normal run — only then does the source move out of issues/; failure
+    # leaves it in its issues folder (re-quarantine is the no-clobber no-op).
+    input_dir = os.path.join(vid, "issues" if args.retry else "rip")
     lib_dir = os.path.join(vid, "library")
-    done_dir = os.path.join(vid, "rip-DONE")
-    issues_dir = os.path.join(vid, "rip-ISSUES")
+    lossless_root = os.path.join(vid, "lossless")
+    issues_root = os.path.join(vid, "issues")
     tmp_dir = args.workdir or os.environ.get("VIDEO_WORK_DIR") or os.path.join(tempfile.gettempdir(), "video-work")
     os.makedirs(tmp_dir, exist_ok=True)
 
@@ -581,11 +638,9 @@ def run_transcode(args) -> int:
     tess_exe = _find_on_path("tesseract.exe")  # seconv shells out to it
     if not hb_exe or not mkv_exe or not ffprobe_exe or not seconv_exe or not tess_exe:
         return 1
-    if args.keep:
-        os.makedirs(done_dir, exist_ok=True)
 
     log = RipLog()
-    items, want_hit = _scan(rip_dir, args.prefixes)
+    items, want_hit = _scan(input_dir, args.prefixes)
     for w in args.prefixes:
         if w not in want_hit:
             print(f"no staged MKVs match: {w}", file=sys.stderr)
@@ -593,7 +648,7 @@ def run_transcode(args) -> int:
         if args.prefixes:
             print("no matching MKVs to transcode", file=sys.stderr)
             return 1
-        print(f"no MKVs in {rip_dir}")
+        print(f"no MKVs in {input_dir}")
         return 0
 
     # main feature per movie = the _tNN group with the most bytes (a split
@@ -633,7 +688,7 @@ def run_transcode(args) -> int:
             # -- TV: no main feature, no merge. episodes -> Season NN (00 =
             # -- Specials), extras -> the show's extras.
             if i.is_tv:
-                show_dir = os.path.join(lib_dir, "TV", safe)
+                show_dir = os.path.join(lib_dir, "tv", safe)
                 episode = i.sfx == "S"
                 if episode:
                     season = "Specials" if int(i.sn) == 0 else f"Season {i.sn}"
@@ -669,10 +724,9 @@ def run_transcode(args) -> int:
                         _ship_sidecars(side_dir, dest_dir, res)
                     _rmf(local_src)
                     if res is None or res.ok:
-                        _archive(i.path, done_dir, rip_dir, args.keep)
+                        _archive(i.path, i, lossless_root, args.keep)
                     else:
-                        _fail_quarantine(log, [i.path], os.path.join(issues_dir, "tv"),
-                                         i.name, res.notes)
+                        _fail_quarantine(log, [i], issues_root, i.name, res.notes)
                         failed = 1
                     log.phase_end()
                 else:
@@ -694,7 +748,7 @@ def run_transcode(args) -> int:
                     (s for s in items if s.movie == i.movie and s.sfx == "t" and s.num == i.num),
                     key=lambda s: s.part,
                 )
-                dest_dir = os.path.join(lib_dir, safe)
+                dest_dir = os.path.join(lib_dir, "movies", safe)
                 dest = os.path.join(dest_dir, safe + ".mkv")
                 log.phase("encode")
                 # cleanup removes this item's temps AFTER the encode; every
@@ -706,10 +760,10 @@ def run_transcode(args) -> int:
                     # track guard: a mismatched part set never merges or encodes
                     bad = _split_mismatch(siblings, ffprobe_exe)
                     if bad:
-                        log.note("guard", f"FAIL tracks differ: {bad} -- all parts to rip-ISSUES/movies")
+                        log.note("guard", f"FAIL tracks differ: {bad} -- all parts to issues/movies")
                         print(f"FAILED (track guard): {bad} -- parts quarantined", file=sys.stderr)
                         for s in siblings:
-                            _quarantine(s.path, os.path.join(issues_dir, "movies"))
+                            _quarantine(s.path, s, issues_root, log)
                             handled.add(s.path)
                         failed = 1
                         log.phase_end()
@@ -765,10 +819,9 @@ def run_transcode(args) -> int:
                     names = " ".join(s.name for s in siblings)
                     if res.ok:
                         for s in siblings:
-                            _archive(s.path, done_dir, rip_dir, args.keep)
+                            _archive(s.path, s, lossless_root, args.keep)
                     else:
-                        _fail_quarantine(log, [s.path for s in siblings],
-                                         os.path.join(issues_dir, "movies"), names, res.notes)
+                        _fail_quarantine(log, siblings, issues_root, names, res.notes)
                     for s in siblings:
                         handled.add(s.path)
                     if not res.ok:
@@ -789,7 +842,7 @@ def run_transcode(args) -> int:
             # -- extras (non-main _t title, or an extras-disc title): as-is.
             # the .pN suffix is kept so split-disc extras never collide.
             ext = f".p{i.part}" if i.part >= 0 else ""
-            dest_dir = os.path.join(lib_dir, safe, "extras")
+            dest_dir = os.path.join(lib_dir, "movies", safe, "extras")
             name = (f"{safe} - Extra {i.num_str}{ext}.mkv"
                     if i.sfx == "e" else f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
             dest = os.path.join(dest_dir, name)
@@ -803,7 +856,7 @@ def run_transcode(args) -> int:
             if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe, log=log):
                 shutil.move(local_out, dest)
                 _rmf(local_src)
-                _archive(i.path, done_dir, rip_dir, args.keep)
+                _archive(i.path, i, lossless_root, args.keep)
                 log.phase_end()
             else:
                 _rmf(local_src)
@@ -832,7 +885,7 @@ def run_transcode(args) -> int:
         log.finish(failed)
 
     if args.keep:
-        print(f"--keep: lossless sources moved to {done_dir} -- verify, then clean by hand")
+        print(f"--keep: lossless sources moved to {lossless_root} -- verify, then clean by hand")
     return failed
 
 
@@ -842,7 +895,10 @@ def parse_args(argv=None):
         description="Batch-transcode staged lossless MKVs to native-resolution H.265 for the Jellyfin library.",
     )
     p.add_argument("-k", "--keep", action="store_true",
-                   help="move lossless sources to rip-DONE instead of deleting them (verify, then clean by hand)")
+                   help="move lossless sources to lossless/<type>/<Name> instead of deleting them (verify, then clean by hand)")
+    p.add_argument("--retry", action="store_true",
+                   help="re-run items from the issues folder instead of rip staging: success ships/archives "
+                        "normally and moves the source out, failure stays quarantined")
     p.add_argument("-e", "--encoder", choices=["x265", "nvenc", "qsv", "vce"], default="x265",
                    help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
     p.add_argument("-w", "--workdir", metavar="DIR",

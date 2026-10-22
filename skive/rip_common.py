@@ -22,8 +22,8 @@ class Preamble:
     display: str
     media: str
     titles_full: list[TitleInfo]
-    stage_movie: Path
-    stage_tv: Path
+    title_dir: Path  # rip/<type>/<Name (Year)> — the title's staging folder
+    stage: Path  # title_dir/d{disc} — this run's rip target
     minlength: int
     keep: str
     disc: int
@@ -33,28 +33,19 @@ class Preamble:
 
 
 def rip_preamble(kind: str, script: str, args) -> Preamble:
-    """Mount staging, gate the disc, and resolve common TMDB metadata."""
+    """Mount staging, gate the disc, resolve common TMDB metadata, then create
+    the title's staging tree and purge its junk labels (CONTEXT.md: Staging)."""
     nfs_videos = os.environ.get("NFS_VIDEOS", "")
     videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
 
     ensure_mounted(videos_mnt, nfs_videos)
     disc = getattr(args, "disc", 0)
-    stage_movie = Path(videos_mnt) / "rip" / "movies"
-    stage_tv = Path(videos_mnt) / "rip" / "tv"
-    if disc > 0:
-        # Per-disc subdir so two concurrent rips never rename each other's files;
-        # finished files are promoted to the parent dir after renaming.
-        stage_movie = stage_movie / f"d{disc}"
-        stage_tv = stage_tv / f"d{disc}"
-    stage_dirs = [stage_movie, stage_tv] if kind == "movie" else [stage_tv, stage_movie]
-    for stage_dir in stage_dirs:
-        stage_dir.mkdir(parents=True, exist_ok=True)
 
     log = RipLog(script, "makemkvcon", "-")
     log.start()
 
     try:
-        return _preamble_body(kind, args, log, disc, stage_movie, stage_tv, stage_dirs)
+        return _preamble_body(kind, args, log, disc, Path(videos_mnt))
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: an interrupt in the preamble (disc scan, TMDB
         # search prompt) has ripped nothing, so there is no partial of ours —
@@ -64,19 +55,17 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
         raise
 
 
-def _preamble_body(kind: str, args, log, disc: int, stage_movie: Path,
-                   stage_tv: Path, stage_dirs: list[Path]):
-    """Everything rip_preamble does after the staging dirs and the RipLog
-    exist; split out so the preamble's interrupt guard can wrap it without
-    re-indenting the whole function.
+def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
+    """Everything rip_preamble does after the RipLog exists; split out so the
+    preamble's interrupt guard can wrap it without re-indenting the whole
+    function.
 
     Args:
         kind: "movie" or "tv"
         args: parsed argparse namespace
         log: the run's RipLog, already started
         disc: drive number
-        stage_movie / stage_tv: this run's staging dirs (d{disc} when disc > 0)
-        stage_dirs: the same dirs as a list, in purge order
+        videos_mnt: the mounted videos share root
     """
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
     media, label, device = sniff_disc(disc=disc)
@@ -137,7 +126,6 @@ def _preamble_body(kind: str, args, log, disc: int, stage_movie: Path,
     if not fast_scan:
         _, label, titles_full = scan_disc(minlength, disc=disc)
 
-    purge_junk(stage_dirs)
     require_online()
 
     if args.tmdbid:
@@ -157,7 +145,20 @@ def _preamble_body(kind: str, args, log, disc: int, stage_movie: Path,
     log.name = display
 
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
-    return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv,
+
+    # The title staging exists only once the TMDB pick has named it (CONTEXT.md:
+    # Staging): rip/<type>/<Name (Year)>/d{disc}/ — the per-drive subdir so two
+    # concurrent rips never rename each other's junk-labeled files; finished
+    # files are promoted up into the title folder after the rip.
+    type_dir = "movies" if kind == "movie" else "tv"
+    title_dir = videos_mnt / "rip" / type_dir / display
+    stage = title_dir / f"d{disc}"
+    stage.mkdir(parents=True, exist_ok=True)
+    # Junk purge scoped to the title folder: this title's tree only — never the
+    # whole type dir, never a sibling title, never a parallel drive's d{disc}.
+    purge_junk([title_dir, stage])
+
+    return Preamble(log, pick, display, media, titles_full, title_dir, stage,
                     minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations)
 
 
@@ -171,7 +172,9 @@ def interrupted_exit(log, stage_dirs: list[Path]) -> None:
     Args:
         log: The run's RipLog (interrupted() marks it so a finally's finish()
             stays silent — no double total line; the raw log is kept).
-        stage_dirs: The current run's staging dir(s).
+        stage_dirs: The current run's staging dirs — the title folder and its
+            d{disc} rip subdir; junk may rest in either (mid-rip in d{disc},
+            post-promotion at the title folder).
     """
     purge_junk(stage_dirs, quiet=True)  # one summary line, no per-file chatter
     kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))

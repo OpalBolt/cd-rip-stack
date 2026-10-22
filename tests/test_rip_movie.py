@@ -365,12 +365,14 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
     import json
 
     mock_pick = TMDBPick("Test Movie", "2020", "en", "movie", "1")
-    stage = tmp_path / "rip" / "movies"
-    stage.mkdir(parents=True)
-    (stage / "Test Movie (2020)_t01.mkv").touch()  # completed rename — kept
+    title_dir = tmp_path / "rip" / "movies" / "Test Movie (2020)"
+    d0 = title_dir / "d0"
+    title_dir.mkdir(parents=True)
+    (title_dir / "Test Movie (2020)_t01.mkv").touch()  # completed rename — kept
 
     def rip_a_partial_then_interrupt(*a, **k):
-        (stage / "C2_t1.mkv").write_text("in-flight partial")  # makemkvcon's junk label
+        d0.mkdir(parents=True, exist_ok=True)  # the preamble already made it
+        (d0 / "C2_t1.mkv").write_text("in-flight partial")  # makemkvcon's junk label
         raise KeyboardInterrupt
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
@@ -384,8 +386,8 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
             rip_movie(FakeArgs())
 
     assert e.value.code == 130
-    assert not (stage / "C2_t1.mkv").exists()
-    assert (stage / "Test Movie (2020)_t01.mkv").exists()
+    assert not (d0 / "C2_t1.mkv").exists()
+    assert (title_dir / "Test Movie (2020)_t01.mkv").exists()
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"

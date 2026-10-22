@@ -257,7 +257,7 @@ def test_subtitle_note_empty():
     assert note == "subs=none"
 
 
-def test_promote_staged(tmp_path):
+def test_promote_staged(tmp_path, capsys):
     """promote_staged moves mkvs up one dir and never clobbers."""
     from skive.makemkv import promote_staged
 
@@ -272,6 +272,8 @@ def test_promote_staged(tmp_path):
     assert (tmp_path / "Movie_t00.mkv").exists()
     assert (sub / "Clash.mkv").exists()  # not clobbered
     assert (tmp_path / "Clash.mkv").read_text() == "existing"
+    err = capsys.readouterr().err
+    assert "Clash.mkv already exists — left in d1/" in err
 
 
 def test_rename_staged_extras_real_looking():

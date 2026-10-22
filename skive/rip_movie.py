@@ -26,7 +26,8 @@ def rip_movie(args) -> None:
         pick = preamble.pick
         display = preamble.display
         titles_full = preamble.titles_full
-        stage_movie = preamble.stage_movie
+        title_dir = preamble.title_dir
+        stage_movie = preamble.stage
         minlength = preamble.minlength
 
         log.note("type", "type=movie")
@@ -41,7 +42,7 @@ def rip_movie(args) -> None:
         rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
         try:
             # Rip phase
-            preexisting = set(stage_movie.glob("*.mkv"))
+            preexisting = set(title_dir.glob("*.mkv"))
             log.phase("rip")
             if preamble.fast_scan:
                 # Fast scan (ADR 0002): durations only, so rip all in one call —
@@ -66,14 +67,17 @@ def rip_movie(args) -> None:
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
+            # Promote first so the renames see — and roll past — everything the
+            # title folder already holds; a collision leaves the file in
+            # d{disc}/ with a note (never clobber).
+            promote_staged(stage_movie)
+
             # Rename
             suffix = "e" if args.extras else "t"
-            rename_staged(display, stage_movie, suffix=suffix, part=args.part, preexisting=preexisting)
-            if preamble.disc > 0:
-                promote_staged(stage_movie)
+            rename_staged(display, title_dir, suffix=suffix, part=args.part, preexisting=preexisting)
 
             # Subtitle note
-            note = subtitle_note(stage_movie)
+            note = subtitle_note(title_dir)
             print(f"{note}", file=sys.stderr)
             log.note("subtitle", note)
 
@@ -86,7 +90,7 @@ def rip_movie(args) -> None:
             # exit 130. interrupted_exit never returns; the finally below still
             # unlinks the temp profile, and finish() stays silent because
             # interrupted() already wrote this run's total line.
-            interrupted_exit(log, [stage_movie])
+            interrupted_exit(log, [title_dir, stage_movie])
         finally:
             # Clean up temp profile
             profile_path.unlink(missing_ok=True)
@@ -98,5 +102,5 @@ def rip_movie(args) -> None:
         # the full interrupt exit still apply. main's fallback prints the
         # one line for the not-yet-started window.
         if preamble is not None:
-            interrupted_exit(preamble.log, [preamble.stage_movie])
+            interrupted_exit(preamble.log, [preamble.title_dir, preamble.stage])
         raise

@@ -26,14 +26,15 @@ from skive.tv_match import (
 console = Console()
 
 
-def staged_eps(stage_dir: Path, display: str, season: int) -> set[int]:
+def staged_eps(show_dir: Path, display: str, season: int) -> set[int]:
     """Return episode numbers already staged for this show and season.
 
     S01E05.mkv -> 5
     S01E05-E06.mkv -> 5 and 6
 
     Args:
-        stage_dir: TV staging directory
+        show_dir: The show's title folder under rip/tv (CONTEXT.md: Staging) —
+            episodes rest directly in it after promotion
         display: Display name (Show (Year))
         season: Season number
 
@@ -43,7 +44,7 @@ def staged_eps(stage_dir: Path, display: str, season: int) -> set[int]:
     staged = set()
     season_str = f"{season:02d}"
     pattern = re.compile(rf'^{re.escape(display)}_S{season_str}E(\d+)(-E(\d+))?$')
-    for mkv in stage_dir.glob("*.mkv"):
+    for mkv in show_dir.glob("*.mkv"):
         base = mkv.stem
         m = pattern.match(base)
         if m:
@@ -56,11 +57,11 @@ def staged_eps(stage_dir: Path, display: str, season: int) -> set[int]:
     return staged
 
 
-def show_staging(stage_dir: Path, display: str) -> list[Path]:
+def show_staging(show_dir: Path, display: str) -> list[Path]:
     """Every staged file belonging to one show: its episodes (any season,
     singles and doubles) and its extras. The table's clear command deletes
     exactly these."""
-    return [p for p in sorted(stage_dir.glob("*.mkv"))
+    return [p for p in sorted(show_dir.glob("*.mkv"))
             if p.name.startswith(display + "_S") or p.name.startswith(display + " - ")]
 
 
@@ -118,14 +119,14 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
     console.print(table)
 
 
-def episode_target(stage_dir: Path, display: str, season: int, lo: int, hi: int) -> Path:
+def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) -> Path:
     """Target path for an episode assignment: single or double episode name.
 
     Shared by rename_tv (full scan) and rename_tv_fast (duration join).
     Existence is the caller's concern (never clobber).
 
     Args:
-        stage_dir: TV staging directory
+        show_dir: The show's title folder under rip/tv
         display: Show name
         season: Season number
         lo: First episode number of the assignment
@@ -136,11 +137,11 @@ def episode_target(stage_dir: Path, display: str, season: int, lo: int, hi: int)
     """
     season_str = f"{season:02d}"
     if lo == hi:
-        return stage_dir / f"{display}_S{season_str}E{lo:02d}.mkv"
-    return stage_dir / f"{display}_S{season_str}E{lo:02d}-E{hi:02d}.mkv"
+        return show_dir / f"{display}_S{season_str}E{lo:02d}.mkv"
+    return show_dir / f"{display}_S{season_str}E{lo:02d}-E{hi:02d}.mkv"
 
 
-def rename_tv(display: str, stage_dir: Path, season: int, assignment: dict[int, tuple[int, int]]) -> None:
+def rename_tv(display: str, show_dir: Path, season: int, assignment: dict[int, tuple[int, int]]) -> None:
     """Rename staged files per the episode map.
 
     Junk-labeled titles become <display>_SNNENN[-ENNN].mkv or <display> - Extra NN.mkv.
@@ -148,11 +149,12 @@ def rename_tv(display: str, stage_dir: Path, season: int, assignment: dict[int, 
 
     Args:
         display: Show name
-        stage_dir: TV staging directory
+        show_dir: The show's title folder under rip/tv — the promoted files
+            renamed here rest directly in it
         season: Season number
         assignment: title -> (lo, hi) mapping
     """
-    for mkv in stage_dir.glob("*.mkv"):
+    for mkv in show_dir.glob("*.mkv"):
         base = mkv.stem
         # Extract _tNN
         m = re.search(r'_t(\d+)$', base)
@@ -170,11 +172,11 @@ def rename_tv(display: str, stage_dir: Path, season: int, assignment: dict[int, 
         if lo == 0:
             # Extra - roll "Extra NN" past existing
             m_val = 1
-            while (stage_dir / f"{display} - Extra {m_val:02d}.mkv").exists():
+            while (show_dir / f"{display} - Extra {m_val:02d}.mkv").exists():
                 m_val += 1
-            target = stage_dir / f"{display} - Extra {m_val:02d}.mkv"
+            target = show_dir / f"{display} - Extra {m_val:02d}.mkv"
         else:
-            target = episode_target(stage_dir, display, season, lo, hi)
+            target = episode_target(show_dir, display, season, lo, hi)
 
         # Check for clobber
         if target.exists():
@@ -186,7 +188,7 @@ def rename_tv(display: str, stage_dir: Path, season: int, assignment: dict[int, 
         print(f"skive: {cur} → {target.stem}", file=sys.stderr)
 
 
-def rename_tv_fast(display: str, stage_dir: Path, season: int,
+def rename_tv_fast(display: str, show_dir: Path, season: int,
                    assignment: dict[int, tuple[int, int]], scan_durations: list[int],
                    run=subprocess.run) -> bool:
     """Join staged junk files to scanner titles by duration, then rename.
@@ -200,7 +202,8 @@ def rename_tv_fast(display: str, stage_dir: Path, season: int,
 
     Args:
         display: Show name
-        stage_dir: TV staging directory
+        show_dir: The show's title folder under rip/tv — the promoted files
+            joined and renamed here rest directly in it
         season: Season number
         assignment: Scanner title number -> (lo, hi) mapping (table's keys)
         scan_durations: Scanner durations in scan order (index == title number)
@@ -214,7 +217,7 @@ def rename_tv_fast(display: str, stage_dir: Path, season: int,
     ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                    "-of", "csv=p=0"]
     staged = []  # (path, _tNN, duration seconds)
-    for mkv in stage_dir.glob("*.mkv"):
+    for mkv in show_dir.glob("*.mkv"):
         m = re.search(r'_t(\d+)$', mkv.stem)
         if not m:
             continue
@@ -264,11 +267,11 @@ def rename_tv_fast(display: str, stage_dir: Path, season: int,
         if lo == 0:
             # Extra - roll "Extra NN" past existing
             m_val = 1
-            while (stage_dir / f"{display} - Extra {m_val:02d}.mkv").exists():
+            while (show_dir / f"{display} - Extra {m_val:02d}.mkv").exists():
                 m_val += 1
-            target = stage_dir / f"{display} - Extra {m_val:02d}.mkv"
+            target = show_dir / f"{display} - Extra {m_val:02d}.mkv"
         else:
-            target = episode_target(stage_dir, display, season, lo, hi)
+            target = episode_target(show_dir, display, season, lo, hi)
 
         # Check for clobber
         if target.exists():
@@ -298,14 +301,15 @@ def rip_tv(args) -> None:
         pick = preamble.pick
         display = preamble.display
         titles_full = preamble.titles_full
-        stage_tv = preamble.stage_tv
+        show_dir = preamble.title_dir
+        stage_tv = preamble.stage
         minlength = preamble.minlength
 
         # --extras: no season, no scan, no table
         if args.extras:
             log.note("type", "type=tv extras")
             titles = resolve_titles(args.titles, titles_full, preamble.media)
-            preexisting = set(stage_tv.glob("*.mkv"))
+            preexisting = set(show_dir.glob("*.mkv"))
             log.phase("rip")
             infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
             worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc,
@@ -313,13 +317,13 @@ def rip_tv(args) -> None:
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
-            # Rename as extras
-            rename_staged(display, stage_tv, suffix="e", preexisting=preexisting)
-            if preamble.disc > 0:
-                promote_staged(stage_tv)
+            # Promote first so the renames see everything the show folder
+            # already holds; a collision leaves the file in d{disc}/ with a note.
+            promote_staged(stage_tv)
+            rename_staged(display, show_dir, suffix="e", preexisting=preexisting)
 
             # Subtitle note
-            note = subtitle_note(stage_tv)
+            note = subtitle_note(show_dir)
             print(f"{note}", file=sys.stderr)
             log.note("subtitle", note)
 
@@ -346,9 +350,6 @@ def rip_tv(args) -> None:
             sys.exit(1)
 
         log.note("type", f"type=tv season={season}")
-
-        season_dir = stage_tv  # TV always uses the same dir
-        season_dir.mkdir(parents=True, exist_ok=True)
 
         # The gate already scanned the disc; reuse that result (no second scan)
         if not titles_full:
@@ -398,10 +399,7 @@ def rip_tv(args) -> None:
         max_ep = max(ep_names.keys()) if ep_names else 0
 
         # Get staged episodes
-        staged = staged_eps(season_dir, display, season)
-        if preamble.disc > 0:
-            # Already-promoted episodes live in the parent staging dir
-            staged |= staged_eps(season_dir.parent, display, season)
+        staged = staged_eps(show_dir, display, season)
         if staged:
             eps_str = ", ".join(f"E{e:02d}" for e in sorted(staged))
             console.print(f"already staged: {eps_str} — c at the prompt clears the show's staging")
@@ -455,9 +453,7 @@ def rip_tv(args) -> None:
                 assignment = pin_playalls(assign_range(titles_info, playalls, lo, hi))
                 note = build_note(lo, hi)
             elif ans.lower() == "c":
-                doomed = show_staging(season_dir, display)
-                if preamble.disc > 0:
-                    doomed += show_staging(season_dir.parent, display)
+                doomed = show_staging(show_dir, display)
                 if not doomed:
                     console.print("nothing staged for this show")
                     continue
@@ -470,9 +466,7 @@ def rip_tv(args) -> None:
                     f.unlink()
                 # No re-assignment: the map comes from the stated range, not from
                 # staging. The refreshed set only steers the next pre-fill.
-                staged = staged_eps(season_dir, display, season)
-                if preamble.disc > 0:
-                    staged |= staged_eps(season_dir.parent, display, season)
+                staged = staged_eps(show_dir, display, season)
             else:
                 # Apply fixes - rebuild title->ep mapping for clash check
                 title_to_eps = {}
@@ -499,32 +493,35 @@ def rip_tv(args) -> None:
                 # scanner list used, so rip all in one call and join the staged
                 # files back to scanner titles by duration at rename time.
                 header = fast_scan_header(display, len(titles_info))
-                worst_rc = rip_titles(None, profile_path, tv_floor(minlength), season_dir, disc=preamble.disc,
+                worst_rc = rip_titles(None, profile_path, tv_floor(minlength), stage_tv, disc=preamble.disc,
                                       total=len(titles_info), infos=titles_full, header=header, log=log)
             else:
                 # Explicit -T selections may include titles filtered from the confirmed scan.
                 rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
-                worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc,
+                worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
                                       total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log)
 
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
+            # Promote first: the show folder is the rename target, so the joins
+            # and renames see — and roll past — everything already staged for
+            # the show; a collision leaves the file in d{disc}/ with a note.
+            promote_staged(stage_tv)
+
             # Rename per the map
             if preamble.fast_scan:
                 # The caller owns the exit so the abort still lands in the run log.
-                if not rename_tv_fast(display, season_dir, season, assignment, preamble.scan_durations):
+                if not rename_tv_fast(display, show_dir, season, assignment, preamble.scan_durations):
                     log.note("rename", "join aborted — an episode's staged file is missing")
                     log.phase_end()
                     rc = 1
                     sys.exit(1)
             else:
-                rename_tv(display, season_dir, season, assignment)
-            if preamble.disc > 0:
-                promote_staged(season_dir)
+                rename_tv(display, show_dir, season, assignment)
 
             # Subtitle note
-            note = subtitle_note(season_dir)
+            note = subtitle_note(show_dir)
             print(f"{note}", file=sys.stderr)
             log.note("subtitle", note)
 
@@ -537,7 +534,7 @@ def rip_tv(args) -> None:
             # exit 130. interrupted_exit never returns; the finally below still
             # unlinks the temp profile, and finish() stays silent because
             # interrupted() already wrote this run's total line.
-            interrupted_exit(log, [season_dir])
+            interrupted_exit(log, [show_dir, stage_tv])
         finally:
             profile_path.unlink(missing_ok=True)
             log.finish(rc)
@@ -547,5 +544,5 @@ def rip_tv(args) -> None:
         # partial purge and the full interrupt exit still apply; main's
         # fallback prints the one line for the not-yet-started window.
         if preamble is not None:
-            interrupted_exit(preamble.log, [preamble.stage_tv])
+            interrupted_exit(preamble.log, [preamble.title_dir, preamble.stage])
         raise

@@ -40,6 +40,28 @@ def test_staged_eps_second_disc():
         assert staged == {1, 5, 6}
 
 
+def test_staged_sets_read_the_title_folder_after_promotion(tmp_path):
+    """The re-pointed staging shape (slice 7): episodes promoted out of d{disc}
+    rest directly in the show's title folder, and staged_eps / show_staging
+    read them there; the drive subdir holds nothing once promotion has run."""
+    from skive.rip_tv import show_staging
+
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    disc_dir = show_dir / "d0"
+    disc_dir.mkdir(parents=True)
+    (show_dir / "Show (2000)_S01E01.mkv").touch()
+    (show_dir / "Show (2000)_S01E05-E06.mkv").touch()
+    (show_dir / "Show (2000) - Extra 01.mkv").touch()
+
+    assert staged_eps(show_dir, "Show (2000)", 1) == {1, 5, 6}
+    assert [p.name for p in show_staging(show_dir, "Show (2000)")] == [
+        "Show (2000) - Extra 01.mkv",
+        "Show (2000)_S01E01.mkv",
+        "Show (2000)_S01E05-E06.mkv",
+    ]
+    assert not list(disc_dir.glob("*.mkv"))
+
+
 def _gk_titles():
     """Generation Kill disc 1 shape: three episodes and a play-all (t3)."""
     return [TitleInfo(0, 3932, 1, "dan", "", False),
@@ -51,16 +73,17 @@ def _gk_titles():
 def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, staged_names=()):
     """Drive rip_tv through season/range/confirm prompts over a temp stage.
 
-    staged_names are created in the staging dir before the run (already-ripped
-    episodes shape the pre-fill). Returns (rename_tv mock, console mock, rc).
+    staged_names are created in the show's title folder before the run
+    (already-ripped episodes shape the pre-fill). Returns (rename_tv mock,
+    console mock, rc).
     """
     from skive.tmdb import TMDBPick
 
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    stage = tmp_path / "rip" / "tv"
-    stage.mkdir(parents=True, exist_ok=True)
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True, exist_ok=True)
     for name in staged_names:
-        (stage / name).touch()
+        (show_dir / name).touch()
 
     @dataclass
     class FakeArgs:
@@ -407,7 +430,7 @@ def _clear_staged_flow(tmp_path, monkeypatch, answers):
     from skive.rip_tv import rip_tv
 
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    stage = tmp_path / "rip" / "tv"
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
 
     @dataclass
     class FakeArgs:
@@ -422,8 +445,8 @@ def _clear_staged_flow(tmp_path, monkeypatch, answers):
     # fetch_season is mocked past its minutes->seconds conversion
     episodes = [(1, "ep1", 21 * 60), (2, "ep2", 22 * 60), (3, "ep3", 23 * 60)]
 
-    poisoned = stage / "Show (2000)_S01E01-E02.mkv"
-    stage.mkdir(parents=True, exist_ok=True)
+    poisoned = show_dir / "Show (2000)_S01E01-E02.mkv"
+    show_dir.mkdir(parents=True, exist_ok=True)
     poisoned.touch()
 
     prompt = MagicMock()
@@ -866,10 +889,11 @@ def test_fast_scan_rip_rips_all_at_floor_and_joins(tmp_path, monkeypatch):
     assert fast_args[4] == GK_DURATIONS
 
 
-def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
+def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path):
     """rename_tv_fast returning False: the caller logs the abort, closes the
-    log with rc 1, and exits 1 — before promote or the subtitle note.
-    Nothing is renamed."""
+    log with rc 1, and exits 1 — before the subtitle note. Promotion has
+    already moved this disc's rip up, so the joined junk rests in the show
+    folder for the next run's purge; nothing is renamed."""
     from skive.tmdb import TMDBPick
 
     @dataclass
@@ -882,10 +906,10 @@ def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
     episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
     prompt = MagicMock()
     prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
-    stage = tmp_path / "rip" / "tv"
-    stage.mkdir(parents=True, exist_ok=True)
-    (stage / "B1_t00.mkv").touch()
-    (stage / "B1_t01.mkv").touch()
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True, exist_ok=True)
+    (show_dir / "B1_t00.mkv").touch()
+    (show_dir / "B1_t01.mkv").touch()
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", return_value=GK_DURATIONS), \
@@ -900,22 +924,22 @@ def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
-            patch("skive.rip_tv.rename_tv_fast", return_value=False) as mock_rename_fast, \
             patch("skive.rip_tv.promote_staged") as mock_promote, \
+            patch("skive.rip_tv.rename_tv_fast", return_value=False) as mock_rename_fast, \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan") as mock_subs:
         with pytest.raises(SystemExit) as e:
             rip_tv(FakeArgs())
 
     assert e.value.code == 1
     mock_scan_disc.assert_not_called()  # the fast scan gated the disc
+    mock_promote.assert_called_once()  # promotion precedes the rename gate
     mock_rename_fast.assert_called_once()
     log = mock_log.return_value
     log.note.assert_any_call("rename", "join aborted — an episode's staged file is missing")
     log.phase_end.assert_called_once()  # the abort reaches rip.log ...
     log.finish.assert_called_once_with(1)  # ... with a final total line
-    mock_promote.assert_not_called()  # stopped at the rename gate
     mock_subs.assert_not_called()
-    assert sorted(p.name for p in stage.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
+    assert sorted(p.name for p in show_dir.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
 
 
 # -- Interrupt (Ctrl+C) at the prompts (CONTEXT.md: Interrupt) -----------------
@@ -927,9 +951,9 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
     from skive.tmdb import TMDBPick
 
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    stage = tmp_path / "rip" / "tv"
-    stage.mkdir(parents=True)
-    (stage / "Show (2000)_S01E01.mkv").touch()  # completed rename — kept
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    (show_dir / "Show (2000)_S01E01.mkv").touch()  # completed rename — kept
 
     @dataclass
     class FakeArgs:
@@ -953,7 +977,7 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
             rip_tv(FakeArgs())
 
     assert e.value.code == 130
-    assert (stage / "Show (2000)_S01E01.mkv").exists()
+    assert (show_dir / "Show (2000)_S01E01.mkv").exists()
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
