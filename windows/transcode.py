@@ -55,7 +55,7 @@ def sanitize(s: str) -> str:
     return re.sub(r'[/:*?"<>|]', "", s)
 
 
-# Console verbosity: 0 = transcode's own lines only, 1 = -v adds HandBrake
+# Console verbosity: 0 = transcode's own lines only, 1 = -v adds HandBrake/mkvmerge
 # error lines, 2 = -vv raw passthrough. Duplicate of skive/common.py's
 # VERBOSITY on purpose (standalone file); main()/run_transcode set it once.
 # The raw log always captures everything regardless of level.
@@ -359,6 +359,33 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     return rc == 0
 
 
+def _merge(dst: str, parts: list[str], mkv_exe: str, log: RipLog | None = None) -> int:
+    """Concatenate a split main's parts into dst with mkvmerge ("+"-joined).
+    Every mkvmerge output line is written verbatim to the run's raw log (log.raw),
+    the same tee discipline as _encode, while the console sees everything at -vv,
+    "Error:" lines at -v, nothing at 0; anything the level hid is replayed
+    verbatim when the merge fails (rc 2+ -- rc 1 is a warning, the merged file
+    is still usable, so no replay)."""
+    cmd = [mkv_exe, "-o", dst, parts[0]]
+    for p in parts[1:]:
+        cmd += ["+", p]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    hidden: list[str] = []  # console-suppressed lines, replayed on failure
+    for line in proc.stdout:
+        stripped = line.rstrip()
+        if VERBOSITY >= 2 or (VERBOSITY >= 1 and stripped.startswith("Error")):
+            print(line, end="", flush=True)
+        elif stripped:
+            hidden.append(stripped)
+        if log is not None:
+            log.raw("mkvmerge", stripped)
+    rc = proc.wait()
+    if rc >= 2:
+        for line in hidden:
+            print(line, flush=True)
+    return rc
+
+
 def _rmf(path: str) -> None:
     try:
         os.remove(path)
@@ -588,17 +615,14 @@ def run_transcode(args) -> int:
                         local_parts.append(lb)
                         cleanup.append(lb)
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
-                    margs = [local_parts[0]]
-                    for j in range(1, len(local_parts)):
-                        margs += ["+", local_parts[j]]
-                    mrc = subprocess.run([mkv_exe, "-o", local_src] + margs).returncode
+                    mrc = _merge(local_src, local_parts, mkv_exe, log=log)
                     if mrc <= 1:  # 0 ok, 1 warning (still usable)
                         cleanup.append(local_src)
                     else:  # 2+ failure: sources left, run continues
                         names = " ".join(s.name for s in siblings)
                         log.note("encode", f"FAILED mkvmerge ({mrc}): {names} -- sources left in place")
-                        print(f"FAILED mkvmerge ({mrc}): {names} -- sources left in place "
-                              f"(see mkvmerge output above)", file=sys.stderr)
+                        print(f"FAILED mkvmerge ({mrc}): {names} -- sources left in place",
+                              file=sys.stderr)
                         for p in cleanup:
                             _rmf(p)
                         for s in siblings:

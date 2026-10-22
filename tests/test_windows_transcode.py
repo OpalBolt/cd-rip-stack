@@ -709,6 +709,38 @@ if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
         ["Encoding: task 1 of 1", "work: average 12.3 fps", "Encode done!"]
 
 
+def test_mkvmerge_output_captured_and_replayed_on_failure(env, capsys):
+    """Raw capture wiring for the merge: every mkvmerge line reaches the run's
+    raw log (tool "mkvmerge", stderr included); the console hides them at the
+    default verbosity and replays them verbatim because the merge failed."""
+    vid = env / "vid"
+    (env / "bin" / "mkvmerge.exe").write_text("""#!/bin/sh
+out="$2"; shift 2
+echo "mkvmerge v99.0"
+echo "Progress: 50%"
+echo "Error: the source is broken" >&2
+rm -f "$out"
+exit 2
+""")
+    mk(vid, "rip/Bad (2001)_t00.p1.mkv", "BAD-P1")
+    mk(vid, "rip/Bad (2001)_t00.p2.mkv", "BAD-P2")
+
+    rc = transcode.run_transcode(Args())
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    # failure replay: hidden mkvmerge output reaches the console verbatim
+    assert "mkvmerge v99.0" in out
+    assert "Progress: 50%" in out
+    assert "Error: the source is broken" in out
+    raws = list((vid / "logs" / "raw").glob("*.jsonl"))
+    assert len(raws) == 1  # failure keeps the run's raw log
+    lines = [json.loads(l) for l in raws[0].read_text(encoding="utf-8").splitlines()]
+    mkv = [l for l in lines if l["tool"] == "mkvmerge"]
+    assert [l["line"] for l in mkv] == \
+        ["mkvmerge v99.0", "Progress: 50%", "Error: the source is broken"]
+
+
 # -- verbosity tiers (-v/-vv) ---------------------------------------------------
 
 def test_verbose_flag_levels():
