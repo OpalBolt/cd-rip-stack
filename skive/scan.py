@@ -325,44 +325,32 @@ def parse_lsdvd(out: str) -> list[int]:
 
 
 def fast_scan_dvd(disc: int, device: str, run=subprocess.run) -> list[int]:
-    """DVD title durations in seconds via a read-only UDF mount + lsdvd.
+    """DVD title durations in seconds via lsdvd straight on the block device.
 
-    Seconds-long alternative to the full makemkvcon title scan. ALWAYS
-    unmounts (try/finally); a nonzero umount rc prints one stderr warning
-    (a stuck mount would keep the drive busy before it is used again)
-    but never masks the scan's own result. Any failed command or an empty
-    title list raises RuntimeError — the caller decides the fallback.
+    Seconds-long alternative to the full makemkvcon title scan — no mount,
+    no sudo. Any failure (lsdvd missing, nonzero rc, no parseable titles)
+    raises RuntimeError — the caller falls back to the full scan.
 
     Args:
-        disc: Disc number — keys the mountpoint (/mnt/skive-d{disc}) so
-            parallel drives never share one
-        device: Mount source — the real device path from makemkvcon's DRV
-            line (e.g. /dev/sr1), not a disc:N -> /dev/srN guess
+        disc: Disc number (call-site symmetry with fast_scan_bluray; lsdvd
+            addresses the drive by device alone)
+        device: Device path from makemkvcon's DRV line (e.g. /dev/sr1), or
+            the disc:N -> /dev/srN fallback when the DRV line lacked one
         run: subprocess.run callable for monkeypatching
 
     Returns:
         Durations in scan order (positional; callers use 0-based indices)
     """
-    mnt = f"/mnt/skive-d{disc}"
-    mkdir = run(["sudo", "mkdir", "-p", mnt], capture_output=True, text=True)
-    if mkdir.returncode != 0:
-        raise RuntimeError(f"mkdir {mnt} failed: {mkdir.stderr.strip()}")
     try:
-        mounted = run(["sudo", "mount", "-t", "udf", "-o", "ro", device, mnt],
-                      capture_output=True, text=True)
-        if mounted.returncode != 0:
-            raise RuntimeError(f"mount {device} read-only at {mnt} failed: {mounted.stderr.strip()}")
-        result = run(["lsdvd", mnt], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"lsdvd failed on {mnt}: {result.stderr.strip()}")
-        durations = parse_lsdvd(result.stdout)
-        if not durations:
-            raise RuntimeError(f"lsdvd reported no titles on {mnt}")
-        return durations
-    finally:
-        umount = run(["sudo", "umount", mnt], capture_output=True, text=True)
-        if umount.returncode != 0:
-            print(f"skive: umount {mnt} failed: {umount.stderr.strip()}", file=sys.stderr)
+        result = run(["lsdvd", device], capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"lsdvd unavailable: {e}")
+    if result.returncode != 0:
+        raise RuntimeError(f"lsdvd failed on {device}: {result.stderr.strip()}")
+    durations = parse_lsdvd(result.stdout)
+    if not durations:
+        raise RuntimeError(f"lsdvd reported no titles on {device}")
+    return durations
 
 
 # --- Blu-ray fast scan (ADR 0002, BD half) ---

@@ -468,127 +468,64 @@ def test_sniff_disc_env_override_replays_without_popen():
         assert sniff_disc(run=fail) == ("BD-ROM", "MOVIE", "/dev/sr0")
 
 
-def test_fast_scan_dvd_command_order_and_result():
-    """mkdir -> mount -> lsdvd -> umount, durations from parse_lsdvd."""
+def test_fast_scan_dvd_command_and_result():
+    """No mount, no sudo: one lsdvd call straight on the device."""
     from skive.scan import fast_scan_dvd
 
     calls = []
 
     def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[0] == "lsdvd":
-            return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
-        return Mock(returncode=0, stdout="")
+        calls.append((cmd, kwargs))
+        return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
 
     assert fast_scan_dvd(0, "/dev/sr0", run=fake_run) == [3932, 3897, 3653, 11482]
-    assert [c[0] for c in calls] == ["sudo", "sudo", "lsdvd", "sudo"]
-    assert calls[0][1:] == ["mkdir", "-p", "/mnt/skive-d0"]
-    assert calls[1][1:] == ["mount", "-t", "udf", "-o", "ro", "/dev/sr0", "/mnt/skive-d0"]
-    assert calls[2] == ["lsdvd", "/mnt/skive-d0"]
-    assert calls[3][1:] == ["umount", "/mnt/skive-d0"]
+    assert calls[0][0] == ["lsdvd", "/dev/sr0"]
+    assert calls[0][1] == {"capture_output": True, "text": True}
 
 
-def test_fast_scan_dvd_mounts_given_device_not_dev_sr_disc():
-    """The mount source is the GIVEN device (the DRV line's path), while the
-    mountpoint stays keyed by the disc number — parallel drives never read
-    (or lock) each other."""
+def test_fast_scan_dvd_scans_given_device_not_dev_sr_disc():
+    """lsdvd addresses the GIVEN device — the DRV line's path, or the
+    disc:N -> /dev/srN fallback the caller derives when the DRV line lacks
+    one — never a mountpoint keyed by disc number."""
     from skive.scan import fast_scan_dvd
 
     calls = []
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        if cmd[0] == "lsdvd":
-            return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
-        return Mock(returncode=0, stdout="")
+        return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
 
     assert fast_scan_dvd(7, "/dev/sr1", run=fake_run) == [3932, 3897, 3653, 11482]
-    assert calls[1][1:] == ["mount", "-t", "udf", "-o", "ro", "/dev/sr1", "/mnt/skive-d7"]
-    assert calls[3][1:] == ["umount", "/mnt/skive-d7"]
+    assert calls == [["lsdvd", "/dev/sr1"]]
 
 
-def test_fast_scan_dvd_mount_failure_still_unmounts():
-    """A failed mount raises RuntimeError AND the umount is still attempted."""
+def test_fast_scan_dvd_nonzero_rc_raises():
+    """A failed lsdvd raises for the caller's full-scan fallback."""
     from skive.scan import fast_scan_dvd
 
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[:2] == ["sudo", "mount"]:
-            return Mock(returncode=32, stdout="", stderr="no such device")
-        return Mock(returncode=0, stdout="", stderr="")
-
-    with pytest.raises(RuntimeError, match="mount .* failed"):
+    fake_run = Mock(return_value=Mock(returncode=1, stdout="", stderr="ioctl failed"))
+    with pytest.raises(RuntimeError, match="lsdvd failed"):
         fast_scan_dvd(0, "/dev/sr0", run=fake_run)
-    assert calls[-1][1:] == ["umount", "/mnt/skive-d0"]
 
 
-def test_fast_scan_dvd_lsdvd_failure_and_empty_titles_raise():
-    """Nonzero lsdvd rc and an empty title list both raise, after unmounting."""
+def test_fast_scan_dvd_missing_lsdvd_raises():
+    """FileNotFoundError (no lsdvd installed) becomes the caller's RuntimeError."""
     from skive.scan import fast_scan_dvd
-
-    def fake_run_rc(cmd, **kwargs):
-        if cmd[0] == "lsdvd":
-            return Mock(returncode=1, stdout="", stderr="ioctl failed")
-        return Mock(returncode=0, stdout="", stderr="")
-
-    calls = []
-    with pytest.raises(RuntimeError, match="lsdvd failed"):
-        fast_scan_dvd(0, "/dev/sr0", run=lambda cmd, **kw: (calls.append(cmd), fake_run_rc(cmd, **kw))[1])
-    assert calls[-1][1:] == ["umount", "/mnt/skive-d0"]
-
-    def fake_run_empty(cmd, **kwargs):
-        if cmd[0] == "lsdvd":
-            return Mock(returncode=0, stdout="Disc Title: EMPTY\n")
-        return Mock(returncode=0, stdout="", stderr="")
-
-    with pytest.raises(RuntimeError, match="no titles"):
-        fast_scan_dvd(0, "/dev/sr0", run=fake_run_empty)
-
-
-def test_fast_scan_dvd_mkdir_failure():
-    """A failed mountpoint mkdir raises before anything is mounted."""
-    from skive.scan import fast_scan_dvd
-
-    calls = []
 
     def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[:2] == ["sudo", "mkdir"]:
-            return Mock(returncode=1, stdout="", stderr="permission denied")
-        return Mock(returncode=0, stdout="", stderr="")
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
 
-    with pytest.raises(RuntimeError, match="mkdir .* failed"):
-        fast_scan_dvd(2, "/dev/sr2", run=fake_run)
-    assert [c[:2] for c in calls] == [["sudo", "mkdir"]]
+    with pytest.raises(RuntimeError, match="lsdvd unavailable"):
+        fast_scan_dvd(0, "/dev/sr0", run=fake_run)
 
 
-def test_fast_scan_dvd_umount_failure_warns_but_scan_stands(capsys):
-    """A stuck mount (umount rc != 0) prints one stderr warning; the scan's
-    own result — return or raise — is untouched."""
+def test_fast_scan_dvd_unparsable_output_raises():
+    """rc 0 with no parseable titles raises — nothing to gate the rip on."""
     from skive.scan import fast_scan_dvd
 
-    def fake_run_busy(cmd, **kwargs):
-        if cmd[0] == "lsdvd":
-            return Mock(returncode=0, stdout=LSDVD_GENERATION_KILL)
-        if cmd[:2] == ["sudo", "umount"]:
-            return Mock(returncode=32, stdout="", stderr="target is busy")
-        return Mock(returncode=0, stdout="", stderr="")
-
-    assert fast_scan_dvd(0, "/dev/sr0", run=fake_run_busy) == [3932, 3897, 3653, 11482]
-    assert "umount /mnt/skive-d0 failed: target is busy" in capsys.readouterr().err
-
-    def fake_run_busy_bad_lsdvd(cmd, **kwargs):
-        if cmd[:2] == ["sudo", "umount"]:
-            return Mock(returncode=1, stdout="", stderr="not mounted")
-        if cmd[0] == "lsdvd":
-            return Mock(returncode=1, stdout="", stderr="ioctl failed")
-        return Mock(returncode=0, stdout="", stderr="")
-
-    with pytest.raises(RuntimeError, match="lsdvd failed"):
-        fast_scan_dvd(0, "/dev/sr0", run=fake_run_busy_bad_lsdvd)
-    assert "umount /mnt/skive-d0 failed: not mounted" in capsys.readouterr().err
+    fake_run = Mock(return_value=Mock(returncode=0, stdout="Disc Title: EMPTY\n"))
+    with pytest.raises(RuntimeError, match="no titles"):
+        fast_scan_dvd(0, "/dev/sr0", run=fake_run)
 
 
 # --- Blu-ray fast scan (ADR 0002, BD half) ---
