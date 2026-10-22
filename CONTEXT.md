@@ -5,11 +5,11 @@ Rip CDs to AccurateRip-verified FLAC. Rip DVDs and Blu-rays to lossless MKV, the
 ## Language
 
 **Movie**:
-A single film. Stages as `<Movie (Year)>_tNN.mkv`; files under `library/<Movie (Year)>/`.
+A single film. Stages as `<Movie (Year)>_tNN.mkv`; files under `library/movies/<Movie (Year)>/`.
 _Avoid_: film, video
 
 **TV show**:
-A show with seasons and episodes. Stages as `<Show (Year)>_SNNENN.mkv`; files under `library/TV/<Show (Year)>/Season NN/`.
+A show with seasons and episodes. Stages as `<Show (Year)>_SNNENN.mkv`; files under `library/tv/<Show (Year)>/Season NN/`.
 _Avoid_: series
 
 **Declared type**:
@@ -25,11 +25,11 @@ One numbered video blob the disc scan reports — lsdvd/ffprobe on the fast path
 _Avoid_: track, chapter
 
 **Fast scan**:
-The default disc read: mounted `lsdvd` (DVD) or `ffprobe bluray:` (BD). Yields titles as durations in seconds, in ~seconds — no sizes, no MakeMKV numbers.
+The default disc read: `lsdvd` straight on the device (DVD — no mount, no sudo) or `ffprobe bluray:` (BD). Yields titles as durations in seconds, in ~seconds — no sizes, no MakeMKV numbers.
 _Avoid_: quick scan, pre-scan
 
 **Full scan**:
-The fallback `makemkvcon info` run, fired only when the fast scan finds two titles within ±1s (duplicates/decoy obfuscation) or a movie `-T` menu is requested. Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
+The fallback `makemkvcon info` run, fired when the fast scan fails, finds two titles within ±1s (duplicates/decoy obfuscation), or a movie `-T` menu is requested. Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
 _Avoid_: deep scan, makemkv scan
 
 **Eligible title**:
@@ -57,7 +57,7 @@ The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by the 
 _Avoid_: mapping string
 
 **Season folder**:
-The library folder holding one season's episodes: `Season 01` under the show's `library/TV/` dir. Season 0's folder is named `Specials`.
+The library folder holding one season's episodes: `Season 01` under the show's `library/tv/` dir. Season 0's folder is named `Specials`.
 
 **Double episode**:
 Two episodes on one disc title. Kept as one file, named `S01E01-E02`. Never split.
@@ -80,10 +80,14 @@ MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; tra
 _Avoid_: label, code
 
 **Staging**:
-Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/movies/` or `rip/tv/` — the subdirectory is what tells transcode a file is TV. Music stages under `/mnt/music/rip/` until `tag` files it into the library. A mid-rip file still wears its junk label.
+Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/` until `tag` files it into the library. A mid-rip file still wears its junk label.
+
+**Lossless folder**:
+Where `-Keep` parks lossless sources after transcode, until the encode is verified by eye and purged by hand: `lossless/<type>/<Name (Year)>/`. Never clobbered, never auto-deleted. Replaces the old flat `rip-DONE`.
+_Avoid_: rip-DONE, done folder
 
 **Issues folder**:
-Quarantine for lossless sources whose transcode or subtitle pass failed: `rip-ISSUES/movies/`, `rip-ISSUES/tv/`. Nothing in the pipeline deletes a source until its sidecars are verified — a failed file waits here for retry, never in `rip-DONE` (which is temp and purged).
+Quarantine for lossless sources whose transcode or subtitle pass failed: `issues/<type>/<Name (Year)>/` — the source plus that run's `rip.jsonl`/raw log lines, contained together. `transcode.py --retry` re-runs items from here. Nothing in the pipeline deletes a source until its sidecars are verified — a failed file waits here for retry, never in `lossless/` (which is verified-and-pending-purge).
 _Avoid_: failed folder, retry queue
 
 ### Subtitles
@@ -112,3 +116,15 @@ _Avoid_: HI track, captions
 **Subtitle pass**:
 Extraction + OCR + naming that turns a main feature's or TV episode's tracks into sidecars. Runs inline at transcode for new rips; a one-off backfill covers the existing library.
 _Avoid_: subtitle extraction, sub rip
+
+### Logging
+
+**Run log**:
+The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). Replaces the old 8-column text `rip.log`.
+
+**Raw log**:
+Verbatim tool output for one run, captured while it runs: `logs/raw/<run>.jsonl`. Deleted on a clean exit; kept when a run fails or is interrupted. Verbosity (`-v`, `-vv`) only gates the console — both logs are always written.
+
+**Interrupt**:
+What Ctrl+C means everywhere: the child tool is signalled (up to 5 s, then killed), the in-flight partial file is deleted — no partial rip is ever left hanging — completed renamed titles are kept, `rip.jsonl` records `status=interrupted`, and the process exits 130. A second Ctrl+C exits instantly without cleanup; the next run's junk purge sweeps what's left.
+_Avoid_: cancel, abort
