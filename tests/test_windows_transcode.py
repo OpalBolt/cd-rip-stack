@@ -671,3 +671,37 @@ class TestRipLogJsonl:
         log.start()
         log.finish(0)
         assert not (tmp_path / "logs" / "raw").exists()
+
+
+def test_handbrake_output_lands_in_raw_log_on_failure(env, capsys):
+    """Raw capture wiring: every HandBrake output line reaches the run's raw log
+    (kept on failure) while the console still sees the lines unchanged."""
+    vid = env / "vid"
+    (env / "bin" / "HandBrakeCLI.exe").write_text("""#!/bin/sh
+in=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -i) in="$2"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+echo "Encoding: task 1 of 1" >&2
+echo "work: average 12.3 fps" >&2
+echo "Encode done!"
+if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
+""")
+    mk(vid, "rip/Fail (1999)_t00.mkv", "FAILME")
+
+    rc = transcode.run_transcode(Args())
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    # console behavior unchanged: output still streams through
+    assert "Encoding: task 1 of 1" in out
+    assert "Encode done!" in out
+    raws = list((vid / "logs" / "raw").glob("*.jsonl"))
+    assert len(raws) == 1  # failure keeps the run's raw log
+    lines = [json.loads(l) for l in raws[0].read_text(encoding="utf-8").splitlines()]
+    hb = [l for l in lines if l["tool"] == "handbrake"]
+    assert [l["line"] for l in hb] == \
+        ["Encoding: task 1 of 1", "work: average 12.3 fps", "Encode done!"]

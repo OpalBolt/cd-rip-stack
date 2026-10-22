@@ -41,35 +41,44 @@ def rip_music(args) -> None:
     log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-")
     log.start()
 
-    # Online gate: skip if -N in cyanrip_flags
-    flags = args.cyanrip_flags or []
-    skip_online = "-N" in flags
+    # Log the total on every exit — success, Ctrl-C, or failure — so the raw
+    # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
+    rc = 0
+    try:
+        # Online gate: skip if -N in cyanrip_flags
+        flags = args.cyanrip_flags or []
+        skip_online = "-N" in flags
 
-    if not skip_online:
-        require_online()
+        if not skip_online:
+            require_online()
 
-    log.phase("rip")
+        log.phase("rip")
 
-    # Run cyanrip with tee-like capture
-    rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log)
+        # Run cyanrip with tee-like capture
+        rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log)
 
-    # Handle "Multiple releases found"
-    if rc != 0 and "Multiple releases found" in cap_text:
-        choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
-        if choice:
-            # Re-run with -R <choice>
-            rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log)
-        else:
-            print("skive: aborting", file=sys.stderr)
-            rc = 1
+        # Handle "Multiple releases found"
+        if rc != 0 and "Multiple releases found" in cap_text:
+            choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
+            if choice:
+                # Re-run with -R <choice>
+                rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log)
+            else:
+                print("skive: aborting", file=sys.stderr)
+                rc = 1
 
-    log.phase_end()
+        log.phase_end()
 
-    # Rip name from newest FLAC
-    name = _newest_flac_album(rip_dir)
-    log.name = name
+        # Rip name from newest FLAC
+        name = _newest_flac_album(rip_dir)
+        log.name = name
+    except KeyboardInterrupt:
+        rc = 130
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 1
+    finally:
+        log.finish(rc)
 
-    log.finish(rc)
     sys.exit(rc)
 
 

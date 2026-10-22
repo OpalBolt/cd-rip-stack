@@ -90,7 +90,14 @@ def settle(per_language: list[tuple[Track, int]]) -> tuple[list[Keep], list[str]
     return keeps, notes
 
 
-def inventory(mkv: str, ffprobe_exe: str) -> list[Track]:
+def _raw(log, tool: str, text: str) -> None:
+    """Every captured output line, verbatim, into the run's raw log (no-op without one)."""
+    if log is not None:
+        for line in text.splitlines():
+            log.raw(tool, line)
+
+
+def inventory(mkv: str, ffprobe_exe: str, log=None) -> list[Track]:
     """ffprobe the file's subtitle streams: index, codec, language tag, forced."""
     r = subprocess.run(
         [ffprobe_exe, "-v", "error", "-select_streams", "s",
@@ -98,6 +105,7 @@ def inventory(mkv: str, ffprobe_exe: str) -> list[Track]:
          "-of", "json", mkv],
         capture_output=True, text=True,
     )
+    _raw(log, "ffprobe", r.stdout + r.stderr)
     if r.returncode != 0:
         print(f"ffprobe failed on {mkv}: {r.stderr.strip()}", file=sys.stderr)
         return []
@@ -118,7 +126,7 @@ def count_events(srt_path: str) -> int:
         return sum(1 for line in fh if " --> " in line)
 
 
-def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str) -> str | None:
+def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None) -> str | None:
     """OCR one track into a FRESH temp subdir of out_dir (seconv names its
     output `<stem>.<lang>[.forced].srt`, so same-language tracks would collide
     in one dir). Returns the produced SRT path, or None (stderr note) on
@@ -131,6 +139,7 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str) -> str | None
          f"--output-folder:{work}"],
         capture_output=True, text=True,
     )
+    _raw(log, "seconv", r.stdout + r.stderr)
     produced = sorted(f for f in os.listdir(work) if f.endswith(".srt"))
     if r.returncode != 0 or not produced:
         print(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
@@ -140,13 +149,14 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str) -> str | None
 
 
 def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
-             ffprobe_exe: str) -> PassResult:
+             ffprobe_exe: str, log=None) -> PassResult:
     """The whole pass, orchestration only: inventory -> decide -> OCR each keep
     in its own temp dir -> settle full tracks per language -> move winners into
     out_dir under their final sidecar names. ok=False if any selected track
-    failed; partial success still moves the good sidecars."""
+    failed; partial success still moves the good sidecars. log (a RipLog) gets
+    every captured ffprobe/seconv output line via log.raw."""
     notes: list[str] = []
-    tracks = inventory(mkv, ffprobe_exe)
+    tracks = inventory(mkv, ffprobe_exe, log=log)
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
     print(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
@@ -163,7 +173,7 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         for k in keeps:
             print(f"  OCR {k.track.lang} track {k.track.index}"
                   f"{' (forced)' if k.track.forced else ''}...")
-            srt = convert(mkv, k.track, seconv_exe, tmp_root)
+            srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log)
             if srt is None:
                 ok = False
                 notes.append(f"FAIL {k.track.lang} (track {k.track.index}): seconv failed")

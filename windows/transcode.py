@@ -303,9 +303,11 @@ def _preset(height: int) -> str:
 
 
 def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
-            no_subs: bool = False) -> bool:
+            no_subs: bool = False, log: RipLog | None = None) -> bool:
     """HandBrake pass-through re-encode at native resolution. GPU encoders override the encoder.
-    no_subs selects zero subtitle tracks (features/TV); extras keep today's pass-through."""
+    no_subs selects zero subtitle tracks (features/TV); extras keep today's pass-through.
+    Every HandBrake output line is echoed to the console unchanged and written verbatim
+    to the run's raw log (log.raw), the same tee discipline as skive/makemkv.py."""
     height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
     if encoder != "x265":
@@ -323,7 +325,12 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         # matches selects zero subtitle tracks
         cmd += ["--subtitle-lang-list", "zzz"]
     cmd += ["--all-subtitles", "--subtitle-burned=none"]
-    return subprocess.run(cmd).returncode == 0
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        if log is not None:
+            log.raw("handbrake", line.rstrip())
+    return proc.wait() == 0
 
 
 def _rmf(path: str) -> None:
@@ -379,12 +386,13 @@ def _quarantine(src: str, issues_dir: str) -> None:
 
 
 def _sub_pass(local_src: str, work_dir: str, base: str, seconv_exe: str,
-              ffprobe_exe: str):
+              ffprobe_exe: str, log: RipLog | None = None):
     """Inline subtitle pass on the local copy/merge; sidecars land in a fresh
     dir under the work dir and only move beside the encode once it succeeds.
+    Captured ffprobe/seconv output lines go to the run's raw log via log.raw.
     Returns (sidecar dir, PassResult)."""
     side_dir = tempfile.mkdtemp(dir=work_dir, prefix="subs-")
-    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe)
+    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe, log=log)
     for n in res.notes:
         print(n)
     return side_dir, res
@@ -494,9 +502,9 @@ def run_transcode(args) -> int:
                 if episode:
                     side_dir, res = _sub_pass(
                         local_src, tmp_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}",
-                        seconv_exe, ffprobe_exe)
+                        seconv_exe, ffprobe_exe, log=log)
                 if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                           no_subs=episode):
+                           no_subs=episode, log=log):
                     shutil.move(local_out, dest)
                     if side_dir is not None:
                         _ship_sidecars(side_dir, dest_dir, res)
@@ -578,10 +586,10 @@ def run_transcode(args) -> int:
                     cleanup.append(local_src)
 
                 # pass runs on the merged lossless file, never per part
-                side_dir, res = _sub_pass(local_src, tmp_dir, safe, seconv_exe, ffprobe_exe)
+                side_dir, res = _sub_pass(local_src, tmp_dir, safe, seconv_exe, ffprobe_exe, log=log)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                           no_subs=True):
+                           no_subs=True, log=log):
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
                     for p in cleanup:
@@ -623,7 +631,7 @@ def run_transcode(args) -> int:
             log.phase("encode")
             print(f"copying {i.name} to local temp...")
             _copy2(i.path, local_src)
-            if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe):
+            if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe, log=log):
                 shutil.move(local_out, dest)
                 _rmf(local_src)
                 _archive(i.path, done_dir, rip_dir, args.keep)

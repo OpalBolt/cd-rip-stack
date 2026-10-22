@@ -488,6 +488,7 @@ def rip_tv(args) -> None:
     log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
 
     profile_path = inject_profile(sel)
+    rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
     try:
         # Rip phase
         log.phase("rip")
@@ -513,7 +514,7 @@ def rip_tv(args) -> None:
             if not rename_tv_fast(display, season_dir, season, assignment, preamble.scan_durations):
                 log.note("rename", "join aborted — an episode's staged file is missing")
                 log.phase_end()
-                log.finish(1)
+                rc = 1
                 sys.exit(1)
         else:
             rename_tv(display, season_dir, season, assignment)
@@ -526,7 +527,8 @@ def rip_tv(args) -> None:
         log.note("subtitle", note)
 
         log.phase_end()
-        log.finish(worst_rc)
+        rc = worst_rc
         sys.exit(worst_rc)
     finally:
         profile_path.unlink(missing_ok=True)
+        log.finish(rc)

@@ -36,6 +36,7 @@ def rip_movie(args) -> None:
 
     # Inject profile
     profile_path = inject_profile(sel)
+    rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
     try:
         # Rip phase
         preexisting = set(stage_movie.glob("*.mkv"))
@@ -75,8 +76,9 @@ def rip_movie(args) -> None:
         log.note("subtitle", note)
 
         log.phase_end()
-        log.finish(worst_rc)
+        rc = worst_rc
         sys.exit(worst_rc)
     finally:
         # Clean up temp profile
         profile_path.unlink(missing_ok=True)
+        log.finish(rc)

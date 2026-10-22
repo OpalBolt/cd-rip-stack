@@ -8,7 +8,6 @@ dependencies = [
     "pylast",
     "pillow",
     "beetcamp",
-    "loguru>=0.7.3",
 ]
 
 [project.scripts]
