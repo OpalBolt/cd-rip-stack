@@ -62,7 +62,7 @@ def test_multiple_releases_prompts(tmp_path):
     args = FakeArgs(offset="100", cyanrip_flags=["-N"])
 
     with patch("skive.rip_music.ensure_mounted"), \
-            patch("skive.rip_music.RipLog"), \
+            patch("skive.rip_music.RipLog") as MockLog, \
             patch("skive.rip_music._newest_flac_album", return_value="-"), \
             patch("skive.rip_music.Prompt.ask", return_value="2"), \
             patch("skive.rip_music._cyanrip_run", side_effect=[
@@ -74,9 +74,10 @@ def test_multiple_releases_prompts(tmp_path):
 
     assert exc.value.code == 0
     rip_dir = tmp_path / "rip"
+    log = MockLog.return_value  # the raw log rides along to _cyanrip_run
     assert mock_run.call_args_list == [
-        (("100", ["-N"], rip_dir),),
-        (("100", ["-R", "2", "-N"], rip_dir),),
+        (("100", ["-N"], rip_dir, log),),
+        (("100", ["-R", "2", "-N"], rip_dir, log),),
     ]
 
 

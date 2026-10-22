@@ -307,7 +307,7 @@ def rip_tv(args) -> None:
         log.phase("rip")
         infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
         worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc,
-                              total=len(titles_full), infos=infos, header=rip_header(display, infos))
+                              total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log)
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
@@ -497,19 +497,19 @@ def rip_tv(args) -> None:
             # files back to scanner titles by duration at rename time.
             header = fast_scan_header(display, len(titles_info))
             worst_rc = rip_titles(None, profile_path, tv_floor(minlength), season_dir, disc=preamble.disc,
-                                  total=len(titles_info), infos=titles_full, header=header)
+                                  total=len(titles_info), infos=titles_full, header=header, log=log)
         else:
             # Explicit -T selections may include titles filtered from the confirmed scan.
             rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
             worst_rc = rip_titles(rip_selection, profile_path, minlength, season_dir, disc=preamble.disc,
-                                  total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full))
+                                  total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log)
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
 
         # Rename per the map
         if preamble.fast_scan:
-            # The caller owns the exit so the abort still lands in rip.log.
+            # The caller owns the exit so the abort still lands in the run log.
             if not rename_tv_fast(display, season_dir, season, assignment, preamble.scan_durations):
                 log.note("rename", "join aborted — an episode's staged file is missing")
                 log.phase_end()

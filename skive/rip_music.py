@@ -51,14 +51,14 @@ def rip_music(args) -> None:
     log.phase("rip")
 
     # Run cyanrip with tee-like capture
-    rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir)
+    rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log)
 
     # Handle "Multiple releases found"
     if rc != 0 and "Multiple releases found" in cap_text:
         choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
         if choice:
             # Re-run with -R <choice>
-            rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir)
+            rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log)
         else:
             print("skive: aborting", file=sys.stderr)
             rc = 1
@@ -73,8 +73,9 @@ def rip_music(args) -> None:
     sys.exit(rc)
 
 
-def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path) -> tuple[int, str]:
-    """Run cyanrip with merged output captured and streamed to stdout."""
+def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tuple[int, str]:
+    """Run cyanrip with merged output captured, streamed to stdout, and written
+    verbatim to the run's raw log (log is None in tests)."""
     cmd = ["cyanrip", "-s", offset] + flags
     process = subprocess.Popen(
         cmd,
@@ -89,6 +90,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path) -> tuple[int, str
     if process.stdout is not None:
         for line in process.stdout:
             print(line, end="", flush=True)
+            if log is not None:
+                log.raw("cyanrip", line.rstrip())
             captured.append(line)
 
     return process.wait(), "".join(captured)

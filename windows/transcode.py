@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -54,32 +55,64 @@ def sanitize(s: str) -> str:
     return re.sub(r'[/:*?"<>|]', "", s)
 
 
+def _append_jsonl(path: str, obj: dict) -> None:
+    """Append one object as a JSONL line. Open-append-close per line — the same
+    append/flush discipline as the Linux side — so lines survive concurrent writers."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
 class RipLog:
-    """Same 8-column rip.log as the Linux side: start end script software name phase m:ss status."""
+    """The two JSONL logs, same shapes as skive/common.py, written via the share
+    root (VIDEOS, default Z:\\).
+
+    Run log  <root>\\logs\\rip.jsonl — one
+    {ts, run, script, software, name, phase, status, elapsed_s} object per line.
+    Raw log  <root>\\logs\\raw\\<run>.jsonl — one {ts, run, tool, line} object
+    per tool output line; finish(0) deletes it, failure or interrupt keeps it.
+    """
 
     SCRIPT = "transcode.py"
     SOFT = "handbrake"
 
-    def __init__(self, path: str = "rip.log", now=None):
-        self.path = Path(path)
+    def __init__(self, root: str | None = None, now=None):
         self._now = now or datetime.now
+        # short UUID minted per invocation; names this run's raw log
+        self.run = uuid.uuid4().hex[:8]
+        vid = root if root is not None else (os.environ.get("VIDEOS") or "Z:\\")
+        self._run_log = os.path.join(vid, "logs", "rip.jsonl")
+        self._raw_log = os.path.join(vid, "logs", "raw", self.run + ".jsonl")
         self.name = "-"
         self._phases = 0
 
-    def _emit(self, t1, t2, phase, elapsed, status) -> None:
-        line = f"{t1}  {t2}  {self.SCRIPT}  {self.SOFT}  {self.name}  {phase}  {elapsed}  {status}"
-        print(line)
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+    def _emit(self, now, phase: str, status: str, elapsed_s: int) -> None:
+        _append_jsonl(self._run_log, {
+            "ts": now.isoformat(timespec="seconds"),
+            "run": self.run,
+            "script": self.SCRIPT,
+            "software": self.SOFT,
+            "name": self.name,
+            "phase": phase,
+            "status": status,
+            "elapsed_s": elapsed_s,
+        })
 
-    @staticmethod
-    def _elapsed(seconds: int) -> str:
-        return f"{seconds // 60}m{seconds % 60:02d}"
+    def raw(self, tool: str, line: str) -> None:
+        """One verbatim tool output line into this run's raw log."""
+        _append_jsonl(self._raw_log, {
+            "ts": self._now().isoformat(timespec="seconds"),
+            "run": self.run,
+            "tool": tool,
+            "line": line,
+        })
 
     def start(self) -> None:
-        self._t0 = self._now()
-        self._t0_ts = self._t0.strftime("%Y-%m-%d %H:%M:%S")
-        self._emit(self._t0_ts, "-", "-", "0m00", "started")
+        now = self._now()
+        self._t0 = now
+        self._emit(now, "-", "started", 0)
 
     def phase(self, name: str) -> None:
         self._phase_name = name
@@ -88,25 +121,25 @@ class RipLog:
     def phase_end(self) -> None:
         now = self._now()
         self._phases += 1
-        self._emit(
-            self._phase_t0.strftime("%Y-%m-%d %H:%M:%S"),
-            now.strftime("%Y-%m-%d %H:%M:%S"),
-            self._phase_name,
-            self._elapsed(int((now - self._phase_t0).total_seconds())),
-            "ok",
-        )
+        self._emit(now, self._phase_name, "ok",
+                   int((now - self._phase_t0).total_seconds()))
 
     def note(self, phase: str, status: str) -> None:
-        """Untimed detail line (end and elapsed are '-'); mirrors Linux RipLog.note."""
-        self._emit(self._now().strftime("%Y-%m-%d %H:%M:%S"), "-", phase, "-", status)
+        """Untimed detail line (elapsed_s 0); mirrors Linux RipLog.note."""
+        self._emit(self._now(), phase, status, 0)
 
     def finish(self, rc: int) -> None:
         # always write the total so a successful run ends with a clear summary
         # line (the README contract is "a total on exit").
         now = self._now()
         status = "ok" if rc == 0 else f"FAIL({rc})"
-        self._emit(self._t0_ts, now.strftime("%Y-%m-%d %H:%M:%S"), "total",
-                   self._elapsed(int((now - self._t0).total_seconds())), status)
+        self._emit(now, "total", status, int((now - self._t0).total_seconds()))
+        # raw log is deleted on a clean exit; kept on failure or interrupt
+        if rc == 0:
+            try:
+                os.remove(self._raw_log)
+            except OSError:
+                pass
 
 
 @dataclass

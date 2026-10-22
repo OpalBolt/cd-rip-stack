@@ -11,11 +11,13 @@ SUBS-FAIL input.
 
 import ast
 import importlib.util
+import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
+from datetime import datetime
 
 import pytest
 
@@ -40,6 +42,12 @@ def mk(vid, rel, content):
     p = pathlib.Path(vid) / rel
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
+
+
+def run_log(tmp_path) -> list[dict]:
+    """The transcode run log (VIDEOS points at tmp_path/vid), one dict per line."""
+    p = tmp_path / "vid" / "logs" / "rip.jsonl"
+    return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines()]
 
 
 @pytest.fixture
@@ -172,7 +180,7 @@ def test_scenario1_end_to_end_movie_batch(env, capsys):
     assert sorted(p.name for p in (vid / "rip").iterdir()) == ["B1_t00.mkv", "Failme (1999)_t00.mkv"]
     assert "skip (junk label" in err
     assert "FAILED (handbrake)" in err
-    assert "  total  " in (env / "rip.log").read_text()
+    assert any(l["phase"] == "total" for l in run_log(env))
 
     hb = (env / "hb-calls.log").read_text()
     assert len(hb.strip().splitlines()) == 9  # incl. failed Failme
@@ -226,7 +234,7 @@ def test_scenario3_prefix_single_phase_total(env, capsys):
 
     assert rc == 0
     assert (vid / "library" / "Solo (2006)" / "Solo (2006).mkv").read_text() == "SOLO-MAIN"
-    assert "  total  " in (env / "rip.log").read_text()
+    assert any(l["phase"] == "total" for l in run_log(env))
 
 
 def test_scenario3b_no_match_prefix_exits_1(env, capsys):
@@ -250,7 +258,7 @@ def test_scenario3c_colon_prefix_matches_sanitized_file(env):
             / "Team America World Police (2004).mkv").read_text() == "TEAM-MAIN"
 
 
-# -- scenario 4: empty rip dir -> exit 0; log line shape ----------------------
+# -- scenario 4: empty rip dir -> exit 0; run-log line shape ------------------
 def test_scenario4_empty_rip(env, capsys):
     rc = transcode.run_transcode(Args())
     out = capsys.readouterr().out
@@ -262,12 +270,21 @@ def test_log_line_shape(env):
     vid = env / "vid"
     mk(vid, "rip/Solo (2006)_t00.mkv", "SOLO-MAIN")
     transcode.run_transcode(Args(prefixes=["Solo (2006)"]))
-    first = (env / "rip.log").read_text().splitlines()[0]
-    cols = first.split("  ")
-    assert len(cols) == 8
-    assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", cols[0])
-    assert re.match(r"^\d+m\d{2}$", cols[6])
-    assert cols[7] == "started"
+    lines = run_log(env)
+    first = lines[0]
+    assert list(first) == ["ts", "run", "script", "software", "name", "phase", "status", "elapsed_s"]
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$", first["ts"])
+    assert re.fullmatch(r"[0-9a-f]{8}", first["run"])
+    assert first["script"] == "transcode.py"
+    assert first["software"] == "handbrake"
+    assert first["name"] == "-"
+    assert first["phase"] == "-"
+    assert first["status"] == "started"
+    assert first["elapsed_s"] == 0
+    # a clean single-item run ends with an ok total on the same run id
+    assert lines[-1]["phase"] == "total"
+    assert lines[-1]["status"] == "ok"
+    assert lines[-1]["run"] == first["run"]
 
 
 # -- scenario 5: -Encoder nvenc swaps GPU flags; x265 has none ----------------
@@ -396,7 +413,7 @@ def test_no_third_party_imports():
     src = pathlib.Path(__file__).parent.parent / "windows" / "transcode.py"
     tree = ast.parse(src.read_text())
     stdlib = {"argparse", "json", "os", "re", "shutil", "subprocess", "sys",
-              "tempfile", "dataclasses", "datetime", "pathlib"}
+              "tempfile", "uuid", "dataclasses", "datetime", "pathlib"}
     local = {"subs"}  # windows/subs.py ships beside transcode.py
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -480,7 +497,7 @@ def test_guard_mismatch_quarantines_all_parts_no_encode(env, capsys):
     assert not (vid / "library" / "Two (2001)").exists()
     assert (vid / "library" / "Next (2002)" / "Next (2002).mkv").read_text() == "NEXT"
     assert "FAILED (track guard)" in err
-    log = (env / "rip.log").read_text()
+    log = " ".join(l["status"] for l in run_log(env))
     assert "FAIL tracks differ" in log and "p2" in log
     hb = (env / "hb-calls.log").read_text()
     assert len(hb.strip().splitlines()) == 1  # only Next encoded
@@ -545,7 +562,7 @@ def test_pass_failure_ships_encode_and_quarantines_source(env, capsys):
     assert list((vid / "rip-DONE").iterdir()) == []  # never archived despite -k
     assert (vid / "rip-ISSUES" / "movies" / "Ocr (2001)_t00.mkv").read_text() == "SUBS-FAIL"
     assert "FAILED (subtitle pass)" in err
-    log = (env / "rip.log").read_text()
+    log = " ".join(l["status"] for l in run_log(env))
     assert "FAIL subtitle pass" in log and "seconv failed" in log
 
 
@@ -576,3 +593,81 @@ def test_tv_extra_unchanged_no_pass(env):
     assert not list(ex.glob("*.srt"))  # embedded subs stay, no sidecars
     assert not (env / "seconv-calls.log").exists()  # no pass ran
     assert "--subtitle-lang-list" not in (env / "hb-calls.log").read_text()
+
+
+# -- slice 02: JSONL RipLog (run log + raw log) --------------------------------
+class TestRipLogJsonl:
+    """Windows RipLog: same JSONL shapes as skive/common.py via the share root."""
+
+    @staticmethod
+    def _log(tmp_path, times):
+        ts_iter = iter(times)
+        return transcode.RipLog(root=str(tmp_path), now=lambda: next(ts_iter))
+
+    def test_run_log_via_videos_env(self, tmp_path, monkeypatch):
+        """Without an explicit root the run log lands under $VIDEOS/logs."""
+        monkeypatch.setenv("VIDEOS", str(tmp_path))
+        log = transcode.RipLog(now=lambda: datetime(2024, 1, 15, 10, 30, 0))
+        log.start()
+        lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert lines == [{
+            "ts": "2024-01-15T10:30:00", "run": log.run, "script": "transcode.py",
+            "software": "handbrake", "name": "-", "phase": "-",
+            "status": "started", "elapsed_s": 0,
+        }]
+
+    def test_phase_and_note_lines(self, tmp_path):
+        # start, phase start, phase end, note
+        times = [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0),
+                 datetime(2024, 1, 15, 10, 36, 0), datetime(2024, 1, 15, 10, 36, 10)]
+        log = self._log(tmp_path, times)
+        log.start()
+        log.phase("encode")
+        log.phase_end()
+        log.note("encode", "FAILED handbrake: X (2001)_t00.mkv -- source left in place")
+        lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert lines[1]["phase"] == "encode" and lines[1]["status"] == "ok" and lines[1]["elapsed_s"] == 300
+        assert lines[2]["phase"] == "encode"
+        assert lines[2]["status"] == "FAILED handbrake: X (2001)_t00.mkv -- source left in place"
+        assert lines[2]["elapsed_s"] == 0
+
+    def test_finish_fail_total_and_short_uuid(self, tmp_path):
+        ts_iter = iter([datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 5)])
+        log = transcode.RipLog(root=str(tmp_path), now=lambda: next(ts_iter))
+        assert re.fullmatch(r"[0-9a-f]{8}", log.run)  # short UUID minted per invocation
+        log.start()
+        log.finish(2)
+        lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert lines[-1] == {
+            "ts": "2024-01-15T10:30:05", "run": log.run, "script": "transcode.py",
+            "software": "handbrake", "name": "-", "phase": "total",
+            "status": "FAIL(2)", "elapsed_s": 5,
+        }
+
+    def test_raw_log_write_and_delete_on_rc0(self, tmp_path):
+        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1), datetime(2024, 1, 15, 10, 30, 2)])
+        log.start()
+        log.raw("handbrake", "Encoding: task 1")
+        raw = tmp_path / "logs" / "raw" / f"{log.run}.jsonl"
+        assert [json.loads(l) for l in raw.read_text(encoding="utf-8").splitlines()] == [
+            {"ts": "2024-01-15T10:30:01", "run": log.run, "tool": "handbrake", "line": "Encoding: task 1"},
+        ]
+        log.finish(0)
+        assert not raw.exists()  # deleted on a clean exit
+
+    def test_raw_log_kept_on_failure(self, tmp_path):
+        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1), datetime(2024, 1, 15, 10, 30, 2)])
+        log.start()
+        log.raw("mkvmerge", "Error: something broke")
+        log.finish(1)
+        raw = tmp_path / "logs" / "raw" / f"{log.run}.jsonl"
+        assert raw.exists()  # kept on failure
+        lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "FAIL(1)"
+
+    def test_raw_absent_when_no_tool_ran(self, tmp_path):
+        """No raw writes -> no raw file (and nothing to clean on success)."""
+        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 5)])
+        log.start()
+        log.finish(0)
+        assert not (tmp_path / "logs" / "raw").exists()

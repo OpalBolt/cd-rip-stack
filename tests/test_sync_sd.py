@@ -66,8 +66,11 @@ def stub(**replacements):
 
 @pytest.fixture(autouse=True)
 def _stage_root(tmp_path, monkeypatch):
-    """Keep staging off the real /mnt/music."""
+    """Keep staging and the JSONL run log off the real mounts."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    # spill: slice-02 RipLog writes logs under VIDEOS_MOUNT; spec requires tmp_path
+    # logs roots (no real mounts) and sync_sd exercises the real RipLog.
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
 
 
 # --- detection: find_mounted_cards -------------------------------------------

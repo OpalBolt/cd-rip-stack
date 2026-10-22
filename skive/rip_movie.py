@@ -50,7 +50,7 @@ def rip_movie(args) -> None:
             # fast path's two-line header instead of rip_header's 0.0 B / ?.
             header = fast_scan_header(display, len(titles_full))
             worst_rc = rip_titles(None, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                  total=len(titles_full), infos=titles_full, header=header)
+                                  total=len(titles_full), infos=titles_full, header=header, log=log)
         else:
             # Bare -T opens the menu over the gate scan; no -T rips all titles
             # (Blu-ray: scrambled decoy titles are skipped by default)
@@ -58,7 +58,7 @@ def rip_movie(args) -> None:
 
             infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
             worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                  total=len(titles_full), infos=infos, header=rip_header(display, infos))
+                                  total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log)
 
         if worst_rc != 0:
             log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")

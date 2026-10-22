@@ -66,12 +66,14 @@ def rip_header(display: str, infos: list["TitleInfo"]) -> str:
 
 
 def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
-                       sizes: list[int] | None = None, header: str | None = None) -> int:
+                       sizes: list[int] | None = None, header: str | None = None,
+                       log=None) -> int:
     """Run makemkvcon with --progress=-same and drive a rich progress bar.
 
     Parses robot output: PRGV (values), PRGT (phase name), MSG (messages).
     sizes (estimated bytes per title, in rip order) drives a live GiB column:
     ripped ≈ estimated size × progress fraction.
+    Every output line lands verbatim in the run's raw log (log.raw).
     """
     from rich.progress import (
         BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn,
@@ -95,6 +97,8 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         cur_title = 0
         for line in proc.stdout:
             line = line.rstrip()
+            if log is not None:
+                log.raw("makemkvcon", line)
             if line.startswith("PRGV:"):
                 parts = line[5:].split(",")
                 if len(parts) == 3 and all(p.isdigit() for p in parts):
@@ -127,7 +131,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     return proc.wait()
 
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None) -> int:
+def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
@@ -136,6 +140,7 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         minlength: Minimum title length in seconds
         stage_dir: Staging directory
         run: subprocess.run callable for monkeypatching
+        log: RipLog for the run's raw tool log (None in tests)
 
     Returns:
         Worst (highest) return code from all rip attempts
@@ -146,7 +151,7 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         # Rip all in one call
         cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", "all", str(stage_dir) + "/"]
         sizes = [t.size for t in sorted(infos, key=lambda t: t.number)] if infos else None
-        rc = _run_with_progress(cmd, "all titles", total_titles=total or 1, sizes=sizes, header=header) if run is subprocess.run else run(cmd).returncode
+        rc = _run_with_progress(cmd, "all titles", total_titles=total or 1, sizes=sizes, header=header, log=log) if run is subprocess.run else run(cmd).returncode
         if rc > worst_rc:
             worst_rc = rc
     else:
@@ -154,7 +159,7 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
             cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", str(t), str(stage_dir) + "/"]
             desc = f"title {t} ({i}/{len(titles)})"
             sizes = [by_num[t].size] if t in by_num else None
-            rc = _run_with_progress(cmd, desc, sizes=sizes, header=header if i == 1 else None) if run is subprocess.run else run(cmd).returncode
+            rc = _run_with_progress(cmd, desc, sizes=sizes, header=header if i == 1 else None, log=log) if run is subprocess.run else run(cmd).returncode
             if rc > worst_rc:
                 worst_rc = rc
     return worst_rc

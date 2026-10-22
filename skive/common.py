@@ -1,5 +1,7 @@
-"""Common helpers: title-spec parser, NFS mount-on-demand, rip.log via loguru."""
+"""Common helpers: title-spec parser, NFS mount-on-demand, JSONL run/raw logs."""
 
+import json
+import os
 import re
 import subprocess
 import sys
@@ -7,25 +9,22 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from loguru import logger
-
 # Sentinel for bare -T/--titles (flag with no value) -> open the interactive
 # title menu. Lives here so main.py and makemkv.py can both import it without
 # a cycle.
 MENU = object()
 
-# The 8-column rip.log contract, expressed as a loguru format string. loguru
-# lays out the columns (double-space separated); callers only supply values.
-_FMT = ("{extra[start]}  {extra[end]}  {extra[script]}  {extra[software]}  "
-        "{extra[name]}  {extra[phase]}  {extra[elapsed]}  {extra[status]}")
 
-# One logger, two sinks: INFO lines go to the per-instance rip.log file (added
-# by RipLog), WARNING lines (notes) also tee to stderr. The stderr sink is a
-# callable so sys.stderr is resolved at write time — capsys and other
-# redirects still capture the tee.
-logger.remove()
-logger.add(lambda m: sys.stderr.write(str(m)), format=_FMT, level="WARNING",
-           filter=lambda r: "riplog" in r["extra"])
+def _append_jsonl(path: Path, obj: dict) -> None:
+    """Append one object as a JSONL line.
+
+    Open-append-close per line — the append/flush discipline the parallel-drive
+    text rip.log already used — so concurrent runs (and the Windows box over
+    NFS) interleave whole lines instead of clobbering each other.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
 
 def sanitize(title: str) -> str:
@@ -38,70 +37,97 @@ def sanitize(title: str) -> str:
     return re.sub(r'[:*?"<>|]', "", title.replace("/", "-"))
 
 
-def _elapsed(seconds: int) -> str:
-    """The m:ss column, e.g. 270 -> '4m30'."""
-    return f"{seconds // 60}m{seconds % 60:02d}"
-
-
 class RipLog:
-    """Writes the 8-column rip.log.
+    """Writes the two JSONL logs (CONTEXT.md: Run log, Raw log).
 
-    loguru owns the layout (_FMT) and the routing (INFO -> file, WARNING ->
-    file + stderr). This class only holds what loguru does not: the run/phase
-    clock readings, the phase count, and the total-on-exit rule.
+    Run log  <root>/logs/rip.jsonl — one
+    {ts, run, script, software, name, phase, status, elapsed_s} object per
+    line, appended by both machines over NFS. status carries "started",
+    "ok", "FAIL(rc)", "interrupted", or note text.
+    Raw log  <root>/logs/raw/<run>.jsonl — one {ts, run, tool, line} object
+    per tool output line; finish(0) deletes it, failure or interrupt keeps it.
+
+    This class only holds what plain file appends do not: the run/phase clock
+    readings, the phase count, and the total-on-exit rule.
     """
 
-    def __init__(self, script, software, name="", path="rip.log", now=None):
+    def __init__(self, script, software, name="", root=None, now=None):
         self._now = now or datetime.now
         self.name = name  # mutable: callers assign it mid-run (e.g. the title)
-        self._tag = uuid.uuid4().hex
-        self._log = logger.bind(riplog=self._tag, script=script, software=software)
-        # per-instance file sink; the tag keeps parallel instances from crossing
-        logger.add(str(path), format=_FMT, encoding="utf-8", level="INFO",
-                   filter=lambda r: r["extra"].get("riplog") == self._tag)
-        self._start = self._start_ts = None
+        # short UUID minted per invocation; names this run's raw log
+        self.run = uuid.uuid4().hex[:8]
+        mount = Path(root) if root is not None else Path(
+            os.environ.get("VIDEOS_MOUNT", "/mnt/videos"))
+        self._run_log = mount / "logs" / "rip.jsonl"
+        self._raw_log = mount / "logs" / "raw" / f"{self.run}.jsonl"
+        self._script = script
+        self._software = software
+        self._start = None
         self._phases = 0
         self._phase_name = None
-        self._phase_start = self._phase_start_ts = None
+        self._phase_start = None
 
-    def _emit(self, start, end, phase, elapsed, status):
-        self._log.bind(name=self.name, start=start, end=end, phase=phase,
-                       elapsed=elapsed, status=status).info("")
+    def _emit(self, now, phase, status, elapsed_s):
+        _append_jsonl(self._run_log, {
+            "ts": now.isoformat(timespec="seconds"),
+            "run": self.run,
+            "script": self._script,
+            "software": self._software,
+            "name": self.name,
+            "phase": phase,
+            "status": status,
+            "elapsed_s": elapsed_s,
+        })
+
+    def raw(self, tool, line):
+        """One verbatim tool output line into this run's raw log."""
+        _append_jsonl(self._raw_log, {
+            "ts": self._now().isoformat(timespec="seconds"),
+            "run": self.run,
+            "tool": tool,
+            "line": line,
+        })
 
     def start(self):
         """Log the immediate 'started' marker line."""
-        self._start = self._now()
-        self._start_ts = self._start.strftime("%F %T")
-        self._emit(self._start_ts, "-", "-", "0m00", "started")
+        now = self._now()
+        self._start = now
+        self._emit(now, "-", "started", 0)
 
     def phase(self, name):
         """Begin a named phase."""
         self._phase_name = name
         self._phase_start = self._now()
-        self._phase_start_ts = self._phase_start.strftime("%F %T")
 
     def phase_end(self):
         """Log the just-finished phase."""
-        end = self._now()
+        now = self._now()
         self._phases += 1
-        self._emit(self._phase_start_ts, end.strftime("%F %T"), self._phase_name,
-                   _elapsed(int((end - self._phase_start).total_seconds())), "ok")
+        self._emit(now, self._phase_name, "ok",
+                   int((now - self._phase_start).total_seconds()))
 
     def note(self, phase, text):
-        """Log an untimed note line (end and m:ss are '-'); tees to stderr."""
-        self._log.bind(name=self.name, start=self._now().strftime("%F %T"),
-                       end="-", phase=phase, elapsed="-", status=text).warning("")
+        """Log an untimed note line (elapsed_s 0); tees to stderr."""
+        self._emit(self._now(), phase, text, 0)
+        print(f"skive: {phase}: {text}", file=sys.stderr)
 
     def finish(self, rc):
-        """Log the total line, skipped when rc==0 and exactly one phase succeeded."""
-        # a lone successful phase already logged start..end..status — the total
+        """Log the total line, then drop the raw log on a clean exit.
+
+        The total line is skipped when rc==0 and exactly one phase succeeded —
+        that lone phase line already records the run. The raw log is deleted on
+        rc==0 and kept on failure or interrupt (later slices record
+        status=interrupted).
+        """
+        # a lone successful phase already logged its line — the total
         # would duplicate it. skip it.
-        if rc == 0 and self._phases == 1:
-            return
-        end = self._now()
-        status = "ok" if rc == 0 else f"FAIL({rc})"
-        self._emit(self._start_ts, end.strftime("%F %T"), "total",
-                   _elapsed(int((end - self._start).total_seconds())), status)
+        if rc != 0 or self._phases != 1:
+            now = self._now()
+            status = "ok" if rc == 0 else f"FAIL({rc})"
+            self._emit(now, "total", status,
+                       int((now - self._start).total_seconds()))
+        if rc == 0:
+            self._raw_log.unlink(missing_ok=True)
 
 
 def ensure_mounted(mnt: str, export: str) -> None:
