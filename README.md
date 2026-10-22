@@ -329,6 +329,22 @@ drive fails loudly with a `net use` hint — it never silently scans "no MKVs".
 - Exit code is 0 on a clean run, 1 if any encode/merge failed or a prefix
   matched nothing.
 
+### Library backfill (one-off)
+
+The existing library predates the inline pass. `scripts/backfill.py`
+converts it in place on Linux with the same engine and policy: per file,
+OCR to sidecars, then a verified `mkvmerge --no-subtitles` strip (temp
+beside the original, checked, atomic replace). It probes its tools at
+startup (`seconv`, `tesseract` with `eng`+`dan`, `mkvmerge`, `ffprobe`),
+skips `extras/` trees and finished files, never strips a file whose
+sidecars are missing, and leaves the retry work list in
+`<library>/backfill-report.txt`. Expect an overnight-sized run.
+
+```bash
+python scripts/backfill.py                # /mnt/videos/library ($VIDEOS/library)
+python scripts/backfill.py /some/test/dir # a small trial first
+```
+
 ## Development
 
 ```bash
