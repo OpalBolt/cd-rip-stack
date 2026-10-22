@@ -83,7 +83,7 @@ Verbosity gates the console only. Both logs are always written.
 
   `{ts, run, script, software, name, phase, status, elapsed_s}`
 
-  `run` is a short UUID minted per invocation. `status` carries `started`, `ok`, `FAIL(rc)`, `interrupted`, or note text. One line per phase plus a total on exit; a run with a single successful phase logs that phase line only (the total would duplicate it), and an interrupt writes the total itself, so `finish()` stays silent after it. `tag` is not logged.
+  `run` is a short UUID minted per invocation. `status` carries `started`, `ok`, `FAIL(rc)`, `interrupted`, or note text. One line per phase plus a total on exit; an interrupt writes the total itself, so `finish()` stays silent after it. The lone-phase exception is skive's alone: skive skips the total when a run has a single successful phase (that phase line would be duplicated), but the Windows transcoder always writes its total, even for a single-phase run. `tag` is not logged.
 - **Raw log** — `logs/raw/<run>.jsonl`, one `{ts, run, tool, line}` object per verbatim tool output line. Deleted on a clean exit (return code 0); kept on failure or interrupt.
 - **Evidence on quarantine** — when transcode quarantines an item to `issues/`, the run's own lines (selected by the `run` field) are appended to the item folder's `rip.jsonl`, and the raw log is copied in beside the source. Once per run and folder, never doubled on a `--retry` re-quarantine.
 - **Concurrency** — every append opens, writes, and closes per line, the same discipline the old parallel-drive text log used, so concurrent runs (and the Windows box over NFS) interleave whole lines instead of clobbering each other.
@@ -161,6 +161,7 @@ cd-rip-stack/
 ├── CONTEXT.md
 ├── SPEC.md
 ├── scripts/
+│   ├── backfill.py      # one-off library subtitle backfill
 │   └── migrate_layout.py  # one-shot re-tree of the videos share (dry-run by default)
 ├── skive/
 │   ├── main.py          # argparse dispatch, top-level -v/-vv, interrupt install
