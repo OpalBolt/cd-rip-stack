@@ -3,10 +3,11 @@
 import sys
 
 from skive.makemkv import (
-    build_selection, inject_profile, promote_staged, rename_staged, resolve_titles,
+    build_selection, inject_profile, promote_staged, rename_staged,
     rip_header, subtitle_note, rip_titles,
 )
 from skive.rip_common import fast_scan_header, rip_preamble
+from skive.scan import resolve_titles
 
 
 def rip_movie(args) -> None:

@@ -1,6 +1,5 @@
-"""Tests for TV rip logic: range assignment, fix rows, naming, staged exclusion."""
+"""Tests for the TV rip flow: prompts, confirm table, renames, staging."""
 
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -8,77 +7,12 @@ from dataclasses import dataclass
 import pytest
 
 from skive.rip_tv import (
-    staged_eps, parse_range, next_unstaged, assign_range, range_mismatch_note,
-    range_past_end_note, parse_fix_rows, apply_fixes, map_str, print_table,
-    rename_tv, rip_tv, tv_floor, sum_disqualified, audit_ratio, audit_cell,
-    rename_tv_fast, episode_target,
+    staged_eps, print_table, rename_tv, rip_tv, rename_tv_fast, episode_target,
 )
-from skive.makemkv import scan_disc, TitleInfo
+from skive.scan import TitleInfo
+from skive.tv_match import tv_floor
 from rich.console import Console
 from rich.table import Table
-
-
-# Episode identity: stated range + disc position (ADR 0001)
-def test_parse_range():
-    """Range answers parse to (lo, hi); junk and inverted ranges are None."""
-    assert parse_range("5") == (5, 5)
-    assert parse_range("4-6") == (4, 6)
-    assert parse_range(" 4 - 6 ") == (4, 6)
-    assert parse_range("0") is None
-    assert parse_range("6-4") is None
-    assert parse_range("x") is None
-    assert parse_range("") is None
-
-
-def test_next_unstaged():
-    """Pre-fill starts at the smallest named episode not already staged."""
-    names = {1: "ep1", 2: "ep2", 3: "ep3"}
-    assert next_unstaged(names, {1}) == 2
-    assert next_unstaged(names, {1, 2, 3}) == 4  # all named staged: max + 1
-    assert next_unstaged({}, set()) == 1
-
-
-def test_assign_range_generation_kill():
-    """Disc order fills the stated range; the play-all stays extra."""
-    titles = [(0, 3932, 1), (1, 3897, 1), (2, 3653, 1), (3, 11482, 1)]
-    assert assign_range(titles, {3}, 1, 3) == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
-
-
-def test_assign_range_more_titles_than_range():
-    """Eligible titles past the range size are extras."""
-    titles = [(0, 1000, 1), (1, 1000, 1), (2, 1000, 1), (3, 1000, 1)]
-    assert assign_range(titles, set(), 1, 3) == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
-
-
-def test_assign_range_fewer_titles_than_range():
-    """Fewer eligible titles than the range: only part of it gets covered."""
-    titles = [(0, 1000, 1), (1, 1000, 1)]
-    assert assign_range(titles, set(), 1, 4) == {0: (1, 1), 1: (2, 2)}
-
-
-def test_range_mismatch_note():
-    """Matching counts -> None; mismatch -> a one-line note naming the escapes."""
-    titles = [(0, 1000, 1), (1, 1000, 1), (2, 1000, 1)]
-    assert range_mismatch_note(titles, set(), 1, 3) is None
-
-    note = range_mismatch_note(titles, set(), 1, 2)
-    assert note is not None and "\n" not in note
-    # The suggested fix must always apply: 2=3 is refused past the season's
-    # last episode, 2=e is not.
-    assert "2=e" in note and "n to re-ask" in note
-
-    assert range_mismatch_note(titles[:1], set(), 1, 4) is not None
-    assert range_mismatch_note([], set(), 1, 4) is None  # no eligible titles
-
-
-def test_range_past_end_note():
-    """A range past the season's last episode warns; in-range and unknown-size
-    (max_ep=0) do not."""
-    assert range_past_end_note(5, 3) is not None
-    assert "E5" in range_past_end_note(5, 3) and "3" in range_past_end_note(5, 3)
-    assert range_past_end_note(3, 3) is None
-    assert range_past_end_note(3, 5) is None
-    assert range_past_end_note(5, 0) is None
 
 
 def test_staged_eps_singles_and_doubles():
@@ -104,69 +38,6 @@ def test_staged_eps_second_disc():
         staged = staged_eps(stage, "Show (2000)", 1)
 
         assert staged == {1, 5, 6}
-
-
-def test_parse_fix_rows():
-    """Parse fix row grammar."""
-    rows = parse_fix_rows("1=5,2=1-2,3=e")
-    assert rows == [(1, "ep", 5, 5), (2, "range", 1, 2), (3, "extra", 0, 0)]
-
-    # Empty
-    assert parse_fix_rows("") == []
-
-    # Invalid range
-    with pytest.raises(ValueError, match="bad double-episode range"):
-        parse_fix_rows("1=2-1")
-
-    # Invalid episode
-    with pytest.raises(ValueError, match="bad episode number"):
-        parse_fix_rows("1=0")
-
-    # Bad format
-    with pytest.raises(ValueError, match="bad episode-map entry"):
-        parse_fix_rows("1=x")
-
-
-def test_fix_rows_repoint():
-    """Test fix row re-pointing."""
-    assignment = {0: (1, 1), 1: (2, 2)}
-    titles = [0, 1]
-    staged = set()
-    title_to_eps = {1: 0, 2: 1}
-
-    # E3 is free; title 0 re-points to it, releasing E1
-    ok = apply_fixes(assignment, titles, staged, "0=3", max_ep=5, title_to_eps=title_to_eps)
-
-    assert ok
-    assert assignment[0] == (3, 3)
-    assert 1 not in title_to_eps or title_to_eps[1] != 0
-
-
-def test_fix_rows_clash_rejection():
-    """Reject row claiming already-claimed episode."""
-    assignment = {0: (1, 1)}
-    titles = [0, 1]  # Add title 1 even though it's not assigned yet
-    staged = set()
-    title_to_eps = {1: 0}
-
-    # Try to assign title 1 to E1 (already claimed by title 0)
-    ok = apply_fixes(assignment, titles, staged, "1=1", max_ep=5, title_to_eps=title_to_eps)
-
-    # Should be rejected (E1 already claimed)
-    assert not ok
-
-
-def test_fix_rows_already_staged():
-    """Reject row claiming already-staged episode."""
-    assignment = {0: (1, 1)}
-    titles = [0]
-    staged = {1}  # E1 already staged
-    title_to_eps = {}
-
-    ok = apply_fixes(assignment, titles, staged, "0=1", max_ep=5, title_to_eps=title_to_eps)
-
-    # Should be rejected
-    assert not ok
 
 
 def _gk_titles():
@@ -302,45 +173,6 @@ def test_fix_row_double_at_table(tmp_path, monkeypatch):
     assert mock_rename_tv.call_args.args[3] == {0: (3, 3), 1: (1, 2)}
 
 
-def test_map_str():
-    """Serialize assignment."""
-    assignment = {0: (1, 1), 1: (2, 3), 2: (0, 0)}
-    assert map_str(assignment) == "0=1,1=2-3,2=e"
-
-
-# Durations grade assignments, they never change them (ADR 0001)
-def test_audit_ratio():
-    """disc ÷ tmdb at 2dp; unknown sides are None."""
-    assert audit_ratio(3932, 4140) == 0.95
-    assert audit_ratio(3897, 4080) == 0.96  # 0.9551 — round() gives 0.96
-    assert audit_ratio(3653, 3840) == 0.95
-    assert audit_ratio(3932, 0) is None  # TMDB has no runtime
-    assert audit_ratio(0, 4140) is None
-    assert audit_ratio(-1, 4140) is None
-
-
-def test_audit_cell():
-    """In-band green, out-of-band yellow; extras and missing runtimes blank.
-
-    A double audits against the sum of both runtimes.
-    """
-    assert audit_cell(3932, 1, 1, {1: 4140}) == ("0.95", "green")
-    assert audit_cell(6000, 1, 1, {1: 4000}) == ("1.50", "yellow")
-    assert audit_cell(3932, 0, 0, {1: 4140}) is None  # extra: blank
-    assert audit_cell(3932, 1, 1, {}) is None  # episode not in season: blank
-    assert audit_cell(3932, 1, 1, {1: 0}) is None  # TMDB runtime missing: blank
-    assert audit_cell(7800, 1, 2, {1: 3900, 2: 3900}) == ("1.00", "green")  # double sums
-
-
-def test_audit_band_edges_inclusive():
-    """The PAL band grades the exact quotient: 0.92..1.04 green, just outside
-    yellow — even when the 2dp text rounds back onto an edge."""
-    assert audit_cell(9200, 1, 1, {1: 10000}) == ("0.92", "green")
-    assert audit_cell(10400, 1, 1, {1: 10000}) == ("1.04", "green")
-    assert audit_cell(9190, 1, 1, {1: 10000}) == ("0.92", "yellow")  # 0.919
-    assert audit_cell(10410, 1, 1, {1: 10000}) == ("1.04", "yellow")  # 1.041
-
-
 def test_print_table_audit_column_generation_kill(mock_console):
     """Generation Kill disc 1 renders 0.95/0.96/0.95 green; the play-all's
     audit cell stays blank."""
@@ -434,54 +266,9 @@ def test_naming_no_clobber():
         assignment = {0: (1, 1)}
 
         rename_tv("Show (2000)", stage, 1, assignment)
-
         # Original should stay, junk file untouched with warning
         assert (stage / "Show (2000)_S01E01.mkv").exists()
         assert (stage / "B1_t02.mkv").exists()
-
-
-def test_scan_disc():
-    """One info run returns the media token + parsed titles."""
-    output = """
-DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"
-TINFO:0,9,"0:21:00"
-TINFO:0,11,"1234567890"
-TINFO:1,9,"0:22:30"
-TINFO:1,11,"2345678901"
-TINFO:2,9,"0:15:00"
-TINFO:2,11,"3456789012"
-"""
-
-    mock_run = Mock(return_value=Mock(stdout=output))
-
-    media, _label, titles = scan_disc(120, run=mock_run)
-
-    assert media == "DVD-ROM"
-    # titles sorted by number, with seconds and size
-    assert len(titles) == 3
-    assert titles[0].number == 0
-    assert titles[0].seconds == 21 * 60  # 21:00
-    assert titles[0].size == 1234567890
-    assert titles[1].number == 1
-    assert titles[1].seconds == 22 * 60 + 30  # 22:30
-    assert titles[2].number == 2
-    assert titles[2].seconds == 15 * 60
-
-
-def test_scan_disc_makemkv_info_override():
-    """Honor MAKEMKV_INFO env var."""
-    output = """
-DRV:0,2,0,0,"DVD-ROM"
-TINFO:0,9,"0:21:00"
-TINFO:0,11,"1234567890"
-"""
-    mock_run = Mock(return_value=Mock(stdout=output))
-
-    with patch.dict(os.environ, {"MAKEMKV_INFO": "echo test"}):
-        media, _label, titles = scan_disc(120, run=mock_run)
-
-    assert media == "DVD-ROM"
-    assert len(titles) == 1
 
 
 def test_extras_flow():
@@ -592,6 +379,7 @@ def mock_console():
     with patch("skive.rip_tv.console") as m:
         yield m
 
+
 def test_show_staging_scopes_to_one_show(tmp_path):
     """show_staging returns the show's episodes and extras, nothing else."""
     from skive.rip_tv import show_staging
@@ -675,45 +463,6 @@ def test_clear_staged_declined_keeps_files(tmp_path, monkeypatch):
                                       ["1", "", "c", "n", "q"])  # season, range, clear, no, quit
     assert poisoned.exists()
     assert rc == 1
-
-
-def test_tv_floor():
-    """Floor never drops below 600s, never raises above minlength."""
-    assert tv_floor(120) == 600
-    assert tv_floor(3000) == 3000
-
-
-def test_sum_disqualified_generation_kill():
-    """11482 = 3932+3897+3653 exactly: title 3 is the play-all."""
-    titles = [(0, 3932, 1), (1, 3897, 1), (2, 3653, 1), (3, 11482, 1)]
-    assert sum_disqualified(titles) == {3}
-
-
-def test_sum_disqualified_clean_list():
-    """No subset sums -> nothing disqualified."""
-    titles = [(0, 2500, 1), (1, 2450, 1), (2, 2400, 1)]
-    assert sum_disqualified(titles) == set()
-
-
-def test_sum_disqualified_tolerance():
-    """±120s tolerance: sum +100s still disqualifies, +200s does not."""
-    plus_100 = [(0, 1000, 1), (1, 1500, 1), (2, 2600, 1)]
-    assert sum_disqualified(plus_100) == {2}
-
-    plus_200 = [(0, 1000, 1), (1, 1500, 1), (2, 2700, 1)]
-    assert sum_disqualified(plus_200) == set()
-
-
-def test_sum_disqualified_overlapping_playalls():
-    """Several play-alls on one disc all get disqualified."""
-    titles = [(0, 1000, 1), (1, 1000, 1), (2, 2000, 1), (3, 3000, 1), (4, 4000, 1)]
-    assert sum_disqualified(titles) == {2, 3, 4}
-
-
-def test_sum_disqualified_subset_size_cap():
-    """Sum of 7 components does not disqualify (subset must be 2..6)."""
-    titles = [(i, 600, 1) for i in range(7)] + [(7, 4200, 1)]
-    assert sum_disqualified(titles) == set()
 
 
 def test_floor_drops_short_titles_before_rip():
@@ -913,7 +662,6 @@ def test_fix_row_can_assign_playall_to_episode():
 
 
 # --- Fast scan: duration join + rename (ADR 0002, DVD half) ---
-
 GK_DURATIONS = [3932, 3897, 3653, 11482]
 
 

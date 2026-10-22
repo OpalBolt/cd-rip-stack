@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted, sanitize
-from skive.makemkv import (
-    TitleInfo, ambiguous, fast_scan_bluray, fast_scan_dvd, is_recordable, iso2b, purge_junk, scan_disc, sniff_disc,
+from skive.makemkv import purge_junk
+from skive.scan import (
+    TitleInfo, ambiguous, fast_scan_bluray, fast_scan_dvd, is_recordable, iso2b, scan_disc, sniff_disc,
 )
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
 

@@ -48,6 +48,7 @@ _FFPROBE = "ffprobe.exe"
 _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm"
 
 
+# sanitize/RipLog duplicate skive/common.py on purpose: standalone Windows file, no skive import.
 def sanitize(s: str) -> str:
     """Strip filesystem-hostile chars; keeps ( ) for "Title (Year)"."""
     return re.sub(r'[/:*?"<>|]', "", s)

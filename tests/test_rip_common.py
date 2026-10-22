@@ -7,7 +7,7 @@ import pytest
 
 from skive import rip_common
 from skive.common import MENU
-from skive.makemkv import TitleInfo
+from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
 
 
