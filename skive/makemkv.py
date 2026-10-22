@@ -11,6 +11,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from skive import common
+
 
 # Port of bash constants
 BASELINE = '-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
@@ -73,7 +75,10 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     Parses robot output: PRGV (values), PRGT (phase name), MSG (messages).
     sizes (estimated bytes per title, in rip order) drives a live GiB column:
     ripped ≈ estimated size × progress fraction.
-    Every output line lands verbatim in the run's raw log (log.raw).
+    Every output line lands verbatim in the run's raw log (log.raw). Console
+    verbosity (common.VERBOSITY) gates only the printing: MSG lines show at
+    -v, raw/unknown lines at -vv, and anything the level hid is replayed
+    verbatim to stderr when makemkvcon fails (story 7).
     """
     from rich.progress import (
         BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn,
@@ -81,6 +86,8 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     cmd = cmd[:1] + ["--progress=-same"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     est_total = sum(sizes) if sizes else 0
+    verbose = common.VERBOSITY
+    hidden: list[str] = []  # console-suppressed lines, replayed on failure
     with Progress(
         TextColumn("[bold]{task.description}"),
         BarColumn(),
@@ -124,11 +131,23 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
             elif line.startswith("PRGT:"):
                 progress.update(task, description=f"{desc} — {_qval(line)}")
             elif line.startswith("MSG:"):
-                progress.console.print(_qval(line), highlight=False)
+                if verbose >= 1:
+                    progress.console.print(_qval(line), highlight=False)
+                else:
+                    hidden.append(line)
             elif line:
                 # Pass through anything else makemkvcon prints (drive/errors/etc.)
-                progress.console.print(line, highlight=False)
-    return proc.wait()
+                if verbose >= 2:
+                    progress.console.print(line, highlight=False)
+                else:
+                    hidden.append(line)
+    rc = proc.wait()
+    if rc != 0:
+        # Story 7: the captured lines the console never saw are replayed
+        # verbatim so a crash still tells the operator what the tool said.
+        for line in hidden:
+            print(line, file=sys.stderr)
+    return rc
 
 
 def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None) -> int:

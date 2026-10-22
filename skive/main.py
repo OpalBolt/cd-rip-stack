@@ -2,7 +2,7 @@
 
 import argparse
 
-from skive.common import MENU
+from skive.common import MENU, set_verbosity
 
 
 def cmd_rip_movie(args):
@@ -30,8 +30,12 @@ def cmd_sync_sd(args):
     sync_sd(args)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The skive argument parser: -v/-vv live on the TOP level so they apply
+    to every subcommand (skive -v rip movie, not skive rip movie -v)."""
     parser = argparse.ArgumentParser(prog="skive", description="Rip CDs, DVDs, and Blu-rays to MKV and FLAC.")
+    parser.add_argument("-v", "--verbose", action="count", default=0,
+                        help="console verbosity: -v adds tool messages (MakeMKV MSG, cyanrip progress, HandBrake errors), -vv passes tool output through raw")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # rip subcommand
@@ -86,7 +90,12 @@ def main() -> None:
                                  help="card mountpoint (skip auto-detection)")
     sync_sd_parser.set_defaults(func=cmd_sync_sd)
 
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    set_verbosity(args.verbose)  # clamps -vvv and beyond to 2
     args.func(args)
 
 

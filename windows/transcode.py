@@ -12,7 +12,7 @@ re-encoded, audio copied. Main features and TV episodes ship with ZERO subtitle
 tracks (the inline subtitle pass extracts them to SRT sidecars beside the
 encode); extras keep every track embedded.
 
-Usage:  python transcode.py [-k] [-e x265|nvenc|qsv|vce] [-w DIR] [prefix...]
+Usage:  python transcode.py [-k] [-e x265|nvenc|qsv|vce] [-w DIR] [-v|-vv] [prefix...]
 """
 
 import argparse
@@ -53,6 +53,19 @@ _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm"
 def sanitize(s: str) -> str:
     """Strip filesystem-hostile chars; keeps ( ) for "Title (Year)"."""
     return re.sub(r'[/:*?"<>|]', "", s)
+
+
+# Console verbosity: 0 = transcode's own lines only, 1 = -v adds HandBrake
+# error lines, 2 = -vv raw passthrough. Duplicate of skive/common.py's
+# VERBOSITY on purpose (standalone file); main()/run_transcode set it once.
+# The raw log always captures everything regardless of level.
+VERBOSITY = 0
+
+
+def set_verbosity(level: int) -> None:
+    """Store the console verbosity, clamped to 0/1/2 (absent/-v/-vv)."""
+    global VERBOSITY
+    VERBOSITY = max(0, min(int(level or 0), 2))
 
 
 def _append_jsonl(path: str, obj: dict) -> None:
@@ -306,8 +319,12 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
             no_subs: bool = False, log: RipLog | None = None) -> bool:
     """HandBrake pass-through re-encode at native resolution. GPU encoders override the encoder.
     no_subs selects zero subtitle tracks (features/TV); extras keep today's pass-through.
-    Every HandBrake output line is echoed to the console unchanged and written verbatim
-    to the run's raw log (log.raw), the same tee discipline as skive/makemkv.py."""
+    Every HandBrake output line is written verbatim to the run's raw log (log.raw),
+    the same tee discipline as skive/makemkv.py, while the console sees it gated
+    by the verbosity tiers: quiet at 0, HandBrake error lines at -v, everything
+    at -vv; anything the level hid is replayed verbatim when the encode fails.
+    HandBrakeCLI's exact line shapes were never observed on this box -- errors
+    are gated by its "ERROR" line prefix; verify on the first real transcode."""
     height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
     if encoder != "x265":
@@ -326,11 +343,20 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         cmd += ["--subtitle-lang-list", "zzz"]
     cmd += ["--all-subtitles", "--subtitle-burned=none"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    hidden: list[str] = []  # console-suppressed lines, replayed on failure
     for line in proc.stdout:
-        print(line, end="", flush=True)
+        stripped = line.rstrip()
+        if VERBOSITY >= 2 or (VERBOSITY >= 1 and stripped.startswith("ERROR")):
+            print(line, end="", flush=True)
+        elif stripped:
+            hidden.append(stripped)
         if log is not None:
-            log.raw("handbrake", line.rstrip())
-    return proc.wait() == 0
+            log.raw("handbrake", stripped)
+    rc = proc.wait()
+    if rc != 0:
+        for line in hidden:
+            print(line, flush=True)
+    return rc == 0
 
 
 def _rmf(path: str) -> None:
@@ -389,10 +415,11 @@ def _sub_pass(local_src: str, work_dir: str, base: str, seconv_exe: str,
               ffprobe_exe: str, log: RipLog | None = None):
     """Inline subtitle pass on the local copy/merge; sidecars land in a fresh
     dir under the work dir and only move beside the encode once it succeeds.
-    Captured ffprobe/seconv output lines go to the run's raw log via log.raw.
-    Returns (sidecar dir, PassResult)."""
+    Captured ffprobe/seconv output lines go to the run's raw log via log.raw
+    (and pass through to the console at -vv). Returns (sidecar dir, PassResult)."""
     side_dir = tempfile.mkdtemp(dir=work_dir, prefix="subs-")
-    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe, log=log)
+    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe,
+                        log=log, verbose=VERBOSITY)
     for n in res.notes:
         print(n)
     return side_dir, res
@@ -416,6 +443,7 @@ def _fail_quarantine(log: RipLog, paths: list[str], issues_dir: str,
 
 
 def run_transcode(args) -> int:
+    set_verbosity(getattr(args, "verbose", 0))
     vid = os.environ.get("VIDEOS") or "Z:\\"
     if not os.path.isdir(vid):
         print(
@@ -665,6 +693,8 @@ def parse_args(argv=None):
                    help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
     p.add_argument("-w", "--workdir", metavar="DIR",
                    help="local temp work dir (default: $VIDEO_WORK_DIR or %%TEMP%%\\video-work)")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="console verbosity: -v adds HandBrake error lines, -vv passes tool output through raw")
     p.add_argument("prefixes", nargs="*", metavar="NAME",
                    help="transcode only movies whose staged filename starts with this prefix")
     return p.parse_args(argv)

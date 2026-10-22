@@ -14,6 +14,19 @@ from pathlib import Path
 # a cycle.
 MENU = object()
 
+# Console verbosity: 0 = skive's own lines only, 1 = -v adds tool messages
+# worth babysitting, 2 = -vv raw passthrough. Module-level so the print sites
+# in makemkv.py/rip_music.py read it without threading a parameter through
+# every rip call site; main.py sets it once per run. The run and raw logs are
+# always written regardless of level.
+VERBOSITY = 0
+
+
+def set_verbosity(level: int) -> None:
+    """Store the console verbosity, clamped to 0/1/2 (absent/-v/-vv)."""
+    global VERBOSITY
+    VERBOSITY = max(0, min(int(level), 2))
+
 
 def _append_jsonl(path: Path, obj: dict) -> None:
     """Append one object as a JSONL line.

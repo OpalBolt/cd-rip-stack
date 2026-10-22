@@ -2,11 +2,14 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+import pytest
+
+from skive import common
 from skive.makemkv import (
     BASELINE, build_selection, inject_profile, purge_junk, rename_staged,
-    rip_titles, looks_real, subtitle_note,
+    rip_titles, looks_real, subtitle_note, _run_with_progress,
 )
 
 
@@ -297,3 +300,80 @@ def test_rip_header():
     assert "audio: dan,eng" in h and "subs:  dan,eng" in h
 
 
+
+
+# -- verbosity tiers on the _run_with_progress console prints ------------------
+
+def _mkvcon(lines, rc=0):
+    """A fake makemkvcon Popen: stdout iterates lines, wait returns rc."""
+    proc = Mock(stdout=iter(lines))
+    proc.wait.return_value = rc
+    return proc
+
+
+@pytest.fixture
+def verbosity(monkeypatch):
+    """Set the module console verbosity for one test, restore afterwards."""
+    def set_level(level):
+        monkeypatch.setattr(common, "VERBOSITY", level)
+    return set_level
+
+
+def test_run_with_progress_quiet_at_default(verbosity, capsys):
+    """Level 0: MSG and raw lines stay hidden; the skive header still shows."""
+    verbosity(0)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+            "PRGV:100,200,65536", 'MSG:1007,"Working"', "drive chatter"])):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test", header="Movie (2020)")
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Movie (2020)" in err  # skive's own lines print at every level
+    assert "Working" not in err
+    assert "drive chatter" not in err
+
+
+def test_run_with_progress_msg_shown_at_v1(verbosity, capsys):
+    """Level 1: MSG lines stream (parsed value); raw/unknown lines stay hidden."""
+    verbosity(1)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+            'MSG:1007,"Working"', "drive chatter"])):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test")
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Working" in err
+    assert "drive chatter" not in err
+
+
+def test_run_with_progress_raw_passthrough_at_v2(verbosity, capsys):
+    """Level 2: raw/unknown lines pass through; PRGV still only drives the bar."""
+    verbosity(2)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+            "PRGV:100,200,65536", 'MSG:1007,"Working"', "drive chatter"])):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test")
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Working" in err
+    assert "drive chatter" in err
+    assert "PRGV:100,200,65536" not in err  # bar driver, never a console line
+
+
+def test_run_with_progress_failure_replays_hidden_lines(verbosity, capsys):
+    """Failure at level 0: hidden output replays verbatim (story 7)."""
+    verbosity(0)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
+            ['MSG:1007,"Working"', "drive chatter"], rc=2)):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test")
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert 'MSG:1007,"Working"' in err
+    assert "drive chatter" in err
+
+
+def test_run_with_progress_success_replays_nothing(verbosity, capsys):
+    """Success at level 0 stays silent: the raw log alone records the output."""
+    verbosity(0)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
+            ["drive chatter"])):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test")
+    assert rc == 0
+    assert "drive chatter" not in capsys.readouterr().err

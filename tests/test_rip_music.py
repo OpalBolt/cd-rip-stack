@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 
+from skive import common
 from skive.rip_music import rip_music, _cyanrip_run, _newest_flac_album, _metaflac_tag, require_online
 from rich.prompt import Prompt
 
@@ -43,8 +44,9 @@ def test_cyanrip_run_cmdline():
             assert (rc, captured) == (0, "")
 
 
-def test_cyanrip_run_captures_and_streams_output(capsys):
-    """Test cyanrip output is captured and streamed."""
+def test_cyanrip_run_quiet_at_default(capsys, monkeypatch):
+    """Level 0: cyanrip output is captured but not streamed on success."""
+    monkeypatch.setattr(common, "VERBOSITY", 0)
     with tempfile.TemporaryDirectory() as tmpdir:
         process = Mock(stdout=iter(["Ripping track 1\n", "Rip complete\n"]))
         process.wait.return_value = 0
@@ -54,6 +56,50 @@ def test_cyanrip_run_captures_and_streams_output(capsys):
 
         assert rc == 0
         assert captured == "Ripping track 1\nRip complete\n"
+        assert capsys.readouterr().out == ""
+
+
+def test_cyanrip_run_progress_streams_at_v1(capsys, monkeypatch):
+    """Level 1: percent progress lines stream; other chatter stays hidden."""
+    monkeypatch.setattr(common, "VERBOSITY", 1)
+    lines = ["Track 1 of 12\n", "Ripping... 45%\n", "Rip complete\n"]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        process = Mock(stdout=iter(lines))
+        process.wait.return_value = 0
+
+        with patch("subprocess.Popen", return_value=process):
+            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+
+        assert rc == 0
+        assert capsys.readouterr().out == "Ripping... 45%\n"
+        assert captured == "".join(lines)  # capture is complete either way
+
+
+def test_cyanrip_run_raw_passthrough_at_v2(capsys, monkeypatch):
+    """Level 2: everything streams exactly as captured."""
+    monkeypatch.setattr(common, "VERBOSITY", 2)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        process = Mock(stdout=iter(["Ripping track 1\n", "Rip complete\n"]))
+        process.wait.return_value = 0
+
+        with patch("subprocess.Popen", return_value=process):
+            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+
+        assert rc == 0
+        assert capsys.readouterr().out == captured
+
+
+def test_cyanrip_run_failure_replays_captured(capsys, monkeypatch):
+    """Level 0 failure: the hidden lines replay verbatim to the console."""
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        process = Mock(stdout=iter(["Ripping track 1\n", "Read error\n"]))
+        process.wait.return_value = 1
+
+        with patch("subprocess.Popen", return_value=process):
+            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+
+        assert rc == 1
         assert capsys.readouterr().out == captured
 
 

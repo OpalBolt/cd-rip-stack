@@ -31,11 +31,12 @@ _SPEC.loader.exec_module(transcode)
 
 
 class Args:
-    def __init__(self, prefixes=None, keep=False, encoder="x265", workdir=None):
+    def __init__(self, prefixes=None, keep=False, encoder="x265", workdir=None, verbose=0):
         self.prefixes = prefixes or []
         self.keep = keep
         self.encoder = encoder
         self.workdir = workdir
+        self.verbose = verbose
 
 
 def mk(vid, rel, content):
@@ -675,7 +676,8 @@ class TestRipLogJsonl:
 
 def test_handbrake_output_lands_in_raw_log_on_failure(env, capsys):
     """Raw capture wiring: every HandBrake output line reaches the run's raw log
-    (kept on failure) while the console still sees the lines unchanged."""
+    (kept on failure). The console hides them at the default verbosity, then
+    replays them verbatim because the encode failed (story 7)."""
     vid = env / "vid"
     (env / "bin" / "HandBrakeCLI.exe").write_text("""#!/bin/sh
 in=""
@@ -696,7 +698,7 @@ if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
     out = capsys.readouterr().out
 
     assert rc == 1
-    # console behavior unchanged: output still streams through
+    # failure replay: hidden output reaches the console verbatim
     assert "Encoding: task 1 of 1" in out
     assert "Encode done!" in out
     raws = list((vid / "logs" / "raw").glob("*.jsonl"))
@@ -705,3 +707,89 @@ if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
     hb = [l for l in lines if l["tool"] == "handbrake"]
     assert [l["line"] for l in hb] == \
         ["Encoding: task 1 of 1", "work: average 12.3 fps", "Encode done!"]
+
+
+# -- verbosity tiers (-v/-vv) ---------------------------------------------------
+
+def test_verbose_flag_levels():
+    """Same three levels on the transcoder's argparse: absent 0, -v 1, -vv 2."""
+    assert transcode.parse_args([]).verbose == 0
+    assert transcode.parse_args(["-v"]).verbose == 1
+    assert transcode.parse_args(["-vv"]).verbose == 2
+
+
+def _hb_stub(env, lines, exit_code=0):
+    """HandBrakeCLI stub that prints the given lines then encodes (or fails)."""
+    echos = "".join(f"echo {json.dumps(line)}\n" for line in lines)
+    (env / "bin" / "HandBrakeCLI.exe").write_text(f"""#!/bin/sh
+in=""; out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -i) in="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+{echos}if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
+cat "$in" > "$out"
+exit {exit_code}
+""")
+
+
+def test_encode_quiet_at_default(env, capsys):
+    """Level 0: HandBrake lines and the subtitle pass's captured ffprobe output
+    stay off the console on a clean run (the raw log still records them)."""
+    vid = env / "vid"
+    _hb_stub(env, ["Encoding: task 1 of 1", "Encode done!"])
+    mk(vid, "rip/tv/Quiet (2020)_S01E01.mkv", "SUBS-ENG-DAN")
+    rc = transcode.run_transcode(Args())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Encoding: task 1 of 1" not in out
+    assert '"streams"' not in out  # subtitle-pass ffprobe capture stays quiet
+
+
+def test_encode_error_lines_stream_at_v(env, capsys):
+    """Level 1: HandBrake ERROR lines stream; progress chatter stays hidden."""
+    vid = env / "vid"
+    _hb_stub(env, ["Encoding: task 1 of 1", "ERROR: something broke"])
+    mk(vid, "rip/Err (2001)_t00.mkv", "OK")
+    rc = transcode.run_transcode(Args(verbose=1))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ERROR: something broke" in out
+    assert "Encoding: task 1 of 1" not in out
+
+
+def test_encode_raw_passthrough_at_vv(env, capsys):
+    """Level 2: every HandBrake line streams as captured."""
+    vid = env / "vid"
+    _hb_stub(env, ["Encoding: task 1 of 1", "ERROR: something broke"])
+    mk(vid, "rip/Raw (2001)_t00.mkv", "OK")
+    rc = transcode.run_transcode(Args(verbose=2))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Encoding: task 1 of 1" in out
+    assert "ERROR: something broke" in out
+
+
+def test_encode_failure_replays_hidden_lines_at_default(env, capsys):
+    """Level 0 failure: hidden HandBrake output replays verbatim (story 7)."""
+    vid = env / "vid"
+    _hb_stub(env, ["Encoding: task 1 of 1", "ERROR: doomed"], exit_code=3)
+    mk(vid, "rip/Replay (1999)_t00.mkv", "FAILME")
+    rc = transcode.run_transcode(Args())
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "Encoding: task 1 of 1" in out
+    assert "ERROR: doomed" in out
+
+
+def test_sub_pass_raw_passthrough_at_vv(env, capsys):
+    """-vv passes the subtitle pass's captured ffprobe output to the console."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Subs (2020)_S01E01.mkv", "SUBS-ENG-DAN")
+    rc = transcode.run_transcode(Args(verbose=2))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert '"streams"' in out

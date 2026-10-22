@@ -90,22 +90,27 @@ def settle(per_language: list[tuple[Track, int]]) -> tuple[list[Keep], list[str]
     return keeps, notes
 
 
-def _raw(log, tool: str, text: str) -> None:
-    """Every captured output line, verbatim, into the run's raw log (no-op without one)."""
-    if log is not None:
-        for line in text.splitlines():
+def _raw(log, tool: str, text: str, verbose: int = 0) -> None:
+    """Every captured output line, verbatim, into the run's raw log (no log:
+    no-op). At -vv (verbose >= 2) the same lines also pass through to the
+    console -- the pass's own notes print unconditionally at every level."""
+    for line in text.splitlines():
+        if verbose >= 2:
+            print(line)
+        if log is not None:
             log.raw(tool, line)
 
 
-def inventory(mkv: str, ffprobe_exe: str, log=None) -> list[Track]:
-    """ffprobe the file's subtitle streams: index, codec, language tag, forced."""
+def inventory(mkv: str, ffprobe_exe: str, log=None, verbose: int = 0) -> list[Track]:
+    """ffprobe the file's subtitle streams: index, codec, language tag, forced.
+    verbose: -vv passes the captured ffprobe output through to the console."""
     r = subprocess.run(
         [ffprobe_exe, "-v", "error", "-select_streams", "s",
          "-show_entries", "stream=index,codec_name:stream_tags=language:stream_disposition=forced",
          "-of", "json", mkv],
         capture_output=True, text=True,
     )
-    _raw(log, "ffprobe", r.stdout + r.stderr)
+    _raw(log, "ffprobe", r.stdout + r.stderr, verbose)
     if r.returncode != 0:
         print(f"ffprobe failed on {mkv}: {r.stderr.strip()}", file=sys.stderr)
         return []
@@ -126,11 +131,13 @@ def count_events(srt_path: str) -> int:
         return sum(1 for line in fh if " --> " in line)
 
 
-def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None) -> str | None:
+def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
+            verbose: int = 0) -> str | None:
     """OCR one track into a FRESH temp subdir of out_dir (seconv names its
     output `<stem>.<lang>[.forced].srt`, so same-language tracks would collide
     in one dir). Returns the produced SRT path, or None (stderr note) on
-    nonzero returncode / no file. Caller removes the temp dirs."""
+    nonzero returncode / no file. Caller removes the temp dirs.
+    verbose: -vv passes the captured seconv output through to the console."""
     work = tempfile.mkdtemp(dir=out_dir, prefix=f"track{track.index}-")
     r = subprocess.run(
         # seconv --track-number is the 1-based Matroska TID; ffprobe index is 0-based
@@ -139,7 +146,7 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None) -> 
          f"--output-folder:{work}"],
         capture_output=True, text=True,
     )
-    _raw(log, "seconv", r.stdout + r.stderr)
+    _raw(log, "seconv", r.stdout + r.stderr, verbose)
     produced = sorted(f for f in os.listdir(work) if f.endswith(".srt"))
     if r.returncode != 0 or not produced:
         print(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
@@ -149,14 +156,15 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None) -> 
 
 
 def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
-             ffprobe_exe: str, log=None) -> PassResult:
+             ffprobe_exe: str, log=None, verbose: int = 0) -> PassResult:
     """The whole pass, orchestration only: inventory -> decide -> OCR each keep
     in its own temp dir -> settle full tracks per language -> move winners into
     out_dir under their final sidecar names. ok=False if any selected track
     failed; partial success still moves the good sidecars. log (a RipLog) gets
-    every captured ffprobe/seconv output line via log.raw."""
+    every captured ffprobe/seconv output line via log.raw; at -vv (verbose 2)
+    the same lines also pass through to the console."""
     notes: list[str] = []
-    tracks = inventory(mkv, ffprobe_exe, log=log)
+    tracks = inventory(mkv, ffprobe_exe, log=log, verbose=verbose)
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
     print(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
@@ -173,7 +181,7 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         for k in keeps:
             print(f"  OCR {k.track.lang} track {k.track.index}"
                   f"{' (forced)' if k.track.forced else ''}...")
-            srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log)
+            srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
             if srt is None:
                 ok = False
                 notes.append(f"FAIL {k.track.lang} (track {k.track.index}): seconv failed")

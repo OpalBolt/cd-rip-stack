@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.prompt import Prompt
 
+from skive import common
 from skive.common import RipLog, ensure_mounted
 
 
@@ -82,9 +83,19 @@ def rip_music(args) -> None:
     sys.exit(rc)
 
 
+def _progress_line(line: str) -> bool:
+    """cyanrip progress heuristic for -v: its percent updates carry a literal
+    '%'. The exact line shapes were never pinned down; anything misclassified
+    still shows at -vv or is replayed verbatim on failure, so a miss is
+    benign. Verify against a real rip on first run."""
+    return "%" in line
+
+
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tuple[int, str]:
-    """Run cyanrip with merged output captured, streamed to stdout, and written
-    verbatim to the run's raw log (log is None in tests)."""
+    """Run cyanrip with merged output captured, gated on the console by the
+    verbosity tiers (quiet by default, progress lines at -v, everything at
+    -vv; a failed run replays what was hidden, story 7), and written verbatim
+    to the run's raw log (log is None in tests)."""
     cmd = ["cyanrip", "-s", offset] + flags
     process = subprocess.Popen(
         cmd,
@@ -96,14 +107,24 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tupl
     )
 
     captured = []
+    hidden = []  # console-suppressed lines, replayed on failure
     if process.stdout is not None:
+        verbose = common.VERBOSITY
         for line in process.stdout:
-            print(line, end="", flush=True)
+            stripped = line.rstrip()
+            if verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
+                print(line, end="", flush=True)
+            elif stripped:
+                hidden.append(stripped)
             if log is not None:
-                log.raw("cyanrip", line.rstrip())
+                log.raw("cyanrip", stripped)
             captured.append(line)
 
-    return process.wait(), "".join(captured)
+    rc = process.wait()
+    if rc != 0:
+        for line in hidden:
+            print(line, flush=True)
+    return rc, "".join(captured)
 
 
 def _newest_flac_album(rip_dir: Path) -> str:

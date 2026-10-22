@@ -272,3 +272,14 @@ class TestEnsureMounted:
         assert mkdir_called
         assert mount_called
         assert mount_called[0] == ["sudo", "mount", "-t", "nfs", "host:/videos", "/mnt/videos"]
+
+
+def test_set_verbosity_clamps_to_tiers(monkeypatch):
+    """set_verbosity stores the console level clamped to 0/1/2."""
+    monkeypatch.setattr(skive.common, "VERBOSITY", 0)  # snapshot for restore
+    skive.common.set_verbosity(-1)
+    assert skive.common.VERBOSITY == 0
+    skive.common.set_verbosity(2)
+    assert skive.common.VERBOSITY == 2
+    skive.common.set_verbosity(5)  # -vvv and beyond clamps to 2
+    assert skive.common.VERBOSITY == 2
