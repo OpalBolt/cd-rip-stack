@@ -977,3 +977,35 @@ def test_interrupt_drops_tv_sidecar_dir_and_temp(env, monkeypatch):
     assert rc == 130
     assert list(work.iterdir()) == []  # local copy, sidecar dir, no partial shipped
     assert (vid / "rip" / "tv" / "Halt (2011)_S01E01.mkv").exists()
+
+
+def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monkeypatch):
+    """Ctrl+C during a split main's part copies: the local part copies are
+    registered in `inflight` as they are created, so the interrupt drops them
+    (the completed part-1 copy plus the partial part-2 copy) instead of leaving
+    merge work behind; the sources stay in staging, exit 130."""
+    vid = env / "vid"
+    mk(vid, "rip/Slit (2004)_t00.p1.mkv", "SLIT-P1")
+    mk(vid, "rip/Slit (2004)_t00.p2.mkv", "SLIT-P2")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+
+    real_copy2 = transcode._copy2
+
+    def fake_copy2(src, dst):
+        if pathlib.Path(dst).name.endswith(".p2.mkv"):
+            pathlib.Path(dst).write_text("PARTIAL-COPY")  # half-copied second part
+            raise transcode.Interrupted()
+        real_copy2(src, dst)
+
+    monkeypatch.setattr(transcode, "_copy2", fake_copy2)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 130
+    assert (vid / "rip" / "Slit (2004)_t00.p1.mkv").exists()  # both sources untouched
+    assert (vid / "rip" / "Slit (2004)_t00.p2.mkv").exists()
+    assert list(work.iterdir()) == []  # part-1 local copy + partial part-2 dropped
+    log = run_log(env)
+    assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
+    assert "transcode: interrupted -- partial temp output deleted, source left in staging" \
+        in capsys.readouterr().err

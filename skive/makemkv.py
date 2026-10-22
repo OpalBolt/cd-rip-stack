@@ -326,6 +326,7 @@ def purge_junk(stage_dirs: list[Path], quiet: bool = False) -> None:
         quiet: Skip the per-file stderr line (the interrupt exit purges
             silently so its one summary line stays the only output)
     """
+    # shortcut: a year-less TMDB title shaped like a bare code ("B2" renames to "B2_t01.mkv") full-matches this pattern, so a completed file would be purged like a partial; if TMDB ever returns year-less titles or bare codes, anchor junk matching to the current run instead of the name pattern
     junk_pat = re.compile(r'^[A-Z][0-9]+_t\d+$')
     for stage_dir in stage_dirs:
         if not stage_dir.is_dir():

@@ -697,6 +697,10 @@ def run_transcode(args) -> int:
                 dest_dir = os.path.join(lib_dir, safe)
                 dest = os.path.join(dest_dir, safe + ".mkv")
                 log.phase("encode")
+                # cleanup removes this item's temps AFTER the encode; every
+                # entry is also registered in `inflight` AS CREATED so an
+                # interrupt during the copy/merge window drops it too
+                # (CONTEXT.md: Interrupt)
                 cleanup: list[str] = []
                 if len(siblings) > 1:
                     # track guard: a mismatched part set never merges or encodes
@@ -715,10 +719,12 @@ def run_transcode(args) -> int:
                     for s in siblings:
                         lb = os.path.join(tmp_dir, s.name)
                         print(f"copying {s.name} to local temp...")
+                        inflight.append(lb)  # BEFORE the copy: mid-copy interrupt drops the partial
                         _copy2(s.path, lb)
                         local_parts.append(lb)
                         cleanup.append(lb)
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
+                    inflight.append(local_src)  # BEFORE the merge: mid-merge interrupt drops the partial
                     mrc = _merge(local_src, local_parts, mkv_exe, log=log)
                     if mrc <= 1:  # 0 ok, 1 warning (still usable)
                         cleanup.append(local_src)
@@ -738,6 +744,7 @@ def run_transcode(args) -> int:
                     os.makedirs(dest_dir, exist_ok=True)
                     local_src = os.path.join(tmp_dir, i.name)
                     print(f"copying {i.name} to local temp...")
+                    inflight.append(local_src)  # BEFORE the copy (same as the TV branch)
                     _copy2(i.path, local_src)
                     cleanup.append(local_src)
 
