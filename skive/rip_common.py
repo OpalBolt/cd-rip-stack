@@ -102,7 +102,7 @@ def _preamble_body(kind: str, args, log, disc: int, stage_movie: Path,
         log.note("media", f"media={media}")
 
     # Fast path (ADR 0002): movie/TV + pressed video disc + no -T/--extras
-    # gates on scanner durations in seconds — lsdvd (mounted DVD) or
+    # gates on scanner durations in seconds — lsdvd straight on the device (DVD) or
     # `ffprobe bluray:` (device listing, DRM-free). Recordable BD already
     # exits at the gate above, so only pressed BD reaches the fast scan.
     # Flagged runs (-T menu/spec, --extras) stay on the full scan. Scanner

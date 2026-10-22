@@ -52,6 +52,8 @@ By hand:
   `app_Key = "..."` — the free beta key rotates every 30 days
 - `cyanrip` (AUR) for CD rips
 - `flac` (provides `metaflac`)
+- `lsdvd` — the DVD fast-scan gate: reads title durations straight off the
+  device; without it every DVD silently falls back to the slow full scan
 - `mkvtoolnix` (provides `mkvmerge`, the backfill's strip step)
 - `tesseract` with `tesseract-data-eng` and `tesseract-data-dan` — OCR for the
   subtitle pass; `tesseract --list-langs` must show `eng` and `dan`
@@ -62,7 +64,7 @@ By hand:
 Arch, in two commands (`yay` works in place of `paru`):
 
 ```bash
-sudo pacman -S --needed flac mkvtoolnix-cli rsync tesseract tesseract-data-eng tesseract-data-dan
+sudo pacman -S --needed flac lsdvd mkvtoolnix-cli rsync tesseract tesseract-data-eng tesseract-data-dan
 paru -S --needed makemkv cyanrip
 ```
 
