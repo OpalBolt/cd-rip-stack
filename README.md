@@ -14,10 +14,15 @@ skive sync-sd    [mountpoint]                                                   
 
 Ripping happens on the Linux machine with the drive. Transcoding runs on a
 separate Windows machine (see [Windows transcode box](#windows-transcode-box)).
-Both share one NAS mount: `rip/` stages the lossless MKVs, `library/` holds the
-encodes. `windows/transcode.py` + `windows/subs.py` are the whole Windows
-install, copied over by
-hand.
+Both share one NAS mount: `rip/` stages the lossless MKVs (one folder per
+movie or show), `library/` holds the encodes. `windows/transcode.py` +
+`windows/subs.py` are the whole Windows install, copied over by hand.
+
+Every skive command takes `-v` (tool messages) or `-vv` (raw tool output)
+before the subcommand — `skive -v rip movie`. `rip movie` and `rip tv` also
+take `-d N` to name the drive, so two discs can rip at once. Ctrl+C anywhere
+is a graceful interrupt: the child stops, the in-flight partial is deleted,
+completed titles are kept, exit 130.
 
 ## Linux setup
 
@@ -82,32 +87,50 @@ paru -S --needed makemkv cyanrip
 Keys come from the process environment, never from `.env`. NFS mounts happen
 on demand and are never unmounted by skive.
 
-### One-time migration
+### Migrating an old share
 
-If you are upgrading from the old bash scripts, move the existing staging into
-the new subdirectories:
+A share staged with the old layout (flat `rip/movies/*.mkv`, `library/TV/`,
+flat `rip-DONE/`) is re-treed by one script:
 
 ```bash
-mv /mnt/videos/rip/TV /mnt/videos/rip/tv
-mv /mnt/videos/rip/*.mkv /mnt/videos/rip/movies/
+python scripts/migrate_layout.py                # dry-run: prints every move it would make
+python scripts/migrate_layout.py --apply        # execute the moves
+python scripts/migrate_layout.py --root /mnt/videos   # explicit root (default: $VIDEOS_MOUNT)
 ```
 
-The staging subdirectory is what tells transcode a file is TV — hence `tv/`.
+Run the dry-run first and read the move list. The script is idempotent — a
+re-run on a migrated tree reports zero moves. Anything it cannot classify is
+reported and left in place, never touched: junk labels (`B1_t00.mkv`), names
+that lost their title year, a bare ` - Extra NN` file in a flat context
+(movie or TV extra is undecidable there), and any path that would traverse a
+symlink. Old text `rip.log` files are left in place, unread.
+
+After `--apply`, rescan the Jellyfin library once. Jellyfin keeps its single
+root `/mnt/videos/library`, so the split into `library/movies/` and
+`library/tv/` costs one rescan, not a reconfigure.
 
 ## Layout on the NAS
 
 ```text
 /mnt/videos/
-  rip/movies/      movie staging: <Movie (Year)>_tNN.mkv, _tNN.pN.mkv (split-film half), <Movie (Year)> - Extra NN[.pN].mkv (extras)
-  rip/tv/          TV staging: <Show (Year)>_S01E02.mkv, _S01E01-E02.mkv (double), <Show (Year)> - Extra NN.mkv (extras)
-  library/         point Jellyfin here: <Movie (Year)>/<Movie (Year)>.mkv + extras/
-  library/TV/      <Show (Year)>/Season NN/<Show (Year)> - S01E02.mkv, season 0 as Specials/, plus extras/
-  rip-DONE/        where transcode --keep parks lossless sources (verify, then delete)
+  rip/<type>/<Name (Year)>/         staging: one folder per movie or show
+    d{disc}/                        the ripping drive's subdir while a rip runs (parallel drives never collide on junk labels)
+  library/movies/<Movie (Year)>/    finished movie encodes + extras/
+  library/tv/<Show (Year)>/         Season NN/ (season 0 = Specials/) + extras/
+  lossless/<type>/<Name (Year)>/    where transcode --keep parks lossless sources (verify, then clean by hand)
+  issues/<type>/<Name (Year)>/      quarantine for failed transcodes: the source + that run's log lines and raw log
+  logs/rip.jsonl                    the run log, appended by both machines
+  logs/raw/<run>.jsonl              one run's raw tool output (deleted on a clean exit)
 ```
 
-The library layout is unchanged: `library/<Movie (Year)>/`, TV under
-`library/TV/<Show (Year)>/Season NN/` (season 0 = `Specials`), extras in
-`extras/` beside the movie or show.
+`<type>` is `movies` or `tv` — the first path segment under `rip/` is what
+tells transcode a file is TV. Staged names: `<Movie (Year)>_tNN.mkv`,
+`_tNN.pN.mkv` (split-film half), `<Movie (Year)> - Extra NN[.pN].mkv`
+(extras), `<Show (Year)>_S01E02.mkv`, `_S01E01-E02.mkv` (double). Finished
+files are promoted up from `d{disc}` into the title folder before transcode
+sees them.
+
+Point Jellyfin at `/mnt/videos/library` — the single library root.
 
 ## Ripping video
 
@@ -117,26 +140,38 @@ Both `rip movie` and `rip tv` share the same behavior:
    unless you verified the disc by eye and pass `--verified`. Thrift-store
    discs are often bootlegs; genuinely-original recordable releases exist
    (e.g. Warner Archive DVD-R).
-2. **Junk purge** — stale junk-labeled leftovers (`B1_t00.mkv`) from a failed
-   earlier session are deleted before the rip.
-3. **Online gate** — TMDB must answer before anything spins.
-4. **TMDB search** — the disc's volume label searches TMDB automatically and
+2. **Fast scan first** — a pressed DVD or Blu-ray is read in seconds, not
+   minutes: `lsdvd` straight on the device (no mount, no sudo) or `ffprobe
+   bluray:`. Any failure, or two titles within ±1s (decoy playlists),
+   escalates to the full MakeMKV scan. Runs with `-T` or `--extras` start on
+   the full scan.
+3. **Junk purge** — stale junk-labeled leftovers (`B1_t00.mkv`) from a failed
+   earlier session are deleted before the rip — scoped to this title's
+   staging tree, never a sibling title or another drive's.
+4. **Online gate** — TMDB must answer before anything spins.
+5. **TMDB search** — the disc's volume label searches TMDB automatically and
    the results table appears; pick a hit, or `s` drops to a typed search. An
    empty result re-prompts typed, `q` aborts. `--tmdbid` (bare id, `tv:N`, or
    a pasted themoviedb.org URL) skips the search.
-5. **Rip** — one `makemkvcon` call per title at `--minlength=$RIP_MINLENGTH`.
-   A failed title never kills the run: the worst return code is collected and
-   becomes the exit code.
-6. **Rename** — junk labels become `<Title> (Year)_tNN[.pN].mkv` (titles),
-   `<Title> (Year) - Extra NN[.pN].mkv` (extras), or `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
-7. **Done** — a clean rip (exit code 0) just finishes; eject and swap
+6. **Staging** — the title folder `rip/<type>/<Name (Year)>/` is created only
+   after you pick the title at the TMDB prompt, with `d{disc}` inside (the
+   ripping drive).
+7. **Rip** — one `makemkvcon` call per title at `--minlength=$RIP_MINLENGTH`
+   (a fast-scan run rips all titles in one call). A failed title never kills
+   the run: the worst return code is collected and becomes the exit code.
+8. **Promotion + rename** — finished files move up from `d{disc}` into the
+   title folder (a name collision leaves the file in place with a note), then
+   junk labels become `<Title> (Year)_tNN[.pN].mkv` (titles),
+   `<Title> (Year) - Extra NN[.pN].mkv` (extras), or
+   `<Show (Year)>_SNNENN[-ENNN].mkv` (episodes).
+9. **Done** — a clean rip (exit code 0) just finishes; eject and swap
    discs by hand.
 
 `-T/--titles` takes `all` (the default), a single number, a range `N-M`, or a
 comma list like `0,5-7`. Bare `-T` (no value) opens an interactive menu to
 check the titles you want — space toggles a box, Enter rips the checked ones,
-`↑/↓` or `j/k` move, `q` quits, and every box starts checked. The drive is
-always `disc:0`; a stray `disc:N` is rejected before the drive spins.
+`↑/↓` or `j/k` move, `q` quits, and every box starts checked. A stray
+`disc:N` is rejected before the drive spins.
 
 ### rip movie
 
@@ -170,27 +205,28 @@ skive rip tv --tmdbid tv:68357 # skip the search
 ```
 
 Confirm the show at the results table (the volume label prefills the search),
-then the season (Enter = 1, `0` = specials).
-skive scans the disc, rips all titles by default, and proposes a
-title→episode table matched by duration against the season's TMDB runtimes —
-a bare `-T` opens the title menu first, or a `-T` spec narrows straight to
-those titles. Longest title first, each title claims the
-nearest unused episode; a title close to two consecutive runtimes becomes a
-double (`S01E01-E02`, one file). Episodes already staged for that season are
-skipped, so a second disc proposes the next episodes — the table names what is
-already staged, and `c` there lists the show's staged files and, after a y/N,
-deletes them and rematches (the remedy when an earlier run mis-filed
-something). A title with no episode
-left lists as `→ extra` — fix it at the table with a row like `3=7`, `1=1-2`,
-or `2=e`; `q` aborts before the drive spins. When a season's runtimes are
-near-identical (a short show — the table will name episodes that live on
-later discs), `n` at the table numbers the titles in order instead: bare `n`
-starts at the first episode not already staged (right for the next disc of a
-set), `n=4` starts at 4; fix rows still refine what `n` proposed (`2=e`,
-`2=4-5`). When TMDB has no runtimes, skive
-asks for the first episode number and numbers the titles in order.
+then the season (Enter = 1, `0` = specials). skive scans the disc and rips
+all titles by default — a bare `-T` opens the title menu first, or a `-T`
+spec narrows straight to those titles. Titles under the TV floor
+(`max(RIP_MINLENGTH, 600)` seconds) drop entirely, and a title whose duration
+matches the sum of two to six others is a play-all: it always rips as an
+extra.
 
-`--part` is refused for TV: episodes never merge. An aired special is not an
+One prompt then states which episodes this disc carries, pre-filled with the
+first episode not already staged and one episode per eligible title — Enter
+takes it. Titles are assigned to that stated range in disc order; durations
+never choose, they grade: the table shows a per-title ratio audit (disc ÷
+TMDB runtime, green ~0.92–1.04 — PAL discs run ~4–5% short). Episodes
+already staged for the season release their numbers, so a second disc
+prefills the next episodes. The confirm table (title order: duration, size,
+audit, assignment) is the single place to correct the map: Enter rips as
+proposed, fix rows like `3=7`, `1=1-2`, or `2=e` re-point one title at a
+time, `n` re-asks the episode range, `c` lists the show's staged files and,
+after a y/N, deletes them (the remedy when an earlier run mis-filed
+something), and `q` aborts before the drive spins. A title left outside the
+stated range lists as `→ extra`.
+
+`--part` is movie-only: episodes never merge. An aired special is not an
 extra — it is a season 0 episode through the normal flow.
 
 ## Ripping music
@@ -257,11 +293,21 @@ MakeMKV enumerates drives through `/dev/sg*` (SCSI-generic), not `/dev/sr*`.
 
 ## Logging
 
-Every command appends to `./rip.log` in the directory you run it from, one
-line per phase plus a total on exit, in the same 8 columns as ever
-(`start end script software name phase m:ss status`). `tag` is not logged.
-Because rip and transcode run on different machines, `./rip.log` is per
-machine.
+Every command appends JSON lines to `logs/rip.jsonl` on the videos share —
+one object per line, `{ts, run, script, software, name, phase, status,
+elapsed_s}` — one line per phase plus a total on exit. `run` is a short UUID
+minted per invocation; `status` carries `started`, `ok`, `FAIL(rc)`,
+`interrupted`, or note text. Both machines append to the same file over NFS
+(`tag` is not logged).
+
+Each run's raw tool output is captured to `logs/raw/<run>.jsonl`
+(`{ts, run, tool, line}`). A clean exit deletes it; a failure or interrupt
+keeps it. When transcode quarantines a source to `issues/`, that run's log
+lines and raw log are copied in beside it, so everything about one failure
+sits in one folder.
+
+Verbosity (`-v`, `-vv`) gates the console only — both logs are always
+written. Old text `rip.log` files are left in place and read by nothing.
 
 ## Windows transcode box
 
@@ -287,9 +333,11 @@ imports, runs on a clean `python.exe`.
 
 ```powershell
 python transcode.py                    # transcode everything staged
-python transcode.py -Keep              # park sources in rip-DONE instead of deleting
+python transcode.py --keep             # park sources in lossless\<type>\<Name (Year)> instead of deleting
+python transcode.py --retry            # re-run items from the issues folder instead of rip staging
 python transcode.py "X2 (2003)"        # only movies whose staged name starts with the prefix
-python transcode.py -Encoder nvenc     # NVIDIA GPU encode (qsv/vce for Intel/AMD)
+python transcode.py -e nvenc           # NVIDIA GPU encode (qsv/vce for Intel/AMD)
+python transcode.py -v                 # + HandBrake/mkvmerge error lines (-vv = raw passthrough)
 ```
 
 `$env:VIDEOS` overrides the default `Z:\` root (drive letter or UNC both
@@ -298,16 +346,21 @@ drive fails loudly with a `net use` hint — it never silently scans "no MKVs".
 
 ### What it does
 
-- Scans `rip\movies` and `rip\tv` (the staging subdirectory decides the type,
-  never the episode files' presence). A name without a `(YYYY)` tail is a rip
-  in progress or a failed rename — always skipped.
+- Scans `rip\` (or `issues\` with `--retry`). The first path segment under
+  the root decides the type — `tv` (or legacy `TV`) is TV, anything else a
+  movie. Titles rest at either depth — promoted in the title folder
+  (`rip\movies\Name (Year)\`) or fresh in its `d{disc}` subdir — and one
+  walk finds both. A name without a `(YYYY)` tail is a rip in progress or a
+  failed rename — always skipped.
 - **Movies**: the `_tNN` group with the most bytes is the main feature (a
   split main's `.pN` parts sum; tie goes to the lowest number). Parts merge
-  in order via `mkvmerge`, then encode as one movie into
-  `library\<Movie (Year)>\<Movie (Year)>.mkv`. Extras never merge; they file
-  under the movie's `extras\` keeping their `_tNN`/`- Extra NN`/`.pN` names.
+  in order via `mkvmerge` — but only when their track sets match; a
+  mismatched set quarantines every part unmerged. The merged feature encodes
+  as one movie into `library\movies\<Movie (Year)>\<Movie (Year)>.mkv`.
+  Extras never merge; they file under the movie's `extras\` keeping their
+  `_tNN`/`- Extra NN`/`.pN` names.
 - **TV**: no main feature, no merge. Episodes file as
-  `library\TV\<Show (Year)>\Season NN\<Show (Year)> - S01E02.mkv`; season 00
+  `library\tv\<Show (Year)>\Season NN\<Show (Year)> - S01E02.mkv`; season 00
   goes to `Specials\`; TV extras under the show's `extras\`.
 - **Encode**: `HandBrakeCLI` re-encodes video only to H.265 at the source's
   native resolution — never upscaled (ffprobe picks the preset: 480p/576p
@@ -320,14 +373,21 @@ drive fails loudly with a `net use` hint — it never silently scans "no MKVs".
   carries **zero** subtitle tracks (`--subtitle-lang-list zzz`, a language
   no track matches). Extras keep every track embedded — no pass, no
   sidecars. A failed pass ships the encode subless and quarantines the
-  lossless source to `rip-ISSUES\movies|tv\` for retry; a split main whose
-  `.pN` parts have mismatched track sets never merges — all parts
-  quarantine instead.
+  lossless source to `issues\<type>\<Name (Year)>\` together with that
+  run's log lines and raw log; a split main whose `.pN` parts have
+  mismatched track sets never merges — all parts quarantine instead.
 - Each file is pulled to a local temp dir first so it encodes off the
   network share.
-- **`-Keep`**: moves lossless sources to `rip-DONE` instead of deleting, and
-  never clobbers an existing file there (warns and leaves the source).
-- Same 8-column `rip.log` lines as the Linux side, written UTF-8-safe.
+- **`--keep`**: moves lossless sources to `lossless\<type>\<Name (Year)>\`
+  instead of deleting, and never clobbers an existing file there (warns and
+  leaves the source).
+- **`--retry`**: re-runs items from `issues\`. Success ships and archives
+  normally and moves the source out; failure stays quarantined
+  (re-quarantine is a no-op).
+- Ctrl+C is a graceful interrupt: the child is stopped, the partial temp
+  output is deleted, the source stays where it is, exit 130.
+- Same JSONL logs as the Linux side (run log + raw log, through the share
+  root's `logs\`), always written; `-v`/`-vv` gate the console only.
 - Exit code is 0 on a clean run, 1 if any encode/merge failed or a prefix
   matched nothing.
 
@@ -365,20 +425,26 @@ cd-rip-stack/
 ├── README.md            # this file — Linux setup + the Windows install spec
 ├── CONTEXT.md
 ├── SPEC.md
+├── scripts/
+│   ├── backfill.py      # one-off library subtitle backfill
+│   └── migrate_layout.py  # one-shot re-tree of the videos share (dry-run by default)
 ├── skive/
-│   ├── main.py          # argparse dispatch
-│   ├── common.py        # rip.log, NFS mount-on-demand, title-spec parser
-│   ├── tmdb.py          # search loop, season fetch, duration matcher
-│   ├── makemkv.py       # disc info scan, rip loop, profile injection, rename
+│   ├── main.py          # argparse dispatch, top-level -v/-vv, interrupt install
+│   ├── common.py        # JSONL run/raw logs, NFS mount-on-demand, interrupt machinery, title-spec parser
+│   ├── scan.py          # disc sniff, full scan and parsers, both fast scans, ambiguity, title menu
+│   ├── makemkv.py       # profile injection, rip loop + status block, junk purge, renames, promotion
+│   ├── rip_common.py    # shared preamble: mount → gates → TMDB pick → staging tree; interrupt exit
+│   ├── tv_match.py      # pure assignment math: floor, play-alls, range, fixes, audit
+│   ├── tmdb.py          # search loop, season fetch, id/URL parse
 │   ├── rip_movie.py
-│   ├── rip_tv.py
+│   ├── rip_tv.py        # interactive TV flow: prompts, confirm table, renames, staging
 │   ├── rip_music.py
 │   ├── tag.py
 │   └── sync_sd.py
 ├── config/
 │   ├── beets-config.yaml
 │   └── custom.mmcp.xml
-├── tests/               # pytest: matcher fixtures, naming, title-spec, transcode rules
+├── tests/               # pytest: matcher fixtures, naming, title-spec, JSONL logs, fast scans, migration, transcode rules
 └── windows/
     ├── transcode.py     # standalone, stdlib-only — the Windows batch
     └── subs.py          # shared subtitle pass (transcode + backfill import it)

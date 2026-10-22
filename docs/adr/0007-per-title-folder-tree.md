@@ -1,0 +1,10 @@
+# Every title gets its own folder on the share; lossless and issues mirror the staging tree
+
+The share grew flat in three places, and each became hard to live with. `rip-DONE/` was one giant file list every lossless rip landed in, so verifying encodes meant scrolling, not browsing. The library mixed movies at its root with TV under a differently-cased `library/TV/`, so the finished tree did not match the staging tree that feeds it. Staging was flat per type (`rip/movies/*.mkv`), so a queue of discs read as one undecodable pile and two parallel drives could collide on junk labels in the same directory. We re-tree all of it per title (ADR-0007): staging becomes `rip/<type>/<Name (Year)>/d{disc}/` (the drive as a subfolder, promotion up into the title folder), the library splits lowercase into `library/movies/` and `library/tv/`, `-Keep` archives to `lossless/<type>/<Name (Year)>/`, and failed transcodes quarantine to `issues/<type>/<Name (Year)>/` with that run's `rip.jsonl` lines and raw log copied in beside the source, so everything about one failure is contained in one folder and `--retry` re-runs straight from it.
+
+## Consequences
+
+- Hard to reverse. This is an on-disk tree change, not a code flag: once applied, the old paths are gone and reverting means another migration. The mitigation is `scripts/migrate_layout.py` — dry-run by default, prints every move, idempotent, reports and skips anything it cannot classify (junk labels, ambiguous extras, symlinks are refused) — so the audit happens before a byte moves.
+- Jellyfin keeps its single library root (`/mnt/videos/library`); the cost of the `library/{movies,tv}` split is one rescan, not a reconfigure. Watched state should follow by media ID on rescan.
+- The transcoder's type detection stays positional: the first path segment under `rip/` is still the type, because `d{disc}` nests inside the title folder rather than beside the file.
+- The run log and the evidence copies inside `issues/` ride a shared-file append over NFS, the same pattern the parallel-drive text log already accepted: concurrent writers interleave whole lines, and a torn line is one skipped record, not a lost source.

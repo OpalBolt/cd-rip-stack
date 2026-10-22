@@ -112,7 +112,10 @@ def sanitize(title: str) -> str:
 
     ':' and friends are legal on Linux, but SMB surfaces them as 8.3 short
     names (P3TGB9~G.MKV) that transcode then skips as junk. '/' becomes '-'
-    because it is a path separator on every OS. Matches windows/transcode.py.
+    because it is a path separator on every OS. windows/transcode.py's copy
+    DELETES '/' instead of mapping it — benign, because skive mints every
+    staged name first, so a '/' already arrived as '-' before transcode ever
+    parses one; the two never disagree about a name on disk.
     """
     return re.sub(r'[:*?"<>|]', "", title.replace("/", "-"))
 
