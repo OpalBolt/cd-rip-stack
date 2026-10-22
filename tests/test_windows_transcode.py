@@ -467,7 +467,8 @@ def test_retry_success_with_keep_archives_to_lossless(env):
 
 def test_retry_failure_requarantines_in_place(env, capsys):
     """--retry on a still-failing item: the source never leaves its issues
-    folder (re-quarantine is the no-clobber no-op) and the run fails."""
+    folder (re-quarantine is the no-clobber no-op), the run fails, and the
+    retried run's evidence lands beside the source like in every other arm."""
     vid = env / "vid"
     mk(vid, "issues/movies/Stuck (2004)/Stuck (2004)_t00.mkv", "FAILME")
 
@@ -476,8 +477,18 @@ def test_retry_failure_requarantines_in_place(env, capsys):
 
     assert rc == 1
     assert "FAILED (handbrake)" in err
-    assert (vid / "issues" / "movies" / "Stuck (2004)" / "Stuck (2004)_t00.mkv").read_text() == "FAILME"
+    folder = vid / "issues" / "movies" / "Stuck (2004)"
+    assert (folder / "Stuck (2004)_t00.mkv").read_text() == "FAILME"
     assert not list((vid / "library" / "movies" / "Stuck (2004)").glob("*.mkv"))  # nothing shipped
+    # the handbrake arm copied the run's evidence beside the in-issues source:
+    # the run's rip.jsonl lines (incl. the FAILED note) and the kept raw log
+    runs = {json.loads(l)["run"] for l in (vid / "logs" / "rip.jsonl").read_text().splitlines()}
+    assert len(runs) == 1
+    run = runs.pop()
+    ev = [json.loads(l) for l in (folder / "rip.jsonl").read_text().splitlines()]
+    assert ev and all(l["run"] == run for l in ev)
+    assert any("FAILED handbrake: Stuck (2004)_t00.mkv" in l["status"] for l in ev)
+    assert (folder / f"{run}.jsonl").read_text() == (vid / "logs" / "raw" / f"{run}.jsonl").read_text()
 
 
 def test_retry_subtitle_failure_leaves_source_in_issues(env, capsys):
@@ -611,6 +622,10 @@ def test_guard_quarantine_carries_run_evidence(env):
     assert ev_lines and all(l["run"] == run for l in ev_lines)
     assert any("FAIL tracks differ" in l["status"] for l in ev_lines)
     assert any(l["phase"] == "encode" for l in ev_lines)  # Next's shipped phase
+    # both parts quarantine into the same folder — each evidence line exactly
+    # once, not once per part (and only the run's own raw-log copy beside them)
+    assert len(ev_lines) == len({json.dumps(l, sort_keys=True) for l in ev_lines})
+    assert {p.name for p in folder.glob("*.jsonl")} == {"rip.jsonl", f"{run}.jsonl"}
     # the run failed, so its raw log exists in logs/raw/ AND is copied in
     raw = vid / "logs" / "raw" / f"{run}.jsonl"
     assert raw.exists()

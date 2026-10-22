@@ -554,7 +554,25 @@ def _copy_run_evidence(log: RipLog, dest_dir: str) -> None:
     """Copy the run's evidence beside a quarantined source: the run's lines
     from logs/rip.jsonl (selected by the run field) are appended to the
     folder's rip.jsonl, and the run's raw log is copied in when it still
-    exists (a clean exit deletes it; a failure keeps it)."""
+    exists (a clean exit deletes it; a failure keeps it). One copy per run
+    and folder: a multi-part item quarantines part by part into the same
+    folder, and a --retry re-quarantines into its existing folder — a
+    folder already holding this run's evidence (its run id in rip.jsonl)
+    is left alone, so lines are never appended twice and the same-named
+    raw-log copy never clobbers."""
+    rip_jsonl = os.path.join(dest_dir, "rip.jsonl")
+    if os.path.exists(rip_jsonl):
+        try:
+            with open(rip_jsonl, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get("run") == log.run:
+                        return  # this run's evidence already landed here
+        except OSError:
+            pass
     kept: list[str] = []
     try:
         with open(log._run_log, encoding="utf-8") as fh:
@@ -571,10 +589,12 @@ def _copy_run_evidence(log: RipLog, dest_dir: str) -> None:
     except OSError:
         pass
     if kept:
-        with open(os.path.join(dest_dir, "rip.jsonl"), "a", encoding="utf-8") as fh:
+        with open(rip_jsonl, "a", encoding="utf-8") as fh:
             fh.write("\n".join(kept) + "\n")
     if os.path.exists(log._raw_log):
-        shutil.copy2(log._raw_log, os.path.join(dest_dir, os.path.basename(log._raw_log)))
+        dst = os.path.join(dest_dir, os.path.basename(log._raw_log))
+        if not os.path.exists(dst):
+            shutil.copy2(log._raw_log, dst)
 
 
 def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
@@ -833,6 +853,13 @@ def run_transcode(args) -> int:
                         _rmf(p)
                     log.note("encode", f"FAILED handbrake: {i.name} -- sources left in place")
                     print(f"FAILED (handbrake): {i.name} -- sources left in place", file=sys.stderr)
+                    if args.retry:
+                        # unlike the sub-pass/guard arms this arm never moves
+                        # the source — only a --retry leaves it resting in its
+                        # issues folder, and then this run's evidence lands
+                        # beside it like every other quarantine
+                        _copy_run_evidence(
+                            log, os.path.join(issues_root, "tv" if i.is_tv else "movies", i.movie))
                     for s in siblings:
                         handled.add(s.path)
                     failed = 1

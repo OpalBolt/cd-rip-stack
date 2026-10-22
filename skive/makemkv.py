@@ -305,7 +305,9 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
 def promote_staged(stage_dir: Path) -> None:
     """Move finished .mkv files from the d{disc} rip subdir up into the title
     folder (CONTEXT.md: Staging). A name collision leaves the file in d{disc}/
-    with a note — never clobbered; the next run's junk purge sweeps it.
+    with a note — never clobbered; the junk purge sweeps it on the same
+    drive's next run (another drive's junk rests in its own d{disc} — the
+    show-scoped purge covers the title tree's own dirs only).
     """
     parent = stage_dir.parent
     for mkv in stage_dir.glob("*.mkv"):
