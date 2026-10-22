@@ -25,7 +25,7 @@ _SDH_NUM, _SDH_DEN = 3, 10
 
 @dataclass
 class Track:
-    index: int  # MKV/ffprobe stream index (the number seconv --track-number takes)
+    index: int  # ffprobe stream index (0-based); seconv takes the 1-based Matroska TID = index + 1
     lang: str  # three-letter code as ffprobe reports it ("eng", "dan", "und", ...)
     codec: str  # ffprobe codec_name ("hdmv_pgs_subtitle", "dvd_subtitle", ...)
     forced: bool  # disposition.forced
@@ -125,8 +125,9 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str) -> str | None
     nonzero returncode / no file. Caller removes the temp dirs."""
     work = tempfile.mkdtemp(dir=out_dir, prefix=f"track{track.index}-")
     r = subprocess.run(
+        # seconv --track-number is the 1-based Matroska TID; ffprobe index is 0-based
         [seconv_exe, mkv, "subrip",
-         f"--track-number:{track.index}", f"--ocr-language:{track.lang}",
+         f"--track-number:{track.index + 1}", f"--ocr-language:{track.lang}",
          f"--output-folder:{work}"],
         capture_output=True, text=True,
     )

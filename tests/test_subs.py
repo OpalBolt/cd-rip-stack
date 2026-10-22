@@ -120,7 +120,7 @@ INV = {"streams": [
     {"index": 5, "codec_name": "dvd_subtitle", "disposition": {"forced": 0},
      "tags": {"language": "swe"}},
 ]}
-CUES = {2: 6, 3: 100, 4: 40, 5: 9}
+CUES = {3: 6, 4: 100, 5: 40, 6: 9}  # keyed by the TID seconv receives (ffprobe index + 1)
 
 
 def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0):
@@ -168,7 +168,7 @@ def test_run_pass_temp_dir_isolation_and_final_renames(tmp_path, monkeypatch):
 
 def test_run_pass_failed_conversion_is_partial_success(tmp_path, monkeypatch):
     dirs = []
-    stub_run(monkeypatch, dirs, fail_track=4)
+    stub_run(monkeypatch, dirs, fail_track=5)
     out = tmp_path / "out"
     res = subs.run_pass("x.mkv", str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe")
     assert not res.ok
@@ -180,7 +180,7 @@ def test_run_pass_failed_conversion_is_partial_success(tmp_path, monkeypatch):
 
 def test_run_pass_empty_sidecar_fails(tmp_path, monkeypatch):
     dirs = []
-    stub_run(monkeypatch, dirs, empty_track=4)
+    stub_run(monkeypatch, dirs, empty_track=5)
     out = tmp_path / "out"
     res = subs.run_pass("x.mkv", str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe")
     assert not res.ok
