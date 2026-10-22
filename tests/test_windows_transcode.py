@@ -17,7 +17,9 @@ import pathlib
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from unittest.mock import Mock
 
 import pytest
 
@@ -413,7 +415,7 @@ def test_copy2_reports_progress(tmp_path, capsys):
 def test_no_third_party_imports():
     src = pathlib.Path(__file__).parent.parent / "windows" / "transcode.py"
     tree = ast.parse(src.read_text())
-    stdlib = {"argparse", "json", "os", "re", "shutil", "subprocess", "sys",
+    stdlib = {"argparse", "json", "os", "re", "shutil", "signal", "subprocess", "sys",
               "tempfile", "uuid", "dataclasses", "datetime", "pathlib"}
     local = {"subs"}  # windows/subs.py ships beside transcode.py
     for node in ast.walk(tree):
@@ -825,3 +827,153 @@ def test_sub_pass_raw_passthrough_at_vv(env, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert '"streams"' in out
+
+
+# -- Interrupt (Ctrl+C), Windows arm (CONTEXT.md: Interrupt) -------------------
+
+class FakeChild:
+    """A stub Popen: records terminate/kill/waits, streams a stdout iterable."""
+
+    def __init__(self, stdout=iter(()), stalls=False):
+        self.stdout = stdout
+        self.stalls = stalls
+        self.terminated = False
+        self.killed = False
+        self.waits = []
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        if self.stalls:
+            self.stalls = False
+            raise subprocess.TimeoutExpired(cmd="child", timeout=timeout)
+        return 0
+
+    def kill(self):
+        self.killed = True
+
+
+def test_sigint_handler_first_raises_interrupted():
+    """One Ctrl+C becomes the clean Interrupted exception path."""
+    transcode._sigint_count = 0
+    with pytest.raises(transcode.Interrupted):
+        transcode._sigint_handler(2, None)
+
+
+def test_sigint_handler_second_exits_without_cleanup(monkeypatch):
+    """A second Ctrl+C restores the default disposition and re-raises: instant
+    exit, no cleanup, no traceback."""
+    calls = []
+    monkeypatch.setattr(transcode, "_exit_immediately", lambda: calls.append(1))
+    transcode._sigint_count = 1
+    transcode._sigint_handler(2, None)  # must not raise
+    assert calls == [1]
+
+
+def test_kill_child_terminates_waits_grace_then_kills():
+    """Windows child arm: terminate, wait grace seconds, kill, reap."""
+    proc = FakeChild(stalls=True)
+    transcode._kill_child(proc, grace=0.1)
+    assert proc.terminated and proc.killed
+    assert proc.waits == [0.1, None]  # grace wait + post-kill reap
+
+
+def test_kill_child_exiting_inside_grace_not_killed():
+    proc = FakeChild()
+    transcode._kill_child(proc, grace=5)
+    assert proc.terminated and not proc.killed
+    assert proc.waits == [5]
+
+
+def test_windows_riplog_interrupted_keeps_raw_and_silences_finish(tmp_path):
+    """interrupted() writes the status=interrupted total, keeps the raw log,
+    and a later finish() adds no second total line."""
+    times = iter([datetime(2024, 1, 15, 10, 30, 0) + timedelta(seconds=n) for n in range(4)])
+    log = transcode.RipLog(root=str(tmp_path), now=lambda: next(times))
+    log.start()
+    log.raw("handbrake", "Encoding: task 1 of 1")
+    log.interrupted()
+    log.finish(1)
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert [line["status"] for line in lines] == ["started", "interrupted"]
+    assert lines[-1]["elapsed_s"] == 2  # raw call was at +1s
+    assert (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").exists()
+
+
+def test_encode_interrupt_kills_child_and_reraises(monkeypatch):
+    """Ctrl+C mid-encode: the HandBrake child goes through the terminate/kill
+    helper and Interrupted propagates to run_transcode's exit."""
+    def raising_stdout():
+        yield "Encoding: task 1 of 1"
+        raise transcode.Interrupted()
+
+    proc = FakeChild(stdout=raising_stdout(), stalls=True)  # wedged: killed after grace
+    monkeypatch.setattr(transcode.subprocess, "run",
+                        lambda *a, **k: Mock(stdout="1080\n", returncode=0))
+    monkeypatch.setattr(transcode.subprocess, "Popen", lambda *a, **k: proc)
+
+    with pytest.raises(transcode.Interrupted):
+        transcode._encode("src", "out", "x265", "hb.exe", "ffprobe.exe")
+
+    assert proc.terminated and proc.killed
+    assert proc.waits == [5.0, None]  # grace wait, then the post-kill reap
+
+
+def test_interrupt_drops_temp_partial_source_stays_log_130(env, capsys, monkeypatch):
+    """Ctrl+C mid-encode: the partial .h265 temp output and the local copy are
+    dropped, the SOURCE stays in staging (sources only move on success), the
+    run log says interrupted, exit 130."""
+    vid = env / "vid"
+    mk(vid, "rip/Stop (2007)_t00.mkv", "STOP-MAIN")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+
+    def fake_encode(src, out, *a, **k):
+        pathlib.Path(out).write_text("PARTIAL-ENCODE")  # the in-flight temp output
+        raise transcode.Interrupted()
+
+    monkeypatch.setattr(transcode, "_encode", fake_encode)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 130
+    assert (vid / "rip" / "Stop (2007)_t00.mkv").exists()  # source untouched
+    assert list(work.iterdir()) == []  # local copy + partial encode dropped
+    log = run_log(env)
+    assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
+    assert "transcode: interrupted -- partial temp output deleted, source left in staging" \
+        in capsys.readouterr().err
+
+
+def test_interrupt_drops_tv_sidecar_dir_and_temp(env, monkeypatch):
+    """Ctrl+C during a TV episode's encode also drops the never-shipped
+    sidecar dir from the work dir."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Halt (2011)_S01E01.mkv", "HALT-EPISODE")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+
+    fake_side = None
+    real_sub_pass = transcode._sub_pass
+
+    def spy_sub_pass(local_src, side_dir, base, *a, **k):
+        nonlocal fake_side
+        fake_side = side_dir
+        res = real_sub_pass(local_src, side_dir, base, *a, **k)
+        return res
+
+    def fake_encode(src, out, *a, **k):
+        raise transcode.Interrupted()
+
+    monkeypatch.setattr(transcode, "_sub_pass", spy_sub_pass)
+    monkeypatch.setattr(transcode, "_encode", fake_encode)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 130
+    assert list(work.iterdir()) == []  # local copy, sidecar dir, no partial shipped
+    assert (vid / "rip" / "tv" / "Halt (2011)_S01E01.mkv").exists()

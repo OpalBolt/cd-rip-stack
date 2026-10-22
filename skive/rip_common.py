@@ -53,6 +53,31 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     log = RipLog(script, "makemkvcon", "-")
     log.start()
 
+    try:
+        return _preamble_body(kind, args, log, disc, stage_movie, stage_tv, stage_dirs)
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: an interrupt in the preamble (disc scan, TMDB
+        # search prompt) has ripped nothing, so there is no partial of ours —
+        # record the closing interrupted line so the run log is never left
+        # dangling, then pass the interrupt up for the one-line 130 exit.
+        log.interrupted()
+        raise
+
+
+def _preamble_body(kind: str, args, log, disc: int, stage_movie: Path,
+                   stage_tv: Path, stage_dirs: list[Path]):
+    """Everything rip_preamble does after the staging dirs and the RipLog
+    exist; split out so the preamble's interrupt guard can wrap it without
+    re-indenting the whole function.
+
+    Args:
+        kind: "movie" or "tv"
+        args: parsed argparse namespace
+        log: the run's RipLog, already started
+        disc: drive number
+        stage_movie / stage_tv: this run's staging dirs (d{disc} when disc > 0)
+        stage_dirs: the same dirs as a list, in purge order
+    """
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
     media, label, device = sniff_disc(disc=disc)
     if not media:
@@ -134,6 +159,25 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
     return Preamble(log, pick, display, media, titles_full, stage_movie, stage_tv,
                     minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations)
+
+
+def interrupted_exit(log, stage_dirs: list[Path]) -> None:
+    """The interrupt (Ctrl+C) exit, shared by the rip commands (CONTEXT.md:
+    Interrupt): delete the in-flight partial — every junk-labeled .mkv in the
+    current staging dir, the labels MakeMKV writes mid-rip — keep completed
+    renamed titles, record status=interrupted in the run log, print the one
+    summary line, and exit 130. Never returns.
+
+    Args:
+        log: The run's RipLog (interrupted() marks it so a finally's finish()
+            stays silent — no double total line; the raw log is kept).
+        stage_dirs: The current run's staging dir(s).
+    """
+    purge_junk(stage_dirs, quiet=True)  # one summary line, no per-file chatter
+    kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))
+    log.interrupted()
+    print(f"skive: interrupted — partial deleted, kept {kept} titles", file=sys.stderr)
+    sys.exit(130)
 
 
 def fast_scan_header(display: str, n: int) -> str:

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,66 @@ def set_verbosity(level: int) -> None:
     VERBOSITY = max(0, min(int(level or 0), 2))
 
 
+# -- Interrupt (Ctrl+C): the same contract as skive/common.py (CONTEXT.md:
+# Interrupt), duplicated because this file is standalone by design (no skive
+# imports). Windows shape: signal.signal(SIGINT, ...) catches Ctrl+C, but there
+# is no cross-process SIGINT, so the child arm is terminate()/kill().
+
+# Seconds a signalled child gets to exit before it is killed.
+INTERRUPT_GRACE_S = 5.0
+
+
+class Interrupted(KeyboardInterrupt):
+    """The first Ctrl+C, raised by the installed SIGINT handler; subclasses
+    KeyboardInterrupt so generic catches keep working."""
+
+
+_sigint_count = 0
+
+
+def _sigint_handler(signum, frame) -> None:
+    """First Ctrl+C -> Interrupted; second Ctrl+C -> instant default death."""
+    global _sigint_count
+    _sigint_count += 1
+    if _sigint_count > 1:
+        _exit_immediately()
+        return
+    raise Interrupted()
+
+
+def _exit_immediately() -> None:
+    """Second Ctrl+C: default disposition + re-raise — no cleanup, no
+    traceback. os._exit(130) is the belt-and-braces for platforms where
+    raise_signal returns."""
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGINT)
+    os._exit(130)
+
+
+def install_interrupt_handler() -> None:
+    """Install the interrupt handler and reset the second-SIGINT counter."""
+    global _sigint_count
+    _sigint_count = 0
+    signal.signal(signal.SIGINT, _sigint_handler)
+
+
+def _kill_child(proc, grace: float = INTERRUPT_GRACE_S) -> None:
+    """Interrupt a running tool child (CONTEXT.md: Interrupt, Windows arm):
+    terminate (TerminateProcess), wait up to grace seconds, then kill and
+    reap. A child that already exited is only reaped."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 def _append_jsonl(path: str, obj: dict) -> None:
     """Append one object as a JSONL line. Open-append-close per line — the same
     append/flush discipline as the Linux side — so lines survive concurrent writers."""
@@ -100,6 +161,7 @@ class RipLog:
         self._raw_log = os.path.join(vid, "logs", "raw", self.run + ".jsonl")
         self.name = "-"
         self._phases = 0
+        self._interrupted = False
 
     def _emit(self, now, phase: str, status: str, elapsed_s: int) -> None:
         _append_jsonl(self._run_log, {
@@ -141,7 +203,21 @@ class RipLog:
         """Untimed detail line (elapsed_s 0); mirrors Linux RipLog.note."""
         self._emit(self._now(), phase, status, 0)
 
+    def interrupted(self) -> None:
+        """The run's closing line with status=interrupted (CONTEXT.md:
+        Interrupt); keeps the raw log. A later finish() stays silent — the
+        interrupt line IS the total — so interrupt exits inside the
+        run_transcode finally never double-log."""
+        if self._interrupted:
+            return
+        self._interrupted = True
+        now = self._now()
+        self._emit(now, "total", "interrupted",
+                   int((now - self._t0).total_seconds()))
+
     def finish(self, rc: int) -> None:
+        if self._interrupted:
+            return
         # always write the total so a successful run ends with a clear summary
         # line (the README contract is "a total on exit").
         now = self._now()
@@ -344,15 +420,21 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     cmd += ["--all-subtitles", "--subtitle-burned=none"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
-    for line in proc.stdout:
-        stripped = line.rstrip()
-        if VERBOSITY >= 2 or (VERBOSITY >= 1 and stripped.startswith("ERROR")):
-            print(line, end="", flush=True)
-        elif stripped:
-            hidden.append(stripped)
-        if log is not None:
-            log.raw("handbrake", stripped)
-    rc = proc.wait()
+    try:
+        for line in proc.stdout:
+            stripped = line.rstrip()
+            if VERBOSITY >= 2 or (VERBOSITY >= 1 and stripped.startswith("ERROR")):
+                print(line, end="", flush=True)
+            elif stripped:
+                hidden.append(stripped)
+            if log is not None:
+                log.raw("handbrake", stripped)
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: stop the encode child; the partial temp output
+        # itself is dropped by run_transcode (sources only move on success).
+        _kill_child(proc)
+        raise
     if rc != 0:
         for line in hidden:
             print(line, flush=True)
@@ -371,15 +453,21 @@ def _merge(dst: str, parts: list[str], mkv_exe: str, log: RipLog | None = None) 
         cmd += ["+", p]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
-    for line in proc.stdout:
-        stripped = line.rstrip()
-        if VERBOSITY >= 2 or (VERBOSITY >= 1 and stripped.startswith("Error")):
-            print(line, end="", flush=True)
-        elif stripped:
-            hidden.append(stripped)
-        if log is not None:
-            log.raw("mkvmerge", stripped)
-    rc = proc.wait()
+    try:
+        for line in proc.stdout:
+            stripped = line.rstrip()
+            if VERBOSITY >= 2 or (VERBOSITY >= 1 and stripped.startswith("Error")):
+                print(line, end="", flush=True)
+            elif stripped:
+                hidden.append(stripped)
+            if log is not None:
+                log.raw("mkvmerge", stripped)
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: stop the merge child; the partial merged file
+        # itself is dropped by run_transcode (sources only move on success).
+        _kill_child(proc)
+        raise
     if rc >= 2:
         for line in hidden:
             print(line, flush=True)
@@ -438,13 +526,13 @@ def _quarantine(src: str, issues_dir: str) -> None:
         shutil.move(src, d)
 
 
-def _sub_pass(local_src: str, work_dir: str, base: str, seconv_exe: str,
+def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
               ffprobe_exe: str, log: RipLog | None = None):
-    """Inline subtitle pass on the local copy/merge; sidecars land in a fresh
-    dir under the work dir and only move beside the encode once it succeeds.
-    Captured ffprobe/seconv output lines go to the run's raw log via log.raw
-    (and pass through to the console at -vv). Returns (sidecar dir, PassResult)."""
-    side_dir = tempfile.mkdtemp(dir=work_dir, prefix="subs-")
+    """Inline subtitle pass on the local copy/merge; the caller creates the
+    sidecar dir (and registers it as the interrupt path's temp) and sidecars
+    only move beside the encode once it succeeds. Captured ffprobe/seconv
+    output lines go to the run's raw log via log.raw (and pass through to the
+    console at -vv). Returns (sidecar dir, PassResult)."""
     res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe,
                         log=log, verbose=VERBOSITY)
     for n in res.notes:
@@ -524,11 +612,21 @@ def run_transcode(args) -> int:
 
     failed = 0
     handled: set[str] = set()
+    # The in-flight item's local temp files and sidecar dir (CONTEXT.md:
+    # Interrupt): the interrupt path deletes exactly these — the encode
+    # partial, the local copy, the merge work — while the SOURCE stays in
+    # staging (sources only move on success). Reset per item; stale entries
+    # after a finished item are harmless (the files are already gone and
+    # _rmf/rmtree tolerate that).
+    inflight: list[str] = []
+    inflight_side: str | None = None
     log.start()
     try:
         for i in items:
             if i.path in handled:
                 continue
+            inflight = []
+            inflight_side = None
             log.name = i.movie
             safe = sanitize(i.movie)
 
@@ -550,13 +648,19 @@ def run_transcode(args) -> int:
                 os.makedirs(dest_dir, exist_ok=True)
                 local_src = os.path.join(tmp_dir, i.name)
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
+                inflight = [local_src, local_out]
                 log.phase("encode")
                 print(f"copying {i.name} to local temp...")
                 _copy2(i.path, local_src)
                 side_dir = res = None  # extras: no pass, embedded subs stay
                 if episode:
+                    # the sidecar dir is created up front and registered as
+                    # this item's temp BEFORE the pass runs, so an interrupt
+                    # mid-pass drops it too (CONTEXT.md: Interrupt)
+                    side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
+                    inflight_side = side_dir
                     side_dir, res = _sub_pass(
-                        local_src, tmp_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}",
+                        local_src, side_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}",
                         seconv_exe, ffprobe_exe, log=log)
                 if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
                            no_subs=episode, log=log):
@@ -637,9 +741,14 @@ def run_transcode(args) -> int:
                     _copy2(i.path, local_src)
                     cleanup.append(local_src)
 
-                # pass runs on the merged lossless file, never per part
-                side_dir, res = _sub_pass(local_src, tmp_dir, safe, seconv_exe, ffprobe_exe, log=log)
+                # pass runs on the merged lossless file, never per part;
+                # the sidecar dir is this item's temp from creation (interrupt
+                # mid-pass drops it — CONTEXT.md: Interrupt)
+                side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
+                inflight_side = side_dir
+                side_dir, res = _sub_pass(local_src, side_dir, safe, seconv_exe, ffprobe_exe, log=log)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
+                inflight = list(cleanup) + [local_out]
                 if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
                            no_subs=True, log=log):
                     shutil.move(local_out, dest)
@@ -680,6 +789,7 @@ def run_transcode(args) -> int:
             os.makedirs(dest_dir, exist_ok=True)
             local_src = os.path.join(tmp_dir, i.name)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
+            inflight = [local_src, local_out]
             log.phase("encode")
             print(f"copying {i.name} to local temp...")
             _copy2(i.path, local_src)
@@ -695,6 +805,19 @@ def run_transcode(args) -> int:
                 print(f"FAILED (handbrake): {i.name} -- source left in place", file=sys.stderr)
                 failed = 1
                 log.phase_end()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: drop this item's partial temp output (the local
+        # copy, merged file, and .h265 encode live in the work dir; the
+        # sidecar dir never shipped), leave the SOURCE in staging — sources
+        # only move on success — record status=interrupted, exit 130.
+        for p in inflight:
+            _rmf(p)
+        if inflight_side is not None:
+            shutil.rmtree(inflight_side, ignore_errors=True)
+        log.interrupted()
+        print("transcode: interrupted -- partial temp output deleted, source left in staging",
+              file=sys.stderr)
+        return 130
     except Exception as e:
         failed = 1
         print(f"FATAL: {e}", file=sys.stderr)
@@ -725,6 +848,7 @@ def parse_args(argv=None):
 
 
 def main(argv=None) -> None:
+    install_interrupt_handler()  # CONTEXT.md Interrupt: Ctrl+C -> clean exit path
     sys.exit(run_transcode(parse_args(argv)))
 
 

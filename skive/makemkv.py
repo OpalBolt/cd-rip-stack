@@ -193,53 +193,61 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         """Re-render the block after a phase-only change (no bar update)."""
         live.refresh()
 
-    with live:
-        for line in proc.stdout:
-            line = line.rstrip()
-            if log is not None:
-                log.raw("makemkvcon", line)
-            if line.startswith("PRGV:"):
-                parts = line[5:].split(",")
-                if len(parts) == 3 and all(p.isdigit() for p in parts):
-                    tot = int(parts[2]) or 65536
-                    eta = ""
-                    if est_total:
-                        # ponytail: byte counts are est size × PRGV fraction, not real
-                        # file sizes; stat the staged .mkv if precision ever matters.
-                        cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
-                        cur_done = int(cur_size * int(parts[0]) / tot)
-                        tot_done = int(est_total * int(parts[1]) / tot)
-                        if tot_done:
-                            elapsed = time.monotonic() - started
-                            eta = _fmt_eta(elapsed * (est_total - tot_done) / tot_done)
-                    redraw(eta)
-                    # Clamp below total: rich freezes elapsed/ETA once a task
-                    # finishes, and makemkvcon hits 100% on quick sub-phases.
-                    progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot)
-            elif line.startswith("PRGC:"):
-                # New sub-task; "Saving to MKV file" marks the start of each title
-                val = _qval(line)
-                if "Saving to MKV file" in val:
-                    cur_title += 1
-                phase = val.strip()
-                redraw()
-                live_refresh()
-            elif line.startswith("PRGT:"):
-                phase = _qval(line).strip()
-                redraw()
-                live_refresh()
-            elif line.startswith("MSG:"):
-                if verbose >= 1:
-                    console.print(_qval(line), highlight=False)
-                else:
-                    hidden.append(line)
-            elif line:
-                # Pass through anything else makemkvcon prints (drive/errors/etc.)
-                if verbose >= 2:
-                    console.print(line, highlight=False)
-                else:
-                    hidden.append(line)
-    rc = proc.wait()
+    try:
+        with live:
+            for line in proc.stdout:
+                line = line.rstrip()
+                if log is not None:
+                    log.raw("makemkvcon", line)
+                if line.startswith("PRGV:"):
+                    parts = line[5:].split(",")
+                    if len(parts) == 3 and all(p.isdigit() for p in parts):
+                        tot = int(parts[2]) or 65536
+                        eta = ""
+                        if est_total:
+                            # ponytail: byte counts are est size × PRGV fraction, not real
+                            # file sizes; stat the staged .mkv if precision ever matters.
+                            cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
+                            cur_done = int(cur_size * int(parts[0]) / tot)
+                            tot_done = int(est_total * int(parts[1]) / tot)
+                            if tot_done:
+                                elapsed = time.monotonic() - started
+                                eta = _fmt_eta(elapsed * (est_total - tot_done) / tot_done)
+                        redraw(eta)
+                        # Clamp below total: rich freezes elapsed/ETA once a task
+                        # finishes, and makemkvcon hits 100% on quick sub-phases.
+                        progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot)
+                elif line.startswith("PRGC:"):
+                    # New sub-task; "Saving to MKV file" marks the start of each title
+                    val = _qval(line)
+                    if "Saving to MKV file" in val:
+                        cur_title += 1
+                    phase = val.strip()
+                    redraw()
+                    live_refresh()
+                elif line.startswith("PRGT:"):
+                    phase = _qval(line).strip()
+                    redraw()
+                    live_refresh()
+                elif line.startswith("MSG:"):
+                    if verbose >= 1:
+                        console.print(_qval(line), highlight=False)
+                    else:
+                        hidden.append(line)
+                elif line:
+                    # Pass through anything else makemkvcon prints (drive/errors/etc.)
+                    if verbose >= 2:
+                        console.print(line, highlight=False)
+                    else:
+                        hidden.append(line)
+            rc = proc.wait()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: the Live region just closed (its context
+        # exited on the exception); stop the child — SIGINT, grace window,
+        # then kill — and pass the interrupt up for the partial purge and
+        # the 130 exit.
+        common.kill_child_after_grace(proc)
+        raise
     if rc != 0:
         # Story 7: the captured lines the console never saw are replayed
         # verbatim so a crash still tells the operator what the tool said.
@@ -308,13 +316,15 @@ def promote_staged(stage_dir: Path) -> None:
         mkv.rename(target)
 
 
-def purge_junk(stage_dirs: list[Path]) -> None:
+def purge_junk(stage_dirs: list[Path], quiet: bool = False) -> None:
     """Delete junk-labeled .mkv files from staging dirs.
 
     Junk pattern: ^[A-Z][0-9]+_t[0-9]+$
 
     Args:
         stage_dirs: List of directories to purge
+        quiet: Skip the per-file stderr line (the interrupt exit purges
+            silently so its one summary line stays the only output)
     """
     junk_pat = re.compile(r'^[A-Z][0-9]+_t\d+$')
     for stage_dir in stage_dirs:
@@ -323,7 +333,8 @@ def purge_junk(stage_dirs: list[Path]) -> None:
         for mkv in stage_dir.glob("*.mkv"):
             base = mkv.stem
             if junk_pat.match(base):
-                print(f"skive: removing stale staged file from an earlier session: {base}.mkv", file=sys.stderr)
+                if not quiet:
+                    print(f"skive: removing stale staged file from an earlier session: {base}.mkv", file=sys.stderr)
                 mkv.unlink()
 
 

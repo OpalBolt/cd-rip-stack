@@ -10,7 +10,7 @@ from pathlib import Path
 from rich.prompt import Prompt
 
 from skive import common
-from skive.common import RipLog, ensure_mounted
+from skive.common import RipLog, ensure_mounted, kill_child_after_grace
 
 
 def rip_music(args) -> None:
@@ -74,7 +74,14 @@ def rip_music(args) -> None:
         name = _newest_flac_album(rip_dir)
         log.name = name
     except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: _cyanrip_run already stopped the child (SIGINT,
+        # grace window, kill). Music staging has no junk labels — cyanrip writes
+        # its final-named FLACs straight into rip/ — so there is no partial of
+        # ours to purge; record status=interrupted (finish() below stays
+        # silent), one line, exit 130.
         rc = 130
+        log.interrupted()
+        print("skive: interrupted", file=sys.stderr)
     except SystemExit as e:
         rc = e.code if isinstance(e.code, int) else 1
     finally:
@@ -108,19 +115,25 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tupl
 
     captured = []
     hidden = []  # console-suppressed lines, replayed on failure
-    if process.stdout is not None:
-        verbose = common.VERBOSITY
-        for line in process.stdout:
-            stripped = line.rstrip()
-            if verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
-                print(line, end="", flush=True)
-            elif stripped:
-                hidden.append(stripped)
-            if log is not None:
-                log.raw("cyanrip", stripped)
-            captured.append(line)
+    try:
+        if process.stdout is not None:
+            verbose = common.VERBOSITY
+            for line in process.stdout:
+                stripped = line.rstrip()
+                if verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
+                    print(line, end="", flush=True)
+                elif stripped:
+                    hidden.append(stripped)
+                if log is not None:
+                    log.raw("cyanrip", stripped)
+                captured.append(line)
 
-    rc = process.wait()
+        rc = process.wait()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: forward to the child, grace window, then kill,
+        # and let the interrupt rip_music's handler log status=interrupted.
+        kill_child_after_grace(process)
+        raise
     if rc != 0:
         for line in hidden:
             print(line, flush=True)

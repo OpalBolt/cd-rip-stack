@@ -1,8 +1,9 @@
 """skive main entry point — argparse dispatch for rip movie|tv|music, tag, sync-sd."""
 
 import argparse
+import sys
 
-from skive.common import MENU, set_verbosity
+from skive.common import MENU, install_interrupt_handler, set_verbosity
 
 
 def cmd_rip_movie(args):
@@ -96,7 +97,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     set_verbosity(args.verbose)  # clamps -vvv and beyond to 2
-    args.func(args)
+    install_interrupt_handler()  # CONTEXT.md Interrupt: SIGINT -> clean exit path
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        # Interrupt fallback for the paths the rip commands don't cover: the
+        # interactive prompts (TMDB search, menus) and commands without staging
+        # of their own. One line, no traceback, exit 130; runs that already
+        # started logged their interrupted status where the RipLog was at hand.
+        print("skive: interrupted", file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

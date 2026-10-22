@@ -1,14 +1,84 @@
 """Tests for the shared movie/TV rip preamble."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from skive import rip_common
-from skive.common import MENU
+from skive.common import MENU, RipLog
 from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
+
+
+# -- Interrupt exit (CONTEXT.md: Interrupt): partial purge + log + 130 --------
+
+def _tmp_log(tmp_path):
+    log = RipLog("skive rip movie", "makemkvcon", "Test", root=str(tmp_path))
+    log.start()
+    return log
+
+
+def _run_log_lines(tmp_path) -> list[dict]:
+    return [json.loads(line)
+            for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+
+
+def test_interrupted_exit_purges_junk_keeps_renamed_exits_130(tmp_path, capsys):
+    """The interrupt exit deletes the junk-labeled in-flight partials, keeps
+    completed renamed titles, records status=interrupted, prints ONE line, and
+    exits 130."""
+    stage = tmp_path / "d1"
+    stage.mkdir()
+    (stage / "B1_t0.mkv").touch()                # in-flight partial (junk label)
+    (stage / "Show (2020)_S01E01.mkv").touch()   # completed, renamed
+    log = _tmp_log(tmp_path)
+
+    with pytest.raises(SystemExit) as e:
+        rip_common.interrupted_exit(log, [stage])
+
+    assert e.value.code == 130
+    assert not (stage / "B1_t0.mkv").exists()
+    assert (stage / "Show (2020)_S01E01.mkv").exists()
+    lines = _run_log_lines(tmp_path)
+    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "skive: interrupted — partial deleted, kept 1 titles" in err
+
+
+def test_interrupted_exit_leaves_raw_log_for_evidence(tmp_path):
+    """The interrupt keeps this run's raw log (deleted only on rc==0)."""
+    stage = tmp_path / "d1"
+    stage.mkdir()
+    (stage / "B1_t0.mkv").touch()
+    log = _tmp_log(tmp_path)
+    log.raw("makemkvcon", "MSG:1007 Working")
+
+    with pytest.raises(SystemExit):
+        rip_common.interrupted_exit(log, [stage])
+
+    assert (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").exists()
+
+
+def test_preamble_interrupt_logs_interrupted_and_reraises(tmp_path, monkeypatch):
+    """An interrupt inside the preamble (disc scan, TMDB prompt) records the
+    closing interrupted line — the run log is never left dangling — and passes
+    the interrupt up for the one-line exit."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
+    monkeypatch.setattr(rip_common, "sniff_disc",
+                        Mock(return_value=("DVD-ROM", "", "")))
+    monkeypatch.setattr(rip_common, "scan_disc",
+                        Mock(side_effect=KeyboardInterrupt))
+
+    with pytest.raises(KeyboardInterrupt):
+        rip_common.rip_preamble("movie", "skive rip movie",
+                                SimpleNamespace(tmdbid=None, verified=False))
+
+    lines = _run_log_lines(tmp_path)
+    assert lines[-1]["status"] == "interrupted"
 
 
 def _mock_preamble_seams(monkeypatch, media="DVD-ROM"):

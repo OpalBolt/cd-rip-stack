@@ -1,8 +1,10 @@
-"""Common helpers: title-spec parser, NFS mount-on-demand, JSONL run/raw logs."""
+"""Common helpers: title-spec parser, NFS mount-on-demand, JSONL run/raw logs,
+the shared interrupt (Ctrl+C) machinery."""
 
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import uuid
@@ -26,6 +28,71 @@ def set_verbosity(level: int) -> None:
     """Store the console verbosity, clamped to 0/1/2 (absent/-v/-vv)."""
     global VERBOSITY
     VERBOSITY = max(0, min(int(level), 2))
+
+
+# -- Interrupt (Ctrl+C), CONTEXT.md glossary "Interrupt": the first SIGINT
+# becomes a clean exception path (child signalled, then killed after a grace
+# window, partial deleted, run log says interrupted, exit 130); a second SIGINT
+# restores the default disposition and re-raises, so the process dies at once
+# with no cleanup and no traceback. windows/transcode.py carries its own copy
+# (standalone file, Windows kill semantics).
+
+# Seconds a signalled child gets to exit before it is killed.
+INTERRUPT_GRACE_S = 5
+
+
+class Interrupted(KeyboardInterrupt):
+    """The first Ctrl+C, raised by the installed SIGINT handler.
+
+    Subclasses KeyboardInterrupt so existing `except KeyboardInterrupt` sites
+    (sync_sd, the rip commands' prompt paths) keep catching it."""
+
+
+_sigint_count = 0
+
+
+def _sigint_handler(signum, frame) -> None:
+    """First Ctrl+C -> Interrupted; second Ctrl+C -> instant default death."""
+    global _sigint_count
+    _sigint_count += 1
+    if _sigint_count > 1:
+        _exit_immediately()
+        return
+    raise Interrupted()
+
+
+def _exit_immediately() -> None:
+    """Second Ctrl+C: default disposition + re-raise — no cleanup, no
+    traceback; the next run's junk purge is the safety net. os._exit(130) is
+    the belt-and-braces for platforms where raise_signal returns."""
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGINT)
+    os._exit(130)
+
+
+def install_interrupt_handler() -> None:
+    """Install the interrupt handler and reset the second-SIGINT counter.
+
+    Called once per invocation from main(); the rip commands' contract runs on
+    the Interrupted exception, so tests may drive it directly without signals."""
+    global _sigint_count
+    _sigint_count = 0
+    signal.signal(signal.SIGINT, _sigint_handler)
+
+
+def kill_child_after_grace(proc: subprocess.Popen,
+                           grace: float = INTERRUPT_GRACE_S) -> None:
+    """Interrupt a running tool child: SIGINT it, wait up to grace seconds,
+    then kill and reap (CONTEXT.md: Interrupt). A child that already exited —
+    or that exits inside the grace window — is only reaped."""
+    if proc.poll() is not None:
+        return
+    proc.send_signal(signal.SIGINT)
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def _append_jsonl(path: Path, obj: dict) -> None:
@@ -79,6 +146,7 @@ class RipLog:
         self._phases = 0
         self._phase_name = None
         self._phase_start = None
+        self._interrupted = False
 
     def _emit(self, now, phase, status, elapsed_s):
         _append_jsonl(self._run_log, {
@@ -124,14 +192,29 @@ class RipLog:
         self._emit(self._now(), phase, text, 0)
         print(f"skive: {phase}: {text}", file=sys.stderr)
 
+    def interrupted(self):
+        """Log the run's closing line with status=interrupted (elapsed_s from
+        start, phase "total" — the usual total shape). Keeps the raw log: only
+        finish(0) deletes it. A later finish() stays silent — the interrupt
+        line IS the total — so interrupt exits inside a try/finally never
+        double-log (CONTEXT.md: Interrupt)."""
+        if self._interrupted:
+            return
+        self._interrupted = True
+        now = self._now()
+        self._emit(now, "total", "interrupted",
+                   int((now - self._start).total_seconds()))
+
     def finish(self, rc):
         """Log the total line, then drop the raw log on a clean exit.
 
         The total line is skipped when rc==0 and exactly one phase succeeded —
-        that lone phase line already records the run. The raw log is deleted on
-        rc==0 and kept on failure or interrupt (later slices record
-        status=interrupted).
+        that lone phase line already records the run — and after interrupted(),
+        which already wrote this run's total. The raw log is deleted on rc==0
+        and kept on failure or interrupt.
         """
+        if self._interrupted:
+            return
         # a lone successful phase already logged its line — the total
         # would duplicate it. skip it.
         if rc != 0 or self._phases != 1:

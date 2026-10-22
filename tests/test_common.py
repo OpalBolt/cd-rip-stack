@@ -2,6 +2,7 @@
 
 import json
 import re
+import signal
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -283,3 +284,128 @@ def test_set_verbosity_clamps_to_tiers(monkeypatch):
     assert skive.common.VERBOSITY == 2
     skive.common.set_verbosity(5)  # -vvv and beyond clamps to 2
     assert skive.common.VERBOSITY == 2
+
+
+# -- Interrupt (Ctrl+C): handler, second-SIGINT, child kill (CONTEXT.md:
+# Interrupt). Deterministic: the handler and the kill helper are called
+# directly — the tests never deliver a real signal.
+
+
+class FakeChild:
+    """A stub Popen: records signals, waits, kills; can stall past the grace
+    window (wait raises TimeoutExpired once) or already be dead."""
+
+    def __init__(self, stalls=False, alive=True):
+        self.stalls = stalls
+        self.alive = alive
+        self.sent = []
+        self.waits = []
+        self.killed = False
+
+    def poll(self):
+        return None if self.alive else 0
+
+    def send_signal(self, sig):
+        self.sent.append(sig)
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        if self.stalls:
+            self.stalls = False
+            raise subprocess.TimeoutExpired(cmd="child", timeout=timeout)
+        return 0
+
+    def kill(self):
+        self.killed = True
+
+
+def test_interrupted_is_a_keyboard_interrupt():
+    """Interrupted subclasses KeyboardInterrupt so existing catches keep working."""
+    assert issubclass(skive.common.Interrupted, KeyboardInterrupt)
+
+
+def test_sigint_handler_first_raises_interrupted():
+    """One Ctrl+C becomes the clean Interrupted exception path."""
+    skive.common._sigint_count = 0
+    with pytest.raises(skive.common.Interrupted):
+        skive.common._sigint_handler(2, None)
+
+
+def test_sigint_handler_second_exits_without_cleanup(monkeypatch):
+    """A second Ctrl+C restores the default disposition and re-raises: instant
+    exit, no cleanup, no traceback (the next junk purge is the safety net)."""
+    calls = []
+    monkeypatch.setattr(skive.common, "_exit_immediately", lambda: calls.append(1))
+    skive.common._sigint_count = 1
+    skive.common._sigint_handler(2, None)  # must not raise
+    assert calls == [1]
+
+
+def test_install_interrupt_handler_resets_counter(monkeypatch):
+    """Installing the handler resets the second-SIGINT counter from any prior run."""
+    installed = []
+    monkeypatch.setattr("signal.signal",
+                        lambda sig, handler: installed.append((sig, handler)))
+    skive.common._sigint_count = 3
+    skive.common.install_interrupt_handler()
+    assert installed == [(2, skive.common._sigint_handler)]
+    assert skive.common._sigint_count == 0
+
+
+@pytest.mark.parametrize("grace", [0.1, 5])
+def test_kill_child_forwards_sigint_and_waits_grace(grace):
+    """The child is SIGINTed and awaited exactly grace seconds; a child that
+    exits inside the window is reaped, never killed."""
+    child = FakeChild()
+    skive.common.kill_child_after_grace(child, grace=grace)
+    assert child.sent == [signal.SIGINT]
+    assert child.waits == [grace]
+    assert not child.killed
+
+
+def test_kill_child_kills_after_grace_window():
+    """A child wedged past the grace window gets killed and reaped."""
+    child = FakeChild(stalls=True)
+    skive.common.kill_child_after_grace(child, grace=0.1)
+    assert child.sent == [signal.SIGINT]
+    assert child.killed
+    # the grace wait, then the post-kill reap
+    assert child.waits == [0.1, None]
+
+
+def test_kill_child_skips_already_dead():
+    """A child that already exited is not signalled again."""
+    child = FakeChild(alive=False)
+    skive.common.kill_child_after_grace(child)
+    assert child.sent == [] and child.waits == [] and not child.killed
+
+
+class TestInterruptedRunLog:
+    """RipLog.interrupted(): the run's closing line says status=interrupted and
+    keeps the raw log; a later finish() stays silent (CONTEXT.md: Interrupt)."""
+
+    def test_interrupted_line(self, tmp_path):
+        ts = iter([datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 42, 0)])
+        log = skive.common.RipLog("rip-movie", "makemkv", "Test Movie",
+                                  root=str(tmp_path), now=lambda: next(ts))
+        log.start()
+        log.interrupted()
+        lines = _read_jsonl(tmp_path / "logs" / "rip.jsonl")
+        assert len(lines) == 2  # started + interrupted total
+        assert lines[1] == {
+            "ts": "2024-01-15T10:42:00", "run": log.run, "script": "rip-movie",
+            "software": "makemkv", "name": "Test Movie", "phase": "total",
+            "status": "interrupted", "elapsed_s": 720,
+        }
+
+    def test_interrupted_keeps_raw_log_and_finish_stays_silent(self, tmp_path):
+        ts = iter(datetime(2024, 1, 15, 10, 30, 0) + timedelta(seconds=n) for n in range(5))
+        log = skive.common.RipLog("rip-movie", "makemkv", "Test Movie",
+                                  root=str(tmp_path), now=lambda: next(ts))
+        log.start()
+        log.raw("makemkvcon", "MSG: mid-title")
+        log.interrupted()
+        log.finish(130)  # the finally's finish must not add a second total
+        lines = _read_jsonl(tmp_path / "logs" / "rip.jsonl")
+        assert [line["status"] for line in lines] == ["started", "interrupted"]
+        assert (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").exists()

@@ -354,3 +354,59 @@ def test_rip_movie_fast_scan_rips_all_with_two_line_header(monkeypatch):
                                     f"  titles: {len(FAST_DURATIONS)} (fast scan — no size/audio preview)")
     mock_rename.assert_called_once()
     assert mock_rename.call_args[1]["suffix"] == "t"
+
+
+# -- Interrupt (Ctrl+C) mid-rip (CONTEXT.md: Interrupt) ------------------------
+
+def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, capsys):
+    """Ctrl+C mid-rip: the junk-labeled in-flight partial is deleted, completed
+    renamed files are kept, the run log records status=interrupted, one line on
+    stderr, exit 130."""
+    import json
+
+    mock_pick = TMDBPick("Test Movie", "2020", "en", "movie", "1")
+    stage = tmp_path / "rip" / "movies"
+    stage.mkdir(parents=True)
+    (stage / "Test Movie (2020)_t01.mkv").touch()  # completed rename — kept
+
+    def rip_a_partial_then_interrupt(*a, **k):
+        (stage / "C2_t1.mkv").write_text("in-flight partial")  # makemkvcon's junk label
+        raise KeyboardInterrupt
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=mock_pick), \
+            patch("skive.rip_movie.inject_profile", return_value=tmp_path / "absent-profile.xml"), \
+            patch("skive.rip_movie.rip_titles", side_effect=rip_a_partial_then_interrupt):
+        with pytest.raises(SystemExit) as e:
+            rip_movie(FakeArgs())
+
+    assert e.value.code == 130
+    assert not (stage / "C2_t1.mkv").exists()
+    assert (stage / "Test Movie (2020)_t01.mkv").exists()
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
+    err = capsys.readouterr().err
+    assert "skive: interrupted — partial deleted, kept 1 titles" in err
+    assert err.count("skive: interrupted") == 1
+
+
+def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
+    """Ctrl+C at the TMDB prompt (inside rip_preamble): the preamble logged the
+    interrupted status, main's fallback owns the one-line exit — no traceback."""
+    import json
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", side_effect=KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt):
+            rip_movie(FakeArgs())
+
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert lines[-1]["status"] == "interrupted"

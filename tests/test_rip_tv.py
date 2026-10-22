@@ -916,3 +916,85 @@ def test_fast_scan_rename_abort_logs_and_exits_before_promote(tmp_path):
     mock_promote.assert_not_called()  # stopped at the rename gate
     mock_subs.assert_not_called()
     assert sorted(p.name for p in stage.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
+
+
+# -- Interrupt (Ctrl+C) at the prompts (CONTEXT.md: Interrupt) -----------------
+
+def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch, capsys):
+    """Ctrl+C at the season prompt: the run log records status=interrupted, the
+    exit is 130 with ONE summary line, and no traceback escapes."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    stage = tmp_path / "rip" / "tv"
+    stage.mkdir(parents=True)
+    (stage / "Show (2000)_S01E01.mkv").touch()  # completed rename — kept
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    prompt = MagicMock()
+    prompt.ask.side_effect = KeyboardInterrupt
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 130
+    assert (stage / "Show (2000)_S01E01.mkv").exists()
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
+    err = capsys.readouterr().err
+    assert "skive: interrupted — partial deleted, kept 1 titles" in err
+    assert err.count("skive: interrupted") == 1
+
+
+def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
+    """Ctrl+C at the confirm table (after a previous disc's rips): the exit is
+    130 and the junk the table's run would have re-ripped is left clean."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    (tmp_path / "rip" / "tv").mkdir(parents=True)
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    prompt = MagicMock()
+    # season Enter, range Enter, then Ctrl+C at the confirm table
+    prompt.ask.side_effect = ["", "", KeyboardInterrupt]
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=[(e, f"ep{e}", 3600) for e in range(1, 5)]):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 130
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert lines[-1]["status"] == "interrupted"

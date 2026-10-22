@@ -295,3 +295,50 @@ def test_repo_sweep_no_local_paths():
             content = py_file.read_text()
             assert "~/media" not in content, f"~/media found in {py_file}"
             assert "media/audio" not in content, f"media/audio found in {py_file}"
+
+# -- Interrupt (Ctrl+C) (CONTEXT.md: Interrupt) --------------------------------
+
+def _stdout_then_interrupt(lines):
+    """A fake cyanrip stdout that streams lines, then the interrupt lands."""
+    def gen():
+        yield from lines
+        raise KeyboardInterrupt
+    return gen()
+
+
+def test_cyanrip_run_interrupt_kills_child_and_reraises(monkeypatch):
+    """Ctrl+C during the cyanrip stream: the child goes through the
+    forward/kill helper and the interrupt propagates to rip_music's handler."""
+    killed = []
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace",
+                        lambda proc: killed.append(proc))
+    process = Mock(stdout=_stdout_then_interrupt(["Ripping track 1\n"]))
+
+    with patch("subprocess.Popen", return_value=process):
+        with pytest.raises(KeyboardInterrupt):
+            _cyanrip_run("100", [], Path("/tmp/rip"))
+
+    assert killed == [process]
+
+
+def test_rip_music_interrupt_records_interrupted_and_exits_130(tmp_path, monkeypatch, capsys):
+    """Ctrl+C mid-rip: the run log's closing line says status=interrupted (the
+    finally's finish stays silent), the raw log is kept, one line, exit 130.
+    Music staging has no junk labels, so there is no partial purge here."""
+    import json
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt):
+        with pytest.raises(SystemExit) as e:
+            rip_music(args)
+
+    assert e.value.code == 130
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert [line["status"] for line in lines] == ["started", "interrupted"]
+    err = capsys.readouterr().err
+    assert "skive: interrupted" in err
+    assert err.count("skive: interrupted") == 1

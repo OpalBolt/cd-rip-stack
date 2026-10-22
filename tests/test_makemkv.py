@@ -478,3 +478,44 @@ def test_rip_titles_per_title_threads_header_and_position(verbosity, capsys):
     assert err.count("titles: 2") == 1  # header printed once, above the first Live
     assert "title 12 (1/2): done · title 1/2" in err
     assert "title 14 (2/2): done · title 2/2" in err
+
+
+# -- Interrupt (Ctrl+C) mid-rip (CONTEXT.md: Interrupt) ------------------------
+
+def _stdout_then_interrupt(lines):
+    """A fake makemkvcon stdout that streams lines, then the interrupt lands."""
+    def gen():
+        yield from lines
+        raise common.Interrupted()
+    return gen()
+
+
+def test_run_with_progress_interrupt_kills_child_and_reraises(verbosity, capsys, monkeypatch):
+    """Ctrl+C mid-rip: the child goes through the forward/kill helper, the Live
+    region closes with no summary line, and Interrupted propagates to the
+    command's exit path (partial purge + status=interrupted + 130)."""
+    verbosity(0)
+    proc = Mock(stdout=_stdout_then_interrupt(["PRGV:100,200,65536"]))
+    kill = Mock()
+    monkeypatch.setattr(common, "kill_child_after_grace", kill)
+    with patch("skive.makemkv.subprocess.Popen", return_value=proc):
+        with pytest.raises(common.Interrupted):
+            _run_with_progress(["makemkvcon", "mkv"], "test", header="Movie (2020)")
+    kill.assert_called_once_with(proc)
+    # No stale bar, no outcome summary: the interrupt line comes from the
+    # command's interrupted_exit, not from here.
+    assert "done" not in capsys.readouterr().err
+
+
+def test_run_with_progress_wait_interrupt_also_kills_child(verbosity, monkeypatch):
+    """The interrupt can land while waiting on the child after the output
+    stream ends — the kill still runs."""
+    verbosity(0)
+    proc = Mock(stdout=iter([]))
+    proc.wait.side_effect = common.Interrupted()
+    kill = Mock()
+    monkeypatch.setattr(common, "kill_child_after_grace", kill)
+    with patch("skive.makemkv.subprocess.Popen", return_value=proc):
+        with pytest.raises(common.Interrupted):
+            _run_with_progress(["makemkvcon", "mkv"], "test")
+    kill.assert_called_once_with(proc)
