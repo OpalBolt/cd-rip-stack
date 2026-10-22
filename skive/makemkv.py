@@ -112,7 +112,8 @@ def _fmt_eta(seconds: float) -> str:
 
 def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                        sizes: list[int] | None = None, header: str | None = None,
-                       log=None) -> int:
+                       log=None, what: str | None = None,
+                       title_offset: int = 0) -> int:
     """Run makemkvcon with --progress=-same and drive the status block.
 
     The block is a rich Live region of three lines under the static disc
@@ -132,6 +133,14 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     verbatim to stderr when makemkvcon fails (story 7). At level 0 the block
     is the only thing moving on screen; at level ≥1 tool lines print through
     the same console inside the live context, landing above the block.
+
+    Args:
+        what: Display title for line 1; None falls back to the header's first
+            line, then to desc. Per-title rips seed it once in rip_titles so
+            every Live region names the rip without reprinting the header.
+        title_offset: Titles already saved in this session before this call,
+            so per-title calls show the true title x/y. The bar's sizes stay
+            indexed within the call (cur_title still counts from 0).
     """
     from rich.console import Group
     from rich.live import Live
@@ -147,7 +156,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     console = Console(file=sys.stderr)
     if header:
         console.print(header, highlight=False)  # static, above the Live region
-    what = header.split("\n", 1)[0] if header else desc
+    what = what or (header.split("\n", 1)[0] if header else desc)
     drive = next((a for a in cmd if a.startswith("disc:")), "?")
     phase = ""
     cur_title = 0
@@ -171,7 +180,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     def redraw(eta: str = "") -> None:
         """Refresh the two text lines of the status block."""
         l1.plain, l2.plain = status_block(
-            what=what, drive=drive, phase=phase, title_x=cur_title,
+            what=what, drive=drive, phase=phase, title_x=cur_title + title_offset,
             title_y=total_titles,
             cur=hsize(cur_done) if est_total else "",
             total=hsize(cur_size) if est_total else "",
@@ -237,7 +246,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         for line in hidden:
             print(line, file=sys.stderr)
     outcome = "done" if rc == 0 else f"failed (rc={rc})"
-    summary = f"{desc}: {outcome} · title {cur_title}/{total_titles}"
+    summary = f"{desc}: {outcome} · title {cur_title + title_offset}/{total_titles}"
     if est_total:
         summary += f" · disc {hsize(tot_done)}/{hsize(est_total)}"
     console.print(summary, highlight=False)
@@ -268,11 +277,18 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         if rc > worst_rc:
             worst_rc = rc
     else:
+        # Seed line 1 and the title position once: every call's block keeps
+        # the header's display title and shows true x/y across the selection,
+        # while the static header still prints only above the first Live region.
+        what = header.split("\n", 1)[0] if header else None
+        total_titles = len(titles)
         for i, t in enumerate(titles, 1):
             cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", str(t), str(stage_dir) + "/"]
-            desc = f"title {t} ({i}/{len(titles)})"
+            desc = f"title {t} ({i}/{total_titles})"
             sizes = [by_num[t].size] if t in by_num else None
-            rc = _run_with_progress(cmd, desc, sizes=sizes, header=header if i == 1 else None, log=log) if run is subprocess.run else run(cmd).returncode
+            rc = _run_with_progress(cmd, desc, total_titles=total_titles, sizes=sizes,
+                                    header=header if i == 1 else None, log=log,
+                                    what=what, title_offset=i - 1) if run is subprocess.run else run(cmd).returncode
             if rc > worst_rc:
                 worst_rc = rc
     return worst_rc
