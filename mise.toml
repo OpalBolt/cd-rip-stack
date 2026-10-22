@@ -1,6 +1,9 @@
 [tools]
 python = "3.13"
 uv = "latest"
+# seconv: Subtitle Edit headless converter (ADR-0004) — the subtitle-pass OCR engine
+"github:SubtitleEdit/subtitleedit" = { version = "latest", matching = "SeConv-Linux", exe = "seconv" }
+ffmpeg = "latest"
 
 [tasks.install]
 description = "install skive on PATH — editable, from this repo"

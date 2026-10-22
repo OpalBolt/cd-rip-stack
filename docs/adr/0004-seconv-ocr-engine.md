@@ -1,0 +1,3 @@
+# seconv + Tesseract is the OCR engine
+
+One engine extracts and OCRs every subtitle track: Subtitle Edit's headless `seconv` (cross-platform, .NET; reads MKV containers directly — text tracks, PGS, VobSub — and writes subrip) plus Tesseract with `eng`/`dan` traineddata. It is CPU-only, which lets the same policy code run on the Windows transcode box (inline pass) and on Linux (`scripts/backfill.py`). The alternative pair — pgsrip (PGS only, tesseract 5) + vobsub2srt (VobSub only, 2014 code pinned to tesseract 3, shaky Danish) — splits the library across two engines with the weaker one covering 90% of the tracks (845 VobSub vs 91 PGS).

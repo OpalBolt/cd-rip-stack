@@ -1,0 +1,3 @@
+# Strip embedded tracks only after verified sidecars; failures quarantine to rip-ISSUES
+
+An encode loses its embedded subtitle tracks (in-place `mkvmerge --no-subtitles` remux) only after every kept sidecar for that file exists and is non-empty. A file whose subtitle pass fails keeps its embedded tracks and is reported for retry. At transcode time a failed pass means the source is not deleted or moved to `rip-DONE` — it moves to `rip-ISSUES/movies|tv/` and waits. This matters because `rip-DONE` is a temp folder that gets purged: without the quarantine, an OCR failure plus a purge would destroy the only copy of those subtitle tracks.

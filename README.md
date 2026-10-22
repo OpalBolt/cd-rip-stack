@@ -37,16 +37,33 @@ That puts `skive` on your PATH from this repo — `mise run update` (or the uv
 command again) after pulling. The venv carries rich (prompts/tables) plus the
 beets stack (tagging) and loguru.
 
-Non-Python prerequisites, installed once by hand:
+Non-Python prerequisites.
+
+Via mise — pinned in `mise.toml`, arrive with `mise install`:
+
+- `seconv` — Subtitle Edit's headless converter, the subtitle-pass engine
+- `ffmpeg` — conda-forge build from the mise registry; provides `ffprobe`
+  (subtitle note + subtitle pass) and `ffmpeg`
+
+By hand:
 
 - `makemkv` (AUR) with a MakeMKV key in `~/.MakeMKV/settings.conf` as
   `app_Key = "..."` — the free beta key rotates every 30 days
 - `cyanrip` (AUR) for CD rips
 - `flac` (provides `metaflac`)
-- `ffmpeg` (provides `ffprobe`, used for the subtitle note)
+- `mkvtoolnix` (provides `mkvmerge`, the backfill's strip step)
+- `tesseract` with `tesseract-data-eng` and `tesseract-data-dan` — OCR for the
+  subtitle pass; `tesseract --list-langs` must show `eng` and `dan`
 - `rsync` for `sync-sd`
 - NFS mounts reachable (see below)
 - for DVD naming: a TMDB API key
+
+Arch, in two commands (`yay` works in place of `paru`):
+
+```bash
+sudo pacman -S --needed flac mkvtoolnix-cli rsync tesseract tesseract-data-eng tesseract-data-dan
+paru -S --needed makemkv cyanrip
+```
 
 ### Environment variables
 
@@ -256,9 +273,13 @@ Python, no skive imports, runs on a clean `python.exe`.
    (`mkvmerge.exe`), and **ffmpeg** (`ffprobe.exe`, `winget install
    Gyan.FFmpeg`). Each is found on PATH, else under its default Program
    Files dir.
-3. Map the NAS share: `net use Z: \\nas\videos` (or any drive letter). Copy
+3. For the subtitle pass: install **Tesseract** (`winget install
+   UB-Mannheim.TesseractOCR`; select English and Danish in the installer)
+   and **SeConv** (the `SeConv-Windows-x64.zip` from the Subtitle Edit
+   releases; put `seconv.exe` on PATH).
+4. Map the NAS share: `net use Z: \\nas\videos` (or any drive letter). Copy
    `windows/transcode.py` to the box.
-4. Open an SSH session and run:
+5. Open an SSH session and run:
 
 ```powershell
 python transcode.py                    # transcode everything staged

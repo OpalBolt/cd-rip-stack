@@ -67,6 +67,10 @@ _Avoid_: split episode
 The biggest-bytes `_tNN` group of a staged movie. Movies only — never computed for a TV show.
 _Avoid_: main title
 
+**Part**:
+One disc's share of a movie split across discs. Staged `.pN`; a main feature's parts merge into one file at transcode (track sets must match first), extras' parts stay split.
+_Avoid_: side, disc file
+
 **Extras**:
 Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. An aired special is not an extra — it is a Season 0 episode.
 _Avoid_: bonus, featurette, special
@@ -77,3 +81,34 @@ _Avoid_: label, code
 
 **Staging**:
 Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/movies/` or `rip/tv/` — the subdirectory is what tells transcode a file is TV. Music stages under `/mnt/music/rip/` until `tag` files it into the library. A mid-rip file still wears its junk label.
+
+**Issues folder**:
+Quarantine for lossless sources whose transcode or subtitle pass failed: `rip-ISSUES/movies/`, `rip-ISSUES/tv/`. Nothing in the pipeline deletes a source until its sidecars are verified — a failed file waits here for retry, never in `rip-DONE` (which is temp and purged).
+_Avoid_: failed folder, retry queue
+
+### Subtitles
+
+**Sidecar**:
+A subtitle file next to a library video, named `<base>.<lang>[.<flag>].srt`. The subtitle form on main features and TV episodes; extras keep their subs embedded.
+_Avoid_: external subtitle, extracted sub
+
+**Bitmap track**:
+An image-based subtitle track (PGS from Blu-ray, VobSub from DVD). Reaches a sidecar only through OCR.
+_Avoid_: image sub, PGS track
+
+**Text track**:
+A character-coded subtitle track (SRT, ASS/SSA, WebVTT). Converts to a sidecar directly.
+
+**Forced track**:
+Subtitle events covering foreign-audio dialogue only, flagged by disposition at rip time. Sidecar suffix `.forced`.
+
+**Full track**:
+One language's complete dialogue track. At most one per language per video; duplicates resolve by policy, not by suffixing.
+
+**SDH track**:
+A full track carrying sound-effect descriptions, unflagged on disc. Identified by OCR output, sidecar suffix `.sdh`.
+_Avoid_: HI track, captions
+
+**Subtitle pass**:
+Extraction + OCR + naming that turns a main feature's or TV episode's tracks into sidecars. Runs inline at transcode for new rips; a one-off backfill covers the existing library.
+_Avoid_: subtitle extraction, sub rip
