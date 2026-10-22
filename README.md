@@ -15,7 +15,8 @@ skive sync-sd    [mountpoint]                                                   
 Ripping happens on the Linux machine with the drive. Transcoding runs on a
 separate Windows machine (see [Windows transcode box](#windows-transcode-box)).
 Both share one NAS mount: `rip/` stages the lossless MKVs, `library/` holds the
-encodes. `windows/transcode.py` is the whole Windows install, copied over by
+encodes. `windows/transcode.py` + `windows/subs.py` are the whole Windows
+install, copied over by
 hand.
 
 ## Linux setup
@@ -263,8 +264,9 @@ machine.
 ## Windows transcode box
 
 Transcoding happens on a separate Windows machine; ripping stays on Linux.
-The whole Windows install is one file, `windows/transcode.py` — stdlib-only
-Python, no skive imports, runs on a clean `python.exe`.
+The whole Windows install is two files, `windows/transcode.py` +
+`windows/subs.py` (kept side by side) — stdlib-only Python, no skive
+imports, runs on a clean `python.exe`.
 
 ### Install
 
@@ -278,7 +280,7 @@ Python, no skive imports, runs on a clean `python.exe`.
    and **SeConv** (the `SeConv-Windows-x64.zip` from the Subtitle Edit
    releases; put `seconv.exe` on PATH).
 4. Map the NAS share: `net use Z: \\nas\videos` (or any drive letter). Copy
-   `windows/transcode.py` to the box.
+   `windows/transcode.py` and `windows/subs.py` to the box, same folder.
 5. Open an SSH session and run:
 
 ```powershell
@@ -308,9 +310,17 @@ drive fails loudly with a `net use` hint — it never silently scans "no MKVs".
 - **Encode**: `HandBrakeCLI` re-encodes video only to H.265 at the source's
   native resolution — never upscaled (ffprobe picks the preset: 480p/576p
   for DVD, 1080p for Blu-ray, 4K for UHD; DVD also gets detelecine +
-  decomb). Every audio and subtitle track passes through (`--all-audio
-  --aencoder copy`, `--all-subtitles`, nothing burned in). GPU encoders add
-  `--encoder <gpu>_h265 --quality 28`.
+  decomb). Audio passes through (`--all-audio --aencoder copy`, nothing
+  burned in). GPU encoders add `--encoder <gpu>_h265 --quality 28`.
+- **Subtitle pass**: main features and TV episodes get their eng/dan
+  subtitle tracks extracted + OCR'd (`seconv`, inline) into SRT sidecars
+  beside the encode (`<base>.<lang>[.forced|.sdh].srt`) and the encode
+  carries **zero** subtitle tracks (`--subtitle-lang-list zzz`, a language
+  no track matches). Extras keep every track embedded — no pass, no
+  sidecars. A failed pass ships the encode subless and quarantines the
+  lossless source to `rip-ISSUES\movies|tv\` for retry; a split main whose
+  `.pN` parts have mismatched track sets never merges — all parts
+  quarantine instead.
 - Each file is pulled to a local temp dir first so it encodes off the
   network share.
 - **`-Keep`**: moves lossless sources to `rip-DONE` instead of deleting, and
@@ -352,5 +362,6 @@ cd-rip-stack/
 │   └── custom.mmcp.xml
 ├── tests/               # pytest: matcher fixtures, naming, title-spec, transcode rules
 └── windows/
-    └── transcode.py     # standalone, stdlib-only — the Windows install
+    ├── transcode.py     # standalone, stdlib-only — the Windows batch
+    └── subs.py          # shared subtitle pass (transcode + backfill import it)
 ```

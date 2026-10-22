@@ -1,8 +1,12 @@
 """Port of windows/test-transcode.sh's seven scenarios to pytest.
 
-Stubs HandBrakeCLI/mkvmerge with the same shell semantics as the bash test:
-HandBrakeCLI copies input->output and exits 3 on input containing FAILME;
-mkvmerge concatenates args' contents in order and exits 2 on BADMERGE.
+Stubs HandBrakeCLI/mkvmerge/ffprobe/seconv/tesseract with the same shell
+semantics as the bash test: HandBrakeCLI copies input->output and exits 3 on
+input containing FAILME; mkvmerge concatenates args' contents in order and
+exits 2 on BADMERGE; ffprobe answers height (csv), subtitle inventory
+(-select_streams s) and full-stream signature (merge guard) queries keyed off
+content markers; seconv writes one SRT into its --output-folder and exits 1 on
+SUBS-FAIL input.
 """
 
 import ast
@@ -15,9 +19,11 @@ import sys
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "transcode", pathlib.Path(__file__).parent.parent / "windows" / "transcode.py"
-)
+_WINDOWS = pathlib.Path(__file__).parent.parent / "windows"
+# transcode.py does `import subs`; when run as a script the script dir is on
+# sys.path, but spec_from_file_location does not add it
+sys.path.insert(0, str(_WINDOWS))
+_SPEC = importlib.util.spec_from_file_location("transcode", _WINDOWS / "transcode.py")
 transcode = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(transcode)
 
@@ -46,6 +52,7 @@ def env(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     hb_log = tmp_path / "hb-calls.log"
+    seconv_log = tmp_path / "seconv-calls.log"
 
     (bin_dir / "HandBrakeCLI.exe").write_text(
         f"""#!/bin/sh
@@ -75,14 +82,54 @@ done
     )
     (bin_dir / "ffprobe.exe").write_text(
         """#!/bin/sh
-in=""
-for a in "$@"; do in="$a"; done
-if grep -q 2160 "$in" 2>/dev/null; then echo 2160
-elif grep -q 576 "$in" 2>/dev/null; then echo 576
-elif grep -q 480 "$in" 2>/dev/null; then echo 480
-else echo 1080; fi
+# three query shapes: height (csv), subtitle inventory (json, -select_streams s),
+# full-stream signature (json, no select) for the merge guard
+in=""; fmt=""; sel=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-select_streams" ] && sel="$a"
+  [ "$prev" = "-of" ] && fmt="$a"
+  in="$a"
+  prev="$a"
+done
+if grep -q PROBEBAD "$in" 2>/dev/null; then echo boom >&2; exit 1; fi
+if [ "$fmt" != "json" ]; then
+  if grep -q 2160 "$in" 2>/dev/null; then echo 2160
+  elif grep -q 576 "$in" 2>/dev/null; then echo 576
+  elif grep -q 480 "$in" 2>/dev/null; then echo 480
+  else echo 1080; fi
+  exit 0
+fi
+if [ "$sel" = "s" ]; then
+  if grep -q SUBS-FAIL "$in" 2>/dev/null; then
+    printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
+  elif grep -q SUBS-ENG-DAN "$in" 2>/dev/null; then
+    printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":1},"tags":{"language":"dan"}},{"index":3,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
+  else
+    printf '%s\\n' '{"streams":[]}'
+  fi
+  exit 0
+fi
+# guard signatures: all parts identical unless a part carries TRACKS-DIFFER
+if grep -q TRACKS-DIFFER "$in" 2>/dev/null; then
+  printf '%s\\n' '{"streams":[{"codec_type":"video","codec_name":"mpeg2video","tags":{"language":"und"}},{"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng"}}]}'
+else
+  printf '%s\\n' '{"streams":[{"codec_type":"video","codec_name":"mpeg2video","tags":{"language":"und"}},{"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng"}},{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"eng"}}]}'
+fi
 """
     )
+    (bin_dir / "seconv.exe").write_text(
+        f"""#!/bin/sh
+{{ printf 'CALL:'; printf ' %s' "$@"; echo; }} >> "{seconv_log}"
+in="$1"
+if grep -q SUBS-FAIL "$in" 2>/dev/null; then exit 1; fi
+out=""
+for a in "$@"; do
+  case "$a" in --output-folder:*) out="${{a#--output-folder:}}" ;; esac
+done
+printf '1\\n00:00:01,000 --> 00:00:02,000\\ncue\\n\\n' > "$out/track.srt"
+"""
+    )
+    (bin_dir / "tesseract.exe").write_text("#!/bin/sh\nexit 0\n")
     for f in bin_dir.iterdir():
         f.chmod(0o755)
 
@@ -348,14 +395,15 @@ def test_copy2_reports_progress(tmp_path, capsys):
 def test_no_third_party_imports():
     src = pathlib.Path(__file__).parent.parent / "windows" / "transcode.py"
     tree = ast.parse(src.read_text())
-    stdlib = {"argparse", "os", "re", "shutil", "subprocess", "sys",
+    stdlib = {"argparse", "json", "os", "re", "shutil", "subprocess", "sys",
               "tempfile", "dataclasses", "datetime", "pathlib"}
+    local = {"subs"}  # windows/subs.py ships beside transcode.py
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
-                assert a.name.split(".")[0] in stdlib, a.name
+                assert a.name.split(".")[0] in stdlib | local, a.name
         elif isinstance(node, ast.ImportFrom):
-            assert (node.module or "").split(".")[0] in stdlib, node.module
+            assert (node.module or "").split(".")[0] in stdlib | local, node.module
 
 
 def test_dvd_not_upscaled(env):
@@ -387,3 +435,144 @@ def test_runs_standalone_help():
     r = subprocess.run([sys.executable, str(p), "--help"], capture_output=True, text=True)
     assert r.returncode == 0
     assert "usage:" in r.stdout
+
+
+# -- slice 03: inline subtitle pass in the transcode batch ---------------------
+_ARGV_TAIL = ('--preset H.265 MKV 1080p30 --all-audio --aencoder copy '
+              '--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm '
+              '--audio-fallback ac3 ')
+
+
+def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
+    vid = env / "vid"
+    mk(vid, "rip/Arg (2001)_t00.mkv", "ARG-MAIN-BYTES")  # outweighs t01 so t00 is the main
+    mk(vid, "rip/Arg (2001)_t01.mkv", "ARG-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    lines = (env / "hb-calls.log").read_text().strip().splitlines()
+    assert len(lines) == 2
+    feat = next(l for l in lines if "_t00.h265.mkv" in l)
+    extra = next(l for l in lines if "_t01.h265.mkv" in l)
+    # feature: the no-match language list rides in front of --all-subtitles
+    assert feat.split(".h265.mkv ", 1)[1] == _ARGV_TAIL + \
+        "--subtitle-lang-list zzz --all-subtitles --subtitle-burned=none"
+    # extra: byte-identical to today's pass-through argv
+    assert extra.split(".h265.mkv ", 1)[1] == \
+        _ARGV_TAIL + "--all-subtitles --subtitle-burned=none"
+
+
+def test_guard_mismatch_quarantines_all_parts_no_encode(env, capsys):
+    vid = env / "vid"
+    mk(vid, "rip/Two (2001)_t00.p1.mkv", "PART-ONE")
+    mk(vid, "rip/Two (2001)_t00.p2.mkv", "TRACKS-DIFFER")
+    mk(vid, "rip/Next (2002)_t00.mkv", "NEXT")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    issues = vid / "rip-ISSUES" / "movies"
+    assert sorted(p.name for p in issues.iterdir()) == \
+        ["Two (2001)_t00.p1.mkv", "Two (2001)_t00.p2.mkv"]
+    assert sorted(p.name for p in (vid / "rip").iterdir()) == []
+    assert not (vid / "library" / "Two (2001)").exists()
+    assert (vid / "library" / "Next (2002)" / "Next (2002).mkv").read_text() == "NEXT"
+    assert "FAILED (track guard)" in err
+    log = (env / "rip.log").read_text()
+    assert "FAIL tracks differ" in log and "p2" in log
+    hb = (env / "hb-calls.log").read_text()
+    assert len(hb.strip().splitlines()) == 1  # only Next encoded
+
+
+def test_guard_ffprobe_failure_quarantines(env):
+    vid = env / "vid"
+    mk(vid, "rip/Rip (2001)_t00.p1.mkv", "PROBEBAD")
+    mk(vid, "rip/Rip (2001)_t00.p2.mkv", "PROBEBAD")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 1
+    assert sorted(p.name for p in (vid / "rip-ISSUES" / "movies").iterdir()) == \
+        ["Rip (2001)_t00.p1.mkv", "Rip (2001)_t00.p2.mkv"]
+    assert not (env / "hb-calls.log").exists()
+
+
+def test_guard_match_still_merges_and_passes_merged_file(env):
+    vid = env / "vid"
+    mk(vid, "rip/Merge (2003)_t00.p1.mkv", "SUBS-ENG-DAN")
+    mk(vid, "rip/Merge (2003)_t00.p2.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "Merge (2003)"
+    assert (L / "Merge (2003).mkv").read_text() == "SUBS-ENG-DANSUBS-ENG-DAN"
+    assert (L / "Merge (2003).dan.forced.srt").exists()
+    assert (L / "Merge (2003).eng.srt").exists()
+    # the pass ran once, on the merged file, never per part
+    sc = (env / "seconv-calls.log").read_text().strip().splitlines()
+    assert len(sc) == 2 and all("merged.mkv" in l for l in sc)
+    assert sorted(p.name for p in (vid / "rip").iterdir()) == []
+
+
+def test_pass_success_sidecars_beside_encode_and_archived(env):
+    vid = env / "vid"
+    mk(vid, "rip/Side (2001)_t00.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args(keep=True))
+
+    assert rc == 0
+    L = vid / "library" / "Side (2001)"
+    assert (L / "Side (2001).mkv").read_text() == "SUBS-ENG-DAN"
+    assert (L / "Side (2001).dan.forced.srt").read_text().count(" --> ") == 1
+    assert (L / "Side (2001).eng.srt").exists()
+    assert sorted(p.name for p in (vid / "rip-DONE").iterdir()) == ["Side (2001)_t00.mkv"]
+    assert len((env / "seconv-calls.log").read_text().strip().splitlines()) == 2
+    assert list((env / "work").iterdir()) == []  # sidecar temp dir cleaned up
+
+
+def test_pass_failure_ships_encode_and_quarantines_source(env, capsys):
+    vid = env / "vid"
+    mk(vid, "rip/Ocr (2001)_t00.mkv", "SUBS-FAIL")
+
+    rc = transcode.run_transcode(Args(keep=True))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert (vid / "library" / "Ocr (2001)" / "Ocr (2001).mkv").read_text() == "SUBS-FAIL"
+    assert list((vid / "rip-DONE").iterdir()) == []  # never archived despite -k
+    assert (vid / "rip-ISSUES" / "movies" / "Ocr (2001)_t00.mkv").read_text() == "SUBS-FAIL"
+    assert "FAILED (subtitle pass)" in err
+    log = (env / "rip.log").read_text()
+    assert "FAIL subtitle pass" in log and "seconv failed" in log
+
+
+def test_tv_episode_pass_and_zero_subs_encode(env):
+    vid = env / "vid"
+    mk(vid, "rip/TV/Show (2010)_S01E02.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    S1 = vid / "library" / "TV" / "Show (2010)" / "Season 01"
+    assert (S1 / "Show (2010) - S01E02.mkv").read_text() == "SUBS-ENG-DAN"
+    assert (S1 / "Show (2010) - S01E02.dan.forced.srt").exists()
+    assert (S1 / "Show (2010) - S01E02.eng.srt").exists()
+    assert "--subtitle-lang-list zzz" in (env / "hb-calls.log").read_text()
+    assert sorted(p.name for p in (vid / "rip" / "TV").iterdir()) == []
+
+
+def test_tv_extra_unchanged_no_pass(env):
+    vid = env / "vid"
+    mk(vid, "rip/TV/Show (2010) - Extra 03.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    ex = vid / "library" / "TV" / "Show (2010)" / "extras"
+    assert (ex / "Show (2010) - Extra 03.mkv").read_text() == "SUBS-ENG-DAN"
+    assert not list(ex.glob("*.srt"))  # embedded subs stay, no sidecars
+    assert not (env / "seconv-calls.log").exists()  # no pass ran
+    assert "--subtitle-lang-list" not in (env / "hb-calls.log").read_text()

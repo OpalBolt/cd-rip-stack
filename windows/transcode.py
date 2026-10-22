@@ -7,14 +7,16 @@ is: winget Python 3, HandBrake (CLI reachable), MKVToolNix, ffmpeg (ffprobe),
 and the share mapped (default `Z:\\`, `$env:VIDEOS` overrides).
 
 The staging subdirectory decides the type: anything under `rip\\{TV,tv}` is TV
-(no main-feature pick, no merging); everything else is a movie. This is a
-pass-through re-encode: every audio + subtitle track kept, video only
-re-encoded, nothing burned in.
+(no main-feature pick, no merging); everything else is a movie. Video is
+re-encoded, audio copied. Main features and TV episodes ship with ZERO subtitle
+tracks (the inline subtitle pass extracts them to SRT sidecars beside the
+encode); extras keep every track embedded.
 
 Usage:  python transcode.py [-k] [-e x265|nvenc|qsv|vce] [-w DIR] [prefix...]
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -24,6 +26,8 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+import subs  # beside this script; a script's dir is on sys.path when run directly
 
 # Staged names: <Movie (Year)>_tNN[.pN].mkv (titles), <Movie (Year)> - Extra NN[.pN].mkv
 # (extras disc), <Show (Year)>_SNNENN[-ENN].mkv (TV, incl. doubles).
@@ -134,6 +138,56 @@ def _find_tool(exe: str, fallback_rel: str) -> str | None:
     return None
 
 
+def _find_on_path(exe: str) -> str | None:
+    """seconv/tesseract: PATH only (README install spec puts them there)."""
+    found = shutil.which(exe)
+    if not found:
+        print(f"{exe} not found on PATH -- see README (Windows transcode box: Install)",
+              file=sys.stderr)
+    return found
+
+
+def _stream_sig(src: str, ffprobe_exe: str) -> list[tuple[str, str, str]] | None:
+    """(codec_type, codec_name, language-or-'und') per stream, in order; None if unreadable."""
+    r = subprocess.run(
+        [ffprobe_exe, "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name:stream_tags=language", "-of", "json", src],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        streams = json.loads(r.stdout).get("streams", [])
+        return [(s.get("codec_type") or "", s.get("codec_name") or "",
+                 (s.get("tags") or {}).get("language") or "und") for s in streams]
+    except (ValueError, AttributeError):
+        return None
+
+
+def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
+    """Why a split main must not merge: '' when every part's stream signature
+    matches part 1, else a FAIL detail naming the part and stream position."""
+    sigs = []
+    for p in parts:
+        sig = _stream_sig(p.path, ffprobe_exe)
+        if sig is None:
+            return f"{p.name}: ffprobe failed"
+        sigs.append(sig)
+    first = sigs[0]
+
+    def fmt(s):
+        return f"{s[0]}/{s[1]}/{s[2]}" if s else "-"
+
+    for p, sig in zip(parts[1:], sigs[1:]):
+        for k in range(max(len(sig), len(first))):
+            a = sig[k] if k < len(sig) else None
+            b = first[k] if k < len(first) else None
+            if a != b:
+                return (f"{p.name} stream {k} ({fmt(a)}) != "
+                        f"{parts[0].name} stream {k} ({fmt(b)})")
+    return ""
+
+
 def _scan(rip_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
     """Walk rip\\ for .mkv files; return parsed items + which prefixes hit."""
     items: list[Item] = []
@@ -214,8 +268,10 @@ def _preset(height: int) -> str:
     return "H.265 MKV 2160p60 4K"
 
 
-def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str) -> bool:
-    """HandBrake pass-through re-encode at native resolution. GPU encoders override the encoder."""
+def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
+            no_subs: bool = False) -> bool:
+    """HandBrake pass-through re-encode at native resolution. GPU encoders override the encoder.
+    no_subs selects zero subtitle tracks (features/TV); extras keep today's pass-through."""
     height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
     if encoder != "x265":
@@ -227,8 +283,12 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str) -> 
         "--all-audio", "--aencoder", "copy",
         "--audio-copy-mask", _COPY_MASK,
         "--audio-fallback", "ac3",
-        "--all-subtitles", "--subtitle-burned=none",
     ]
+    if no_subs:
+        # --all-subtitles respects the language list, so a language no track
+        # matches selects zero subtitle tracks
+        cmd += ["--subtitle-lang-list", "zzz"]
+    cmd += ["--all-subtitles", "--subtitle-burned=none"]
     return subprocess.run(cmd).returncode == 0
 
 
@@ -274,6 +334,45 @@ def _archive(src: str, done_dir: str, rip_dir: str, keep: bool) -> None:
         shutil.move(src, d)
 
 
+def _quarantine(src: str, issues_dir: str) -> None:
+    """Sources that must not be lost wait in rip-ISSUES (never clobbering)."""
+    os.makedirs(issues_dir, exist_ok=True)
+    d = os.path.join(issues_dir, os.path.basename(src))
+    if os.path.exists(d):
+        print(f"quarantine: {d} already exists -- source left in place", file=sys.stderr)
+    else:
+        shutil.move(src, d)
+
+
+def _sub_pass(local_src: str, work_dir: str, base: str, seconv_exe: str,
+              ffprobe_exe: str):
+    """Inline subtitle pass on the local copy/merge; sidecars land in a fresh
+    dir under the work dir and only move beside the encode once it succeeds.
+    Returns (sidecar dir, PassResult)."""
+    side_dir = tempfile.mkdtemp(dir=work_dir, prefix="subs-")
+    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe)
+    for n in res.notes:
+        print(n)
+    return side_dir, res
+
+
+def _ship_sidecars(side_dir: str, dest_dir: str, res) -> None:
+    for name in res.sidecars:
+        shutil.move(os.path.join(side_dir, name), os.path.join(dest_dir, name))
+    shutil.rmtree(side_dir, ignore_errors=True)
+
+
+def _fail_quarantine(log: RipLog, paths: list[str], issues_dir: str,
+                     label: str, notes: list[str]) -> None:
+    """Pass failed but the encode shipped subless: sources wait in rip-ISSUES."""
+    fails = "; ".join(n for n in notes if n.startswith("FAIL"))
+    log.note("subs", f"FAIL subtitle pass: {label} -- {fails}")
+    print(f"FAILED (subtitle pass): {label} -- encode shipped subless, "
+          f"sources quarantined to {issues_dir}", file=sys.stderr)
+    for p in paths:
+        _quarantine(p, issues_dir)
+
+
 def run_transcode(args) -> int:
     vid = os.environ.get("VIDEOS") or "Z:\\"
     if not os.path.isdir(vid):
@@ -286,13 +385,16 @@ def run_transcode(args) -> int:
     rip_dir = os.path.join(vid, "rip")
     lib_dir = os.path.join(vid, "library")
     done_dir = os.path.join(vid, "rip-DONE")
+    issues_dir = os.path.join(vid, "rip-ISSUES")
     tmp_dir = args.workdir or os.environ.get("VIDEO_WORK_DIR") or os.path.join(tempfile.gettempdir(), "video-work")
     os.makedirs(tmp_dir, exist_ok=True)
 
     hb_exe = _find_tool(_HB, os.path.join("HandBrake", _HB))
     mkv_exe = _find_tool(_MKV, os.path.join("MKVToolNix", _MKV))
     ffprobe_exe = _find_tool(_FFPROBE, os.path.join("ffmpeg", "bin", _FFPROBE))
-    if not hb_exe or not mkv_exe or not ffprobe_exe:
+    seconv_exe = _find_on_path("seconv.exe")
+    tess_exe = _find_on_path("tesseract.exe")  # seconv shells out to it
+    if not hb_exe or not mkv_exe or not ffprobe_exe or not seconv_exe or not tess_exe:
         return 1
     if args.keep:
         os.makedirs(done_dir, exist_ok=True)
@@ -337,7 +439,8 @@ def run_transcode(args) -> int:
             # -- Specials), extras -> the show's extras.
             if i.is_tv:
                 show_dir = os.path.join(lib_dir, "TV", safe)
-                if i.sfx == "S":
+                episode = i.sfx == "S"
+                if episode:
                     season = "Specials" if int(i.sn) == 0 else f"Season {i.sn}"
                     dest_dir = os.path.join(show_dir, season)
                     dest = os.path.join(dest_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}.mkv")
@@ -353,12 +456,27 @@ def run_transcode(args) -> int:
                 log.phase("encode")
                 print(f"copying {i.name} to local temp...")
                 _copy2(i.path, local_src)
-                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe):
+                side_dir = res = None  # extras: no pass, embedded subs stay
+                if episode:
+                    side_dir, res = _sub_pass(
+                        local_src, tmp_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}",
+                        seconv_exe, ffprobe_exe)
+                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
+                           no_subs=episode):
                     shutil.move(local_out, dest)
+                    if side_dir is not None:
+                        _ship_sidecars(side_dir, dest_dir, res)
                     _rmf(local_src)
-                    _archive(i.path, done_dir, rip_dir, args.keep)
+                    if res is None or res.ok:
+                        _archive(i.path, done_dir, rip_dir, args.keep)
+                    else:
+                        _fail_quarantine(log, [i.path], os.path.join(issues_dir, "tv"),
+                                         i.name, res.notes)
+                        failed = 1
                     log.phase_end()
                 else:
+                    if side_dir is not None:
+                        shutil.rmtree(side_dir, ignore_errors=True)
                     _rmf(local_src)
                     _rmf(local_out)
                     log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
@@ -377,10 +495,21 @@ def run_transcode(args) -> int:
                 )
                 dest_dir = os.path.join(lib_dir, safe)
                 dest = os.path.join(dest_dir, safe + ".mkv")
-                os.makedirs(dest_dir, exist_ok=True)
                 log.phase("encode")
                 cleanup: list[str] = []
                 if len(siblings) > 1:
+                    # track guard: a mismatched part set never merges or encodes
+                    bad = _split_mismatch(siblings, ffprobe_exe)
+                    if bad:
+                        log.note("guard", f"FAIL tracks differ: {bad} -- all parts to rip-ISSUES/movies")
+                        print(f"FAILED (track guard): {bad} -- parts quarantined", file=sys.stderr)
+                        for s in siblings:
+                            _quarantine(s.path, os.path.join(issues_dir, "movies"))
+                            handled.add(s.path)
+                        failed = 1
+                        log.phase_end()
+                        continue
+                    os.makedirs(dest_dir, exist_ok=True)
                     local_parts = []
                     for s in siblings:
                         lb = os.path.join(tmp_dir, s.name)
@@ -408,22 +537,35 @@ def run_transcode(args) -> int:
                         log.phase_end()
                         continue
                 else:
+                    os.makedirs(dest_dir, exist_ok=True)
                     local_src = os.path.join(tmp_dir, i.name)
                     print(f"copying {i.name} to local temp...")
                     _copy2(i.path, local_src)
                     cleanup.append(local_src)
 
+                # pass runs on the merged lossless file, never per part
+                side_dir, res = _sub_pass(local_src, tmp_dir, safe, seconv_exe, ffprobe_exe)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
-                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe):
+                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
+                           no_subs=True):
                     shutil.move(local_out, dest)
+                    _ship_sidecars(side_dir, dest_dir, res)
                     for p in cleanup:
                         _rmf(p)
-                    for s in siblings:
-                        _archive(s.path, done_dir, rip_dir, args.keep)
+                    names = " ".join(s.name for s in siblings)
+                    if res.ok:
+                        for s in siblings:
+                            _archive(s.path, done_dir, rip_dir, args.keep)
+                    else:
+                        _fail_quarantine(log, [s.path for s in siblings],
+                                         os.path.join(issues_dir, "movies"), names, res.notes)
                     for s in siblings:
                         handled.add(s.path)
+                    if not res.ok:
+                        failed = 1
                     log.phase_end()
                 else:
+                    shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
                         _rmf(p)
                     log.note("encode", f"FAILED handbrake: {i.name} -- sources left in place")
