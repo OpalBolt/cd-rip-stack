@@ -266,6 +266,7 @@ def test_naming_no_clobber():
         assignment = {0: (1, 1)}
 
         rename_tv("Show (2000)", stage, 1, assignment)
+
         # Original should stay, junk file untouched with warning
         assert (stage / "Show (2000)_S01E01.mkv").exists()
         assert (stage / "B1_t02.mkv").exists()

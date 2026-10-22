@@ -26,9 +26,6 @@ from skive.tv_match import (
 console = Console()
 
 
-console = Console()
-
-
 def staged_eps(stage_dir: Path, display: str, season: int) -> set[int]:
     """Return episode numbers already staged for this show and season.
 
