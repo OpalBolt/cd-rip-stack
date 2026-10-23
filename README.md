@@ -104,8 +104,10 @@ mirror of the share under /tmp (empty files, no media bytes), applies the full
 migration there, and prints the tree to inspect — a free end-to-end rehearsal. The script is idempotent — a
 re-run on a migrated tree reports zero moves. Anything it cannot classify is
 reported and left in place, never touched: junk labels (`B1_t00.mkv`), names
-that lost their title year, a bare ` - Extra NN` file in a flat context
-(movie or TV extra is undecidable there), and any path that would traverse a
+that lost their title year, a bare ` - Extra NN` file in a flat context the
+library cannot type (a flat extra follows its title's home — movie or show —
+so only a title homed in neither, or in both, of the movie and TV homes
+leaves the extra undecidable), and any path that would traverse a
 symlink. Old text `rip.log` files are left in place, unread.
 
 After `--apply`, rescan the Jellyfin library once. Jellyfin keeps its single

@@ -500,6 +500,34 @@ def test_flat_extra_homed_in_both_library_sides_still_ambiguous(tmp_path, capsys
             f" -- left in place)") in out
 
 
+def test_flat_extra_library_typed_route_refuses_target_collision(tmp_path,
+                                                                 capsys):
+    # lossless-root stray: the library types it (title in library/movies/),
+    # but its lossless title folder already holds that extra -- the typed
+    # route refuses at the target, same as any move
+    mkfile(tmp_path / "library" / "movies" / "Movie (2001)"
+           / "Movie (2001)_t01.mkv")
+    kept = mkfile(tmp_path / "lossless" / "movies" / "Movie (2001)"
+                  / "Movie (2001) - Extra 02.mkv", b"kept")
+    stray = mkfile(tmp_path / "lossless" / "Movie (2001) - Extra 02.mkv",
+                   b"stray")
+
+    rc = run(tmp_path)  # dry-run: the plan already shows the refusal
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert f"skip {stray} (target exists -- left in place)" in out
+    assert "ambiguous" not in out  # the library typed it; only the target refuses
+
+    rc = run(tmp_path, apply=True)  # apply: same refusal, nothing overwritten
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert kept.read_bytes() == b"kept" and stray.read_bytes() == b"stray"
+    assert stray.exists()  # left at the lossless root, never re-treed
+    assert f"skip {stray} (target exists -- left in place)" in out
+    assert (tmp_path / "lossless" / "movies" / "Movie (2001)"
+            / "Movie (2001) - Extra 02.mkv").read_bytes() == b"kept"
+
+
 def test_typed_context_extra_keeps_positional_type(tmp_path, capsys):
     extra = mkfile(tmp_path / "rip" / "tv" / "Show (2020) - Extra 02.mkv")
 
