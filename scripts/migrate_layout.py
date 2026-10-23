@@ -26,7 +26,14 @@ Names are parsed by windows/transcode.py's staged-name contracts
 the transcoder matches, imported rather than duplicated (the module imports
 cleanly on Linux; the test suite already does it).
 
-Usage:  python scripts/migrate_layout.py [--apply] [--root PATH]
+--mock [PATH] (default /tmp/migrate-layout-mock) rehearses the APPLY against
+a structure-only mirror of the MANAGED roots (library/, rip/, rip-DONE/,
+lossless/, issues/, logs/) built at PATH: real dirs (empty ones included),
+empty files in place of media, recreated symlinks -- the source root itself
+is never listed (only read below the managed roots), the mirror is the sole
+mutation target.
+
+Usage:  python scripts/migrate_layout.py [--apply] [--root PATH] [--mock [PATH]]
         (default root: $VIDEOS_MOUNT, like the skive scripts)
 """
 
@@ -45,6 +52,10 @@ _JUNK = re.compile(r"^[A-Z][0-9]+_t\d+\.mkv$")
 _YEAR = re.compile(r"\(\d{4}\)$")  # transcode's junk guard: a title must carry a year
 _DISC = re.compile(r"^d\d+$")  # drive subdir, old and new staging shapes alike
 _TYPE_DIRS = ("movies", "tv")  # structural children of lossless/
+# the managed roots the mock mirrors -- and nothing else: the source root
+# itself is never listed (a sandboxed share may refuse to list it while
+# serving the subtrees fine), so nothing outside these roots crosses over
+_MANAGED_ROOTS = ("library", "rip", "rip-DONE", "lossless", "issues", "logs")
 
 
 def _through_symlink(root: Path, p: Path) -> bool:
@@ -474,6 +485,89 @@ def run_migration(root: Path, apply_mode: bool) -> int:
     return 0
 
 
+def _mock_symlink(src: Path, dst: Path) -> None:
+    """Recreate src's symlink at dst verbatim (the target string is copied,
+    so a dangling target stays dangling, exactly like the source); if the OS
+    refuses, an empty file stands in and a note is printed."""
+    try:
+        os.symlink(os.readlink(src), dst)
+    except OSError as e:
+        print(f"note: could not symlink {dst} ({e}) -- wrote an empty file")
+        dst.touch()
+
+
+def _build_mock_tree(source: Path, mirror: Path) -> tuple[int, int, int]:
+    """Mirror source's MANAGED roots into mirror: real dirs (empty ones
+    included), empty files in place of regular files, recreated symlinks
+    (os.walk with followlinks=False: a symlinked dir is mirrored as the
+    symlink alone and never descended into). Each managed root that exists
+    is walked as a subtree; the source root itself is never listed -- a
+    sandboxed share may refuse to list it -- and nothing outside the managed
+    roots belongs to the migration. Returns (dirs, files, symlinks) mirrored;
+    the source is only ever read."""
+    mirror.mkdir(parents=True, exist_ok=True)  # caller vetted PATH first
+    ndir = nfile = nlink = 0
+    for root_name in _MANAGED_ROOTS:
+        managed = source / root_name
+        if managed.is_symlink():
+            # exactly as within the walk: mirrored as the link alone, never
+            # descended into
+            _mock_symlink(managed, mirror / root_name)
+            nlink += 1
+            continue
+        if not managed.is_dir():
+            continue  # absent: nothing to mirror
+        (mirror / root_name).mkdir()  # the managed root exists in the mirror
+        ndir += 1
+        for dirpath, dirnames, filenames in os.walk(managed, followlinks=False):
+            rel = Path(dirpath).relative_to(source)
+            for name in dirnames:
+                src, dst = Path(dirpath) / name, mirror / rel / name
+                if src.is_symlink():
+                    _mock_symlink(src, dst)
+                    nlink += 1
+                else:
+                    dst.mkdir()  # parent already walked, so it exists
+                    ndir += 1
+            for name in filenames:
+                src, dst = Path(dirpath) / name, mirror / rel / name
+                if src.is_symlink():
+                    _mock_symlink(src, dst)
+                    nlink += 1
+                else:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.touch()  # empty: no media bytes cross into the mirror
+                    nfile += 1
+    return ndir, nfile, nlink
+
+
+def run_mock(source: Path, mirror: Path) -> int:
+    """--mock: build a structure-only mirror of source's managed roots at
+    mirror, then run the FULL migration (plan + apply) against the mirror and
+    point at it for
+    inspection. The source is never written; the mirror is the only target.
+    PATH is refused unless absent or an empty directory."""
+    if not source.is_dir():
+        print(f"migrate_layout: {source} is not a directory", file=sys.stderr)
+        return 1
+    if mirror.exists() or mirror.is_symlink():
+        if mirror.is_symlink() or not mirror.is_dir() or any(mirror.iterdir()):
+            print(f"migrate_layout: {mirror} already exists and is not empty"
+                  " (remove it first)", file=sys.stderr)
+            return 1
+    try:
+        ndir, nfile, nlink = _build_mock_tree(source, mirror)
+    except OSError as e:
+        print(f"migrate_layout: could not build the mock tree: {e}",
+              file=sys.stderr)
+        return 1
+    print(f"mock tree at {mirror} (structure only, empty files): "
+          f"{ndir} dir(s), {nfile} file(s), {nlink} symlink(s)")
+    rc = run_migration(mirror, apply_mode=True)
+    print(f"inspect with: find {mirror} -type d | sort")
+    return rc
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="migrate_layout.py",
@@ -486,12 +580,19 @@ def parse_args(argv=None):
                    help="execute the planned moves and prunes (default: dry-run)")
     p.add_argument("--root", metavar="PATH", type=Path, default=None,
                    help="videos share root (default: $VIDEOS_MOUNT, else /mnt/videos)")
+    p.add_argument("--mock", nargs="?", const=Path("/tmp/migrate-layout-mock"),
+                   metavar="PATH", type=Path, default=None,
+                   help="rehearse the apply on a structure-only mirror of the "
+                        "managed roots at PATH (default: /tmp/migrate-layout-mock): "
+                        "empty files, no media bytes; the source is never written")
     return p.parse_args(argv)
 
 
 def main(argv=None) -> None:
     args = parse_args(argv)
     root = args.root or Path(os.environ.get("VIDEOS_MOUNT", "/mnt/videos"))
+    if args.mock is not None:
+        sys.exit(run_mock(root, args.mock))
     sys.exit(run_migration(root, args.apply))
 
 

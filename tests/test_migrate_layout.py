@@ -590,6 +590,195 @@ def test_failed_carry_reports_dependents_at_real_location(tmp_path, capsys,
     assert "lossless" not in out  # no virtual in-root citation survives
 
 
+# -- --mock: rehearse the apply on a structure-only mirror ---------------------------
+def mock_source(root):
+    """The rehearsal fixture: managed roots around a migration-worthy tree --
+    library root movie (with a nested logs/ dir), a library-level symlink to
+    rip-DONE, library/TV show, rip-DONE movie + flat " - Extra", rip/movies
+    flat + junk + old d1, a top-level logs/ dir with an empty subdir -- plus
+    unrelated top-level entries (music-backup/, empty-photos/) that the mock
+    must never mirror (only the managed roots are walked)."""
+    mkfile(root / "library" / "Old Movie (1999)" / "Old Movie (1999)_t01.mkv")
+    mkfile(root / "library" / "Old Movie (1999)" / "logs" / "2024" / "encode.log")
+    (root / "library" / "link-to-rip-DONE").symlink_to("../rip-DONE")
+    mkfile(root / "library" / "TV" / "Show (2010)" / "Season 01"
+           / "Show (2010) - S01E01.mkv")
+    mkfile(root / "rip-DONE" / "Movie (2001)_t01.mkv")
+    mkfile(root / "rip-DONE" / "Show (2020) - Extra 02.mkv")
+    mkfile(root / "rip" / "movies" / "Movie (2002)_t00.mkv")
+    mkfile(root / "rip" / "movies" / "B2_t03.mkv")
+    mkfile(root / "rip" / "tv" / "d1" / "Show (2021)_S02E05.mkv")
+    mkfile(root / "logs" / "mount.log")
+    (root / "logs" / "2024").mkdir()  # empty dir inside a managed root
+    mkfile(root / "music-backup" / "old-mix.flac")  # unrelated: never mirrored
+    (root / "empty-photos").mkdir()  # unrelated: never mirrored
+    return root
+
+
+def tree_snapshot(root):
+    """(relative path, kind, payload) for every entry below root, sorted;
+    kind is dir / file (payload bytes) / symlink (payload target string).
+    os.walk with followlinks=False, so a symlinked dir is one entry."""
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dp = pathlib.Path(dirpath)
+        for name in dirnames + filenames:
+            p = dp / name
+            rel = str(p.relative_to(root))
+            if p.is_symlink():
+                entries.append((rel, "symlink", os.readlink(p)))
+            elif p.is_dir():
+                entries.append((rel, "dir", ""))
+            else:
+                entries.append((rel, "file", p.read_bytes()))
+    return sorted(entries)
+
+
+def test_parse_args_mock_defaults():
+    args = migrate.parse_args(["--mock"])
+    assert args.mock == pathlib.Path("/tmp/migrate-layout-mock")
+    args = migrate.parse_args(["--mock", "/tmp/elsewhere"])
+    assert args.mock == pathlib.Path("/tmp/elsewhere")
+    assert migrate.parse_args([]).mock is None
+    # --apply beside --mock is accepted and redundant, not an error
+    args = migrate.parse_args(["--mock", "--apply"])
+    assert args.mock == pathlib.Path("/tmp/migrate-layout-mock")
+    assert args.apply is True
+
+
+def test_mock_mirrors_structure_and_applies_inside_it(tmp_path, capsys):
+    source = mock_source(tmp_path / "videos")
+    mirror = tmp_path / "mock"
+    before = tree_snapshot(source)
+
+    rc = migrate.run_mock(source, mirror)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    # the source was only ever read: identical names, kinds, bytes, targets
+    assert tree_snapshot(source) == before
+    # the mirror line (with the mirrored counts) and the closing hint
+    assert (f"mock tree at {mirror} (structure only, empty files): "
+            "14 dir(s), 9 file(s), 1 symlink(s)") in out
+    assert f"inspect with: find {mirror} -type d | sort" in out
+    # --mock implies apply: normal plan/apply lines and summary, no dry-run
+    assert f"move {mirror}/rip-DONE -> {mirror}/lossless" in out
+    assert f"migrate report -- {mirror}" in out
+    assert "dry-run" not in out
+    # migrated layout inside the mirror -- and every file zero bytes
+    for zero in ("library/movies/Old Movie (1999)/Old Movie (1999)_t01.mkv",
+                 "library/movies/Old Movie (1999)/logs/2024/encode.log",
+                 "library/tv/Show (2010)/Season 01/Show (2010) - S01E01.mkv",
+                 "lossless/movies/Movie (2001)/Movie (2001)_t01.mkv",
+                 "lossless/Show (2020) - Extra 02.mkv",
+                 "rip/movies/Movie (2002)/Movie (2002)_t00.mkv",
+                 "rip/movies/B2_t03.mkv",
+                 "rip/tv/Show (2021)/Show (2021)_S02E05.mkv"):
+        f = mirror / zero
+        assert f.is_file() and f.stat().st_size == 0, zero
+    # the old locations are gone inside the mirror
+    for gone in ("rip-DONE", "library/TV", "library/Old Movie (1999)",
+                 "rip/tv/d1"):
+        assert not (mirror / gone).exists(), gone
+    # only the managed roots were walked: unrelated top-level entries did not
+    # cross over
+    assert not (mirror / "music-backup").exists()
+    assert not (mirror / "empty-photos").exists()
+    # a managed root the migration never touches is mirrored too, empty dirs
+    # and empty files included -- and survives the apply untouched
+    assert (mirror / "logs" / "mount.log").is_file()
+    assert (mirror / "logs" / "mount.log").stat().st_size == 0
+    assert (mirror / "logs" / "2024").is_dir()
+    # symlinks inside a managed root are mirrored (dangling after rip-DONE's
+    # rename) and the rehearsed apply refuses to move through them
+    assert (mirror / "library" / "link-to-rip-DONE").is_symlink()
+    assert os.readlink(mirror / "library" / "link-to-rip-DONE") == "../rip-DONE"
+    assert (f"skip {mirror}/library/link-to-rip-DONE"
+            " (path traverses a symlink -- left in place)") in out
+
+
+def test_mock_tree_mirrors_only_the_managed_roots(tmp_path):
+    """_build_mock_tree walks the managed roots only, never the source root:
+    every managed root that exists is mirrored (structure, empty files,
+    symlinks -- and empty ones included), while unrelated top-level entries
+    (music-backup/, stray files) are not; a symlinked root is mirrored as
+    the link alone and never descended into."""
+    source = tmp_path / "videos"
+    mkfile(source / "library" / "Old (1999)" / "Old (1999)_t01.mkv", b"media")
+    mkfile(source / "rip" / "movies" / "Movie (2002)_t00.mkv", b"media")
+    mkfile(source / "rip-DONE" / "Movie (2001)_t01.mkv", b"media")
+    (source / "rip-DONE" / "link-to-lossless").symlink_to("lossless")
+    mkfile(source / "lossless" / "tv" / "Show (2020)"
+           / "Show (2020) - S01E01.mkv", b"media")
+    (source / "issues").mkdir()  # an empty managed root still gets mirrored
+    (source / "logs-real" / "2024").mkdir(parents=True)  # unrelated target
+    mkfile(source / "logs-real" / "2024" / "real.log", b"media")
+    (source / "logs").symlink_to("logs-real")  # symlinked root: link alone
+    mkfile(source / "music-backup" / "old-mix.flac", b"media")  # unrelated
+    mkfile(source / "stray.txt", b"media")  # unrelated top-level file
+    (source / "empty-photos").mkdir()  # unrelated empty dir
+    before = tree_snapshot(source)
+
+    mirror = tmp_path / "mock"
+    counts = migrate._build_mock_tree(source, mirror)
+
+    assert counts == (9, 4, 2)
+    # exactly the managed roots that exist -- nothing else at the top level
+    assert sorted(p.name for p in mirror.iterdir()) == sorted(
+        ("library", "rip", "rip-DONE", "lossless", "issues", "logs"))
+    # structure, empty files, symlinks inside them
+    assert (mirror / "library" / "Old (1999)"
+            / "Old (1999)_t01.mkv").stat().st_size == 0
+    assert (mirror / "rip" / "movies").is_dir()  # empty dir mirrored
+    assert (mirror / "rip-DONE" / "link-to-lossless").is_symlink()
+    assert os.readlink(mirror / "rip-DONE" / "link-to-lossless") == "lossless"
+    assert (mirror / "lossless" / "tv" / "Show (2020)"
+            / "Show (2020) - S01E01.mkv").stat().st_size == 0
+    # an empty managed root exists in the mirror, empty
+    assert (mirror / "issues").is_dir()
+    assert not any((mirror / "issues").iterdir())
+    # a symlinked root: the link alone -- its target is not walked into
+    assert (mirror / "logs").is_symlink()
+    assert os.readlink(mirror / "logs") == "logs-real"
+    assert not (mirror / "logs" / "2024").exists()
+    # unrelated top-level entries never cross over
+    for absent in ("music-backup", "stray.txt", "empty-photos", "logs-real"):
+        assert not (mirror / absent).exists(), absent
+    assert tree_snapshot(source) == before  # the source was only ever read
+
+
+def test_mock_accepts_existing_empty_dir(tmp_path, capsys):
+    source = mock_source(tmp_path / "videos")
+    mirror = tmp_path / "mock"
+    mirror.mkdir()  # empty: allowed, per the simplest safe rule
+
+    rc = migrate.run_mock(source, mirror)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (mirror / "lossless" / "movies" / "Movie (2001)"
+            / "Movie (2001)_t01.mkv").stat().st_size == 0
+    assert "mock tree at" in out
+
+
+def test_mock_refuses_existing_non_empty_path(tmp_path, capsys):
+    source = mock_source(tmp_path / "videos")
+    mirror = tmp_path / "mock"
+    mirror.mkdir()
+    keep = mkfile(mirror / "keep.txt", b"keep")
+    before = tree_snapshot(source)
+
+    rc = migrate.run_mock(source, mirror)
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert (f"{mirror} already exists and is not empty (remove it first)"
+            in captured.err)
+    assert keep.read_bytes() == b"keep"  # nothing touched, nothing built
+    assert captured.out == ""  # no mock line, no migration output at all
+    assert tree_snapshot(source) == before
+
+
 # -- strays that were silently unreported ---------------------------------------------
 def test_stray_dir_at_lossless_root_reported_and_kept(tmp_path, capsys):
     mkfile(tmp_path / "lossless" / "movies" / "Old (2000)" / "Old (2000)_t01.mkv")
