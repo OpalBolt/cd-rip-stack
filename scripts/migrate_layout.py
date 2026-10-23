@@ -14,9 +14,10 @@ Old shape -> new shape:
 Dry-run by default: prints every move it WOULD make; --apply executes.
 Idempotent: a migrated tree yields zero moves. Anything unclassifiable --
 junk labels, unparseable or yearless names, target collisions, unexpected
-shapes, bare " - Extra NN" names in a flat context, paths that would
-traverse a symlink -- is reported and left in place: never touched, never
-overwritten, never followed outside the root.
+shapes, bare " - Extra NN" names in a flat context the library cannot type
+(title homed in neither -- or in both -- of the movie and TV homes), paths
+that would traverse a symlink -- is reported and left in place: never
+touched, never overwritten, never followed outside the root.
 Old text rip.log files are left in place, unread. After the moves (apply
 only) now-empty d{disc} dirs and empty title folders under rip/, lossless/
 and library/ are pruned; the managed roots themselves are never removed.
@@ -84,9 +85,11 @@ def parse_name(name: str) -> tuple[str, bool] | str:
 
     Type is read from the filename -- rip-DONE is flat, so there is no type
     dir to consult: episodes (_SNNENN[-ENN]) and extras (" - Extra NN") are
-    TV; _tNN titles are movies. Extras also parse as TV, but a FLAT extra is
-    refused by the planner: movie extras and TV extras share the name, and
-    only a type dir can position one. A legacy _eNN extra title also parses
+    TV; _tNN titles are movies. Extras also parse as TV, but a FLAT extra
+    needs evidence beyond the name: movie extras and TV extras share it, so
+    the planner types a flat extra by its title's home in the library
+    (_extra_type_from_library) and reports the ones the library leaves
+    ambiguous. A legacy _eNN extra title also parses
     as a movie extra, matching transcode's everything-not-TV-is-a-movie rule.
     """
     if _JUNK.match(name):
@@ -211,13 +214,49 @@ def _title_dir(lossless_root: Path, title: str, is_tv: bool) -> Path:
     return lossless_root / ("tv" if is_tv else "movies") / title
 
 
+def _extra_type_from_library(root: Path, title: str) -> bool | None:
+    """Type evidence for a FLAT-context extra, read from the library: the
+    title's own home decides. A movie title rests at the library root (any
+    entry there -- parsed titles always carry a year, so they can never
+    collide with the structural movies/tv/TV names) or under movies/; a TV
+    title under TV/ or tv/ (the pre- and post-move spellings). All four
+    homes are checked so the verdict is the same in the dry-run world (title
+    at the root), after the library re-tree, and on idempotent re-runs.
+    Homeless, or homed on both sides, the name stays a guess: None -- no
+    guessing."""
+    lib = root / "library"
+    as_movie = (lib / title).is_dir() or (lib / "movies" / title).is_dir()
+    as_tv = (lib / "TV" / title).is_dir() or (lib / "tv" / title).is_dir()
+    if as_movie and not as_tv:
+        return False  # movie homes only: a movie extra
+    if as_tv and not as_movie:
+        return True  # TV homes only: a TV extra
+    return None  # both homes or neither: still ambiguous
+
+
+def _plan_flat_extra(root: Path, plan: Plan, src: Path, title: str) -> None:
+    """A bare " - Extra NN" file in a flat context (a rip-DONE child, or a
+    stray at the lossless/ root): movie extras and TV extras share the name
+    and no type dir positions it, so the library does -- the extra re-trees
+    to lossless/<type>/<title>/ wherever the library homes <title>
+    (_extra_type_from_library). Ambiguous evidence (both homes or neither)
+    is reported, not guessed; collisions and symlinked paths are refused by
+    Plan.move as for any other move."""
+    is_tv = _extra_type_from_library(root, title)
+    if is_tv is None:
+        plan.skips.append((src, "ambiguous extra (no type dir: tv or movies?)"))
+        return
+    _plan_file_move(plan, src, _title_dir(root / "lossless", title, is_tv))
+
+
 def _plan_lossless_child(root: Path, plan: Plan, child: Path) -> None:
     """One rip-DONE child in merge mode (lossless/ already exists): a flat
     staged file re-trees straight to its final lossless/<type>/<Title>/
     folder; anything else is reported and left in rip-DONE (so rip-DONE is
-    only pruned once it holds nothing). A bare " - Extra NN" file is
-    reported as ambiguous instead of guessed: with no type dir, movie extra
-    and TV extra share the name."""
+    only pruned once it holds nothing). A bare " - Extra NN" file is typed
+    by its title's library home (_plan_flat_extra); with no single home it
+    is reported as ambiguous instead of guessed: with no type dir, movie
+    extra and TV extra share the name."""
     if not child.is_file():
         plan.skips.append((child, "unexpected shape"))
         return
@@ -227,7 +266,7 @@ def _plan_lossless_child(root: Path, plan: Plan, child: Path) -> None:
         return
     title, is_tv = parsed
     if is_tv and transcode._RX_EXTRA.match(child.name):
-        plan.skips.append((child, "ambiguous extra (no type dir: tv or movies?)"))
+        _plan_flat_extra(root, plan, child, title)
         return
     _plan_file_move(plan, child, _title_dir(root / "lossless", title, is_tv))
 
@@ -237,8 +276,10 @@ def _plan_flat_children(root: Path, plan: Plan, listing: Path, virtual: Path) ->
     live now; `virtual` where the dir sits once earlier planned renames ran
     (rip-DONE -> lossless), so printed plan lines show the real sequential
     result. Subdirectories are not flat files: they ride along silently.
-    A bare " - Extra NN" file is reported as ambiguous instead of guessed:
-    with no type dir, movie extra and TV extra share the name."""
+    A bare " - Extra NN" file is typed by its title's library home
+    (_plan_flat_extra); with no single home it is reported as ambiguous
+    instead of guessed: with no type dir, movie extra and TV extra share
+    the name."""
     for child in sorted(listing.iterdir()):
         if not child.is_file():
             continue
@@ -250,8 +291,7 @@ def _plan_flat_children(root: Path, plan: Plan, listing: Path, virtual: Path) ->
             continue
         title, is_tv = parsed
         if is_tv and transcode._RX_EXTRA.match(child.name):
-            plan.skips.append((virtual / child.name,
-                               "ambiguous extra (no type dir: tv or movies?)"))
+            _plan_flat_extra(root, plan, virtual / child.name, title)
             continue
         _plan_file_move(plan, virtual / child.name,
                         _title_dir(root / "lossless", title, is_tv))

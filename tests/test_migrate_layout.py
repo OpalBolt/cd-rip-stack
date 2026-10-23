@@ -400,10 +400,12 @@ def test_dry_run_then_apply_matches_apply_directly(tmp_path, capsys):
             assert line.removeprefix("would ") in out  # the plan is what executed
 
 
-# -- flat-context extras are ambiguous, typed extras are positional -----------------
-def test_flat_context_extra_reported_ambiguous_and_kept(tmp_path, capsys):
+# -- flat-context extras: the library types them, or they stay ambiguous ------------
+def test_flat_context_extra_without_library_title_still_ambiguous(tmp_path, capsys):
     # merge mode: rip-DONE child and lossless-root straggler are both flat --
-    # movie extras and TV extras share the name, no type dir positions them
+    # the library holds neither extra's title, so no type dir is provable
+    mkfile(tmp_path / "library" / "movies" / "Other (1999)"
+           / "Other (1999)_t01.mkv")  # a library to look in, no matching title
     mkfile(tmp_path / "lossless" / "movies" / "Old (2000)" / "Old (2000)_t01.mkv")
     done_extra = mkfile(tmp_path / "rip-DONE" / "Movie (2001) - Extra 02.mkv")
     root_extra = mkfile(tmp_path / "lossless" / "Show (2020) - Extra 03.mkv")
@@ -414,6 +416,84 @@ def test_flat_context_extra_reported_ambiguous_and_kept(tmp_path, capsys):
     assert rc == 0
     assert done_extra.exists() and root_extra.exists()  # reported, never re-treed
     assert (tmp_path / "rip-DONE").exists()  # the kept extra keeps rip-DONE alive
+    assert (f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?)"
+            f" -- left in place)") in out
+    assert (f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?)"
+            f" -- left in place)") in out
+
+
+def test_flat_extra_typed_by_title_at_library_root_moves_as_movie(tmp_path, capsys):
+    # dry-run world: the title still rests at the library root; the extra
+    # follows it into lossless/movies/ when the plan applies
+    mkfile(tmp_path / "library" / "Movie (2001)" / "Movie (2001)_t01.mkv")
+    done_extra = mkfile(tmp_path / "rip-DONE" / "Movie (2001) - Extra 02.mkv")
+    root_extra = mkfile(tmp_path / "lossless" / "Movie (2001) - Extra 03.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    title_dir = tmp_path / "lossless" / "movies" / "Movie (2001)"
+    assert (title_dir / "Movie (2001) - Extra 02.mkv").exists()
+    assert (title_dir / "Movie (2001) - Extra 03.mkv").exists()
+    assert not done_extra.exists() and not root_extra.exists()
+    assert "ambiguous" not in out
+    # idempotent re-run: the extras rest in their title folder and the title
+    # itself has moved into library/movies/ -- the library still says movie
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0 move(s), 0 skipped," in out
+    assert (title_dir / "Movie (2001) - Extra 02.mkv").exists()
+
+
+def test_flat_extra_typed_by_title_in_library_movies_moves_as_movie(tmp_path, capsys):
+    # post-apply world: the title already lives in library/movies/
+    mkfile(tmp_path / "library" / "movies" / "Movie (2001)"
+           / "Movie (2001)_t01.mkv")
+    root_extra = mkfile(tmp_path / "lossless" / "Movie (2001) - Extra 03.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (tmp_path / "lossless" / "movies" / "Movie (2001)"
+            / "Movie (2001) - Extra 03.mkv").exists()
+    assert not root_extra.exists()
+    assert "ambiguous" not in out
+
+
+@pytest.mark.parametrize("spelling", ["TV", "tv"])
+def test_flat_extra_typed_by_title_in_library_tv_moves_as_tv(tmp_path, capsys,
+                                                             spelling):
+    # both TV spellings count as evidence: TV/ pre-move, tv/ post-apply
+    mkfile(tmp_path / "library" / spelling / "Show (2020)"
+           / "Show (2020) - S01E01.mkv")
+    done_extra = mkfile(tmp_path / "rip-DONE" / "Show (2020) - Extra 02.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (tmp_path / "lossless" / "tv" / "Show (2020)"
+            / "Show (2020) - Extra 02.mkv").exists()
+    assert not done_extra.exists()
+    assert "ambiguous" not in out
+
+
+def test_flat_extra_homed_in_both_library_sides_still_ambiguous(tmp_path, capsys):
+    # a same-named title in both homes proves nothing: keep the skip
+    mkfile(tmp_path / "library" / "movies" / "Twin (2015)" / "Twin (2015)_t01.mkv")
+    mkfile(tmp_path / "library" / "tv" / "Twin (2015)"
+           / "Twin (2015) - S01E01.mkv")
+    done_extra = mkfile(tmp_path / "rip-DONE" / "Twin (2015) - Extra 02.mkv")
+    root_extra = mkfile(tmp_path / "lossless" / "Twin (2015) - Extra 03.mkv")
+
+    rc = run(tmp_path, apply=True)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert done_extra.exists() and root_extra.exists()  # reported, never re-treed
     assert (f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?)"
             f" -- left in place)") in out
     assert (f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?)"
