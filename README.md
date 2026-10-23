@@ -95,10 +95,13 @@ flat `rip-DONE/`) is re-treed by one script:
 ```bash
 python scripts/migrate_layout.py                # dry-run: prints every move it would make
 python scripts/migrate_layout.py --apply        # execute the moves
+python scripts/migrate_layout.py --mock         # rehearse on an empty-file copy in /tmp
 python scripts/migrate_layout.py --root /mnt/videos   # explicit root (default: $VIDEOS_MOUNT)
 ```
 
-Run the dry-run first and read the move list. The script is idempotent — a
+Run the dry-run first and read the move list. `--mock` builds a structure-only
+mirror of the share under /tmp (empty files, no media bytes), applies the full
+migration there, and prints the tree to inspect — a free end-to-end rehearsal. The script is idempotent — a
 re-run on a migrated tree reports zero moves. Anything it cannot classify is
 reported and left in place, never touched: junk labels (`B1_t00.mkv`), names
 that lost their title year, a bare ` - Extra NN` file in a flat context
