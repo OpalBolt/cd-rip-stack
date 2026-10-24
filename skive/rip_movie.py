@@ -31,17 +31,20 @@ def _hms(secs: int) -> str:
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
 
 
-_FINAL_T = re.compile(r'_t(\d+)$')
+_FINAL_T = re.compile(r'_t(\d+)(?:\.p\d+)?$')
 """A staged file's final title number — parsed from the FINAL name, never
 the scan table (fast-scan numbers are scanner indices; renames roll numbers
-forward past collisions)."""
+forward past collisions). An optional trailing .pN part suffix (multi-part
+movies) may follow the number: the part file's t is its base title's t."""
 
 
 def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
                  run=subprocess.run) -> list[dict]:
     """Probe this run's staged *_tNN.mkv files for the validation record.
 
-    Glob *_t*.mkv and parse the final _tNN; files that rested in the folder
+    Glob *_t*.mkv and parse the final _tNN (a .pN part suffix may trail it:
+    multi-part movies get their own row under the base title's number);
+    files that rested in the folder
     before the rip started (an earlier rip's files — the re-rip merge keeps
     their rows) and names without a final _tNN (extras, transcode outputs)
     are skipped. Durations are actuals probed from the files — never the scan

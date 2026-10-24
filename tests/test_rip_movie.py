@@ -911,6 +911,31 @@ def test_post_rip_unreadable_duration_still_writes(tmp_path, capsys):
     assert "cannot read duration of Mamma Mia! (2008)_t21.mkv" in capsys.readouterr().err
 
 
+def test_post_rip_part_file_probed_rows_and_main_resolve(tmp_path, capsys):
+    """A multi-part rip's .pN file (<display>_tNN.pN.mkv) is probed like any
+    staged file: its own row under its base title's number — in the report
+    and the document — and the full-scan main still resolves with only the
+    part present (transcode merges the parts by stream signature)."""
+    import json
+    from skive.rip_movie import post_rip_validation
+
+    pre, _log = _preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Mamma Mia! (2008)_t01.p2.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, set(), "t1",
+                        [{"t": 1, "dur_s": 3240, "ratio": 0.5, "band": "yellow"}],
+                        run=Mock(return_value=Mock(stdout="3240.0\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["main"] == "t1"  # full scan: exact number ignores the .pN suffix
+    assert doc["titles"] == [{"file": "Mamma Mia! (2008)_t01.p2.mkv", "t": 1,
+                              "dur_s": 3240, "ratio": 0.5, "band": "yellow"}]
+    err = capsys.readouterr().err
+    assert "Mamma Mia! (2008)_t01.p2.mkv  0:54:00  yellow  MAIN" in err
+    assert "validation: 1 files, 0 green main, 1 yellow" in err
+
+
 def test_post_rip_rerip_same_id_appends(tmp_path):
     """Re-rip into the folder: same id — existing rows kept, this run's
     appended; this run's main resolution and run id win."""
