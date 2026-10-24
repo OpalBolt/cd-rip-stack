@@ -6,6 +6,7 @@ from skive.tv_match import (
     parse_range, next_unstaged, assign_range, range_mismatch_note,
     range_past_end_note, parse_fix_rows, apply_fixes, map_str,
     tv_floor, sum_disqualified, playall_skip, audit_ratio, audit_cell,
+    guess_range,
 )
 
 
@@ -45,6 +46,55 @@ def test_assign_range_fewer_titles_than_range():
     """Fewer eligible titles than the range: only part of it gets covered."""
     titles = [(0, 1000, 1), (1, 1000, 1)]
     assert assign_range(titles, set(), 1, 4) == {0: (1, 1), 1: (2, 2)}
+
+
+# The episode guess: durations suggest the range, they never assign (ADR 0008)
+def test_guess_range_downton_s1d1():
+    """Downton S1D1 durations: the play-all (9643s) is out of the pool, the
+    episodes 3940/2855/2852s sit green against runtimes E1=4020, E2=2820,
+    E3=2820 (ratios 0.98, 1.01, 1.01) — the guess is 1-3."""
+    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
+    runtimes = {1: 4020, 2: 2820, 3: 2820}
+    names = {1: "ep1", 2: "ep2", 3: "ep3"}
+    assert guess_range(titles, {3}, runtimes, set(), names) == (1, 3)
+
+
+def test_guess_range_starts_at_first_unstaged():
+    """Disc 2 shape: E1-E3 staged, the walk starts at E4 and lands 4-6."""
+    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
+    runtimes = {1: 4020, 2: 2820, 3: 2820, 4: 4020, 5: 2820, 6: 2820}
+    names = {e: f"ep{e}" for e in range(1, 7)}
+    assert guess_range(titles, {3}, runtimes, {1, 2, 3}, names) == (4, 6)
+
+
+def test_guess_range_leading_making_of_misconsumed():
+    """Known limit (ADR 0008): a leading making-of that fits E1's runtime is
+    consumed by the walk — the count still lands, but the positional fill the
+    overview shows pins the making-of to E1; the confirm table is the check.
+    Asserted here, not fixed."""
+    titles = [(0, 2820, 1), (1, 2855, 1), (2, 2852, 1)]
+    runtimes = {1: 2820, 2: 2820, 3: 2820}
+    names = {1: "ep1", 2: "ep2", 3: "ep3"}
+    guess = guess_range(titles, set(), runtimes, set(), names)
+    assert guess == (1, 3)  # the count lands ...
+    assert assign_range(titles, set(), *guess)[0] == (1, 1)  # ... as the making-of
+
+
+def test_guess_range_stops_at_first_miss():
+    """E2 finds no fitting title: the guess truncates there instead of
+    skipping the episode ahead."""
+    titles = [(0, 3940, 1), (1, 1800, 1)]  # 1800/2820 = 0.64: no fit for E2
+    assert guess_range(titles, set(), {1: 4020, 2: 2820}, set(),
+                       {1: "ep1", 2: "ep2"}) == (1, 1)
+
+
+def test_guess_range_no_runtimes_returns_none():
+    """No TMDB runtimes (season-0 shape) or a zero runtime: nothing to
+    suggest — the caller falls back to the count-based pre-fill."""
+    titles = [(0, 3940, 1), (1, 2855, 1)]
+    names = {1: "ep1", 2: "ep2"}
+    assert guess_range(titles, set(), {}, set(), names) is None
+    assert guess_range(titles, set(), {1: 0, 2: 0}, set(), names) is None
 
 
 def test_range_mismatch_note():

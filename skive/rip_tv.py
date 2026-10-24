@@ -21,7 +21,7 @@ from skive.tmdb import fetch_season
 from skive.tv_match import (
     tv_floor, sum_disqualified, parse_range, next_unstaged, assign_range,
     range_mismatch_note, range_past_end_note, apply_fixes, audit_cell,
-    playall_skip,
+    playall_skip, guess_range,
 )
 
 console = Console()
@@ -68,8 +68,13 @@ def show_staging(show_dir: Path, display: str) -> list[Path]:
 
 def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
                 assignment: dict[int, tuple[int, int]], ep_names: dict[int, str],
-                ep_runtimes: dict[int, int]) -> None:
+                ep_runtimes: dict[int, int], estimate: bool = False,
+                playalls: set[int] | None = None) -> None:
     """Print the confirmation table in title-number order.
+
+    The range prompt reuses this printer as the title overview: estimate=True
+    marks episode cells ` (est.)`, and playalls renders those rows
+    "play-all, not ripped" — on the overview and the confirm table alike.
 
     Args:
         display: Show name
@@ -78,6 +83,8 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
         assignment: title -> (lo, hi) mapping
         ep_names: episode_number -> name mapping
         ep_runtimes: episode_number -> TMDB runtime seconds
+        estimate: Mark episode assignments ` (est.)` (the overview's guess)
+        playalls: Title numbers disqualified as play-alls
     """
     season_str = f"{season:02d}"
     console.print(f"\n{display} — season {season_str}")
@@ -103,7 +110,9 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
         audit = audit_cell(secs, lo, hi, ep_runtimes)
         audit_str = Text(audit[0], style=audit[1]) if audit else ""
 
-        if lo == 0:
+        if playalls and t in playalls:
+            assign_str = "→ play-all, not ripped"
+        elif lo == 0:
             assign_str = "→ extra"
         else:
             code = f"S{season_str}E{lo:02d}"
@@ -114,6 +123,8 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
                 assign_str = f"→ {code} ({name})"
             else:
                 assign_str = f"→ {code}"
+            if estimate:
+                assign_str += " (est.)"
 
         table.add_row(str(t), dur, sz, audit_str, assign_str)
 
@@ -424,16 +435,24 @@ def rip_tv(args) -> None:
         def ask_range() -> tuple[int, int]:
             """One pre-filled prompt states which episodes this disc carries.
 
-            The pre-fill starts at the first episode not yet staged and spans one
-            episode per eligible title; Enter takes it. Unparseable answers
-            re-ask.
+            The title overview prints first — again on every `n` re-ask —
+            showing the positional fill of the pre-filled range, so what Enter
+            accepts is exactly what the overview showed. The pre-fill is the
+            episode guess when the runtimes suggest one, else one episode per
+            eligible title. Unparseable answers re-ask.
             """
             eligible = len(titles_info) - len(playalls)
             if eligible == 0:
                 print("skive: no eligible titles on this disc", file=sys.stderr)
                 sys.exit(1)
             first = next_unstaged(ep_names, staged)
-            prefill = str(first) if eligible == 1 else f"{first}-{first + eligible - 1}"
+            guess = guess_range(titles_info, playalls, ep_runtimes, staged, ep_names)
+            lo, hi = guess if guess is not None else (
+                (first, first) if eligible == 1 else (first, first + eligible - 1))
+            print_table(display, season, titles_info,
+                        assign_range(titles_info, playalls, lo, hi),
+                        ep_names, ep_runtimes, estimate=True, playalls=playalls)
+            prefill = str(lo) if lo == hi else f"{lo}-{hi}"
             while True:
                 console.print(f"episodes on this disc [{prefill}]: ", end="")
                 rng = parse_range((Prompt.ask("") or prefill).strip())
@@ -454,7 +473,8 @@ def rip_tv(args) -> None:
         while True:
             if note:
                 console.print(note)
-            print_table(display, season, titles_info, assignment, ep_names, ep_runtimes)
+            print_table(display, season, titles_info, assignment, ep_names, ep_runtimes,
+                        playalls=playalls)
             console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, n=episode range, c=clear staged, q=quit): ", end="")
             ans = Prompt.ask("") or ""
 

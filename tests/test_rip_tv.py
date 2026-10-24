@@ -117,13 +117,26 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, stag
     return mock_rename_tv, mock_console, None
 
 
+def _table_texts(console) -> list[str]:
+    """Render each Table the mocked console printed, to plain text."""
+    texts = []
+    for c in console.print.call_args_list:
+        if c.args and isinstance(c.args[0], Table):
+            plain = Console(record=True, width=120)
+            plain.print(c.args[0])
+            texts.append(plain.export_text())
+    return texts
+
+
 def test_range_prefill_skips_staged_and_fills_disc(tmp_path, monkeypatch):
     """The map's regression fixture: E01-E03 staged, this disc carries E04-E06.
 
-    Enter accepts the pre-fill 4-6; the three eligible titles get E4-E6 in
-    disc order and the play-all (t3) stays extra.
+    Enter accepts the pre-fill 4-6 — the episode guess (E4→t0, E5→t1, E6→t2,
+    each ratio 1.00); the three eligible titles get E4-E6 in disc order and
+    the play-all (t3) stays extra.
     """
-    episodes = [(e, f"ep{e}", 3600) for e in range(1, 7)]
+    episodes = [(e, f"ep{e}", rt) for e, rt in
+                ((1, 3932), (2, 3897), (3, 3653), (4, 3932), (5, 3897), (6, 3653))]
     staged = [f"Show (2000)_S01E0{e}.mkv" for e in (1, 2, 3)]
 
     mock_rename_tv, _console, rc = _range_flow(
@@ -131,6 +144,74 @@ def test_range_prefill_skips_staged_and_fills_disc(tmp_path, monkeypatch):
 
     assert rc == 0
     assert mock_rename_tv.call_args.args[3] == {0: (4, 4), 1: (5, 5), 2: (6, 6), 3: (0, 0)}
+
+
+def test_overview_before_range_prompt_guess_prefill(tmp_path, monkeypatch):
+    """The overview precedes the range prompt: guessed assignments wear
+    (est.), the play-all reads "play-all, not ripped", the eligible no-fit
+    title reads "extra"; the pre-fill comes from the guess (1-3, not the
+    eligible count's 1-4), and Enter accepts it — the rip's assignment equals
+    the overview's positional fill."""
+    titles = [TitleInfo(0, 3940, 1, "dan", "", False),
+              TitleInfo(1, 2855, 1, "dan", "", False),
+              TitleInfo(2, 2852, 1, "dan", "", False),
+              TitleInfo(3, 9643, 1, "dan", "", False),   # play-all: 3940+2855+2852 = 9647
+              TitleInfo(4, 4000, 1, "dan", "", False)]   # 1:06:40, fits no runtime
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+
+    mock_rename_tv, console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes,
+                                              ["", "", ""])  # season, accept prefill, Enter=rip
+
+    assert rc == 0
+    texts = _table_texts(console)
+    overview = texts[0]
+    assert overview.count("(est.)") == 3
+    assert "play-all, not ripped" in overview
+    extra_row = next(ln for ln in overview.splitlines() if "1:06:40" in ln)
+    assert "→ extra" in extra_row
+    labels = [str(c.args[0]) for c in console.print.call_args_list
+              if c.args and "episodes on this disc" in str(c.args[0])]
+    assert labels == ["episodes on this disc [1-3]: "]
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3),
+                                                3: (0, 0), 4: (0, 0)}
+
+
+def test_n_reask_reshows_overview_confirm_table_marks_playall(tmp_path, monkeypatch):
+    """`n` re-shows the overview; the confirm table keeps its columns and
+    renders the play-all "play-all, not ripped" without (est.) marks."""
+    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]
+
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), episodes,
+        ["", "", "n", "", ""])  # season, range, n at the table, range, Enter=rip
+
+    assert rc == 0
+    texts = _table_texts(console)
+    assert len(texts) == 4  # overview, confirm, overview (the n re-ask), confirm
+    assert texts[0].count("(est.)") == 3
+    assert "play-all, not ripped" in texts[0]
+    confirm = texts[1]
+    assert "play-all, not ripped" in confirm
+    assert "(est.)" not in confirm
+    assert "audit" in confirm and "assignment" in confirm
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+
+
+def test_no_runtimes_prefill_falls_back_to_count(tmp_path, monkeypatch):
+    """No TMDB runtimes (season-0 shape): the prefill stays today's
+    count-based default — one episode per eligible title from the first
+    unstaged episode — and the overview still prints the positional fill."""
+    episodes = [(1, "special 1", 0), (2, "special 2", 0)]
+
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), episodes,
+        ["0", "", ""])  # season 0, accept prefill, Enter=rip
+
+    assert rc == 0
+    labels = [str(c.args[0]) for c in console.print.call_args_list
+              if c.args and "episodes on this disc" in str(c.args[0])]
+    assert labels == ["episodes on this disc [1-3]: "]
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
 
 
 def test_range_mismatch_note_printed(tmp_path, monkeypatch):

@@ -152,6 +152,49 @@ def assign_range(titles: list[tuple[int, int, int]], playalls: set[int], lo: int
     return assignment
 
 
+def guess_range(titles: list[tuple[int, int, int]], playalls: set[int],
+                ep_runtimes: dict[int, int], staged: set[int],
+                ep_names: dict[int, str]) -> tuple[int, int] | None:
+    """The episode guess: a greedy walk that suggests the disc's episode range.
+
+    From the first unstaged episode (discs rip in order, so staged episodes
+    are a contiguous prefix), each episode claims the first not-yet-consumed
+    eligible title in disc order whose disc÷TMDB ratio is green (the same
+    inclusive band the audit uses); the walk stops at the first episode with
+    no fitting title or no TMDB runtime. Singles only — doubles stay fix-row
+    territory. The pairing is internal: only the range leaves the function;
+    durations suggest, they never assign (ADR 0001, ADR 0008).
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        playalls: Title numbers disqualified as play-alls
+        ep_runtimes: episode_number -> TMDB runtime seconds
+        staged: Episode numbers already staged
+        ep_names: episode_number -> name from TMDB
+
+    Returns:
+        (lo, hi) over the walked episodes, or None when zero episodes matched
+    """
+    secs = {t: d for t, d, _ in titles}
+    remaining = [t for t, _, _ in titles if t not in playalls]
+    ep = next_unstaged(ep_names, staged)
+    lo = ep
+    matched = 0
+    while True:
+        rt = ep_runtimes.get(ep, 0)
+        if rt <= 0:
+            break
+        fit = next((i for i, t in enumerate(remaining)
+                    if secs[t] > 0 and RATIO_GREEN[0] <= secs[t] / rt <= RATIO_GREEN[1]),
+                   None)
+        if fit is None:
+            break
+        remaining.pop(fit)
+        matched += 1
+        ep += 1
+    return (lo, lo + matched - 1) if matched else None
+
+
 def range_mismatch_note(titles: list[tuple[int, int, int]], playalls: set[int], lo: int, hi: int) -> str | None:
     """One-line warning when the eligible titles don't fill the stated range.
 
