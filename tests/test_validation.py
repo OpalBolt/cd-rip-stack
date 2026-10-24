@@ -6,6 +6,7 @@ from skive.validation import (
     MainArbitration, arbitrate_main, biggest_title, grade_main,
     main_candidates, merge_movie_document, movie_row, resolve_main,
     movie_document, tv_document, write_validation, load_validation,
+    merge_tv_document, tv_row,
 )
 
 
@@ -322,3 +323,64 @@ def test_merge_movie_document_tolerates_rowless_old():
                            "ratio": 0.96, "band": "green"}])
     merged = merge_movie_document({"tmdb": {"id": "157"}}, new)
     assert merged["titles"] == new["titles"]
+
+
+# --- TV post-rip record helpers (issue 06, map.md decision 6) ---------------
+
+
+def test_tv_row_grades_the_probed_actual():
+    """A probed duration with a known runtime: exact quotient banded, 2dp
+    stored, the episode's TMDB runtime recorded beside it."""
+    assert tv_row(5, "Show (2019)_S02E05.mkv", 12, 2611, 2580) == {
+        "ep": 5, "file": "Show (2019)_S02E05.mkv", "t": 12, "dur_s": 2611,
+        "runtime_s": 2580, "ratio": 1.01, "band": "green"}
+
+
+def test_tv_row_unknowns_stay_null_and_never_yellow():
+    """Unknown duration or runtime keeps the grade blank (never yellow); the
+    fetch's 0 reads as unknown — recorded null, never graded."""
+    assert tv_row(5, "f.mkv", None, 2611, 0) == {
+        "ep": 5, "file": "f.mkv", "t": None, "dur_s": 2611,
+        "runtime_s": None, "ratio": None, "band": None}
+    assert tv_row(5, "f.mkv", None, None, 2580) == {
+        "ep": 5, "file": "f.mkv", "t": None, "dur_s": None,
+        "runtime_s": 2580, "ratio": None, "band": None}
+
+
+def test_tv_row_band_grades_exact_quotient_ratio_stores_2dp():
+    """The band grades the exact quotient, the record stores the 2dp value:
+    2601/2500 reads 1.04 rounded but bands yellow on the exact 1.0404."""
+    row = tv_row(1, "f.mkv", 0, 2601, 2500)
+    assert row["ratio"] == 1.04
+    assert row["band"] == "yellow"
+
+
+def test_merge_tv_document_appends_rows_and_replaces_by_ep():
+    """Same-show, same-season re-rip: old rows kept, this run's appended; an
+    ep already recorded is replaced by this run's row, not duplicated; run:
+    latest wins; encodes start empty."""
+    old = tv_document("456", "Show (2019)", 2, "OLD", "oldrun",
+                      [{"ep": 5, "file": "Show (2019)_S02E05.mkv", "t": 12,
+                        "dur_s": 2611, "runtime_s": 2580, "ratio": 1.01,
+                        "band": "green"}])
+    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun",
+                      [{"ep": 5, "file": "Show (2019)_S02E05.mkv", "t": None,
+                        "dur_s": 2600, "runtime_s": 2580, "ratio": 1.01,
+                        "band": "green"},
+                       {"ep": 6, "file": "Show (2019)_S02E06.mkv", "t": 13,
+                        "dur_s": 2602, "runtime_s": 2580, "ratio": 1.01,
+                        "band": "green"}])
+
+    merged = merge_tv_document(old, new)
+    assert [r["ep"] for r in merged["episodes"]] == [5, 6]
+    assert merged["episodes"][0]["dur_s"] == 2600  # this run's row replaced
+    assert merged["run"] == "newrun"                # latest wins
+    assert merged["volume_label"] == "NEW"
+    assert merged["encodes"] == []
+
+
+def test_merge_tv_document_tolerates_rowless_old():
+    """An old document without a readable episodes list merges as empty."""
+    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun", [])
+    merged = merge_tv_document({"tmdb": {"id": "456"}}, new)
+    assert merged["episodes"] == []

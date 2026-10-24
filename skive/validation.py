@@ -312,3 +312,64 @@ def merge_movie_document(old: dict, doc: dict) -> dict:
     if merged["main"] is None:
         merged["main"] = old.get("main")
     return merged
+
+
+# --- TV post-rip record (map.md decision 6) ----------------------------------
+
+
+def tv_row(ep: int, file: str, t: int | None, dur_s: int | None,
+           runtime_s: int | None) -> dict:
+    """One TV-document episodes entry: a staged episode's probed duration,
+    graded against that episode's TMDB runtime.
+
+    The band grades the exact staged÷TMDB quotient (grade_main); the stored
+    ratio is that quotient rounded to 2dp for the record. An unknown duration
+    or runtime leaves ratio/band null — a blank cell, never a false yellow.
+    dur_s itself is always recorded, null only when the probe could not read
+    the file at all; runtime_s is null when TMDB lists no runtime for the
+    episode (the fetch's 0 reads as unknown).
+
+    Args:
+        ep: The episode number (a double's lo)
+        file: Final file name in the show folder ("Show (2019)_S02E05.mkv")
+        t: The disc title the episode came from, None when unknown — fast-scan
+            table numbers are scanner indices, and an episode outside this
+            run's map has no title to name
+        dur_s: Probed duration in seconds, None when it would not read
+        runtime_s: TMDB runtime in seconds, None when unknown
+
+    Returns:
+        {"ep", "file", "t", "dur_s", "runtime_s", "ratio", "band"} for
+        the episodes list
+    """
+    runtime_s = runtime_s or None
+    graded = (grade_main(dur_s, runtime_s) if dur_s is not None else None)
+    return {"ep": ep, "file": file, "t": t, "dur_s": dur_s,
+            "runtime_s": runtime_s,
+            "ratio": round(graded[0], 2) if graded else None,
+            "band": graded[1] if graded else None}
+
+
+def merge_tv_document(old: dict, doc: dict) -> dict:
+    """A same-show, same-season re-rip's document merged into the folder's
+    existing one.
+
+    episodes: the existing rows kept, this run's appended — an ep already
+    recorded is replaced by this run's row, not duplicated (each run probes
+    the season's staged files, so its rows are the current actuals). run:
+    latest wins. encodes start empty — the record travels on with the new rip.
+
+    Args:
+        old: The existing document (same tmdb id and season, caller-checked)
+        doc: This run's document
+
+    Returns:
+        The merged document, this run's shape throughout
+    """
+    old_eps = old.get("episodes")
+    old_rows = list(old_eps) if isinstance(old_eps, list) else []
+    redone = {r.get("ep") for r in doc["episodes"]}
+    merged = dict(doc)
+    merged["episodes"] = [r for r in old_rows if r.get("ep") not in redone] \
+        + list(doc["episodes"])
+    return merged

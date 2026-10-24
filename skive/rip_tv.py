@@ -1,5 +1,5 @@
 """TV rip flow: season prompt, episode-range prompt, confirm table, renames,
-staging inspection."""
+staging inspection, post-rip validation record."""
 
 import re
 import subprocess
@@ -18,6 +18,10 @@ from skive.makemkv import (
 from skive.rip_common import fast_scan_header, interrupted_exit, rip_preamble
 from skive.scan import resolve_titles, scan_disc
 from skive.tmdb import fetch_season
+from skive.validation import (
+    VALIDATION_FILENAME, load_validation, merge_tv_document, tv_document,
+    tv_row, write_validation,
+)
 from skive.tv_match import (
     tv_floor, sum_disqualified, parse_range, next_unstaged, assign_range,
     range_mismatch_note, range_past_end_note, apply_fixes, audit_cell,
@@ -300,6 +304,119 @@ def rename_tv_fast(display: str, show_dir: Path, season: int,
     return True
 
 
+def probe_episodes(show_dir: Path, display: str, season: int,
+                   assignment: dict[int, tuple[int, int]], ep_runtimes: dict[int, int],
+                   fast_scan: bool, run=subprocess.run) -> list[dict]:
+    """Probe this season's staged episode files for the validation record.
+
+    Globs the show folder for `<display>_S{season:02d}E*.mkv` and parses each
+    name with the staged_eps shape (extras and junk-labeled files never
+    match); a double (S02E05-E06) records one row under its lo episode.
+    Durations are actuals probed from the files — never the scan table's
+    promise. `t` inverts this run's episode map: the first title whose
+    (lo, hi) covers the episode, full scans only — the fast scan's table
+    numbers are scanner indices, not real _tNN (slice-04 review P2), and the
+    real join died with the junk labels at rename, so fast-scan rows record
+    t=None; so does an episode this run's map doesn't cover (an earlier
+    disc's file re-probed by the all-season sweep). Null is honest. A file
+    whose duration ffprobe won't read is recorded with dur_s null and one
+    stderr warning: probing never crashes, never skips the write.
+
+    Args:
+        show_dir: The show's title folder — episodes rest here after promotion
+        display: Show name (Show (Year))
+        season: Season number the disc belongs to
+        assignment: This run's title -> (lo, hi) episode map
+        ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
+        fast_scan: The fast path ran — table numbers are indices, t stays None
+        run: subprocess.run callable for monkeypatching
+
+    Returns:
+        episodes rows [{"ep", "file", "t", "dur_s", "runtime_s", "ratio",
+        "band"}] in ep order
+    """
+    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                   "-of", "csv=p=0"]
+    pattern = re.compile(rf"^{re.escape(display)}_S{season:02d}E(\d+)(-E(\d+))?$")
+    rows = []
+    for mkv in show_dir.glob("*.mkv"):
+        m = pattern.match(mkv.stem)
+        if not m:
+            continue
+        ep = int(m.group(1))
+        result = run(ffprobe_cmd + [str(mkv)], capture_output=True, text=True)
+        try:
+            dur = int(float(result.stdout.strip()))
+        except ValueError:
+            print(f"skive: cannot read duration of {mkv.name} — recorded without one",
+                  file=sys.stderr)
+            dur = None
+        t = None
+        if not fast_scan:
+            # Invert this run's map: the first title whose (lo, hi) covers the ep
+            t = next((num for num in sorted(assignment)
+                      if assignment[num][0] <= ep <= assignment[num][1]), None)
+        rows.append(tv_row(ep, mkv.name, t, dur, ep_runtimes.get(ep)))
+    rows.sort(key=lambda r: r["ep"])
+    return rows
+
+
+def post_rip_validation(preamble, season: int, assignment: dict[int, tuple[int, int]],
+                        ep_runtimes: dict[int, int], run=subprocess.run) -> None:
+    """The post-rip record (map.md decision 6), run beside the subtitle note:
+    probe the season's staged episodes, grade them against their TMDB
+    runtimes, report the one summary line, and write validation.json at the
+    show-folder root.
+
+    A re-rip into the folder merges into an existing same-show, same-season
+    document (this run's rows replace the episodes they record, latest run
+    wins); an existing file naming a different show — or the same show at a
+    different season — is never overwritten: stderr note, logged, old file
+    kept. One season per document; multi-season merge needs a schema change,
+    when it bites. Interrupts exit through the rip handler and never reach
+    this; a partial rip (makemkvcon rc != 0) is not an interrupt — it renames
+    what completed and is recorded from what is there. No new prompts or
+    tables: the single summary note is the run's whole voice.
+
+    Args:
+        preamble: The run's Preamble — show folder, log, pick, display,
+            volume label, fast-scan flag
+        season: Season number the disc belongs to
+        assignment: This run's title -> (lo, hi) episode map
+        ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
+        run: subprocess.run callable for monkeypatching
+    """
+    show_dir = preamble.title_dir
+    log = preamble.log
+    rows = probe_episodes(show_dir, preamble.display, season, assignment,
+                          ep_runtimes, preamble.fast_scan, run)
+    yellow = sum(1 for r in rows if r["band"] == "yellow")
+    log.note("validation", f"{len(rows)} episodes, {yellow} yellow")
+
+    doc = tv_document(preamble.pick.id, preamble.display, season,
+                      preamble.label, log.run, rows)
+    path = show_dir / VALIDATION_FILENAME
+    old = load_validation(path)
+    if old is not None:
+        old_tmdb = old.get("tmdb")
+        old_id = old_tmdb.get("id") if isinstance(old_tmdb, dict) else None
+        old_season = old_tmdb.get("season") if isinstance(old_tmdb, dict) else None
+        if old_id is None or str(old_id) != str(preamble.pick.id):
+            print(f"skive: {path} records a different show — validation left untouched",
+                  file=sys.stderr)
+            log.note("validation", "existing validation.json names a different show — kept")
+            return
+        if old_season != season:
+            print(f"skive: {path} records season {old_season}, this is season {season} — "
+                  "one season per document, validation left untouched", file=sys.stderr)
+            log.note("validation",
+                     "existing validation.json records a different season — kept "
+                     "(one season per document; multi-season merge needs a schema change, when it bites)")
+            return
+        doc = merge_tv_document(old, doc)
+    write_validation(path, doc)
+
+
 def rip_tv(args) -> None:
     """Main TV rip orchestration.
 
@@ -573,6 +690,12 @@ def rip_tv(args) -> None:
             note = subtitle_note(show_dir)
             print(f"{note}", file=sys.stderr)
             log.note("subtitle", note)
+
+            # Post-rip validation (map.md decision 6): the record beside the
+            # subtitle note — this season's staged episodes probed and graded,
+            # merged into the folder's document, validation.json at the
+            # show-folder root. Interrupts exit above and never reach this.
+            post_rip_validation(preamble, season, assignment, ep_runtimes)
 
             log.phase_end()
             rc = worst_rc

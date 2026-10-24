@@ -8,6 +8,7 @@ import pytest
 
 from skive.rip_tv import (
     staged_eps, print_table, rename_tv, rip_tv, rename_tv_fast, episode_target,
+    post_rip_validation,
 )
 from skive.scan import TitleInfo
 from skive.tv_match import tv_floor
@@ -94,6 +95,13 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, stag
 
     prompt = MagicMock()
     prompt.ask.side_effect = answers
+
+    # The post-rip validation record probes staged files with ffprobe; flow
+    # tests assert prompts and tables, so its probe subprocess stays a fake
+    # here (the record itself is tested directly, below).
+    real_post = post_rip_validation
+    monkeypatch.setattr("skive.rip_tv.post_rip_validation",
+                        lambda pre, *a, **k: real_post(pre, *a, run=Mock(return_value=Mock(stdout="600.0\n"))))
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
@@ -457,6 +465,7 @@ def test_rip_only_requested_titles_that_survived_scan():
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_common.RipLog") as mock_log_class:
                                                     mock_log = MagicMock()
+                                                    mock_log.run = "run-1"  # the validation document's run identity
                                                     mock_log_class.return_value = mock_log
                                                     with patch("skive.rip_tv.Prompt") as mock_prompt:
                                                         # season, then Enter for the range, Enter=rip
@@ -605,7 +614,8 @@ def test_floor_drops_short_titles_before_rip():
                                     with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog"):
+                                                with patch("skive.rip_common.RipLog") as MockLog:
+                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
                                                     with patch("skive.rip_tv.Prompt") as mock_prompt:
                                                         # season, Enter for the range, Enter=rip at the table
                                                         mock_prompt.ask.side_effect = ["", "", ""]
@@ -655,7 +665,8 @@ def test_playall_forced_to_extra():
                                     with patch("skive.rip_tv.rip_titles", return_value=0):
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog"):
+                                                with patch("skive.rip_common.RipLog") as MockLog:
+                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
                                                     with patch("skive.rip_tv.Prompt") as mock_prompt:
                                                         # season, then Enter for the range, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "", ""]
@@ -704,7 +715,8 @@ def test_playall_pin_survives_n_reask():
                                     with patch("skive.rip_tv.rip_titles", return_value=0):
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog"):
+                                                with patch("skive.rip_common.RipLog") as MockLog:
+                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
                                                     with patch("skive.rip_tv.Prompt") as mock_prompt:
                                                         # season, range 1-3, n re-ask, Enter for pre-fill, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "1-3", "n", "", ""]
@@ -754,7 +766,8 @@ def test_fix_row_can_assign_playall_to_episode():
                                     with patch("skive.rip_tv.rip_titles", return_value=0):
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog"):
+                                                with patch("skive.rip_common.RipLog") as MockLog:
+                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
                                                     with patch("skive.rip_tv.Prompt") as mock_prompt:
                                                         # season, then Enter for the range, 3=5 at the table, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "", "3=5", ""]
@@ -1013,6 +1026,7 @@ def test_fast_scan_playall_escalates_to_full_scan_and_skips_it(tmp_path, capsys)
             patch("skive.rip_tv.rename_tv") as mock_rename_tv, \
             patch("skive.rip_tv.rename_tv_fast") as mock_rename_fast, \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
+        mock_log.return_value.run = "run-1"  # the validation document's run identity
         with pytest.raises(SystemExit) as e:
             rip_tv(FakeArgs())
 
@@ -1268,3 +1282,402 @@ def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["status"] == "interrupted"
+
+
+# -- Post-rip validation record (issue 06, map.md decision 6) ------------------
+
+def _tv_preamble_for(tmp_path, fast_scan=False):
+    """A real Preamble (dataclass) for direct post_rip_validation calls:
+    Mock log carrying a string run, the Show (2000) pick and folder."""
+    from skive.rip_common import Preamble
+    from skive.tmdb import TMDBPick
+
+    log = Mock()
+    log.run = "newrun1"
+    title_dir = tmp_path / "Show (2000)"
+    pre = Preamble(log=log, pick=TMDBPick("Show", "2000", "en", "tv", "5"),
+                   display="Show (2000)", media="DVD-ROM", titles_full=[],
+                   title_dir=title_dir, stage=title_dir / "d0", minlength=120,
+                   keep="", disc=0, label="SHOW_S2", fast_scan=fast_scan)
+    return pre, log
+
+
+def test_post_rip_writes_probed_rows_and_identity_block(tmp_path):
+    """Full scan: validation.json lands at the show-folder root with the TV
+    shape — shared identity block, episode rows carrying the probed actuals
+    (not the scan table's promise), t inverted from this run's map, grades
+    against the per-episode TMDB runtimes."""
+    import json
+    pre, log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+    (pre.title_dir / "Show (2000)_S01E02.mkv").write_bytes(b"x")
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 3895}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    post_rip_validation(pre, 1, {0: (1, 1), 1: (2, 2), 9: (0, 0)},
+                        {1: 4140, 2: 4080}, run=fake_run)
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert list(doc) == ["tmdb", "volume_label", "run", "episodes", "encodes"]
+    assert doc["tmdb"] == {"id": "5", "type": "tv", "title": "Show (2000)", "season": 1}
+    assert doc["volume_label"] == "SHOW_S2"
+    assert doc["run"] == "newrun1"
+    assert doc["episodes"] == [
+        {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 0, "dur_s": 3930,
+         "runtime_s": 4140, "ratio": 0.95, "band": "green"},
+        {"ep": 2, "file": "Show (2000)_S01E02.mkv", "t": 1, "dur_s": 3895,
+         "runtime_s": 4080, "ratio": 0.95, "band": "green"},
+    ]
+    assert doc["encodes"] == []
+    log.note.assert_any_call("validation", "2 episodes, 0 yellow")
+
+
+def test_post_rip_double_records_lo_extra_and_junk_skipped(tmp_path):
+    """A double (S01E05-E06) records one row under its lo episode; extras
+    (" - Extra NN") and junk-labeled files never match the episode shape."""
+    import json
+    pre, _log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Show (2000)_S01E05-E06.mkv").write_bytes(b"x")
+    (pre.title_dir / "Show (2000) - Extra 01.mkv").write_bytes(b"x")
+    (pre.title_dir / "Show (2000)_t00.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, 1, {0: (5, 6)}, {5: 2580, 6: 2580},
+                        run=Mock(return_value=Mock(stdout="2578\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["episodes"] == [
+        {"ep": 5, "file": "Show (2000)_S01E05-E06.mkv", "t": 0, "dur_s": 2578,
+         "runtime_s": 2580, "ratio": 1.0, "band": "green"},
+    ]
+
+
+def test_post_rip_fast_scan_rows_record_t_none(tmp_path):
+    """Fast scan: the table numbers are scanner indices, never real _tNN
+    (slice-04 review P2) — rows record t=None even though the map covers the
+    episode. Null is honest."""
+    import json
+    pre, _log = _tv_preamble_for(tmp_path, fast_scan=True)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
+                        run=Mock(return_value=Mock(stdout="3930\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["episodes"][0]["t"] is None
+
+
+def test_post_rip_unknown_runtime_and_yellow_band(tmp_path):
+    """An episode without a TMDB runtime (the fetch's 0) records runtime_s
+    null and never a grade; a real mismatch bands yellow, counted in the
+    summary note."""
+    import json
+    pre, log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+    (pre.title_dir / "Show (2000)_S01E02.mkv").write_bytes(b"x")
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 6000}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    post_rip_validation(pre, 1, {0: (1, 1), 1: (2, 2)}, {1: 0, 2: 4140}, run=fake_run)
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    by_ep = {r["ep"]: r for r in doc["episodes"]}
+    assert by_ep[1]["runtime_s"] is None and by_ep[1]["band"] is None
+    assert by_ep[2]["ratio"] == 1.45 and by_ep[2]["band"] == "yellow"
+    log.note.assert_any_call("validation", "2 episodes, 1 yellow")
+
+
+def test_post_rip_unreadable_duration_still_writes(tmp_path, capsys):
+    """A file whose duration won't read: null dur row, one warning — the
+    document is still written (never crash, never skip the write)."""
+    import json
+    pre, _log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
+                        run=Mock(return_value=Mock(stdout="")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["episodes"] == [{"ep": 1, "file": "Show (2000)_S01E01.mkv",
+                                "t": 0, "dur_s": None, "runtime_s": 4140,
+                                "ratio": None, "band": None}]
+    assert "cannot read duration of Show (2000)_S01E01.mkv" in capsys.readouterr().err
+
+
+def test_post_rip_rerip_same_season_merges_replaces_and_keeps(tmp_path):
+    """Re-rip of the next disc, same season: this run's rows replace the
+    episodes they record, episodes this disc didn't carry stay recorded, the
+    latest run and label win."""
+    import json
+    pre, _log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    old = {"tmdb": {"id": "5", "type": "tv", "title": "Show (2000)", "season": 1},
+           "volume_label": "OLD_S1A", "run": "oldrun1", "episodes": [
+               {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 7,
+                "dur_s": 3900, "runtime_s": 4140, "ratio": 0.94, "band": "green"},
+               {"ep": 3, "file": "Show (2000)_S01E03.mkv", "t": 9,
+                "dur_s": 3840, "runtime_s": 3840, "ratio": 1.0, "band": "green"}],
+           "encodes": []}
+    (pre.title_dir / "validation.json").write_text(json.dumps(old), encoding="utf-8")
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")  # re-staged
+    (pre.title_dir / "Show (2000)_S01E02.mkv").write_bytes(b"x")  # this disc
+
+    post_rip_validation(pre, 1, {0: (1, 1), 1: (2, 2)}, {1: 4140, 2: 4080},
+                        run=Mock(return_value=Mock(stdout="3930\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["run"] == "newrun1" and doc["volume_label"] == "SHOW_S2"
+    assert [(r["ep"], r["dur_s"], r["t"]) for r in doc["episodes"]] == [
+        (3, 3840, 9),  # episode this disc didn't carry — kept as recorded
+        (1, 3930, 0),  # replaced by this run's row
+        (2, 3930, 1),  # this run's new episode appended
+    ]
+
+
+def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
+    """An existing validation.json naming a different show is never
+    overwritten: stderr note, logged, the old file kept byte-for-byte."""
+    pre, log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    old_text = '{\n  "tmdb": {"id": "999"}\n}'
+    path = pre.title_dir / "validation.json"
+    path.write_text(old_text, encoding="utf-8")
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
+                        run=Mock(return_value=Mock(stdout="3930\n")))
+
+    assert path.read_text(encoding="utf-8") == old_text
+    assert "records a different show" in capsys.readouterr().err
+    log.note.assert_any_call("validation",
+                             "existing validation.json names a different show — kept")
+
+
+def test_post_rip_same_id_different_season_refuses_with_shortcut_note(tmp_path, capsys):
+    """One season per document: the same show's season-2 record refuses to
+    merge a season-1 rip — stderr note, logged with the shortcut, old file
+    kept byte-for-byte."""
+    import json
+    pre, log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    old_text = json.dumps({"tmdb": {"id": "5", "type": "tv",
+                                    "title": "Show (2000)", "season": 2},
+                           "volume_label": "S2", "run": "oldrun1",
+                           "episodes": [], "encodes": []})
+    path = pre.title_dir / "validation.json"
+    path.write_text(old_text, encoding="utf-8")
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
+                        run=Mock(return_value=Mock(stdout="3930\n")))
+
+    assert path.read_text(encoding="utf-8") == old_text
+    err = capsys.readouterr().err
+    assert "records season 2, this is season 1" in err
+    assert "one season per document" in err
+    log.note.assert_any_call(
+        "validation",
+        "existing validation.json records a different season — kept "
+        "(one season per document; multi-season merge needs a schema change, when it bites)")
+
+
+def test_post_rip_corrupt_existing_file_reads_fresh(tmp_path):
+    """A corrupt validation.json reads as no file: this run writes fresh."""
+    import json
+    pre, _log = _tv_preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "validation.json").write_text("{oops", encoding="utf-8")
+    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
+                        run=Mock(return_value=Mock(stdout="3930\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["tmdb"]["id"] == "5"
+    assert [r["ep"] for r in doc["episodes"]] == [1]
+
+
+@dataclass
+class _ValidationFakeArgs:
+    titles = None
+    extras = False
+    tmdbid = None
+    verified = True
+
+
+def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
+    """The record is born at the show-folder root after the renames, beside
+    the subtitle note: rows carry the probed actuals and the map-inverted t;
+    nothing is written before the subtitle note (the interrupt's exit point
+    is earlier), and the run log closes after the write."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    episodes = [(1, "ep1", 4140), (2, "ep2", 4080), (3, "ep3", 3840),
+                (4, "ep4", 3600)]
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True, exist_ok=True)
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 3895,
+            "Show (2000)_S01E03.mkv": 3653}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    def promote_three_junk(stage):
+        for n in range(3):
+            (show_dir / f"B1_t0{n}.mkv").write_bytes(b"x")
+
+    def subs_after_renames(_dir):
+        assert not (show_dir / "validation.json").exists()  # born later, never sooner
+        return "subs=dan"
+
+    real_post = post_rip_validation
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd",
+                  side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_common.RipLog") as mock_log, \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.promote_staged", side_effect=promote_three_junk), \
+            patch("skive.rip_tv.subtitle_note", side_effect=subs_after_renames), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
+        mock_log.return_value.run = "run-1"  # the validation document's run identity
+        with pytest.raises(SystemExit) as e:
+            rip_tv(_ValidationFakeArgs())
+
+    assert e.value.code == 0
+    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["tmdb"] == {"id": "5", "type": "tv", "title": "Show (2000)", "season": 1}
+    assert doc["run"] == "run-1"
+    assert doc["volume_label"] == ""  # the scan mock carries no volume label
+    assert doc["episodes"] == [
+        {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 0, "dur_s": 3930,
+         "runtime_s": 4140, "ratio": 0.95, "band": "green"},
+        {"ep": 2, "file": "Show (2000)_S01E02.mkv", "t": 1, "dur_s": 3895,
+         "runtime_s": 4080, "ratio": 0.95, "band": "green"},
+        {"ep": 3, "file": "Show (2000)_S01E03.mkv", "t": 2, "dur_s": 3653,
+         "runtime_s": 3840, "ratio": 0.95, "band": "green"},
+    ]
+    log = mock_log.return_value
+    log.note.assert_any_call("validation", "3 episodes, 0 yellow")
+    log.phase_end.assert_called_once()  # the write precedes the phase close
+
+
+def test_fast_scan_flow_rows_record_t_none(tmp_path):
+    """Fast-path rip: the record still lands after the renames, and its rows
+    carry t=None — the fast scan's table numbers are scanner indices, not
+    real _tNN (slice-04 review P2)."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    episodes = [(1, "ep1", 4140), (2, "ep2", 4080), (3, "ep3", 3840)]
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True, exist_ok=True)
+
+    def join_creates_episodes(_display, _dir, _season, _assignment, _durs, **k):
+        for ep in (1, 2, 3):
+            (show_dir / f"Show (2000)_S01E0{ep}.mkv").write_bytes(b"x")
+        return True
+
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 3895,
+            "Show (2000)_S01E03.mkv": 3653}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    real_post = post_rip_validation
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd", return_value=FAST_DURATIONS), \
+            patch("skive.rip_common.scan_disc") as mock_scan_disc, \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.RipLog") as mock_log, \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rename_tv_fast", side_effect=join_creates_episodes), \
+            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
+        mock_log.return_value.run = "run-1"  # the validation document's run identity
+        with pytest.raises(SystemExit) as e:
+            rip_tv(_ValidationFakeArgs())
+
+    assert e.value.code == 0
+    mock_scan_disc.assert_not_called()  # the fast scan gated the disc
+    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
+    assert [r["ep"] for r in doc["episodes"]] == [1, 2, 3]
+    assert [r["dur_s"] for r in doc["episodes"]] == [3930, 3895, 3653]
+    assert [r["t"] for r in doc["episodes"]] == [None, None, None]
+
+
+def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
+    """Ctrl+C mid-rip: the in-flight partial is purged, exit 130 — and no
+    validation.json exists: the write sits beside the subtitle note, after
+    the interrupt's exit point."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    episodes = [(1, "ep1", 4140), (2, "ep2", 4080), (3, "ep3", 3840),
+                (4, "ep4", 3600)]
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    d0 = show_dir / "d0"
+
+    def rip_a_partial_then_interrupt(*a, **k):
+        d0.mkdir(parents=True, exist_ok=True)  # the preamble already made it
+        (d0 / "B1_t0.mkv").write_text("in-flight partial")  # makemkvcon's junk label
+        raise KeyboardInterrupt
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd",
+                  side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=tmp_path / "absent-profile.xml"), \
+            patch("skive.rip_tv.rip_titles", side_effect=rip_a_partial_then_interrupt):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(_ValidationFakeArgs())
+
+    assert e.value.code == 130
+    assert not (d0 / "B1_t0.mkv").exists()  # the partial is purged
+    # An interrupted run writes no Validation file — partial rips stay
+    # unrecorded rather than lying (issue 06).
+    assert not (show_dir / "validation.json").exists()
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
+    err = capsys.readouterr().err
+    assert "skive: interrupted — partial deleted, kept 0 titles" in err
+    assert err.count("skive: interrupted") == 1
