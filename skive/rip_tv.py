@@ -73,8 +73,9 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
     """Print the confirmation table in title-number order.
 
     The range prompt reuses this printer as the title overview: estimate=True
-    marks episode cells ` (est.)`, and playalls renders those rows
-    "play-all, not ripped" — on the overview and the confirm table alike.
+    marks episode cells ` (est.)`, and playalls renders rows still assigned
+    extra "play-all, not ripped" — on the overview and the confirm table
+    alike; a fix row rescuing a play-all shows its episode instead.
 
     Args:
         display: Show name
@@ -110,7 +111,9 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
         audit = audit_cell(secs, lo, hi, ep_runtimes)
         audit_str = Text(audit[0], style=audit[1]) if audit else ""
 
-        if playalls and t in playalls:
+        # Only a play-all still assigned extra reads skipped: a fix row handing
+        # one an episode must show the rescue here (pin_playalls is not re-applied).
+        if playalls and t in playalls and lo == 0:
             assign_str = "→ play-all, not ripped"
         elif lo == 0:
             assign_str = "→ extra"

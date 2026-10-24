@@ -156,7 +156,7 @@ def test_overview_before_range_prompt_guess_prefill(tmp_path, monkeypatch):
               TitleInfo(1, 2855, 1, "dan", "", False),
               TitleInfo(2, 2852, 1, "dan", "", False),
               TitleInfo(3, 9643, 1, "dan", "", False),   # play-all: 3940+2855+2852 = 9647
-              TitleInfo(4, 4000, 1, "dan", "", False)]   # 1:06:40, fits no runtime
+              TitleInfo(4, 4000, 1, "dan", "", False)]   # 4000/4020 = 0.995, inside the green band — still extra: the walk spent t0 on E1 and only 3 episodes exist
     episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
 
     mock_rename_tv, console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes,
@@ -1115,6 +1115,7 @@ def test_fix_row_rescued_playall_rips():
             patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
             patch("skive.rip_tv.rename_tv"), \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
+            patch("skive.rip_tv.console") as mock_console, \
             patch("skive.rip_tv.Prompt") as mock_prompt:
         # season, then Enter for the range, the rescue fix row, Enter=rip
         mock_prompt.ask.side_effect = ["", "", "2=3", ""]
@@ -1124,6 +1125,14 @@ def test_fix_row_rescued_playall_rips():
             pass
 
     assert mock_rip_titles.call_args.args[0] is None  # skip set empty: rip all
+
+    # The table must not lie about the rescue: before `2=3` t2 reads skipped,
+    # after it the re-printed confirm table shows E3 for t2 (texts: overview,
+    # confirm before the fix row, confirm after it).
+    texts = _table_texts(mock_console)
+    assert "play-all, not ripped" in texts[1]
+    assert "play-all, not ripped" not in texts[2]
+    assert "→ S01E03 (ep3)" in texts[2]
 
 
 def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path):
