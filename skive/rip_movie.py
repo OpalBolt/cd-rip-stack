@@ -31,6 +31,10 @@ def rip_movie(args) -> None:
         minlength = preamble.minlength
 
         log.note("type", "type=movie")
+        # Identity note: the film's runtime when known, so the run log records
+        # what disc durations were graded against. Unknown stays absent.
+        if pick.runtime_secs is not None:
+            log.note("runtime", f"runtime={pick.runtime_secs}s")
 
         # Build selection string
         keep = preamble.keep

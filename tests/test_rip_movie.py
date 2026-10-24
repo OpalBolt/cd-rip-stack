@@ -262,6 +262,61 @@ def test_rip_movie_rip_failure_notes():
                                             # Check the rip note was made
                                             log_instance.note.assert_any_call("rip", "makemkvcon rc=1 — partial rip, renaming what completed")
 
+
+def test_rip_movie_runtime_note_when_known():
+    """Identity note: a known movie runtime is recorded beside the type note."""
+    args = FakeArgs()
+    mock_pick = TMDBPick(title="Mamma Mia!", year="2008", original_language="en",
+                         type="movie", id="471", runtime_secs=6480)
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
+                        with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
+                            with patch("skive.rip_movie.rip_titles", return_value=0):
+                                with patch("skive.rip_movie.rename_staged"):
+                                    with patch("skive.rip_movie.subtitle_note", return_value="subs=dan"):
+                                        with patch("pathlib.Path.unlink"):
+                                            with patch("skive.rip_common.RipLog") as MockLog:
+                                                log_instance = MockLog.return_value
+                                                try:
+                                                    rip_movie(args)
+                                                except SystemExit:
+                                                    pass
+                                                log_instance.note.assert_any_call("type", "type=movie")
+                                                log_instance.note.assert_any_call("runtime", "runtime=6480s")
+
+
+def test_rip_movie_no_runtime_note_when_unknown():
+    """An unknown runtime stays absent from the identity notes (never 0)."""
+    args = FakeArgs()
+    mock_pick = TMDBPick(title="Mystery Film", year="2010", original_language="de",
+                         type="movie", id="99", runtime_secs=None)
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
+        with patch("skive.rip_common.ensure_mounted"):
+            with patch("skive.rip_common.purge_junk"):
+                with patch("skive.rip_common.require_online"):
+                    with patch("skive.rip_common.search_loop", return_value=mock_pick):
+                        with patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")):
+                            with patch("skive.rip_movie.rip_titles", return_value=0):
+                                with patch("skive.rip_movie.rename_staged"):
+                                    with patch("skive.rip_movie.subtitle_note", return_value="subs=dan"):
+                                        with patch("pathlib.Path.unlink"):
+                                            with patch("skive.rip_common.RipLog") as MockLog:
+                                                log_instance = MockLog.return_value
+                                                try:
+                                                    rip_movie(args)
+                                                except SystemExit:
+                                                    pass
+                                                runtime_notes = [c for c in log_instance.note.call_args_list
+                                                                 if c.args and c.args[0] == "runtime"]
+                                                assert runtime_notes == []
+
 def test_rip_movie_clean_rip_exits_0():
     """A rc=0 rip finishes the flow (log/finish) and exits 0."""
     args = FakeArgs(verified=True)

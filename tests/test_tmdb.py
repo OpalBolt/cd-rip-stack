@@ -128,6 +128,40 @@ def test_fetch_by_id_success():
             assert pick.id == "12345"
 
 
+def test_fetch_by_id_movie_runtime_secs():
+    """A movie by-id pick converts the details payload's runtime (minutes)
+    to seconds — the payload is already in hand, no second fetch."""
+    mock_data = {"title": "Mamma Mia!", "release_date": "2008-06-30",
+                 "original_language": "en", "id": 471, "runtime": 108}
+    with patch("skive.tmdb._http_get_json", return_value=mock_data) as mock_http:
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            pick = fetch_by_id("movie", "471")
+    assert pick.runtime_secs == 6480
+    assert mock_http.call_count == 1
+
+
+def test_fetch_by_id_movie_missing_runtime_is_none():
+    """A movie details payload without runtime degrades to unknown (None),
+    never a fake 0 (the tv_match.audit_cell no-false-yellow rule)."""
+    mock_data = {"title": "Mystery Film", "release_date": "2010-01-01",
+                 "original_language": "de", "id": 99}
+    with patch("skive.tmdb._http_get_json", return_value=mock_data):
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            pick = fetch_by_id("movie", "99")
+    assert pick.runtime_secs is None
+
+
+def test_fetch_by_id_tv_has_no_runtime():
+    """TV picks stay runtime-less: episode runtimes arrive at season level."""
+    mock_data = {"name": "Some Show", "first_air_date": "2020-01-01",
+                 "original_language": "en", "id": 7}
+    with patch("skive.tmdb._http_get_json", return_value=mock_data):
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            pick = fetch_by_id("tv", "7")
+    assert pick.type == "tv"
+    assert pick.runtime_secs is None
+
+
 @patch_console
 @patch_prompt
 def test_search_loop_reprompts_empty():
@@ -165,6 +199,72 @@ def test_search_loop_pick():
             assert pick.title == "First Result"
             assert pick.year == "2019"
             assert pick.original_language == "en"
+            # details payload (same mock) carries no runtime -> unknown
+            assert pick.runtime_secs is None
+
+
+@patch_console
+@patch_prompt
+def test_search_loop_movie_resolves_runtime_from_details():
+    """Search results lack runtime; a movie pick fetches the details endpoint
+    after selection and carries the runtime in seconds."""
+    search = {"results": [{"title": "Mamma Mia!", "release_date": "2008-06-30",
+                           "original_language": "en", "id": 471}]}
+    details = {"runtime": 108, "id": 471}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", side_effect=[search, details]) as mock_http:
+            mock_prompt.ask.side_effect = ["Mamma Mia!", ""]
+            pick = search_loop("movie")
+    assert pick.title == "Mamma Mia!"
+    assert pick.runtime_secs == 108 * 60
+    assert "movie/471?" in mock_http.call_args_list[1].args[0]
+
+
+@patch_console
+@patch_prompt
+def test_search_loop_movie_runtime_fetch_failure_still_picks():
+    """A failed details fetch never kills the pick — runtime degrades to None
+    (the pick already succeeded; runtime is an enhancement)."""
+    search = {"results": [{"title": "Mamma Mia!", "release_date": "2008-06-30",
+                           "original_language": "en", "id": 471}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json",
+                   side_effect=[search, RuntimeError("TMDB request failed: HTTP 500")]):
+            mock_prompt.ask.side_effect = ["Mamma Mia!", ""]
+            pick = search_loop("movie")
+    assert pick.title == "Mamma Mia!"
+    assert pick.runtime_secs is None
+
+
+@patch_console
+@patch_prompt
+def test_search_loop_movie_missing_runtime_is_none():
+    """A movie whose details carry no runtime degrades to unknown (None),
+    never a fake 0 that downstream would read as a real duration."""
+    search = {"results": [{"title": "Mystery Film", "release_date": "2010-01-01",
+                           "original_language": "de", "id": 99}]}
+    details = {"runtime": None, "id": 99}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", side_effect=[search, details]):
+            mock_prompt.ask.side_effect = ["Mystery Film", ""]
+            pick = search_loop("movie")
+    assert pick.runtime_secs is None
+
+
+@patch_console
+@patch_prompt
+def test_search_loop_tv_makes_no_runtime_fetch():
+    """TV picks are untouched: no runtime resolution, no follow-up fetch
+    (episode runtimes already arrive at season level via fetch_season)."""
+    search = {"results": [{"name": "Some Show", "first_air_date": "2020-01-01",
+                           "original_language": "en", "id": 7}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", side_effect=[search]) as mock_http:
+            mock_prompt.ask.side_effect = ["Some Show", ""]
+            pick = search_loop("tv")
+    assert pick.type == "tv"
+    assert pick.runtime_secs is None
+    assert mock_http.call_count == 1
 
 
 @patch_prompt
@@ -191,7 +291,7 @@ def test_search_loop_prefill_skips_query_prompt():
             pick = search_loop("movie", prefill="ROGUE ONE")
             assert pick.title == "Rogue One"
             assert mock_prompt.ask.call_count == 1
-            assert "query=ROGUE%20ONE" in mock_http.call_args.args[0]
+            assert "query=ROGUE%20ONE" in mock_http.call_args_list[0].args[0]
 
 
 @patch_console
@@ -205,8 +305,9 @@ def test_search_loop_s_drops_to_typed_query():
             mock_prompt.ask.side_effect = ["s", "typed query", ""]
             pick = search_loop("movie", prefill="ALIEN")
             assert pick.title == "Alien"
-            assert "query=typed%20query" in mock_http.call_args.args[0]
-            assert mock_http.call_count == 2
+            assert "query=typed%20query" in mock_http.call_args_list[1].args[0]
+            # two searches + the pick's runtime details fetch
+            assert mock_http.call_count == 3
 
 
 @patch_console
@@ -216,8 +317,9 @@ def test_search_loop_prefill_zero_results_prompts_typed():
     empty = {"results": []}
     hit = {"results": [{"title": "Alien", "release_date": "1979-05-25",
                         "original_language": "en", "id": 348}]}
+    # third payload: the picked movie's runtime details fetch
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
-        with patch("skive.tmdb._http_get_json", side_effect=[empty, hit]):
+        with patch("skive.tmdb._http_get_json", side_effect=[empty, hit, {"id": 348}]):
             mock_prompt.ask.side_effect = ["typed", ""]
             pick = search_loop("movie", prefill="GARBAGE_LABEL")
             assert pick.title == "Alien"

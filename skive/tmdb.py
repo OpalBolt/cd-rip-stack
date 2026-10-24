@@ -23,6 +23,11 @@ class TMDBPick:
     original_language: str  # "-" if none
     type: str  # "movie" or "tv"
     id: str  # TMDB id as string
+    # Movie runtime in seconds (TMDB reports minutes). None = unknown: a fake 0
+    # would read as a real duration and could produce a false-yellow ratio cell
+    # (the tv_match.audit_cell no-false-yellow rule). TV stays None; episode
+    # runtimes arrive at season level via fetch_season.
+    runtime_secs: int | None = None
 
 
 def _api_key() -> str:
@@ -114,6 +119,31 @@ def parse_tmdbid(arg: str, kind: str) -> tuple[str, str]:
     return "movie", arg
 
 
+def _runtime_secs_from_details(data: dict) -> int | None:
+    """Convert a details payload's runtime (TMDB minutes) to seconds.
+
+    Missing runtime stays None — never a fake 0, which downstream would read
+    as a real duration (the tv_match.audit_cell no-false-yellow rule).
+    """
+    minutes = data.get("runtime")
+    return minutes * 60 if minutes else None
+
+
+def _resolve_movie_runtime(api_key: str, movie_id: str) -> int | None:
+    """Resolve a movie's runtime (seconds) from its details endpoint.
+
+    Search results carry no runtime, so this runs after the user's pick. Any
+    fetch failure returns None — the pick already succeeded; runtime is an
+    enhancement and must not kill it.
+    """
+    url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}"
+    try:
+        data = _http_get_json(url)
+    except RuntimeError:
+        return None
+    return _runtime_secs_from_details(data)
+
+
 def fetch_by_id(type_: str, id_: str) -> TMDBPick:
     """Fetch a TMDB entry by id.
 
@@ -143,7 +173,12 @@ def fetch_by_id(type_: str, id_: str) -> TMDBPick:
     orig_lang = data.get("original_language", "-")
     tmdb_id = str(data.get("id", "-"))
 
-    return TMDBPick(title=title, year=year, original_language=orig_lang, type=type_, id=tmdb_id)
+    # Movie details already carry the runtime (converted to seconds); TV stays
+    # unknown — episode runtimes arrive at season level via fetch_season.
+    runtime_secs = _runtime_secs_from_details(data) if type_ == "movie" else None
+
+    return TMDBPick(title=title, year=year, original_language=orig_lang, type=type_, id=tmdb_id,
+                    runtime_secs=runtime_secs)
 
 
 def search_loop(kind: str, prefill: str = "") -> TMDBPick:
@@ -240,7 +275,11 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
                     year = date_str[:4] if date_str and date_str != "-" else "-"
                     orig_lang = r.get("original_language", "-")
                     tmdb_id = str(r.get("id", "-"))
-                    return TMDBPick(title=title, year=year, original_language=orig_lang, type=kind, id=tmdb_id)
+                    # Search results lack runtime, so a movie pick resolves it
+                    # from the details endpoint (failure degrades to unknown).
+                    runtime_secs = _resolve_movie_runtime(api_key, tmdb_id) if kind == "movie" else None
+                    return TMDBPick(title=title, year=year, original_language=orig_lang, type=kind, id=tmdb_id,
+                                    runtime_secs=runtime_secs)
                 else:
                     print(f"skive: pick 1-{len(results[:5])}", file=sys.stderr)
             except ValueError:
