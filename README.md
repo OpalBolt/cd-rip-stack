@@ -110,6 +110,20 @@ so only a title homed in neither, or in both, of the movie and TV homes
 leaves the extra undecidable), and any path that would traverse a
 symlink. Old text `rip.log` files are left in place, unread.
 
+Names that lost their title year are not junk: they are rips whose rename
+never wrote the `(Year)`. `scripts/backfill_years.py` completes that rename
+— per title group it runs the same interactive TMDB pick the rip flow uses,
+then renames each file in place to the canonical `<Name (Year)>` name
+(glued MakeMKV disc tags dropped, `_tNN` kept, groups landing on one name
+become `.pN` parts; a TMDB entry with no release date asks for the year by
+hand — Enter skips the group). Dry-run by default; after `--apply`, re-run the
+migration to re-tree them.
+
+```bash
+python scripts/backfill_years.py               # dry-run: pick per title, print the plan
+python scripts/backfill_years.py --apply       # rename in place, then re-run migrate_layout.py
+```
+
 After `--apply`, rescan the Jellyfin library once. Jellyfin keeps its single
 root `/mnt/videos/library`, so the split into `library/movies/` and
 `library/tv/` costs one rescan, not a reconfigure.
