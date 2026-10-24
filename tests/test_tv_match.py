@@ -5,7 +5,7 @@ import pytest
 from skive.tv_match import (
     parse_range, next_unstaged, assign_range, range_mismatch_note,
     range_past_end_note, parse_fix_rows, apply_fixes, map_str,
-    tv_floor, sum_disqualified, audit_ratio, audit_cell,
+    tv_floor, sum_disqualified, playall_skip, audit_ratio, audit_cell,
 )
 
 
@@ -211,3 +211,19 @@ def test_sum_disqualified_subset_size_cap():
     """Sum of 7 components does not disqualify (subset must be 2..6)."""
     titles = [(i, 600, 1) for i in range(7)] + [(7, 4200, 1)]
     assert sum_disqualified(titles) == set()
+
+
+# Play-alls are never ripped; a fix row rescuing one rips it (ADR 0008)
+def test_playall_skip():
+    """The skip set holds exactly the play-alls whose final assignment is
+    extra: the rescued play-all (t3=E5) rips, the play-all left extra (t4)
+    skips, and the plain extra (t2) is not a play-all so it still rips."""
+    assignment = {0: (1, 1), 1: (2, 2), 2: (0, 0), 3: (5, 5), 4: (0, 0)}
+    assert playall_skip({3, 4}, assignment) == {4}
+
+
+def test_playall_skip_all_rescued_or_pinned():
+    """Every play-all rescued by fix rows: the skip set is empty (rip all as
+    today); every play-all pinned extra: all of it skips."""
+    assert playall_skip({3, 4}, {3: (1, 2), 4: (5, 5)}) == set()
+    assert playall_skip({3, 4}, {3: (0, 0), 4: (0, 0)}) == {3, 4}

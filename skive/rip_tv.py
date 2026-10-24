@@ -16,11 +16,12 @@ from skive.makemkv import (
     rip_header, subtitle_note, rip_titles, hsize,
 )
 from skive.rip_common import fast_scan_header, interrupted_exit, rip_preamble
-from skive.scan import resolve_titles
+from skive.scan import resolve_titles, scan_disc
 from skive.tmdb import fetch_season
 from skive.tv_match import (
     tv_floor, sum_disqualified, parse_range, next_unstaged, assign_range,
     range_mismatch_note, range_past_end_note, apply_fixes, audit_cell,
+    playall_skip,
 )
 
 console = Console()
@@ -371,8 +372,24 @@ def rip_tv(args) -> None:
         titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
         playalls = sum_disqualified(titles_info)
 
+        # ADR 0002/0008: a play-all on the fast scan escalates to the full
+        # MakeMKV scan — skipping it needs MakeMKV's real title numbers. The
+        # fast durations are discarded and the run joins the full-scan path
+        # (direct rename, no duration join), like the duplicate-duration
+        # trigger in the preamble.
+        if preamble.fast_scan and playalls:
+            print("skive: fast scan found a play-all title — escalating to the full MakeMKV scan", file=sys.stderr)
+            log.note("scan", "play-all detected — full-scan escalation")
+            _, _, titles_full = scan_disc(minlength, disc=preamble.disc)
+            titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
+            titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
+            playalls = sum_disqualified(titles_info)
+            preamble.fast_scan = False
+            preamble.scan_durations = None
+
         def pin_playalls(a: dict[int, tuple[int, int]]) -> dict[int, tuple[int, int]]:
-            """Play-alls rip as extras whatever the stated range said.
+            """Play-alls pin extra whatever the stated range said — the rip
+            skips them unless a fix row assigns one an episode.
 
             Re-applied after each automatic rebuild (initial assignment, `n`
             re-ask). Never applied after a fix row: `t=ep` typed at the table is
@@ -498,6 +515,13 @@ def rip_tv(args) -> None:
             else:
                 # Explicit -T selections may include titles filtered from the confirmed scan.
                 rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
+                # Play-alls whose final assignment is extra are never ripped
+                # (ADR 0008) — derived after the confirm loop, so a fix row
+                # rescuing one rips it. -T runs stay exactly as they were.
+                if user_titles is None:
+                    skip = playall_skip(playalls, assignment)
+                    if skip:
+                        rip_selection = [t for t, _, _ in titles_info if t not in skip]
                 worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
                                       total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log)
 

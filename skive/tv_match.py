@@ -61,6 +61,22 @@ def sum_disqualified(titles: list[tuple[int, int, int]]) -> set[int]:
     return disqualified
 
 
+def playall_skip(playalls: set[int], assignment: dict[int, tuple[int, int]]) -> set[int]:
+    """Play-alls whose final assignment is extra — the titles the rip skips.
+
+    Derived after the confirm loop from the final assignment, so a fix row
+    assigning a play-all an episode (`0=1-2`) keeps it in the rip (ADR 0008).
+
+    Args:
+        playalls: Title numbers disqualified as play-alls
+        assignment: Final title -> (lo, hi) mapping (post fix rows)
+
+    Returns:
+        Set of title numbers to leave out of the rip selection
+    """
+    return {t for t in playalls if assignment.get(t, (0, 0)) == (0, 0)}
+
+
 def parse_range(s: str) -> tuple[int, int] | None:
     """Parse a stated episode range: "N" -> (N, N), "N-M" -> (N, M).
 
