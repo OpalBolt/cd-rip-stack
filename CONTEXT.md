@@ -64,7 +64,7 @@ Two episodes on one disc title. Kept as one file, named `S01E01-E02`. Never spli
 _Avoid_: split episode
 
 **Main feature**:
-The biggest-bytes `_tNN` group of a staged movie. Movies only — never computed for a TV show.
+The staged title chosen as the film itself — the candidate main nearest TMDB runtime when one clearly matches, or the pick recorded in the validation file when several do; biggest-bytes is only the fallback for legacy folders and shorts. Movies only — never computed for a TV show.
 _Avoid_: main title
 
 **Part**:
@@ -89,6 +89,20 @@ _Avoid_: rip-DONE, done folder
 **Issues folder**:
 Quarantine for lossless sources whose transcode or subtitle pass failed: `issues/<type>/<Name (Year)>/` — the source plus that run's `rip.jsonl`/raw log lines, contained together. `transcode.py --retry` re-runs items from here. Nothing in the pipeline deletes a source until its sidecars are verified — a failed file waits here for retry, never in `lossless/` (which is verified-and-pending-purge).
 _Avoid_: failed folder, retry queue
+
+### Validation
+
+**Validation file**:
+`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main. Travels staging → transcode → library; transcode appends its encode results to it.
+_Avoid_: manifest, metadata file
+
+**Candidate main**:
+A movie-rip title at or above the main floor (2400 s). One candidate near the TMDB runtime names the main outright; several near it demand a human pick (default: biggest) before the drive spins.
+_Avoid_: main title, feature-length title
+
+**Library checker**:
+The report-only consistency pass over `library/` (`skive validate`): durations vs TMDB, duplicate ids, stray staging names, missing episodes. Touches nothing.
+_Avoid_: lint, audit (that name belongs to the ratio audit)
 
 ### Subtitles
 
