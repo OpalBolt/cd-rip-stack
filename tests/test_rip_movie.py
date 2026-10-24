@@ -3,11 +3,12 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from skive.rip_movie import rip_movie
+from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
 
 
@@ -26,6 +27,16 @@ def _fast_scan_fails(monkeypatch):
                         Mock(side_effect=RuntimeError("tests force the full-scan fallback")))
     monkeypatch.setattr(rip_common, "fast_scan_bluray",
                         Mock(side_effect=RuntimeError("tests force the full-scan fallback")))
+
+
+@pytest.fixture(autouse=True)
+def _confirm_enter(monkeypatch):
+    """Every movie run now ends its pre-rip gate in a confirm (issue 04);
+    default it to Enter (=rip) so the flow tests keep their shape. Prompt
+    tests re-patch skive.rip_movie.Prompt with their own answers."""
+    prompt = MagicMock()
+    prompt.ask.return_value = ""
+    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
 
 
 class FakeArgs:
@@ -467,3 +478,259 @@ def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["status"] == "interrupted"
+
+
+# --- Pre-rip gate: table, main pick, confirm (issue 04) ----------------------
+
+MAMMA = TMDBPick("Mamma Mia!", "2008", "en", "movie", "157", runtime_secs=6480)
+
+
+def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
+    """Movie flow seams for the pre-rip gate tests: full scan over `titles`,
+    `pick` from search, `answers` feeding rip_movie.Prompt in order (the main
+    pick when it appears, then the confirm; StopIteration kills the run on an
+    unexpected prompt). Returns (log, prompt, rip): the mock RipLog, the mock
+    Prompt and the mock rip_titles."""
+    from skive import rip_common
+
+    log = Mock()
+    prompt = Mock()
+    chain = iter(answers)
+    prompt.ask.side_effect = lambda *a, **k: next(chain)
+    rip = Mock(return_value=0)
+
+    monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
+    monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=("DVD-ROM", "", titles)))
+    monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
+    monkeypatch.setattr(rip_common, "purge_junk", Mock())
+    monkeypatch.setattr(rip_common, "require_online", Mock())
+    monkeypatch.setattr(rip_common, "search_loop", Mock(return_value=pick))
+    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+    monkeypatch.setattr("skive.rip_movie.inject_profile", Mock(return_value=Path("/tmp/test.xml")))
+    monkeypatch.setattr("skive.rip_movie.rip_titles", rip)
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock())
+    monkeypatch.setattr("skive.rip_movie.subtitle_note", Mock(return_value="subs=none"))
+    return log, prompt, rip
+
+
+def _main_notes(log):
+    """The (phase, text) notes a mock RipLog recorded under phase "main"."""
+    return [tuple(c.args) for c in log.note.call_args_list if c.args[0] == "main"]
+
+
+# The Mamma Mia disc: two feature-length titles near the 6480s runtime
+MIXED_TITLES = [TitleInfo(21, 6252, 4_300_000_000, "dan", "", False),
+                TitleInfo(12, 6662, 19_000_000_000, "dan", "", False)]
+
+
+def test_pre_rip_several_candidates_default_taken_on_enter(monkeypatch):
+    """Two titles near the runtime: the pick prompt appears and bare Enter
+    takes the biggest-bytes default; the run then rips."""
+    log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    assert prompt.ask.call_count == 2  # the pick prompt, then the confirm
+    assert ("main", "main=t12 default (biggest bytes) — 2 titles near the runtime") in _main_notes(log)
+    rip.assert_called_once()
+
+
+def test_pre_rip_several_candidates_explicit_pick(monkeypatch):
+    """A number at the pick prompt chooses that title as the main."""
+    log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    assert ("main", "main=t21 picked by hand — 2 titles near the runtime") in _main_notes(log)
+    rip.assert_called_once()
+
+
+def test_pre_rip_several_candidates_q_quits_before_any_rip(monkeypatch, capsys):
+    """q at the pick prompt quits with nothing ripped — no rip call at all."""
+    log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("q",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 1
+    rip.assert_not_called()
+    assert "skive: quit — nothing ripped." in capsys.readouterr().err
+
+
+def test_pre_rip_sole_near_candidate_automatic_without_prompt(monkeypatch, capsys):
+    """One candidate near the runtime, one short: the main is automatic —
+    only the confirm prompts."""
+    titles = [TitleInfo(5, 6400, 8_000_000_000, "en", "", False),
+              TitleInfo(2, 600, 100_000_000, "en", "", False)]
+    log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    assert prompt.ask.call_count == 1  # confirm only, no pick prompt
+    assert ("main", "main=t5 near the runtime — automatic") in _main_notes(log)
+    assert "0.99" in capsys.readouterr().out  # the candidate's graded ratio cell
+    rip.assert_called_once()
+
+
+def test_pre_rip_zero_candidates_silent_records_none(monkeypatch):
+    """Shorts only (nothing at/above the floor): no main logic surfaces, the
+    log records main=none, and the run rips after its confirm."""
+    titles = [TitleInfo(1, 600, 100_000_000, "en", "", False),
+              TitleInfo(2, 900, 200_000_000, "en", "", False)]
+    log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    assert prompt.ask.call_count == 1
+    assert _main_notes(log) == [("main", "main=none — no candidate main on the disc")]
+    rip.assert_called_once()
+
+
+def test_pre_rip_yellow_escalation_default_no_aborts(monkeypatch, capsys):
+    """Any yellow row escalates the confirm to y/N default No: bare Enter
+    aborts with nothing ripped (the automatic main still logged first)."""
+    titles = [TitleInfo(1, 6300, 5_000_000_000, "en", "", False),   # 0.97 green
+              TitleInfo(2, 3000, 6_000_000_000, "en", "", False)]   # 0.46 yellow
+    log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 1
+    rip.assert_not_called()
+    assert ("main", "main=t1 near the runtime — automatic") in _main_notes(log)
+    assert "skive: quit — nothing ripped." in capsys.readouterr().err
+
+
+def test_pre_rip_yellow_escalation_explicit_yes_proceeds(monkeypatch, capsys):
+    """An explicit y past the yellow escalation rips."""
+    titles = [TitleInfo(1, 6300, 5_000_000_000, "en", "", False),
+              TitleInfo(2, 3000, 6_000_000_000, "en", "", False)]
+    _log, _prompt, rip = _movie_flow(monkeypatch, titles, answers=("y",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    rip.assert_called_once()
+    assert "y/N: yellow rows present" in capsys.readouterr().out
+
+
+def test_pre_rip_plain_confirm_q_aborts(monkeypatch, capsys):
+    """The confirm stands on every run: q quits with nothing ripped."""
+    _log, _prompt, rip = _movie_flow(monkeypatch, [], answers=("q",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 1
+    rip.assert_not_called()
+    assert "skive: quit — nothing ripped." in capsys.readouterr().err
+
+
+def test_pre_rip_extras_no_ratio_column_and_no_main(monkeypatch, capsys):
+    """-E runs: no ratio column, no main note, plain confirm — even with two
+    feature-length titles that would otherwise force the pick prompt."""
+    log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs(extras=True))
+
+    assert e.value.code == 0
+    assert prompt.ask.call_count == 1  # the plain confirm only
+    assert _main_notes(log) == []
+    out = capsys.readouterr().out
+    assert "0.96" not in out and "1.03" not in out  # no graded ratio cells
+    rip.assert_called_once()
+
+
+def test_pre_rip_confirm_gates_the_T_menu(monkeypatch, capsys):
+    """-T keeps its menu, but the confirm stands over it: q at the confirm
+    quits before the menu ever opens."""
+    from skive import rip_movie as rm
+    monkeypatch.setattr(rm, "resolve_titles", Mock())
+    _log, _prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("q",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs(titles="0"))
+
+    assert e.value.code == 1
+    rm.resolve_titles.assert_not_called()
+    rip.assert_not_called()
+
+
+def test_pre_rip_confirm_then_T_menu_still_opens(monkeypatch):
+    """Enter at the pick prompt and the confirm, and the -T menu still opens,
+    then the rip runs."""
+    from skive import rip_movie as rm
+    monkeypatch.setattr(rm, "resolve_titles", Mock(return_value=[12]))
+    _log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs(titles="0"))
+
+    assert e.value.code == 0
+    assert prompt.ask.call_count == 2  # the pick prompt, then the confirm
+    rm.resolve_titles.assert_called_once()
+    rip.assert_called_once()
+
+
+def test_pre_rip_confirm_returns_the_validation_seam(monkeypatch):
+    """The post-rip write's seam (slice 05): the chosen main as "tNN" and the
+    per-title graded rows come back from one call, title order, sub-floor
+    rows ungraded."""
+    from skive import rip_movie as rm
+    log = Mock()
+    prompt = Mock()
+    prompt.ask.side_effect = ["21", ""]  # hand-pick t21 at the prompt, confirm
+    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+
+    main, rows = rm.pre_rip_confirm(log, "Mamma Mia! (2008)", MIXED_TITLES, 6480)
+
+    assert main == "t21"
+    assert rows == [
+        {"t": 12, "dur_s": 6662, "ratio": 6662 / 6480, "band": "green"},
+        {"t": 21, "dur_s": 6252, "ratio": 6252 / 6480, "band": "green"},
+    ]
+    log.note.assert_any_call("main", "main=t21 picked by hand — 2 titles near the runtime")
+
+
+def test_pre_rip_confirm_unknown_runtime_blanks_rows(monkeypatch):
+    """No runtime: rows come back ungraded (never yellow) and no main is chosen."""
+    from skive import rip_movie as rm
+    prompt = Mock()
+    prompt.ask.return_value = ""  # confirm Enter
+    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+
+    main, rows = rm.pre_rip_confirm(Mock(), "Mystery Film (2010)", MIXED_TITLES, None)
+
+    assert main == "t12"  # biggest-bytes fallback under an unknown runtime
+    assert rows == [
+        {"t": 12, "dur_s": 6662, "ratio": None, "band": None},
+        {"t": 21, "dur_s": 6252, "ratio": None, "band": None},
+    ]
+
+
+def test_pre_rip_confirm_extras_rows_ungraded_and_main_none(monkeypatch):
+    """-E runs: main None, every row ungraded — no main logic at all."""
+    from skive import rip_movie as rm
+    prompt = Mock()
+    prompt.ask.return_value = ""
+    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+
+    main, rows = rm.pre_rip_confirm(Mock(), "Bonus Disc", MIXED_TITLES, 6480, extras=True)
+
+    assert main is None
+    assert rows == [
+        {"t": 12, "dur_s": 6662, "ratio": None, "band": None},
+        {"t": 21, "dur_s": 6252, "ratio": None, "band": None},
+    ]

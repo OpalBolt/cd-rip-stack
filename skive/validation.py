@@ -10,6 +10,7 @@ functions and file IO — the flows own every prompt and table."""
 
 import json
 from pathlib import Path
+from typing import NamedTuple
 
 from skive.tv_match import RATIO_GREEN  # re-exported: one band, never a copy
 
@@ -115,3 +116,108 @@ def load_validation(path: Path) -> dict | None:
     except (OSError, ValueError):
         return None
     return doc if isinstance(doc, dict) else None
+
+
+# --- Candidate-main arbitration (map.md decision 4) -------------------------
+
+MAIN_FLOOR_S = 2400
+"""Shortest duration (seconds) that counts as candidate-main material — 40
+minutes of feature on any media; menu loops and shorts stay below it."""
+
+
+class MainArbitration(NamedTuple):
+    """The candidate-main arbitration outcome.
+
+    kind reads "sole" (exactly one candidate near the runtime — pick is
+    automatic), "several" (two or more near — the human picks; near carries
+    them for the prompt, pick is the default), "zero" (no candidate near —
+    biggest-bytes fallback, silent) or "unknown" (no runtime to grade against
+    — biggest-bytes fallback, silent; near-ness is never guessed). pick is the
+    automatic/fallback/default candidate as a (number, secs, size) triple, or
+    None when there is nothing to pick (no candidates at all: shorts, bonus
+    discs — the flow records main=None and transcode keeps its biggest-bytes
+    fallback)."""
+
+    kind: str
+    near: list[tuple[int, int, float]]  # (t-number, secs, exact ratio), several only
+    pick: tuple[int, int, int] | None
+
+
+def grade_main(dur_s: int, runtime_s: int | None) -> tuple[float, str] | None:
+    """(exact ratio, band) for one candidate graded against the film runtime.
+
+    The band grades the exact disc÷TMDB quotient in the shared RATIO_GREEN
+    band; callers show the 2dp value. None — a blank cell, never yellow —
+    when either side is unknown (no-false-yellow).
+
+    Args:
+        dur_s: Candidate title duration in seconds
+        runtime_s: TMDB runtime in seconds, None when unknown
+
+    Returns:
+        (ratio, "green" or "yellow"), or None when ungradable
+    """
+    if runtime_s is None or runtime_s <= 0 or dur_s <= 0:
+        return None
+    ratio = dur_s / runtime_s
+    inside = RATIO_GREEN[0] <= ratio <= RATIO_GREEN[1]
+    return (ratio, "green" if inside else "yellow")
+
+
+def main_candidates(titles: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+    """The candidate mains: titles at/above MAIN_FLOOR_S, in the order given.
+
+    Args:
+        titles: (title_number, duration_seconds, size_bytes) triples, the
+            tv_match helper shape
+
+    Returns:
+        The candidates (duration >= MAIN_FLOOR_S)
+    """
+    return [t for t in titles if t[1] >= MAIN_FLOOR_S]
+
+
+def biggest_title(titles: list[tuple[int, int, int]]) -> tuple[int, int, int] | None:
+    """The biggest-bytes title; longest duration breaks ties — and decides
+    outright when every size is 0 (the fast scan knows durations only).
+
+    Args:
+        titles: (title_number, duration_seconds, size_bytes) triples
+
+    Returns:
+        The fallback candidate, or None for an empty list
+    """
+    return max(titles, key=lambda t: (t[2], t[1]), default=None)
+
+
+def arbitrate_main(candidates: list[tuple[int, int, int]],
+                   runtime_s: int | None) -> MainArbitration:
+    """The main-feature decision (map.md decision 4): one candidate near the
+    TMDB runtime wins automatically, several near need the human, none near
+    — or no runtime at all — falls back to biggest bytes silently. Both
+    heuristics picked the wrong film in the Mamma Mia case, so only "several"
+    asks; the flow's prompt lists `near` with the biggest-bytes default.
+
+    Args:
+        candidates: Candidate mains (main_candidates), (number, secs, size)
+        runtime_s: TMDB runtime in seconds, None when unknown
+
+    Returns:
+        MainArbitration — near carries (t-number, duration, exact ratio) in
+        title order, several only; pick is the automatic/fallback/default
+        candidate, None when there were no candidates at all
+    """
+    if runtime_s is None or runtime_s <= 0:
+        return MainArbitration("unknown", [], biggest_title(candidates))
+    near = []
+    for c in candidates:
+        graded = grade_main(c[1], runtime_s)
+        if graded is not None and graded[1] == "green":
+            near.append(c)
+    if len(near) == 1:
+        return MainArbitration("sole", [], near[0])
+    if len(near) > 1:
+        return MainArbitration("several",
+                               [(n, s, s / runtime_s) for n, s, _ in sorted(near)],
+                               biggest_title(near))
+    return MainArbitration("zero", [], biggest_title(candidates))

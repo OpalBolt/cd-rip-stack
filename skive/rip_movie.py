@@ -1,13 +1,184 @@
-"""Movie rip orchestration: gates, TMDB resolve, rip, rename, subtitle note."""
+"""Movie rip orchestration: gates, TMDB resolve, pre-rip table with main
+pick, rip, rename, subtitle note."""
 
 import sys
 
+from rich.console import Console
+from rich.prompt import Prompt
+from rich.table import Table
+from rich.text import Text
+
 from skive.makemkv import (
-    build_selection, inject_profile, promote_staged, rename_staged,
+    build_selection, hsize, inject_profile, promote_staged, rename_staged,
     rip_header, subtitle_note, rip_titles,
 )
 from skive.rip_common import fast_scan_header, interrupted_exit, rip_preamble
-from skive.scan import resolve_titles
+from skive.scan import TitleInfo, resolve_titles
+from skive.validation import (
+    MAIN_FLOOR_S, arbitrate_main, grade_main, main_candidates,
+)
+
+console = Console()
+
+
+def _hms(secs: int) -> str:
+    """Duration as H:MM:SS (the TV table's format)."""
+    return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+
+
+def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
+                extras: bool = False) -> None:
+    """Print the pre-rip table in title-number order (the TV confirm table,
+    movie cut).
+
+    One row per scanned title: number, duration, size when known (fast-scan
+    rows carry size 0 and show a blank cell, like TV). Candidates at/above
+    MAIN_FLOOR_S get a ratio cell graded green/yellow in the shared band;
+    sub-floor titles show duration only; an unknown runtime blanks the ratio
+    cells — never a false yellow. -E runs drop the ratio column entirely: a
+    bonus disc has no film runtime to grade against.
+
+    Args:
+        display: Sanitized display title shown over the table
+        titles: Every scanned TitleInfo
+        runtime_s: TMDB runtime in seconds, None when unknown
+        extras: -E run — no ratio column
+    """
+    console.print(f"\n{display}")
+
+    table = Table()
+    table.add_column("title", style="cyan", width=6)
+    table.add_column("duration", style="white", width=9)
+    table.add_column("size", style="dim", width=9)
+    if not extras:
+        table.add_column("ratio", width=6)
+
+    for t in sorted(titles, key=lambda x: x.number):
+        cell = ""
+        if not extras and t.seconds >= MAIN_FLOOR_S:
+            graded = grade_main(t.seconds, runtime_s)
+            if graded is not None:
+                cell = Text(f"{graded[0]:.2f}", style=graded[1])
+        row = [str(t.number), _hms(t.seconds), hsize(t.size) if t.size else ""]
+        if not extras:
+            row.append(cell)
+        table.add_row(*row)
+
+    console.print(table)
+
+
+def _quit_nothing_ripped() -> None:
+    """TV's quit: one line on stderr, exit 1 — nothing has been ripped."""
+    print("skive: quit — nothing ripped.", file=sys.stderr)
+    sys.exit(1)
+
+
+def _ask_main(near: list[tuple[int, int, float]], default_number: int) -> int:
+    """The loud main-pick prompt: bare Enter takes the default (biggest), a
+    number picks that title, q quits. Anything else re-asks.
+
+    Args:
+        near: (t-number, duration, exact ratio) candidates near the runtime
+        default_number: The default pick's title number
+
+    Returns:
+        The picked title number
+    """
+    console.print(f"[bold red]{len(near)} titles near the TMDB runtime — "
+                  f"pick the main feature[/bold red]")
+    for number, secs, ratio in near:
+        console.print(f"  t{number}  {_hms(secs)}  {ratio:.2f}")
+    while True:
+        console.print(f"main? (Enter=t{default_number}, number=that title, q=quit): ", end="")
+        ans = (Prompt.ask("") or "").strip().lower()
+        if not ans:
+            return default_number
+        if ans == "q":
+            _quit_nothing_ripped()
+        digits = ans[1:] if ans.startswith("t") else ans
+        if digits.isdigit() and any(n == int(digits) for n, _, _ in near):
+            return int(digits)
+        console.print(f"pick one of: {', '.join(f't{n}' for n, _, _ in near)}")
+
+
+def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
+                    runtime_s: int | None,
+                    extras: bool = False) -> tuple[str | None, list[dict]]:
+    """The pre-rip gate (map.md decision 3): table, main pick, confirm —
+    everything the human sees before the drive spins.
+
+    Arbitration (skive.validation.arbitrate_main) decides the main: one
+    candidate near the TMDB runtime wins automatically, several force the
+    pick prompt (default biggest), none near — or an unknown runtime —
+    falls back to biggest bytes silently. Every outcome lands in the run log
+    under phase "main". The confirm ends the gate: plain
+    `ok? (Enter=rip, q=quit)`, escalating to a default-No y/N whenever any
+    row graded yellow (blank cells never escalate). q — or anything but an
+    explicit y on the yellow escalation — quits with nothing ripped, before
+    inject_profile. The -T title menu still opens later, over the scan; this
+    gate stands over it.
+
+    Args:
+        log: The run's RipLog; main outcomes log under phase "main"
+        display: Sanitized display title shown over the table
+        titles: Every scanned TitleInfo (fast-scan and full scan alike)
+        runtime_s: TMDB runtime in seconds, None when unknown
+        extras: -E run — no ratio column, no main logic at all
+
+    Returns:
+        (main, rows) for the validation record written after the rip:
+        main is the chosen main "t21", None when nothing was chosen (shorts,
+        bonus discs, -E runs — transcode keeps its biggest-bytes fallback);
+        rows are {"t", "dur_s", "ratio", "band"} per scanned title in title
+        order, ratio the exact quotient (2dp for the record is the writer's
+        call) and ratio/band None where never graded.
+    """
+    ordered = sorted(titles, key=lambda t: t.number)
+    triples = [(t.number, t.seconds, t.size) for t in ordered]
+
+    print_table(display, ordered, runtime_s, extras=extras)
+
+    main_number: int | None = None
+    if not extras:
+        arb = arbitrate_main(main_candidates(triples), runtime_s)
+        if arb.kind == "several":
+            main_number = _ask_main(arb.near, arb.pick[0])
+            how = "picked by hand" if main_number != arb.pick[0] else "default (biggest bytes)"
+            log.note("main", f"main=t{main_number} {how} — {len(arb.near)} titles near the runtime")
+        elif arb.pick is not None:
+            main_number = arb.pick[0]
+            why = {"sole": "near the runtime — automatic",
+                   "zero": "biggest bytes — nothing near the runtime",
+                   "unknown": "biggest bytes — runtime unknown"}[arb.kind]
+            log.note("main", f"main=t{main_number} {why}")
+        else:
+            log.note("main", "main=none — no candidate main on the disc")
+
+    rows = []
+    for number, secs, _size in triples:
+        ratio = band = None
+        if not extras and secs >= MAIN_FLOOR_S:
+            graded = grade_main(secs, runtime_s)
+            if graded is not None:
+                ratio, band = graded
+        rows.append({"t": number, "dur_s": secs, "ratio": ratio, "band": band})
+
+    if any(r["band"] == "yellow" for r in rows):
+        while True:
+            console.print("ok? (y/N: yellow rows present, q=quit): ", end="")
+            if (Prompt.ask("") or "").strip().lower() == "y":
+                break
+            _quit_nothing_ripped()
+    else:
+        while True:
+            console.print("ok? (Enter=rip, q=quit): ", end="")
+            ans = (Prompt.ask("") or "").strip().lower()
+            if not ans:
+                break
+            if ans == "q":
+                _quit_nothing_ripped()
+
+    return (f"t{main_number}" if main_number is not None else None, rows)
 
 
 def rip_movie(args) -> None:
@@ -35,6 +206,13 @@ def rip_movie(args) -> None:
         # what disc durations were graded against. Unknown stays absent.
         if pick.runtime_secs is not None:
             log.note("runtime", f"runtime={pick.runtime_secs}s")
+
+        # Pre-rip gate (map.md decision 3): table, main pick, confirm — every
+        # run confirms before the drive spins. The chosen main and the graded
+        # rows travel on to the validation record (map.md decision 5), written
+        # beside the subtitle note after the rip.
+        chosen_main, graded_rows = pre_rip_confirm(
+            log, display, titles_full, pick.runtime_secs, extras=args.extras)
 
         # Build selection string
         keep = preamble.keep
