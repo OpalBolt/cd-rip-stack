@@ -286,6 +286,42 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
                 print(f"skive: invalid choice '{pick_str}'", file=sys.stderr)
 
 
+def search_first(kind: str, query: str) -> TMDBPick | None:
+    """The first TMDB search result for `query` — no table, no prompt.
+
+    The library checker's identity fallback (skive validate): legacy folders
+    resolve by name+year to the top hit, a LEAD the report shows, never a
+    verdict. None on zero results; RuntimeError on network failure like every
+    fetch here — the caller degrades that folder instead of aborting. Search
+    results carry no runtime; callers needing one fetch details separately
+    (fetch_by_id).
+
+    Args:
+        kind: "movie" or "tv" — search index to use
+        query: The search text
+
+    Returns:
+        The first result as a TMDBPick, or None when nothing matched
+
+    Raises:
+        RuntimeError: On API failure
+    """
+    api_key = _api_key()
+    q_enc = urllib.parse.quote(query)
+    url = f"https://api.themoviedb.org/3/search/{kind}?api_key={api_key}&query={q_enc}"
+    data = _http_get_json(url)
+    results = data.get("results", [])
+    if not results:
+        return None
+    r = results[0]
+    title = r.get("title") or r.get("name", "-")
+    date_str = r.get("release_date") or r.get("first_air_date", "-")
+    year = date_str[:4] if date_str and date_str != "-" else "-"
+    return TMDBPick(title=title, year=year,
+                    original_language=r.get("original_language", "-"),
+                    type=kind, id=str(r.get("id", "-")))
+
+
 def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:
     """Fetch a TV season's episodes from TMDB.
 

@@ -9,7 +9,7 @@ import pytest
 
 from skive.tmdb import (
     _http_get_json, fetch_by_id, fetch_season, parse_tmdbid, require_online,
-    search_loop,
+    search_first, search_loop,
 )
 
 # Create mocks that won't fail with rich
@@ -336,3 +336,56 @@ def test_fetch_season_returns_seconds():
         with patch("skive.tmdb._http_get_json", return_value=mock_data):
             eps = fetch_season("1432", 1)
     assert eps == [(1, "Get Some", 66 * 60), (2, "The Cradle of Civilization", 0)]
+
+
+# --- search_first: the library checker's non-interactive search --------------
+
+
+def test_search_first_returns_the_top_hit_without_prompting():
+    """The first result, no table, no prompt, no details fetch: search results
+    carry no runtime and search_first never chases one."""
+    mock_data = {"results": [
+        {"title": "Mamma Mia!", "release_date": "2008-06-30",
+         "original_language": "en", "id": 471},
+        {"title": "Other Film", "release_date": "2009-01-01",
+         "original_language": "de", "id": 9},
+    ]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data) as mock_http:
+            pick = search_first("movie", "Mamma Mia!")
+    assert pick.title == "Mamma Mia!"
+    assert pick.year == "2008"
+    assert pick.type == "movie"
+    assert pick.id == "471"
+    assert pick.runtime_secs is None
+    assert mock_http.call_count == 1
+    assert "query=Mamma%20Mia%21" in mock_http.call_args.args[0]
+
+
+def test_search_first_tv_uses_name_and_air_date_fields():
+    mock_data = {"results": [{"name": "Some Show", "first_air_date": "2020-01-01",
+                              "original_language": "en", "id": 7}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data):
+            pick = search_first("tv", "Some Show")
+    assert pick.title == "Some Show"
+    assert pick.year == "2020"
+    assert pick.type == "tv"
+    assert pick.id == "7"
+
+
+def test_search_first_zero_results_is_none():
+    """No match: None — the checker's unidentified row, not an error."""
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value={"results": []}):
+            assert search_first("movie", "Nothing Real") is None
+
+
+def test_search_first_network_failure_raises_runtime_error():
+    """A failed search raises RuntimeError like every fetch in tmdb.py — the
+    checker degrades that folder instead of aborting the walk."""
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json",
+                   side_effect=RuntimeError("TMDB request failed: HTTP 500")):
+            with pytest.raises(RuntimeError):
+                search_first("movie", "Mamma Mia!")

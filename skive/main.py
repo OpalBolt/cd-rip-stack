@@ -1,4 +1,4 @@
-"""skive main entry point — argparse dispatch for rip movie|tv|music, tag, sync-sd."""
+"""skive main entry point — argparse dispatch for rip movie|tv|music, tag, sync-sd, validate."""
 
 import argparse
 import sys
@@ -29,6 +29,11 @@ def cmd_tag(args):
 def cmd_sync_sd(args):
     from skive.sync_sd import sync_sd
     sync_sd(args)
+
+
+def cmd_validate(args):
+    from skive.validation import run_validate
+    run_validate()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,6 +95,11 @@ def build_parser() -> argparse.ArgumentParser:
     sync_sd_parser.add_argument("mountpoint", nargs="?",
                                  help="card mountpoint (skip auto-detection)")
     sync_sd_parser.set_defaults(func=cmd_sync_sd)
+
+    # validate — report-only library checker: findings are leads, exit 0 always
+    validate_parser = subparsers.add_parser("validate",
+                                            help="report library findings (read-only, never changes anything)")
+    validate_parser.set_defaults(func=cmd_validate)
 
     return parser
 
