@@ -3,7 +3,8 @@
 Stubs HandBrakeCLI/mkvmerge/ffprobe/seconv/tesseract with the same shell
 semantics as the bash test: HandBrakeCLI copies input->output and exits 3 on
 input containing FAILME; mkvmerge concatenates args' contents in order and
-exits 2 on BADMERGE; ffprobe answers height (csv), subtitle inventory
+exits 2 on BADMERGE; ffprobe answers height (csv), duration (csv,
+format=duration — the validation encode record's probe), subtitle inventory
 (-select_streams s) and full-stream signature (merge guard) queries keyed off
 content markers; seconv writes one SRT into its --output-folder and exits 1 on
 SUBS-FAIL input.
@@ -94,7 +95,8 @@ done
     )
     (bin_dir / "ffprobe.exe").write_text(
         """#!/bin/sh
-# three query shapes: height (csv), subtitle inventory (json, -select_streams s),
+# four query shapes: height (csv), duration (csv, format=duration — the
+# validation encode record's probe), subtitle inventory (json, -select_streams s),
 # full-stream signature (json, no select) for the merge guard
 in=""; fmt=""; sel=""; prev=""
 for a in "$@"; do
@@ -104,6 +106,14 @@ for a in "$@"; do
   prev="$a"
 done
 if grep -q PROBEBAD "$in" 2>/dev/null; then echo boom >&2; exit 1; fi
+case "$*" in
+  *format=duration*)
+    # whole seconds; a DUR-6251 content marker names its own duration
+    if grep -q DUR-6251 "$in" 2>/dev/null; then echo 6251.244000
+    else echo 5580.000000
+    fi
+    exit 0 ;;
+esac
 if [ "$fmt" != "json" ]; then
   if grep -q 2160 "$in" 2>/dev/null; then echo 2160
   elif grep -q 576 "$in" 2>/dev/null; then echo 576
@@ -1144,3 +1154,178 @@ def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monk
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
     assert "transcode: interrupted -- partial temp output deleted, source left in staging" \
         in capsys.readouterr().err
+
+
+# -- movie validation: transcode obeys the recorded main (map.md decision 5) --
+
+def _movie_doc(main, **over):
+    """A minimal movie validation.json body (skive/validation.movie_document shape)."""
+    d = {"tmdb": {"id": "476", "type": "movie", "title": "Doc (2000)",
+                  "runtime_s": 6480},
+         "volume_label": "LABEL", "run": "deadbeef", "main": main,
+         "titles": [], "encodes": []}
+    d.update(over)
+    return json.dumps(d)
+
+
+def test_recorded_main_beats_bytes_and_appends_encodes(env):
+    """The Mamma Mia shape: bytes say t12, the doc says t21 -- t21 encodes as
+    the main, t12 demotes to extras; the encode is appended to the doc's
+    encodes with the probed actual duration, and the doc copies beside the
+    encode into the library folder."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t12.mkv",
+       "RED-BYTES-BYTES-BYTES-BYTES-BYTES")  # biggest bytes: the wrong film
+    mk(vid, "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t21.mkv",
+       "MAMMA-DUR-6251")                     # the recorded main
+    mk(vid, "rip/movies/Mamma Mia! (2008)/validation.json", _movie_doc("t21"))
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Mamma Mia! (2008)"
+    assert (L / "Mamma Mia! (2008).mkv").read_text() == "MAMMA-DUR-6251"
+    assert (L / "extras" / "Mamma Mia! (2008)_t12.mkv").read_text().startswith("RED-BYTES")
+    entry = {"file": "Mamma Mia! (2008).mkv", "src": "t21", "dur_s": 6251}
+    assert json.loads((L / "validation.json").read_text())["encodes"] == [entry]
+    staged = vid / "rip" / "movies" / "Mamma Mia! (2008)" / "validation.json"
+    assert json.loads(staged.read_text())["encodes"] == [entry]
+
+
+def test_null_main_and_absent_doc_keep_bytes_fallback(env):
+    """Legacy behavior: an absent doc and a doc recording main=null both fall
+    back to biggest-bytes; only an existing doc gets the append + copy."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Shorts (2001)/Shorts (2001)_t12.mkv", "NULL-BIG-BYTES")
+    mk(vid, "rip/movies/Shorts (2001)/Shorts (2001)_t21.mkv", "NULL-SMALL")
+    mk(vid, "rip/movies/Shorts (2001)/validation.json", _movie_doc(None))
+    mk(vid, "rip/movies/Legacy (2002)/Legacy (2002)_t12.mkv", "LEGACY-BIG-BYTES")
+    mk(vid, "rip/movies/Legacy (2002)/Legacy (2002)_t21.mkv", "LEGACY-SMALL")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "Shorts (2001)" / "Shorts (2001).mkv").read_text() == "NULL-BIG-BYTES"
+    assert (L / "Legacy (2002)" / "Legacy (2002).mkv").read_text() == "LEGACY-BIG-BYTES"
+    # the existing (null-main) doc still records the fallback encode's result
+    assert json.loads((L / "Shorts (2001)" / "validation.json").read_text())["encodes"] == [
+        {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580}]
+    # no doc ever existed for the legacy folder -> no library copy
+    assert not (L / "Legacy (2002)" / "validation.json").exists()
+
+
+def test_recorded_main_without_staged_title_skips_loud(env, capsys):
+    """Hand-edit typo / moved files: the doc's main has no staged _tNN -- no
+    silent bytes fallback. The movie's _t titles stay in staging for a human
+    (the byte-winner never encodes), extras still process, nothing crashes."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Typo (2003)/Typo (2003)_t12.mkv", "TYPO-BIG-BYTES")
+    mk(vid, "rip/movies/Typo (2003)/Typo (2003) - Extra 01.mkv", "TYPO-EXTRA")
+    mk(vid, "rip/movies/Typo (2003)/validation.json", _movie_doc("t99"))
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Typo (2003)"
+    assert not (L / "Typo (2003).mkv").exists()  # no main encode
+    assert not list(L.glob("extras/Typo (2003)_t*.mkv"))  # _t titles never demote
+    assert (L / "extras" / "Typo (2003) - Extra 01.mkv").read_text() == "TYPO-EXTRA"
+    # the byte-winner stays in staging for a human; the doc is untouched
+    assert (vid / "rip" / "movies" / "Typo (2003)" / "Typo (2003)_t12.mkv").exists()
+    assert json.loads((vid / "rip" / "movies" / "Typo (2003)" / "validation.json")
+                      .read_text())["encodes"] == []
+    assert "recorded main t99 has no staged title" in err
+    log = " ".join(l["status"] for l in run_log(env))
+    assert "recorded main t99 has no staged title" in log
+
+
+def test_encodes_append_once_across_rerun(env):
+    """A re-run re-encoding the same dest replaces its encodes entry with the
+    fresh probe instead of duplicating it (the _copy_run_evidence discipline)."""
+    vid = env / "vid"
+    folder = "rip/movies/Once (2004)"
+    mk(vid, f"{folder}/Once (2004)_t21.mkv", "RUN-ONE-DUR-6251")
+    mk(vid, f"{folder}/validation.json", _movie_doc("t21"))
+    doc = vid / "rip" / "movies" / "Once (2004)" / "validation.json"
+
+    assert transcode.run_transcode(Args()) == 0
+    assert json.loads(doc.read_text())["encodes"] == [
+        {"file": "Once (2004).mkv", "src": "t21", "dur_s": 6251}]
+
+    mk(vid, f"{folder}/Once (2004)_t21.mkv", "RUN-TWO")  # re-staged, new probe answer
+    assert transcode.run_transcode(Args()) == 0
+    assert json.loads(doc.read_text())["encodes"] == [
+        {"file": "Once (2004).mkv", "src": "t21", "dur_s": 5580}]
+
+
+def test_corrupt_doc_falls_back_and_never_blocks(env):
+    """A corrupt validation.json reads as absent: biggest-bytes fallback, no
+    append, no library copy, run green."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Corrupt (2005)/Corrupt (2005)_t12.mkv", "CORRUPT-BIG-BYTES-BYTES")
+    mk(vid, "rip/movies/Corrupt (2005)/Corrupt (2005)_t21.mkv", "CORRUPT-SMALL")
+    mk(vid, "rip/movies/Corrupt (2005)/validation.json", "{ not json")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Corrupt (2005)"
+    assert (L / "Corrupt (2005).mkv").read_text() == "CORRUPT-BIG-BYTES-BYTES"
+    assert not (L / "validation.json").exists()
+    assert (vid / "rip" / "movies" / "Corrupt (2005)"
+            / "validation.json").read_text() == "{ not json"
+
+
+def test_unparsable_main_falls_back_loud(env, capsys):
+    """A main that isn't tNN reads as corrupt: bytes fallback stands with a
+    loud note, and the readable doc still gets the encode appended."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Garbled (2006)/Garbled (2006)_t12.mkv", "GARBLE-BIG-BYTES-BYTES")
+    mk(vid, "rip/movies/Garbled (2006)/Garbled (2006)_t21.mkv", "GARBLE-SMALL")
+    mk(vid, "rip/movies/Garbled (2006)/validation.json", _movie_doc("t2x"))
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Garbled (2006)"
+    assert (L / "Garbled (2006).mkv").read_text() == "GARBLE-BIG-BYTES-BYTES"
+    assert "unreadable main 't2x'" in err
+    assert json.loads((L / "validation.json").read_text())["encodes"] == [
+        {"file": "Garbled (2006).mkv", "src": "t12", "dur_s": 5580}]
+
+
+def test_recorded_main_parts_still_merge(env):
+    """Split-part merging unchanged: the recorded main's .pN parts merge under
+    the stream-signature guard; one encodes entry records the merged encode."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Parts (2007)/Parts (2007)_t21.p1.mkv", "P1-DUR-6251")
+    mk(vid, "rip/movies/Parts (2007)/Parts (2007)_t21.p2.mkv", "P2")
+    mk(vid, "rip/movies/Parts (2007)/validation.json", _movie_doc("t21"))
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Parts (2007)"
+    assert (L / "Parts (2007).mkv").read_text() == "P1-DUR-6251P2"
+    assert json.loads((L / "validation.json").read_text())["encodes"] == [
+        {"file": "Parts (2007).mkv", "src": "t21", "dur_s": 6251}]
+
+
+def test_retry_obeys_traveled_doc(env):
+    """A doc that traveled into issues/ beside the quarantined source still
+    steers the --retry run: recorded main, encodes append, library copy."""
+    vid = env / "vid"
+    mk(vid, "issues/movies/Heal (2008)/Heal (2008)_t12.mkv", "HEAL-BIG-BYTES-BYTES")
+    mk(vid, "issues/movies/Heal (2008)/Heal (2008)_t21.mkv", "HEAL-REAL")
+    mk(vid, "issues/movies/Heal (2008)/validation.json", _movie_doc("t21"))
+
+    rc = transcode.run_transcode(Args(retry=True))
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Heal (2008)"
+    assert (L / "Heal (2008).mkv").read_text() == "HEAL-REAL"
+    assert json.loads((L / "validation.json").read_text())["encodes"] == [
+        {"file": "Heal (2008).mkv", "src": "t21", "dur_s": 5580}]

@@ -16,6 +16,11 @@ both. Video is re-encoded, audio copied. Main features and TV episodes ship
 with ZERO subtitle tracks (the inline subtitle pass extracts them to SRT
 sidecars beside the encode); extras keep every track embedded.
 
+For movies carrying a validation.json (the rip's record in the title folder),
+the recorded main IS the film — biggest-bytes is only the fallback; a successful
+main encode is appended to the doc's encodes list and the doc copies into the
+library folder beside the encode.
+
 Ships go to `library\\movies\\<Name>\\` and `library\\tv\\<Name>\\Season NN\\`;
 -Keep parks sources under `lossless\\<type>\\<Name (Year)>\\`; failures are
 quarantined to `issues\\<type>\\<Name (Year)>\\` with the run's log evidence.
@@ -50,7 +55,12 @@ _RX_EXTRA = re.compile(
 _RX_EP = re.compile(
     r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$"
 )
+_RX_MAIN = re.compile(r"^t\d+$")  # validation.json's recorded main: "tNN"
 _TV_ROOTS = ("TV", "tv")  # rip\TV (legacy ps1 staging) and rip\tv (SPEC layout)
+_VALIDATION_FILENAME = "validation.json"
+# duplicate of skive.validation.VALIDATION_FILENAME on purpose (standalone
+# Windows file, no skive import): the doc born in the title folder at rip that
+# travels staging -> transcode -> library (CONTEXT.md: Validation file).
 _HB = "HandBrakeCLI.exe"
 _MKV = "mkvmerge.exe"
 _FFPROBE = "ffprobe.exe"
@@ -394,6 +404,20 @@ def _probe_height(src: str, ffprobe_exe: str) -> int:
         return 0
 
 
+def _probe_duration(src: str, ffprobe_exe: str) -> int | None:
+    """Whole-second duration of src (format=duration, the rip flow's probe
+    shape); None when the probe can't read it."""
+    r = subprocess.run(
+        [ffprobe_exe, "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", src],
+        capture_output=True, text=True,
+    )
+    try:
+        return int(float(r.stdout.strip()))
+    except ValueError:
+        return None
+
+
 def _preset(height: int) -> str:
     """Largest standard preset that does NOT upscale the source."""
     if height <= 480:
@@ -597,6 +621,56 @@ def _copy_run_evidence(log: RipLog, dest_dir: str) -> None:
             shutil.copy2(log._raw_log, dst)
 
 
+def _load_validation(path: str) -> dict | None:
+    """The validation document at path, or None: absent, unreadable, and
+    not-a-JSON-object all read as missing. Duplicate of
+    skive.validation.load_validation on purpose (standalone Windows file, no
+    skive import); the movie/TV shapes are owned by skive/validation.py and
+    matched exactly."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> None:
+    """Append the main encode's result to the title folder's validation.json
+    and copy the doc into the library folder beside the encode. The encodes
+    entry is {"file", "src", "dur_s"} (skive/validation.py's schema): the
+    dest file's name, the source title number as "tNN", and the actual
+    duration probed from the encode output. Append-once (the
+    _copy_run_evidence discipline): an entry already naming this dest file —
+    a --retry or re-run — is replaced by the fresh probe, never duplicated.
+    A doc absent or unreadable here skips the append and the copy: the record
+    never crashes the pipeline."""
+    doc = _load_validation(doc_path)
+    if doc is None:
+        return
+    entry = {"file": os.path.basename(dest), "src": f"t{src_num}",
+             "dur_s": _probe_duration(dest, ffprobe_exe)}
+    encodes = doc.get("encodes")
+    if not isinstance(encodes, list):
+        encodes = []
+    # append-once: this dest file's old entry is replaced, never doubled
+    doc["encodes"] = [e for e in encodes
+                      if not (isinstance(e, dict) and e.get("file") == entry["file"])]
+    doc["encodes"].append(entry)
+    try:
+        # skive.validation.write_validation's shape: UTF-8, 2-space indent,
+        # trailing newline
+        with open(doc_path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    except OSError:
+        return
+    try:  # the doc's final copy lands beside the encode — simple overwrite
+        shutil.copyfile(doc_path,
+                        os.path.join(os.path.dirname(dest), _VALIDATION_FILENAME))
+    except OSError:
+        pass
+
+
 def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
               ffprobe_exe: str, log: RipLog | None = None):
     """Inline subtitle pass on the local copy/merge; the caller creates the
@@ -671,8 +745,9 @@ def run_transcode(args) -> int:
         print(f"no MKVs in {input_dir}")
         return 0
 
-    # main feature per movie = the _tNN group with the most bytes (a split
-    # main's .pN halves sum; tie -> lowest number). Extras are never main.
+    # main-feature fallback per movie = the _tNN group with the most bytes (a
+    # split main's .pN halves sum; tie -> lowest number). Extras are never
+    # main. A readable validation.json in the title folder overrides below.
     grp: dict[tuple[str, int], int] = {}
     for i in items:
         if i.sfx != "t" or i.is_tv:
@@ -685,8 +760,38 @@ def run_transcode(args) -> int:
         if best is None or sz > best[1] or (sz == best[1] and num < best[0]):
             main_num[movie] = (num, sz)
 
+    # Recorded main (CONTEXT.md: Validation file, map.md decision 5): the doc
+    # sits at the title-folder root beside the staged titles. main non-null
+    # "tNN" -> that number IS the main; null/absent/corrupt -> bytes fallback
+    # stands (legacy folders, shorts). A recorded main with no staged _tNN
+    # (hand-edit typo, moved files) skips the movie's main encode loudly —
+    # never a silent bytes fallback (that is the Mamma Mia failure mode).
+    doc_path: dict[str, str] = {}      # movie -> its validation.json (append + copy)
+    rec_missing: dict[str, str] = {}   # movie -> recorded main with no staged title
+    for movie in sorted({i.movie for i in items if i.sfx == "t" and not i.is_tv}):
+        dpath = os.path.join(os.path.dirname(
+            next(i.path for i in items if i.movie == movie and i.sfx == "t")),
+            _VALIDATION_FILENAME)
+        doc = _load_validation(dpath)
+        if doc is None:
+            continue
+        doc_path[movie] = dpath
+        rec = doc.get("main")
+        if rec is None:
+            continue  # the record says no candidate main existed: bytes fallback
+        if not isinstance(rec, str) or not _RX_MAIN.match(rec):
+            print(f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback",
+                  file=sys.stderr)
+            continue
+        num = int(rec[1:])
+        if any(i.num == num for i in items if i.movie == movie and i.sfx == "t"):
+            main_num[movie] = (num, grp.get((movie, num), 0))  # the record wins
+        else:
+            rec_missing[movie] = rec
+
     failed = 0
     handled: set[str] = set()
+    missing_warned: set[str] = set()  # movies whose no-staged-main note already printed
     # The in-flight item's local temp files and sidecar dir (CONTEXT.md:
     # Interrupt): the interrupt path deletes exactly these — the encode
     # partial, the local copy, the merge work — while the SOURCE stays in
@@ -758,6 +863,20 @@ def run_transcode(args) -> int:
                     print(f"FAILED (handbrake): {i.name} -- source left in place", file=sys.stderr)
                     failed = 1
                     log.phase_end()
+                continue
+
+            # -- recorded main with no staged title: loud skip, never a
+            # silent bytes fallback. This movie's _t titles stay in staging
+            # for a human (encoding the byte-winner would be the Mamma Mia
+            # failure mode); its extras still process.
+            if i.sfx == "t" and i.movie in rec_missing:
+                if i.movie not in missing_warned:
+                    missing_warned.add(i.movie)
+                    msg = (f"{i.movie}: recorded main {rec_missing[i.movie]} has no "
+                           f"staged title -- main encode skipped, staged titles "
+                           f"left for a human")
+                    print(f"validation: {msg}", file=sys.stderr)
+                    log.note("validation", msg)
                 continue
 
             # -- main feature: merge its .pN parts (if any), encode as one movie.
@@ -834,6 +953,10 @@ def run_transcode(args) -> int:
                            no_subs=True, log=log):
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
+                    # the doc that picked this main gets the encode appended
+                    # (append-once) and a library copy beside the encode
+                    if i.movie in doc_path:
+                        _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe)
                     for p in cleanup:
                         _rmf(p)
                     names = " ".join(s.name for s in siblings)
