@@ -4,7 +4,7 @@ from skive.tv_match import RATIO_GREEN as TV_RATIO_GREEN
 from skive.validation import (
     RATIO_GREEN, MAIN_FLOOR_S, VALIDATION_FILENAME,
     MainArbitration, arbitrate_main, biggest_title, grade_main,
-    main_candidates,
+    main_candidates, merge_movie_document, movie_row, resolve_main,
     movie_document, tv_document, write_validation, load_validation,
 )
 
@@ -218,3 +218,107 @@ def test_biggest_title_prefers_bytes_over_duration():
 
 def test_biggest_title_empty_reads_none():
     assert biggest_title([]) is None
+
+
+# --- Post-rip record helpers (issue 05, map.md decision 5) ------------------
+
+
+def test_movie_row_grades_the_probed_actual():
+    """A probed duration at/above the floor: exact quotient banded, 2dp stored."""
+    assert movie_row("Mamma Mia! (2008)_t21.mkv", 21, 6249, 6480) == {
+        "file": "Mamma Mia! (2008)_t21.mkv", "t": 21, "dur_s": 6249,
+        "ratio": 0.96, "band": "green"}
+
+
+def test_movie_row_unknowns_and_sub_floor_stay_null():
+    """Unknown duration or runtime — or a sub-floor short — keeps the grade
+    blank (never yellow); dur_s itself is still recorded."""
+    assert movie_row("f_t1.mkv", 1, 600, 6480) == {
+        "file": "f_t1.mkv", "t": 1, "dur_s": 600, "ratio": None, "band": None}
+    assert movie_row("f_t1.mkv", 1, None, 6480) == {
+        "file": "f_t1.mkv", "t": 1, "dur_s": None, "ratio": None, "band": None}
+    assert movie_row("f_t1.mkv", 1, 6249, None) == {
+        "file": "f_t1.mkv", "t": 1, "dur_s": 6249, "ratio": None, "band": None}
+
+
+def test_movie_row_band_grades_exact_quotient_ratio_stores_2dp():
+    """The band grades the exact quotient, the record stores the 2dp value:
+    2601/2500 reads 1.04 rounded but bands yellow on the exact 1.0404."""
+    row = movie_row("f_t1.mkv", 1, 2601, 2500)
+    assert row["ratio"] == 1.04
+    assert row["band"] == "yellow"
+
+
+def test_resolve_main_full_scan_exact_number():
+    """Full scan: the file whose final _tNN equals the table number wins."""
+    staged = [{"file": "M_t21.mkv", "t": 21, "dur_s": 6249, "ratio": None, "band": None}]
+    graded = [{"t": 21, "dur_s": 6252, "ratio": None, "band": None}]
+    assert resolve_main("t21", graded, staged, fast_scan=False) == "t21"
+
+
+def test_resolve_main_full_scan_collision_roll_joins_by_duration():
+    """The table number never staged (collision rolled t21 forward to t22):
+    the fallback joins the table main's scanned duration ±1s."""
+    staged = [{"file": "M_t22.mkv", "t": 22, "dur_s": 6251, "ratio": None, "band": None}]
+    graded = [{"t": 21, "dur_s": 6252, "ratio": None, "band": None}]
+    assert resolve_main("t21", graded, staged, fast_scan=False) == "t22"
+
+
+def test_resolve_main_no_match_is_null():
+    """Skipped decoy, no duration twin staged: main stays null."""
+    staged = [{"file": "M_t02.mkv", "t": 2, "dur_s": 600, "ratio": None, "band": None}]
+    graded = [{"t": 21, "dur_s": 6252, "ratio": None, "band": None}]
+    assert resolve_main("t21", graded, staged, fast_scan=False) is None
+
+
+def test_resolve_main_ambiguous_join_is_null():
+    """Two staged files within ±1s of the scanned duration: never guess."""
+    staged = [{"file": "M_t04.mkv", "t": 4, "dur_s": 7020, "ratio": None, "band": None},
+              {"file": "M_t05.mkv", "t": 5, "dur_s": 7021, "ratio": None, "band": None}]
+    graded = [{"t": 9, "dur_s": 7021, "ratio": None, "band": None}]
+    assert resolve_main("t9", graded, staged, fast_scan=False) is None
+
+
+def test_resolve_main_fast_scan_joins_by_duration_never_the_index():
+    """Fast scan: the table number is a scanner index — even a staged _t0
+    with the wrong duration never matches; the duration twin does."""
+    staged = [{"file": "M_t0.mkv", "t": 0, "dur_s": 100, "ratio": None, "band": None},
+              {"file": "M_t5.mkv", "t": 5, "dur_s": 7020, "ratio": None, "band": None}]
+    graded = [{"t": 0, "dur_s": 7021, "ratio": None, "band": None}]
+    assert resolve_main("t0", graded, staged, fast_scan=True) == "t5"
+
+
+def test_resolve_main_fast_scan_ambiguous_or_unknown_is_null():
+    """Fast scan with no duration twin — or none chosen at the table: null."""
+    staged = [{"file": "M_t3.mkv", "t": 3, "dur_s": 599, "ratio": None, "band": None}]
+    graded = [{"t": 0, "dur_s": 7021, "ratio": None, "band": None}]
+    assert resolve_main("t0", graded, staged, fast_scan=True) is None
+    assert resolve_main(None, graded, staged, fast_scan=False) is None
+
+
+def test_merge_movie_document_appends_rows_and_applies_main_run_rules():
+    """Same-film re-rip: old rows kept, this run's appended; this run's main
+    resolution wins when present, else the old one stands; run: latest."""
+    old = movie_document("157", "Mamma Mia! (2008)", 6480, "OLD", "oldrun", "t12",
+                         [{"file": "M_t12.mkv", "t": 12, "dur_s": 6662,
+                           "ratio": 1.03, "band": "green"}])
+    new = movie_document("157", "Mamma Mia! (2008)", 6480, "NEW", "newrun", None,
+                         [{"file": "M_t21.mkv", "t": 21, "dur_s": 6252,
+                           "ratio": 0.96, "band": "green"}])
+
+    merged = merge_movie_document(old, new)
+    assert merged["titles"] == old["titles"] + new["titles"]
+    assert merged["main"] == "t12"    # this run resolved nothing — old stands
+    assert merged["run"] == "newrun"  # latest wins
+    assert merged["encodes"] == []
+
+    assert merge_movie_document(old, dict(new, main="t21"))["main"] == "t21"
+
+
+def test_merge_movie_document_tolerates_rowless_old():
+    """An old document without a readable titles list merges as empty."""
+    new = movie_document("157", "Mamma Mia! (2008)", 6480, "NEW", "newrun", "t21",
+                         [{"file": "M_t21.mkv", "t": 21, "dur_s": 6252,
+                           "ratio": 0.96, "band": "green"}])
+    merged = merge_movie_document({"tmdb": {"id": "157"}}, new)
+    assert merged["titles"] == new["titles"]

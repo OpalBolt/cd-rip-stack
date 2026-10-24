@@ -31,6 +31,7 @@ class Preamble:
     device: str = ""  # real device from the DRV line, or the /dev/srN fallback
     fast_scan: bool = False
     scan_durations: list[int] | None = None  # durations in scan order, fast path only
+    label: str = ""  # spill: slice-05 document needs the volume label
 
 
 def rip_preamble(kind: str, script: str, args) -> Preamble:
@@ -166,7 +167,8 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     purge_junk([title_dir, stage])
 
     return Preamble(log, pick, display, media, titles_full, title_dir, stage,
-                    minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations)
+                    minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations,
+                    label=label)  # spill: slice-05 document needs the volume label
 
 
 # --- Movie identity gates (map.md decision 2) -----------------------------

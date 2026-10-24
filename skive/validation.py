@@ -221,3 +221,94 @@ def arbitrate_main(candidates: list[tuple[int, int, int]],
                                [(n, s, s / runtime_s) for n, s, _ in sorted(near)],
                                biggest_title(near))
     return MainArbitration("zero", [], biggest_title(candidates))
+
+
+# --- Post-rip record (map.md decision 5) ------------------------------------
+
+
+def movie_row(file: str, t: int, dur_s: int | None, runtime_s: int | None) -> dict:
+    """One movie-document titles entry: a staged file's probed duration,
+    graded against the film runtime when both are known and the duration
+    reaches the main floor.
+
+    The band grades the exact disc÷TMDB quotient (grade_main); the stored
+    ratio is that quotient rounded to 2dp for the record. An unknown duration
+    or runtime — or a sub-floor short — leaves ratio/band null: a blank cell,
+    never a false yellow. dur_s itself is always recorded, null only when the
+    probe could not read the file at all.
+
+    Args:
+        file: Final file name in the title folder ("Mamma Mia! (2008)_t21.mkv")
+        t: The file's real title number, parsed from the final _tNN
+        dur_s: Probed duration in seconds, None when it would not read
+        runtime_s: TMDB runtime in seconds, None when unknown
+
+    Returns:
+        {"file", "t", "dur_s", "ratio", "band"} for the titles list
+    """
+    graded = (grade_main(dur_s, runtime_s)
+              if dur_s is not None and dur_s >= MAIN_FLOOR_S else None)
+    return {"file": file, "t": t, "dur_s": dur_s,
+            "ratio": round(graded[0], 2) if graded else None,
+            "band": graded[1] if graded else None}
+
+
+def resolve_main(chosen_main: str | None, graded_rows: list[dict],
+                 staged_rows: list[dict], fast_scan: bool) -> str | None:
+    """The table's chosen main resolved to a real staged file number.
+
+    Full-scan table numbers are MakeMKV numbers, so the file whose final
+    _tNN equals the chosen number wins outright; missing there (skipped
+    decoy, collision roll forward) — and always on the fast scan, whose
+    table numbers are scanner indices — the resolution falls back to a
+    duration join ±1s against the chosen title's scanned duration. A join
+    that matches nothing or several files resolves to None: never guess.
+
+    Args:
+        chosen_main: The table's pick ("t21"), None when nothing was chosen
+        graded_rows: The pre-rip rows — the scanned duration per table number
+        staged_rows: The probed post-rip rows — the real _tNN and actual
+            duration per staged file (this run's files only)
+        fast_scan: The fast path ran — table numbers are indices, skip the
+            exact-number match
+
+    Returns:
+        The main as a real "tNN" file number, or None when unresolved
+    """
+    if chosen_main is None:
+        return None
+    main_t = int(chosen_main[1:])
+    if not fast_scan and any(r["t"] == main_t for r in staged_rows):
+        return chosen_main
+    scanned = next((r["dur_s"] for r in graded_rows if r["t"] == main_t), None)
+    if scanned is None:
+        return None
+    matches = sorted(r["t"] for r in staged_rows
+                     if r["dur_s"] is not None and abs(r["dur_s"] - scanned) <= 1)
+    if len(matches) == 1:
+        return f"t{matches[0]}"
+    return None
+
+
+def merge_movie_document(old: dict, doc: dict) -> dict:
+    """A same-film re-rip's document merged into the folder's existing one.
+
+    titles: the existing rows kept, this run's appended (this run probes
+    only its own files, so nothing duplicates). main: this run's resolution
+    wins when present, else the old one stands. run: latest wins. encodes
+    start empty — the record travels on with the new rip.
+
+    Args:
+        old: The existing document (same tmdb id, caller-checked)
+        doc: This run's document
+
+    Returns:
+        The merged document, this run's shape throughout
+    """
+    old_titles = old.get("titles")
+    merged = dict(doc)
+    merged["titles"] = (list(old_titles) if isinstance(old_titles, list) else []) \
+        + list(doc["titles"])
+    if merged["main"] is None:
+        merged["main"] = old.get("main")
+    return merged

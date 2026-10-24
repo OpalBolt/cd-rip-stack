@@ -266,6 +266,7 @@ def test_rip_movie_rip_failure_notes():
                                             with patch("skive.rip_common.RipLog") as MockLog:
                                                 # RipLog.note should be called with rip note
                                                 log_instance = MockLog.return_value
+                                                log_instance.run = "run-1"  # the validation document's run identity
                                                 try:
                                                     rip_movie(args)
                                                 except SystemExit:
@@ -293,6 +294,7 @@ def test_rip_movie_runtime_note_when_known():
                                         with patch("pathlib.Path.unlink"):
                                             with patch("skive.rip_common.RipLog") as MockLog:
                                                 log_instance = MockLog.return_value
+                                                log_instance.run = "run-1"  # the validation document's run identity
                                                 try:
                                                     rip_movie(args)
                                                 except SystemExit:
@@ -320,6 +322,7 @@ def test_rip_movie_no_runtime_note_when_unknown():
                                         with patch("pathlib.Path.unlink"):
                                             with patch("skive.rip_common.RipLog") as MockLog:
                                                 log_instance = MockLog.return_value
+                                                log_instance.run = "run-1"  # the validation document's run identity
                                                 try:
                                                     rip_movie(args)
                                                 except SystemExit:
@@ -454,6 +457,10 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
     assert e.value.code == 130
     assert not (d0 / "C2_t1.mkv").exists()
     assert (title_dir / "Test Movie (2020)_t01.mkv").exists()
+    # An interrupted run writes no Validation file — partial rips stay
+    # unrecorded rather than lying (issue 05). The write sits beside the
+    # subtitle note, after the interrupt's exit point.
+    assert not (title_dir / "validation.json").exists()
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
@@ -494,6 +501,7 @@ def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
     from skive import rip_common
 
     log = Mock()
+    log.run = "a1b2c3d4"  # the validation document's run identity
     prompt = Mock()
     chain = iter(answers)
     prompt.ask.side_effect = lambda *a, **k: next(chain)
@@ -734,3 +742,240 @@ def test_pre_rip_confirm_extras_rows_ungraded_and_main_none(monkeypatch):
         {"t": 12, "dur_s": 6662, "ratio": None, "band": None},
         {"t": 21, "dur_s": 6252, "ratio": None, "band": None},
     ]
+
+
+# --- Post-rip report + validation.json (issue 05, map.md decision 5) --------
+
+
+def test_probe_staged_probes_actuals_and_warns_on_unreadable(tmp_path, capsys):
+    """The probe records ffprobe actuals (never the scan table), skips names
+    without a final _tNN, and records an unreadable file with null duration
+    and one stderr warning — never crashing."""
+    from skive.rip_movie import probe_staged
+
+    title = tmp_path / "M"
+    title.mkdir()
+    (title / "M_t01.mkv").write_bytes(b"x")   # 600s — sub-floor, ungraded
+    (title / "M_t05.mkv").write_bytes(b"x")   # 6249s — graded against 6480
+    (title / "M_t02.mkv").write_bytes(b"x")   # ffprobe reads nothing
+    (title / "M - Extra 01.mkv").write_bytes(b"x")  # no _tNN — skipped
+
+    def fake_run(cmd, **k):
+        name = cmd[-1]
+        out = {"M_t01.mkv": "600.0\n", "M_t05.mkv": "6249.5\n", "M_t02.mkv": ""}[name.split("/")[-1]]
+        return Mock(stdout=out)
+
+    rows = probe_staged(title, set(), 6480, run=fake_run)
+
+    assert rows == [
+        {"file": "M_t01.mkv", "t": 1, "dur_s": 600, "ratio": None, "band": None},
+        {"file": "M_t02.mkv", "t": 2, "dur_s": None, "ratio": None, "band": None},
+        {"file": "M_t05.mkv", "t": 5, "dur_s": 6249, "ratio": 0.96, "band": "green"},
+    ]
+    assert "cannot read duration of M_t02.mkv" in capsys.readouterr().err
+
+
+def test_probe_staged_skips_preexisting_files(tmp_path):
+    """Files that rested in the folder before the rip started (an earlier
+    rip's) are never probed — the re-rip merge keeps their rows."""
+    from skive.rip_movie import probe_staged
+
+    title = tmp_path / "M"
+    title.mkdir()
+    old = title / "M_t02.mkv"
+    old.write_bytes(b"x")
+    new = title / "M_t10.mkv"
+    new.write_bytes(b"x")
+
+    rows = probe_staged(title, {old}, 6480, run=Mock(return_value=Mock(stdout="600\n")))
+
+    assert rows == [{"file": "M_t10.mkv", "t": 10, "dur_s": 600,
+                     "ratio": None, "band": None}]
+
+
+def _preamble_for(tmp_path, pick=MAMMA, fast_scan=False):
+    """A real Preamble (dataclass) for direct post_rip_validation calls:
+    Mock log carrying a string run, MAMMA display, the volume label."""
+    from skive.rip_common import Preamble
+    log = Mock()
+    log.run = "newrun1"
+    title_dir = tmp_path / "Mamma Mia! (2008)"
+    pre = Preamble(log=log, pick=pick, display="Mamma Mia! (2008)", media="DVD-ROM",
+                   titles_full=[], title_dir=title_dir, stage=title_dir / "d0",
+                   minlength=120, keep="", disc=0, label="MAMMA_MIA",
+                   fast_scan=fast_scan)
+    return pre, log
+
+
+def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_path, capsys):
+    """Full-scan rip: validation.json lands at the title-folder root with the
+    full movie shape, durations probed from the staged files (6249/6600 — not
+    the scan table's 6252/6662), the main resolved to the final _tNN, and the
+    report beside the subtitle note flags it."""
+    import json
+    from skive import rip_movie as rm
+
+    title_dir = tmp_path / "rip" / "movies" / "Mamma Mia! (2008)"
+    durs = {"Mamma Mia! (2008)_t21.mkv": 6249, "Mamma Mia! (2008)_t12.mkv": 6600}
+
+    def stage_files(_display, _dir, **k):
+        for name in durs:
+            (title_dir / name).write_bytes(b"x")
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.5\n")
+
+    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""))
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
+    real = rm.post_rip_validation
+    monkeypatch.setattr(rm, "post_rip_validation",
+                        lambda pre, pex, main, rows, **k: real(pre, pex, main, rows, run=fake_run))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+    assert e.value.code == 0
+
+    doc = json.loads((title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["tmdb"] == {"id": "157", "type": "movie",
+                           "title": "Mamma Mia! (2008)", "runtime_s": 6480}
+    assert doc["volume_label"] == ""
+    assert doc["run"] == "a1b2c3d4"
+    assert doc["main"] == "t21"
+    assert doc["titles"] == [
+        {"file": "Mamma Mia! (2008)_t12.mkv", "t": 12, "dur_s": 6600,
+         "ratio": 1.02, "band": "green"},
+        {"file": "Mamma Mia! (2008)_t21.mkv", "t": 21, "dur_s": 6249,
+         "ratio": 0.96, "band": "green"},
+    ]
+    assert doc["encodes"] == []
+    err = capsys.readouterr().err
+    assert "Mamma Mia! (2008)_t21.mkv  1:44:09  green  MAIN" in err
+    assert "Mamma Mia! (2008)_t12.mkv  1:50:00  green" in err
+    assert "validation: 2 files, 1 green main, 0 yellow" in err
+    log.note.assert_any_call("validation", "2 files, 1 green main, 0 yellow")
+
+
+def test_post_rip_fast_scan_main_is_duration_joined_not_the_index(monkeypatch, tmp_path, capsys):
+    """Fast scan: the table's main is a scanner index (t0) — the recorded
+    main is the real final _tNN joined by duration, never the index."""
+    import json
+    from skive import rip_common
+    from skive import rip_movie as rm
+    monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=[7021, 599]))
+
+    title_dir = tmp_path / "rip" / "movies" / "Fast Movie (2021)"
+    durs = {"Fast Movie (2021)_t09.mkv": 7020, "Fast Movie (2021)_t03.mkv": 599}
+
+    def stage_files(_display, _dir, **k):
+        for name in durs:
+            (title_dir / name).write_bytes(b"x")
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.0\n")
+
+    _log, _prompt, _rip = _movie_flow(
+        monkeypatch, [], pick=TMDBPick("Fast Movie", "2021", "en", "movie", "1"))
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
+    real = rm.post_rip_validation
+    monkeypatch.setattr(rm, "post_rip_validation",
+                        lambda pre, pex, main, rows, **k: real(pre, pex, main, rows, run=fake_run))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+    assert e.value.code == 0
+
+    doc = json.loads((title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["main"] == "t9"  # joined by duration — t0 was a scanner index
+
+
+def test_post_rip_unreadable_duration_still_writes(tmp_path, capsys):
+    """A file whose duration won't read: null row, one warning — and the
+    document is still written (never crash, never skip the write)."""
+    import json
+    from skive.rip_movie import post_rip_validation
+
+    pre, _log = _preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    (pre.title_dir / "Mamma Mia! (2008)_t21.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, set(), "t21",
+                        [{"t": 21, "dur_s": 6252, "ratio": None, "band": None}],
+                        run=Mock(return_value=Mock(stdout="")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["titles"] == [{"file": "Mamma Mia! (2008)_t21.mkv", "t": 21,
+                              "dur_s": None, "ratio": None, "band": None}]
+    # Full scan: the final _tNN equals the table number — main stands even
+    # without a readable duration.
+    assert doc["main"] == "t21"
+    assert "cannot read duration of Mamma Mia! (2008)_t21.mkv" in capsys.readouterr().err
+
+
+def test_post_rip_rerip_same_id_appends(tmp_path):
+    """Re-rip into the folder: same id — existing rows kept, this run's
+    appended; this run's main resolution and run id win."""
+    import json
+    from skive.rip_movie import post_rip_validation
+
+    pre, _log = _preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    old = {"tmdb": {"id": "157", "type": "movie", "title": "Mamma Mia! (2008)",
+                    "runtime_s": 6480},
+           "volume_label": "OLD", "run": "oldrun1", "main": "t12",
+           "titles": [{"file": "Mamma Mia! (2008)_t12.mkv", "t": 12,
+                       "dur_s": 6662, "ratio": 1.03, "band": "green"}],
+           "encodes": []}
+    (pre.title_dir / "validation.json").write_text(json.dumps(old), encoding="utf-8")
+    (pre.title_dir / "Mamma Mia! (2008)_t21.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, set(), "t21",
+                        [{"t": 21, "dur_s": 6252, "ratio": 0.96, "band": "green"}],
+                        run=Mock(return_value=Mock(stdout="6252\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["run"] == "newrun1"                      # latest wins
+    assert doc["main"] == "t21"                         # this run's resolution wins
+    assert [r["t"] for r in doc["titles"]] == [12, 21]  # old kept, new appended
+    assert doc["volume_label"] == "MAMMA_MIA"
+
+
+def test_post_rip_rerip_unresolved_main_keeps_old(tmp_path):
+    """Re-rip where this run resolves no main: the old main stands."""
+    import json
+    from skive.rip_movie import post_rip_validation
+
+    pre, _log = _preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    old = {"tmdb": {"id": "157", "type": "movie", "title": "Mamma Mia! (2008)",
+                    "runtime_s": 6480},
+           "volume_label": "OLD", "run": "oldrun1", "main": "t12",
+           "titles": [], "encodes": []}
+    (pre.title_dir / "validation.json").write_text(json.dumps(old), encoding="utf-8")
+    (pre.title_dir / "Mamma Mia! (2008)_t02.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, set(), None, [], run=Mock(return_value=Mock(stdout="600\n")))
+
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert doc["main"] == "t12"
+    assert [r["t"] for r in doc["titles"]] == [2]
+
+
+def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
+    """An existing validation.json naming a different film is never
+    overwritten: stderr note, logged, the old file kept byte-for-byte."""
+    from skive.rip_movie import post_rip_validation
+
+    pre, log = _preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    old_text = '{\n  "tmdb": {"id": "999"}\n}'
+    path = pre.title_dir / "validation.json"
+    path.write_text(old_text, encoding="utf-8")
+    (pre.title_dir / "Mamma Mia! (2008)_t21.mkv").write_bytes(b"x")
+
+    post_rip_validation(pre, set(), "t21",
+                        [{"t": 21, "dur_s": 6252, "ratio": None, "band": None}],
+                        run=Mock(return_value=Mock(stdout="6252\n")))
+
+    assert path.read_text(encoding="utf-8") == old_text
+    assert "records a different film" in capsys.readouterr().err
+    log.note.assert_any_call("validation", "existing validation.json names a different film — kept")

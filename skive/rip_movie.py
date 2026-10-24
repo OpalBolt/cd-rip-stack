@@ -1,7 +1,10 @@
 """Movie rip orchestration: gates, TMDB resolve, pre-rip table with main
-pick, rip, rename, subtitle note."""
+pick, rip, rename, subtitle note, post-rip validation record."""
 
+import re
+import subprocess
 import sys
+from pathlib import Path
 
 from rich.console import Console
 from rich.prompt import Prompt
@@ -16,6 +19,8 @@ from skive.rip_common import fast_scan_header, interrupted_exit, rip_preamble
 from skive.scan import TitleInfo, resolve_titles
 from skive.validation import (
     MAIN_FLOOR_S, arbitrate_main, grade_main, main_candidates,
+    merge_movie_document, movie_document, movie_row, resolve_main,
+    VALIDATION_FILENAME, load_validation, write_validation,
 )
 
 console = Console()
@@ -24,6 +29,114 @@ console = Console()
 def _hms(secs: int) -> str:
     """Duration as H:MM:SS (the TV table's format)."""
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+
+
+_FINAL_T = re.compile(r'_t(\d+)$')
+"""A staged file's final title number — parsed from the FINAL name, never
+the scan table (fast-scan numbers are scanner indices; renames roll numbers
+forward past collisions)."""
+
+
+def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
+                 run=subprocess.run) -> list[dict]:
+    """Probe this run's staged *_tNN.mkv files for the validation record.
+
+    Glob *_t*.mkv and parse the final _tNN; files that rested in the folder
+    before the rip started (an earlier rip's files — the re-rip merge keeps
+    their rows) and names without a final _tNN (extras, transcode outputs)
+    are skipped. Durations are actuals probed from the files — never the scan
+    table's promise — and each row is graded against the film runtime. A file
+    whose duration ffprobe won't read is recorded with dur_s/ratio/band null
+    and one stderr warning: probing never crashes, never skips the write.
+
+    Args:
+        title_dir: The title folder — staged files rest here after promotion
+        preexisting: Files present before the rip started — never probed
+        runtime_s: TMDB runtime in seconds, None when unknown
+        run: subprocess.run callable for monkeypatching
+
+    Returns:
+        titles rows [{"file", "t", "dur_s", "ratio", "band"}] in t order
+    """
+    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                   "-of", "csv=p=0"]
+    rows = []
+    for mkv in title_dir.glob("*_t*.mkv"):
+        if mkv in preexisting:
+            continue
+        m = _FINAL_T.search(mkv.stem)
+        if not m:
+            continue
+        result = run(ffprobe_cmd + [str(mkv)], capture_output=True, text=True)
+        try:
+            dur = int(float(result.stdout.strip()))
+        except ValueError:
+            print(f"skive: cannot read duration of {mkv.name} — recorded without one",
+                  file=sys.stderr)
+            dur = None
+        rows.append(movie_row(mkv.name, int(m.group(1)), dur, runtime_s))
+    rows.sort(key=lambda r: r["t"])
+    return rows
+
+
+def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | None,
+                        graded_rows: list[dict], run=subprocess.run) -> None:
+    """The post-rip record (map.md decision 5), run beside the subtitle note:
+    probe what actually staged, grade it, resolve the main to a real file
+    number, report one line per file, and write validation.json at the
+    title-folder root.
+
+    The report and the run-log note carry the green/yellow summary. A re-rip
+    into the folder merges into an existing same-id document (rows appended,
+    this run's main wins when it resolves, latest run wins); an existing file
+    naming a different film is never overwritten — stderr note, logged, old
+    file kept. Interrupts exit through the rip handler and never reach this;
+    a partial rip (makemkvcon rc != 0) is not an interrupt — it renames what
+    completed and is recorded from what is there.
+
+    Args:
+        preamble: The run's Preamble — title folder, log, pick, display,
+            volume label, fast-scan flag
+        preexisting: Files present before the rip started — never probed
+        chosen_main: The table's pick ("t21"), None when nothing was chosen
+        graded_rows: The pre-rip rows from pre_rip_confirm
+        run: subprocess.run callable for monkeypatching
+    """
+    title_dir = preamble.title_dir
+    log = preamble.log
+    pick = preamble.pick
+
+    rows = probe_staged(title_dir, preexisting, pick.runtime_secs, run)
+    main = resolve_main(chosen_main, graded_rows, rows, preamble.fast_scan)
+
+    for r in rows:
+        parts = [r["file"], _hms(r["dur_s"]) if r["dur_s"] is not None else "?"]
+        if r["band"]:
+            parts.append(r["band"])
+        if main == f"t{r['t']}":
+            parts.append("MAIN")
+        print("  ".join(parts), file=sys.stderr)
+    main_row = next((r for r in rows if f"t{r['t']}" == main), None)
+    green_mains = 1 if main_row is not None and main_row["band"] == "green" else 0
+    yellow = sum(1 for r in rows if r["band"] == "yellow")
+    summary = f"{len(rows)} files, {green_mains} green main, {yellow} yellow"
+    print(f"validation: {summary}", file=sys.stderr)
+    log.note("validation", summary)
+
+    doc = movie_document(pick.id, preamble.display, pick.runtime_secs,
+                         preamble.label, log.run, main, rows)
+    path = title_dir / VALIDATION_FILENAME
+    old = load_validation(path)
+    if old is not None:
+        old_tmdb = old.get("tmdb")
+        old_id = old_tmdb.get("id") if isinstance(old_tmdb, dict) else None
+        if old_id is None or str(old_id) != str(pick.id):
+            print(f"skive: {path} records a different film — validation left untouched",
+                  file=sys.stderr)
+            log.note("validation", "existing validation.json names a different film — kept")
+            return
+        doc = merge_movie_document(old, doc)
+    write_validation(path, doc)
 
 
 def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
@@ -262,6 +375,12 @@ def rip_movie(args) -> None:
             note = subtitle_note(title_dir)
             print(f"{note}", file=sys.stderr)
             log.note("subtitle", note)
+
+            # Post-rip validation (map.md decision 5): the record beside the
+            # subtitle note — actuals probed from what staged, the main
+            # resolved to a real final file number, validation.json at the
+            # title-folder root. Interrupts exit above and never reach this.
+            post_rip_validation(preamble, preexisting, chosen_main, graded_rows)
 
             log.phase_end()
             rc = worst_rc
