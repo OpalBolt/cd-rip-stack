@@ -955,7 +955,10 @@ def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
     """Full path (no play-all escalation needed): the rip selection excludes
     the play-all pinned extra, plain extras still rip.
 
-    t2 (3550s) sits within 120s of t0+t1: the selection rips t0 and t1 only.
+    t2 (3550s) sits within 120s of t0+t1: the selection skips t2 alone. t3
+    (300s) is a making-of below the TV floor — no table row, no assignment,
+    not a play-all — and still rips: the selection comes from the full scan
+    list, not the floored table.
     """
     from skive.tmdb import TMDBPick
 
@@ -968,7 +971,8 @@ def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
 
     mock_titles = [TitleInfo(0, 1800, 1, "dan", "", False),
                    TitleInfo(1, 1700, 1, "dan", "", False),
-                   TitleInfo(2, 3550, 1, "dan", "", False)]
+                   TitleInfo(2, 3550, 1, "dan", "", False),
+                   TitleInfo(3, 300, 1, "dan", "", False)]
     mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
@@ -993,7 +997,7 @@ def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
         except SystemExit:
             pass
 
-    assert mock_rip_titles.call_args.args[0] == [0, 1]  # the play-all t2 is skipped
+    assert mock_rip_titles.call_args.args[0] == [0, 1, 3]  # play-all t2 skipped; sub-floor making-of t3 rips
 
 
 def test_fix_row_rescued_playall_rips():

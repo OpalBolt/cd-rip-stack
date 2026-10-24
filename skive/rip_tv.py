@@ -521,7 +521,9 @@ def rip_tv(args) -> None:
                 if user_titles is None:
                     skip = playall_skip(playalls, assignment)
                     if skip:
-                        rip_selection = [t for t, _, _ in titles_info if t not in skip]
+                        # The full scan list, not the floored titles_info: sub-TV-floor
+                        # fragments (120-600s extras) rip too — "all" means all of them.
+                        rip_selection = [t.number for t in titles_full if t.number not in skip]
                 worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
                                       total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log)
 
