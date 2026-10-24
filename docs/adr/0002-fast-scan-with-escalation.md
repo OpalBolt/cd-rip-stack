@@ -1,6 +1,6 @@
 # Fast scan is the default gate; the full MakeMKV scan escalates on failure or ambiguity
 
-`rip_preamble` ran a full `makemkvcon info` (minutes) before any prompt, so every rip waited on the scan. We replace the gate with a fast read — `lsdvd` straight on the block device (DVD; no mount, no sudo) or `ffprobe bluray:` (BD) — yielding titles as durations in seconds. The full scan is demoted to an escalation, fired synchronously when the fast read fails at all (tool missing, nonzero exit, unparseable output) or finds two titles within ±1s (duplicate/decoy/angle playlists), or when a movie `-T` menu is requested.
+`rip_preamble` ran a full `makemkvcon info` (minutes) before any prompt, so every rip waited on the scan. We replace the gate with a fast read — `lsdvd` straight on the block device (DVD; no mount, no sudo) or `ffprobe bluray:` (BD) — yielding titles as durations in seconds. The full scan is demoted to an escalation, fired synchronously when the fast read fails at all (tool missing, nonzero exit, unparseable output) or finds two titles within ±1s (duplicate/decoy/angle playlists), or when a movie `-T` menu is requested, or when a TV play-all is detected (ADR 0008 — the rip skips it, and skipping needs real title numbers).
 
 ## Consequences
 

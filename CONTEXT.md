@@ -33,11 +33,11 @@ The fallback `makemkvcon info` run, fired when the fast scan fails, finds two ti
 _Avoid_: deep scan, makemkv scan
 
 **Eligible title**:
-A disc title that can become an episode: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the range prompt's count and the position assignment.
+A disc title that can become an episode: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment.
 _Avoid_: candidate title
 
 **Play-all title**:
-A disc title whose duration equals the sum of a subset of other eligible titles (±120s) — a compilation, never an episode. Auto-marked extra.
+A disc title whose duration equals the sum of a subset of other eligible titles (±120s) — a compilation, never an episode, never ripped: fast-scan detection escalates to the full scan (ADR 0002) so the rip selects around it, and a fix row assigning it an episode still rips it.
 _Avoid_: compilation, sum title
 
 **Season**:
@@ -47,6 +47,10 @@ _Avoid_: volume, part
 **Episode**:
 One aired unit of a TV show, numbered `S02E05` per TMDB. Numbers come from the stated episode range plus disc position — never from disc title numbers, never from command-line flags.
 _Avoid_: title
+
+**Episode guess**:
+The pre-filled episode range at the range prompt, walked greedily from the first unstaged episode (discs are ripped in order, so staged episodes are a contiguous prefix): each episode claims the first remaining eligible title with a green disc÷TMDB ratio, and the walk stops at the first episode with no fitting title or no runtime. A suggestion only — shown in the title overview before the prompt with (est.) marks; the stated range plus disc position still builds the map (ADR 0001). Without runtimes or matches, the prefill falls back to one episode per eligible title.
+_Avoid_: auto-detect, count guess
 
 **Ratio audit**:
 The per-title sanity check: disc duration ÷ TMDB runtime. Green when the ratio fits the PAL fingerprint (~0.92–1.04 — PAL discs run ~4–5% short); yellow otherwise. Durations grade assignments; they never make them.
