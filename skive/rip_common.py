@@ -11,6 +11,7 @@ from skive.scan import (
     TitleInfo, ambiguous, fast_scan_bluray, fast_scan_dvd, is_recordable, iso2b, scan_disc, sniff_disc,
 )
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
+from skive.validation import VALIDATION_FILENAME, load_validation
 
 
 @dataclass
@@ -146,6 +147,12 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
 
     keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
 
+    # Identity gates (movies only, map.md decision 2): between the pick and the
+    # staging mkdir, so "already ripped" and "wrong name" are caught before
+    # anything spins — a refusal exits with nothing created.
+    if kind == "movie":
+        _identity_gates(videos_mnt, log, display, pick)
+
     # The title staging exists only once the TMDB pick has named it (CONTEXT.md:
     # Staging): rip/<type>/<Name (Year)>/d{disc}/ — the per-drive subdir so two
     # concurrent rips never rename each other's junk-labeled files; finished
@@ -160,6 +167,107 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
 
     return Preamble(log, pick, display, media, titles_full, title_dir, stage,
                     minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations)
+
+
+# --- Movie identity gates (map.md decision 2) -----------------------------
+
+_GATE_ROOTS = ("rip/movies", "lossless/movies", "library/movies")
+"""The share roots the duplicate gate scans: staging, parked lossless, library
+(CONTEXT.md: Staging, Lossless, Library)."""
+
+
+def _confirm(prompt: str) -> bool:
+    """One warn-and-confirm read: True only on an explicit y/yes — bare Enter
+    (default No) and every other answer refuse. EOF (a scripted run with no
+    one to confirm) is no explicit yes either: refuse."""
+    try:
+        return input(prompt).strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def _refuse(log: RipLog, reason: str) -> None:
+    """Record a gate refusal in the run log (phase "gate", tee'd to stderr) and
+    abort — the gates run before the staging mkdir, so nothing was created."""
+    log.note("gate", reason)
+    sys.exit(1)
+
+
+def _recorded_identity(folder: Path) -> tuple[str, str] | None:
+    """A title folder's recorded (tmdb.id, tmdb.title) from its validation.json,
+    or None when there is no readable document — legacy rips never trip a gate.
+
+    Args:
+        folder: A title folder that may hold validation.json
+
+    Returns:
+        The (id, title) the document records, id as a string; None when absent
+        or unreadable, missing the tmdb block, or typed unusable.
+    """
+    doc = load_validation(folder / VALIDATION_FILENAME)
+    tmdb = doc.get("tmdb") if doc else None
+    if not isinstance(tmdb, dict) or not isinstance(tmdb.get("id"), (str, int)):
+        return None
+    title = tmdb.get("title")
+    return str(tmdb["id"]), title if isinstance(title, str) and title else folder.name
+
+
+def _duplicate_id_folders(videos_mnt: Path, tmdb_id: str) -> list[Path]:
+    """Title folders under the movies share — staging, lossless, library —
+    whose validation.json records the picked TMDB id. Folders without a
+    readable document (legacy rips) never match; missing roots are skipped.
+
+    Args:
+        videos_mnt: The mounted videos share root
+        tmdb_id: The TMDB id picked for this run
+
+    Returns:
+        Matching title folders, roots in share order, names sorted per root
+        for a stable prompt
+    """
+    matches: list[Path] = []
+    for rel in _GATE_ROOTS:
+        root = videos_mnt / rel
+        if not root.is_dir():
+            continue
+        for folder in sorted(root.iterdir(), key=str):
+            identity = _recorded_identity(folder) if folder.is_dir() else None
+            if identity and identity[0] == tmdb_id:
+                matches.append(folder)
+    return matches
+
+
+def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick) -> None:
+    """The movie identity gates (map.md decision 2), run after the TMDB pick
+    resolves and before any staging folder is created: (a) the picked id
+    already has a folder under rip/, lossless/ or library/ — including this
+    run's own folder, a re-rip is genuinely already ripped; (b) the title
+    folder exists and its validation.json records a different film. Both
+    warn-and-confirm, default No: a refusal logs phase "gate" and exits with
+    nothing staged; gate (b)'s same-id case never prompts (the documented
+    re-rip path). Movies only — TV is untouched.
+
+    Args:
+        videos_mnt: The mounted videos share root
+        log: The run's RipLog, already started
+        display: The pick's sanitized folder name
+        pick: The resolved TMDB pick
+    """
+    duplicates = _duplicate_id_folders(videos_mnt, pick.id)
+    if duplicates:
+        print(f'"{display}" is already ripped:', file=sys.stderr)
+        for folder in duplicates:
+            print(f"  {folder}", file=sys.stderr)
+        if not _confirm("already ripped — continue? (y/N): "):
+            _refuse(log, f'"{display}" already ripped in '
+                         f"{len(duplicates)} folder(s) — nothing ripped")
+    title_dir = videos_mnt / "rip" / "movies" / display
+    recorded = _recorded_identity(title_dir) if title_dir.is_dir() else None
+    if recorded and recorded[0] != pick.id:
+        if not _confirm(f'folder "{display}" holds "{recorded[1]}", '
+                        f'you picked "{display}" — continue? (y/N): '):
+            _refuse(log, f'title folder "{display}" holds "{recorded[1]}", '
+                         "not the picked film — nothing ripped")
 
 
 def interrupted_exit(log, stage_dirs: list[Path]) -> None:
