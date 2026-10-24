@@ -396,8 +396,9 @@ STAGING_NAME = re.compile(r"_t\d+")
 staged `_tNN` title numbers that must never survive into the library (the
 Mamma Mia extras pollution; CONTEXT.md: Library checker)."""
 
-SEASON_DIR = re.compile(r"^Season (\d{2,})$")
-"""A TV season folder under a show folder; Season 00 is Specials."""
+SEASON_DIR = re.compile(r"^(?:Season (\d{2,})|Specials)$")
+"""A TV season folder under a show folder; `Specials` is season 0 — the folder
+name the pipeline writes for season 0 (CONTEXT.md: Season folder)."""
 
 YEAR_SUFFIX = re.compile(r"^(.*) \((\d{4})\)$")
 """The `<Name (Year)>` title-folder shape; the year is what makes a legacy
@@ -406,6 +407,11 @@ folder's name+year TMDB search worth running."""
 EPISODE_IN_NAME = re.compile(r"S(\d+)E(\d+)")
 """An episode number inside a library file name (`..._S02E05`, transcode's
 `... - S02E05`); the season comes from the Season NN folder, the E from here."""
+
+DOUBLE_EPISODE_TAIL = re.compile(r"-E(\d+)$")
+"""The `-E..` tail of a double-episode file name (`... S02E05-E06`); a double
+is one file, never split (CONTEXT.md: Double episode) — its one ratio row
+covers every episode in the range."""
 
 
 class Finding(NamedTuple):
@@ -480,20 +486,43 @@ def _doc_identity(block: object) -> tuple[str, str, int | None] | None:
 
 
 def _ratio_finding(rel: str, relpath: str, dur_s: int,
-                   runtime_s: int | None) -> Finding:
+                   runtime_s: int | None,
+                   ep_label: str | None = None) -> Finding:
     """One ratio row: the file's probed duration graded in the shared band.
 
     Unknown runtime (or a zero-duration probe read): a blank cell — band None,
-    never yellow (grade_main's no-false-yellow rule).
+    never yellow (grade_main's no-false-yellow rule). ep_label marks a
+    double-episode file's row with its range ("E05-E06") so the human reads
+    the row as one file, not two episodes.
     """
     graded = grade_main(dur_s, runtime_s)
     if graded is None:
         return Finding(rel, "ratio", relpath)
-    return Finding(rel, "ratio", f"{relpath}  {graded[0]:.2f}", graded[1])
+    label = f"  {ep_label}" if ep_label else ""
+    return Finding(rel, "ratio", f"{relpath}{label}  {graded[0]:.2f}", graded[1])
 
 
 def _unreadable_finding(rel: str, relpath: str) -> Finding:
     return Finding(rel, "unreadable", f"{relpath}: duration unreadable")
+
+
+def _double_runtime(runtimes: dict[int, int | None], lo: int, hi: int) -> int | None:
+    """The runtime a double-episode file grades against: the summed runtimes
+    over lo..hi when every episode in the range has a known runtime, else the
+    single lo runtime. A range the sources cannot fully price grades at lo
+    alone rather than guessing the missing runtimes.
+
+    Args:
+        runtimes: Per-episode runtime in seconds, None when unknown
+        lo: The double's first episode
+        hi: The double's last episode (== lo for a single-episode file)
+
+    Returns:
+        Summed runtime in seconds, the lo runtime alone, or None
+    """
+    if all(runtimes.get(ep) for ep in range(lo, hi + 1)):
+        return sum(runtimes[ep] for ep in range(lo, hi + 1))
+    return runtimes.get(lo)
 
 
 def _search_identity(kind: str, rel: str, folder_name: str, search,
@@ -621,12 +650,15 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
 
     Episode runtimes come from the season's document rows (offline) or the
     TMDB season list (legacy folders); an episode with neither is a blank
-    cell, never yellow. The missing check grades the folder's `S..E..` names
-    against the TMDB season list when it fetched, else the document's episode
-    rows; with neither source it skips — never guesses. A season-list fetch
-    failure degrades to the doc source with one stderr warning.
+    cell, never yellow. A double episode (`S..E05-E06`, one file) is one row:
+    every episode in its range counts as present, and the file's duration
+    grades against the range's summed runtime. The missing check grades the
+    folder's `S..E..` names against the TMDB season list when it fetched,
+    else the document's episode rows; with neither source it skips — never
+    guesses. A season-list fetch failure degrades to the doc source with one
+    stderr warning.
     """
-    season = int(SEASON_DIR.match(season_dir.name).group(1))
+    season = int(SEASON_DIR.match(season_dir.name).group(1) or "00")
     findings: list[Finding] = []
     doc_rows: dict[int, dict] = {}
     if doc and isinstance(doc.get("tmdb"), dict) and doc["tmdb"].get("season") == season:
@@ -647,19 +679,30 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
     for ep, _name, rt in (listed or []):
         runtimes.setdefault(ep, rt or None)
     files: dict[int, Path] = {}
+    episode_files: dict[Path, tuple[int, int]] = {}
     for p in sorted(season_dir.glob("*.mkv")):
         if not p.is_file():
             continue
         m = EPISODE_IN_NAME.search(p.stem)
-        if m:
-            files.setdefault(int(m.group(2)), p)
-    for ep in sorted(files):
-        relpath = str(files[ep].relative_to(folder))
-        dur = probe_duration(files[ep], run)
+        if not m:
+            continue
+        lo = int(m.group(2))
+        tail = DOUBLE_EPISODE_TAIL.search(p.stem)
+        hi = max(lo, int(tail.group(1))) if tail else lo
+        episode_files.setdefault(p, (lo, hi))
+        for ep in range(lo, hi + 1):
+            files.setdefault(ep, p)
+    for p in sorted(episode_files):
+        lo, hi = episode_files[p]
+        relpath = str(p.relative_to(folder))
+        dur = probe_duration(p, run)
         if dur is None:
             findings.append(_unreadable_finding(rel, relpath))
             continue
-        findings.append(_ratio_finding(rel, relpath, dur, runtimes.get(ep)))
+        label = _episode_runs(list(range(lo, hi + 1))) if hi > lo else None
+        findings.append(_ratio_finding(rel, relpath, dur,
+                                       _double_runtime(runtimes, lo, hi),
+                                       label))
     if listed is not None:
         expected, source = sorted(ep for ep, _n, _rt in listed), "TMDB season list"
     elif doc_rows:

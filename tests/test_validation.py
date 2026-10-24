@@ -740,6 +740,63 @@ def test_validate_tv_season_list_preferred_for_missing(tmp_path):
         f"Season 02/Show (2019) - S02E0{e}.mkv  1.01" for e in (1, 2, 4)]
 
 
+def test_validate_tv_specials_folder_is_season_0(tmp_path):
+    """The `Specials/` folder the pipeline writes for season 0 walks as a
+    season: its episodes get ratio rows and the missing-episode check grades
+    against TMDB season 0."""
+    show = tmp_path / "library" / "tv" / "Show (2010)"
+    specials = show / "Specials"
+    specials.mkdir(parents=True)
+    (specials / "Show (2010) - S00E01.mkv").touch()
+    write_validation(specials / VALIDATION_FILENAME,
+                     tv_document("456", "Show (2010)", 0, "SHOW_S0", "a1b2c3d4",
+                                 [tv_row(1, "Show (2010) - S00E01.mkv", 3,
+                                         2580, 2580)]))
+
+    def season_list(tv_id, n):
+        assert (tv_id, n) == ("456", 0)
+        return [(1, "Special 1", 2580), (2, "Special 2", 2580)]
+
+    findings = validate_library(
+        tmp_path / "library",
+        run=_fake_probe({"Show (2010) - S00E01.mkv": 2580}),
+        search=_no_search, season_list=season_list)
+
+    assert findings == [
+        Finding("tv/Show (2010)", "ratio",
+                "Specials/Show (2010) - S00E01.mkv  1.00", "green"),
+        Finding("tv/Show (2010)", "missing episodes",
+                "Season 00 missing E02 (TMDB season list)"),
+    ]
+
+
+def test_validate_tv_double_episode_grades_sum_and_is_never_missing(tmp_path):
+    """A double (`S02E05-E06.mkv`, one file, never split) is one ratio row
+    graded against the SUM of the range's runtimes, and covers E06 in the
+    missing check — no false E06-missing, no 2.0 false yellow."""
+    show, season = _show_tree(tmp_path)
+    (season / "Show (2019) - S02E05-E06.mkv").touch()
+    write_validation(season / VALIDATION_FILENAME,
+                     tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4",
+                                 [tv_row(5, "Show (2019) - S02E05-E06.mkv", 9,
+                                         5160, 2580)]))
+
+    def season_list(tv_id, n):
+        assert (tv_id, n) == ("456", 2)
+        return [(5, "Ep 5", 2580), (6, "Ep 6", 2580)]
+
+    findings = validate_library(
+        tmp_path / "library",
+        run=_fake_probe({"Show (2019) - S02E05-E06.mkv": 5160}),
+        search=_no_search, season_list=season_list)
+
+    assert findings == [
+        Finding("tv/Show (2019)", "ratio",
+                "Season 02/Show (2019) - S02E05-E06.mkv  E05-E06  1.00",
+                "green"),
+    ]
+
+
 def test_validate_tv_legacy_uses_search_and_season_list(tmp_path):
     """A legacy show: name+year search names the id, the season list carries
     both the expected episode set and the per-episode runtimes."""
