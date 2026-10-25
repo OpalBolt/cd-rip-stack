@@ -119,10 +119,16 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_tv.console") as mock_console:
-                                                    try:
-                                                        rip_tv(FakeArgs())
-                                                    except SystemExit as e:
-                                                        return mock_rename_tv, mock_console, e.code
+                                                    # The split phase's probe/cut subprocesses stay
+                                                    # fake here too: flow tests assert prompts and
+                                                    # tables, and an armed caption run must never
+                                                    # shell out (the phase itself is tested
+                                                    # directly in test_chapter_split.py).
+                                                    with patch("skive.rip_tv.split_combined"):
+                                                        try:
+                                                            rip_tv(FakeArgs())
+                                                        except SystemExit as e:
+                                                            return mock_rename_tv, mock_console, e.code
     return mock_rename_tv, mock_console, None
 
 
@@ -419,17 +425,20 @@ def test_extras_flow():
                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                 with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
                                     with patch("skive.rip_tv.rip_titles", return_value=0):
-                                        with patch("pathlib.Path.unlink"):
-                                            try:
-                                                rip_tv(args)
-                                                # Should exit with rc from rip_titles
-                                            except SystemExit as e:
-                                                assert e.code == 0  # Default rip_titles returns 0
+                                        with patch("skive.rip_tv.split_combined") as mock_split:
+                                            with patch("pathlib.Path.unlink"):
+                                                try:
+                                                    rip_tv(args)
+                                                    # Should exit with rc from rip_titles
+                                                except SystemExit as e:
+                                                    assert e.code == 0  # Default rip_titles returns 0
 
     # Check rename was called with suffix="e"
     mock_rename.assert_called()
     call_kwargs = mock_rename.call_args[1]
     assert call_kwargs.get("suffix") == "e"
+    # The extras path has no episode range — it never reaches the split.
+    mock_split.assert_not_called()
 
 
 def test_rip_only_requested_titles_that_survived_scan():
@@ -863,6 +872,357 @@ def test_playall_only_caption_on_title_selection(tmp_path, monkeypatch):
     captions = _captions(console)
     assert len(captions) == 1
     assert "title 1" in captions[0] and "S01E01-E03" in captions[0]
+
+
+# --- The chapter split hook (ADR 0009): fires after the rename, before the
+# subtitle note and validation, on both scan paths; its phase internals are
+# tested in test_chapter_split.py — these pin the wiring and the containment.
+
+
+def _split_fake_cut(show_dir, order, expect_combined=True):
+    """A fake split_combined: record firing order, require the rename's
+    combined file, cut the three pieces, delete the combined file."""
+    def fake_split(combined, targets, season, lo, hi, _runtimes, _log, **k):
+        order.append("split")
+        assert combined.exists() is expect_combined   # the rename ran first
+        for t in targets.values():
+            t.touch()
+        combined.unlink()
+    return fake_split
+
+
+def test_chapter_split_hook_arms_on_playall_only_shape(tmp_path):
+    """The lone eligible title carrying a range: the hook names the combined
+    file and the per-episode targets and hands them to the split phase."""
+    from types import SimpleNamespace
+    from skive.rip_tv import chapter_split_hook
+
+    pre = SimpleNamespace(title_dir=tmp_path, display="Show (2000)", log=Mock())
+    runtimes = {1: 3240, 2: 3240, 3: 3240}
+
+    with patch("skive.rip_tv.split_combined") as mock_split:
+        chapter_split_hook(pre, 1, [(0, 9643, 1)], set(), {0: (1, 3)}, runtimes)
+
+    assert mock_split.call_count == 1
+    args = mock_split.call_args.args
+    assert args[0] == tmp_path / "Show (2000)_S01E01-E03.mkv"
+    assert args[1] == {1: tmp_path / "Show (2000)_S01E01.mkv",
+                       2: tmp_path / "Show (2000)_S01E02.mkv",
+                       3: tmp_path / "Show (2000)_S01E03.mkv"}
+    assert args[2:] == (1, 1, 3, runtimes, pre.log)
+
+
+def test_chapter_split_hook_ignores_single_episode_map(tmp_path):
+    """A lone title assigned one episode is no play-all-only disc."""
+    from types import SimpleNamespace
+    from skive.rip_tv import chapter_split_hook
+
+    pre = SimpleNamespace(title_dir=tmp_path, display="Show (2000)", log=Mock())
+    with patch("skive.rip_tv.split_combined") as mock_split:
+        chapter_split_hook(pre, 1, [(0, 9643, 1)], set(), {0: (1, 1)}, {1: 4020})
+    mock_split.assert_not_called()
+
+
+def test_chapter_split_hook_ignores_multi_title_disc(tmp_path):
+    """Two eligible titles: doubles territory, never the split (ADR 0009)."""
+    from types import SimpleNamespace
+    from skive.rip_tv import chapter_split_hook
+
+    pre = SimpleNamespace(title_dir=tmp_path, display="Show (2000)", log=Mock())
+    titles = [(0, 3932, 1), (1, 3897, 1)]
+    with patch("skive.rip_tv.split_combined") as mock_split:
+        chapter_split_hook(pre, 1, titles, set(), {0: (1, 1), 1: (2, 2)},
+                           {1: 3932, 2: 3897})
+    mock_split.assert_not_called()
+
+
+def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
+        tmp_path, monkeypatch):
+    """Full-scan rip of a play-all-only disc: the split runs between the
+    rename and the subtitle note, and post-rip validation grades the three
+    per-episode pieces under the existing rules — no validation changes."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+    combined = show_dir / "Show (2000)_S01E01-E03.mkv"
+    order = []
+
+    def fake_rename(_display, _dir, _season, _assignment):
+        combined.touch()
+
+    def fake_subs(_dir):
+        order.append("subs")
+        assert (show_dir / "Show (2000)_S01E01.mkv").exists()
+        assert not combined.exists()      # cut and gone before subtitles
+        return "subs=dan"
+
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 2810,
+            "Show (2000)_S01E03.mkv": 2810}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    real_post = post_rip_validation
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "1", "0=1-3", ""]  # season, range, fix row, rip
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd",
+                  side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc",
+                  return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rename_tv", side_effect=fake_rename), \
+            patch("skive.rip_tv.split_combined",
+                  side_effect=_split_fake_cut(show_dir, order)), \
+            patch("skive.rip_tv.subtitle_note", side_effect=fake_subs), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 0
+    assert order == ["split", "subs"]
+    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
+    assert [r["file"] for r in doc["seasons"][0]["episodes"]] == [
+        "Show (2000)_S01E01.mkv", "Show (2000)_S01E02.mkv",
+        "Show (2000)_S01E03.mkv"]
+    assert all(r["band"] == "green"
+               for r in doc["seasons"][0]["episodes"])
+
+
+def test_split_decline_keeps_combined_and_validation_grades_it(
+        tmp_path, monkeypatch):
+    """A declined split is the pre-feature shape: the combined file stays,
+    and validation records it as one row under its first episode graded
+    against the summed runtimes (the existing double rule)."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+    combined = show_dir / "Show (2000)_S01E01-E03.mkv"
+
+    def fake_rename(_display, _dir, _season, _assignment):
+        combined.touch()
+
+    durs = {"Show (2000)_S01E01-E03.mkv": 9400}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    real_post = post_rip_validation
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "1", "0=1-3", ""]
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd",
+                  side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc",
+                  return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rename_tv", side_effect=fake_rename), \
+            patch("skive.rip_tv.split_combined"), \
+            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 0
+    assert combined.exists()                 # the decline kept it
+    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
+    rows = doc["seasons"][0]["episodes"]
+    assert rows == [{"ep": 1, "file": "Show (2000)_S01E01-E03.mkv", "t": 0,
+                     "dur_s": 9400, "runtime_s": 9660, "ratio": 0.97,
+                     "band": "green"}]
+
+
+def test_split_hook_fires_on_fast_scan_path(tmp_path, monkeypatch):
+    """Fast scan of a play-all-only disc: the real duration join renames the
+    lone staged file to the combined name, and the split fires there too —
+    after the rename, before the subtitle note."""
+    import json
+    from skive.tmdb import TMDBPick
+    from skive.rip_tv import rename_tv_fast as real_join
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+    combined = show_dir / "Show (2000)_S01E01-E03.mkv"
+    order = []
+
+    def promote_one_junk(stage):
+        (show_dir / "B1_t00.mkv").touch()   # what makemkvcon would have staged
+
+    def joined_join(display, dir_, season, assignment, durs, **k):
+        return real_join(display, dir_, season, assignment, durs,
+                         run=Mock(return_value=Mock(stdout="9643\n")))
+
+    def fake_subs(_dir):
+        order.append("subs")
+        assert (show_dir / "Show (2000)_S01E01.mkv").exists()
+        return "subs=dan"
+
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 2810,
+            "Show (2000)_S01E03.mkv": 2810}
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
+
+    real_post = post_rip_validation
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", "0=1-3", ""]  # season, range prefill, fix row, rip
+
+    @dataclass
+    class FakeArgs:
+        titles = None          # no -T flag: the fast scan gates the disc
+        extras = False
+        tmdbid = None
+        verified = True
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd", return_value=[9643]), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.promote_staged", side_effect=promote_one_junk), \
+            patch("skive.rip_tv.rename_tv_fast", side_effect=joined_join), \
+            patch("skive.rip_tv.split_combined",
+                  side_effect=_split_fake_cut(show_dir, order)), \
+            patch("skive.rip_tv.subtitle_note", side_effect=fake_subs), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 0
+    assert order == ["split", "subs"]
+    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
+    rows = doc["seasons"][0]["episodes"]
+    assert [r["file"] for r in rows] == ["Show (2000)_S01E01.mkv",
+                                         "Show (2000)_S01E02.mkv",
+                                         "Show (2000)_S01E03.mkv"]
+    assert all(r["t"] is None for r in rows)   # fast-scan rows, existing rule
+
+
+def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
+                                                       capsys):
+    """Ctrl+C at the boundary table: the split sweeps and notes `interrupted`,
+    then the run continues through the subtitle note and validation with its
+    exit code — no status=interrupted line, no 130, no junk purge."""
+    import json
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+    combined = show_dir / "Show (2000)_S01E01-E03.mkv"
+
+    def fake_rename(_display, _dir, _season, _assignment):
+        combined.touch()
+
+    # The real split phase runs: probe served inline, Ctrl+C at its prompt.
+    starts = [k * 468.0 for k in range(21)]
+
+    def fake_probe(path, run=None):
+        return (starts, 9410.0)
+
+    split_prompt = MagicMock()
+    split_prompt.ask.side_effect = KeyboardInterrupt
+
+    subs_seen = []
+
+    def fake_subs(_dir):
+        subs_seen.append(True)
+        return "subs=dan"
+
+    real_post = post_rip_validation
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "1", "0=1-3", ""]
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd",
+                  side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc",
+                  return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rename_tv", side_effect=fake_rename), \
+            patch("skive.chapter_split.probe_chapters", side_effect=fake_probe), \
+            patch("skive.chapter_split.Prompt", split_prompt), \
+            patch("skive.rip_tv.subtitle_note", side_effect=fake_subs), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(
+                      pre, *a, run=Mock(return_value=Mock(stdout="9400\n")))):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+
+    assert e.value.code == 0                 # the rip's exit code, unchanged
+    assert subs_seen == [True]               # the run continued past the split
+    assert combined.exists()                 # the interrupt kept it
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert not any(line["status"] == "interrupted" for line in lines)
+    assert "skive: split: interrupted" in capsys.readouterr().err
 
 
 # --- Fast scan: duration join + rename (ADR 0002, DVD half) ---

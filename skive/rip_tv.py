@@ -11,6 +11,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+from skive.chapter_split import split_combined
 from skive.makemkv import (
     CONFIG_DIR, build_selection, inject_profile, promote_staged, rename_staged,
     rip_header, subtitle_note, rip_titles, hsize,
@@ -302,6 +303,40 @@ def rename_tv_fast(display: str, show_dir: Path, season: int,
         print(f"skive: {cur} → {target.stem}", file=sys.stderr)
 
     return True
+
+
+def chapter_split_hook(preamble, season: int,
+                       titles_info: list[tuple[int, int, int]],
+                       playalls: set[int], assignment: dict[int, tuple[int, int]],
+                       ep_runtimes: dict[int, int], run=subprocess.run) -> None:
+    """The chapter split (ADR 0009) for play-all-only discs: when the final
+    episode map leaves exactly one eligible title carrying a multi-episode
+    range, its combined `_SNNENN-ENNN.mkv` is probed, confirmed at the
+    boundary table, and cut into per-episode files. Runs after the rename on
+    both scan paths, before the subtitle note and post-rip validation — so
+    downstream sees per-episode files when the split ran and the combined
+    file when it declined. Any other shape returns with no table, and the
+    split phase contains its own interrupts: this never raises one.
+
+    Args:
+        preamble: The run's Preamble — title_dir, display, log
+        season: Season number the disc belongs to
+        titles_info: The confirm table's floored (title, secs, bytes) list
+        playalls: Title numbers disqualified as play-alls
+        assignment: Final title -> (lo, hi) episode map (post fix rows)
+        ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
+        run: subprocess.run callable for monkeypatching (probe and ffmpeg)
+    """
+    lone = playall_only(titles_info, playalls, assignment)
+    if lone is None:
+        return
+    _t, lo, hi = lone
+    show_dir = preamble.title_dir
+    combined = episode_target(show_dir, preamble.display, season, lo, hi)
+    targets = {e: episode_target(show_dir, preamble.display, season, e, e)
+               for e in range(lo, hi + 1)}
+    split_combined(combined, targets, season, lo, hi, ep_runtimes,
+                   preamble.log, run=run)
 
 
 def probe_episodes(show_dir: Path, display: str, season: int,
@@ -691,6 +726,14 @@ def rip_tv(args) -> None:
                     sys.exit(1)
             else:
                 rename_tv(display, show_dir, season, assignment)
+
+            # Chapter split (ADR 0009): a play-all-only disc's combined file
+            # divides here — after the rename, before the subtitle note and
+            # post-rip validation, on both scan paths. The split contains its
+            # own interrupts, so a Ctrl+C at its table never reaches the
+            # generic interrupt exit below.
+            chapter_split_hook(preamble, season, titles_info, playalls,
+                               assignment, ep_runtimes)
 
             # Subtitle note
             note = subtitle_note(show_dir)
