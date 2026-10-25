@@ -325,6 +325,13 @@ keeps it. When transcode quarantines a source to `issues/`, that run's log
 lines and raw log are copied in beside it, so everything about one failure
 sits in one folder.
 
+Every full MakeMKV scan also writes a scan dump — the verbatim
+`makemkvcon info` output — to `logs/scan/<run>_<volume-label>.txt`, never
+deleted: a scan is the one moment the disc's whole structure is in hand,
+and questions about a disc surface later (a strange table, a stuck prompt),
+when the disc may already be out of the drive. A dump replays through the
+scanner with `MAKEMKV_INFO="cat <dump>"`.
+
 Verbosity (`-v`, `-vv`) gates the console only — both logs are always
 written. Old text `rip.log` files are left in place and read by nothing.
 

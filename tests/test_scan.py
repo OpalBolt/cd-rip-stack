@@ -340,6 +340,48 @@ TINFO:0,11,"1234567890"
     assert len(titles) == 1
 
 
+def test_scan_disc_persists_scan_dump(tmp_path):
+    """With a log, scan_disc writes its verbatim output to
+    <root>/logs/scan/<run>_<label>.txt — written on the success path too,
+    before anyone knows a run will go wrong."""
+    from skive.common import RipLog
+
+    output = 'DRV:0,2,0,0,"DVD-ROM drive","G1_70736D1","/dev/sr0"\nTINFO:0,9,"0:21:00"\nTINFO:0,11,"1234567890"\n'
+    log = RipLog("skive rip tv", "makemkvcon", root=tmp_path)
+
+    media, _label, titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)), log=log)
+
+    assert (media, len(titles)) == ("DVD-ROM", 1)
+    # _parse_label cleans G1_70736D1 -> "G1 70736D1" (underscores to spaces)
+    dump = tmp_path / "logs" / "scan" / f"{log.run}_G1 70736D1.txt"
+    assert dump.read_text(encoding="utf-8") == output
+
+
+def test_scan_disc_dump_before_zero_titles_bail(tmp_path, capsys):
+    """The scan dump lands before the zero-titles refusal — a scan that
+    parses nothing still leaves its evidence in logs/scan/, not just the
+    /tmp dump."""
+    from skive.common import RipLog
+
+    output = 'DRV:0,2,0,0,"DVD-ROM drive","BAD_DISC","/dev/sr0"\nTCOUNT:0\n'
+    log = RipLog("skive rip tv", "makemkvcon", root=tmp_path)
+
+    with pytest.raises(SystemExit):
+        scan_disc(120, run=Mock(return_value=Mock(stdout=output)), log=log)
+
+    assert (tmp_path / "logs" / "scan" / f"{log.run}_BAD DISC.txt").exists()
+
+
+def test_scan_disc_without_log_writes_nothing(tmp_path):
+    """No log -> no dump, no crash: library/test callers stay side-effect free."""
+    output = 'DRV:0,2,0,0,"DVD-ROM drive","G1_70736D1","/dev/sr0"\nTINFO:0,9,"0:21:00"\nTINFO:0,11,"1234567890"\n'
+
+    media, _label, titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+
+    assert (media, len(titles)) == ("DVD-ROM", 1)
+    assert not (tmp_path / "logs").exists()
+
+
 # --- DVD fast scan (ADR 0002, DVD half) ---
 LSDVD_GENERATION_KILL = """Disc Title: GENERATION_KILL
 Title: 01, Length: 01:05:32.000 Chapters: 6, Cells: 10, Audio streams: 02, Subpictures: 04

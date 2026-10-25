@@ -126,7 +126,7 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
                 titles_full = [TitleInfo(number=i, seconds=d, size=0, audio="", subtitles="", scrambled=False)
                                for i, d in enumerate(scan_durations)]
     if not fast_scan:
-        _, label, titles_full = scan_disc(minlength, disc=disc)
+        _, label, titles_full = scan_disc(minlength, disc=disc, log=log)
 
     require_online()
 

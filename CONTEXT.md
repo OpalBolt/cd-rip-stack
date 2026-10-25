@@ -143,6 +143,10 @@ The durable event record both machines append to over NFS: `logs/rip.jsonl` on t
 **Raw log**:
 Verbatim tool output for one run, captured while it runs: `logs/raw/<run>.jsonl`. Deleted on a clean exit; kept when a run fails or is interrupted. Verbosity (`-v`, `-vv`) only gates the console — both logs are always written.
 
+**Scan dump**:
+A full scan's verbatim `makemkvcon info` output, persisted the moment the scan runs: `logs/scan/<run>_<volume label>.txt`. Never deleted — a disc's structure is in hand exactly once, while questions about it surface later at a table or a stuck prompt, when the disc may already be out of the drive. Replays through the scanner with `MAKEMKV_INFO="cat <dump>"`, so a questioned table is reproducible without the disc.
+_Avoid_: scan log, issue log
+
 **Interrupt**:
 What Ctrl+C means everywhere: the child tool is signalled (up to 5 s, then killed), the in-flight partial file is deleted — no partial rip is ever left hanging — completed renamed titles are kept, `rip.jsonl` records `status=interrupted`, and the process exits 130. A second Ctrl+C exits instantly without cleanup; the next run's junk purge sweeps what's left.
 _Avoid_: cancel, abort

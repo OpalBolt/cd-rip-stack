@@ -121,7 +121,8 @@ def sanitize(title: str) -> str:
 
 
 class RipLog:
-    """Writes the two JSONL logs (CONTEXT.md: Run log, Raw log).
+    """Writes the two JSONL logs (CONTEXT.md: Run log, Raw log) and the
+    per-run scan dump (CONTEXT.md: Scan dump).
 
     Run log  <root>/logs/rip.jsonl — one
     {ts, run, script, software, name, phase, status, elapsed_s} object per
@@ -129,6 +130,8 @@ class RipLog:
     "ok", "FAIL(rc)", "interrupted", or note text.
     Raw log  <root>/logs/raw/<run>.jsonl — one {ts, run, tool, line} object
     per tool output line; finish(0) deletes it, failure or interrupt keeps it.
+    Scan dump  <root>/logs/scan/<run>_<label>.txt — one full scan's verbatim
+    output; never deleted (scan_dump).
 
     This class only holds what plain file appends do not: the run/phase clock
     readings, the phase count, and the total-on-exit rule.
@@ -171,6 +174,19 @@ class RipLog:
             "tool": tool,
             "line": line,
         })
+
+    def scan_dump(self, label: str, out: str) -> None:
+        """Persist one full scan's verbatim output to <root>/logs/scan/.
+
+        Never deleted — unlike the raw log, the dump is written before anyone
+        knows a run will go wrong, so a table questioned later (often when the
+        disc is already out of the drive) still replays via
+        MAKEMKV_INFO="cat <dump>". A re-scan of the same disc overwrites it.
+        """
+        scan_dir = self._raw_log.parent.parent / "scan"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+        name = f"{self.run}_{sanitize(label)}.txt" if label else f"{self.run}_disc.txt"
+        (scan_dir / name).write_text(out, encoding="utf-8")
 
     def start(self):
         """Log the immediate 'started' marker line."""

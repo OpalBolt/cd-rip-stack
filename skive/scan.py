@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from skive.common import MENU, parse_titles
+from skive.common import MENU, RipLog, parse_titles
 from skive.makemkv import _qval, hsize
 
 
@@ -255,10 +255,18 @@ def _parse_titles(out: str) -> list[TitleInfo]:
     return result
 
 
-def scan_disc(minlength: int, run=subprocess.run, disc: int = 0) -> tuple[str, str, list[TitleInfo]]:
-    """One `makemkvcon info` run: media token, volume label, parsed titles."""
+def scan_disc(minlength: int, run=subprocess.run, disc: int = 0,
+              log: RipLog | None = None) -> tuple[str, str, list[TitleInfo]]:
+    """One `makemkvcon info` run: media token, volume label, parsed titles.
+
+    With a log, the verbatim output is persisted as a scan dump (CONTEXT.md:
+    Scan dump) before parsing — so the zero-titles refusal below still leaves
+    the evidence behind.
+    """
     out = _info(minlength, run, disc)
     media, label, titles = _parse_media(out, disc), _parse_label(out, disc), _parse_titles(out)
+    if log is not None:
+        log.scan_dump(label, out)
     if media and not titles:
         # A disc with zero parseable titles means the info scan failed (e.g.
         # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.

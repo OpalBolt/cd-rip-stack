@@ -208,6 +208,24 @@ class TestRipLog:
         assert self._raw_path(tmp_path, log).exists()
         assert len(self._run_lines(tmp_path)) == 2  # started + FAIL(3) total
 
+    def test_scan_dump_survives_clean_exit(self, tmp_path):
+        """finish(0) deletes the raw log but never the scan dump — the dump
+        is the one log written before anyone knows a run will go wrong."""
+        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1), datetime(2024, 1, 15, 10, 30, 2)])
+        log.start()
+        log.raw("makemkvcon", "MSG: done")
+        log.scan_dump("ROGUE_ONE", "DRV:0,2,0,0,\"DVD-ROM\"\n")
+        log.finish(0)
+        assert not self._raw_path(tmp_path, log).exists()
+        dump = tmp_path / "logs" / "scan" / f"{log.run}_ROGUE_ONE.txt"
+        assert dump.read_text(encoding="utf-8") == 'DRV:0,2,0,0,"DVD-ROM"\n'
+
+    def test_scan_dump_labelless_run_gets_disc_name(self, tmp_path):
+        """An empty label (disc reported nothing) still dumps, as <run>_disc.txt."""
+        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0)])
+        log.scan_dump("", "TCOUNT:0\n")
+        assert (tmp_path / "logs" / "scan" / f"{log.run}_disc.txt").exists()
+
 
 class TestEnsureMounted:
     """NFS mount-on-demand tests."""

@@ -509,7 +509,7 @@ def rip_tv(args) -> None:
         if preamble.fast_scan and playalls:
             print("skive: fast scan found a play-all title — escalating to the full MakeMKV scan", file=sys.stderr)
             log.note("scan", "play-all detected — full-scan escalation")
-            _, _, titles_full = scan_disc(minlength, disc=preamble.disc)
+            _, _, titles_full = scan_disc(minlength, disc=preamble.disc, log=preamble.log)
             titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
             titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
             playalls = sum_disqualified(titles_info)
