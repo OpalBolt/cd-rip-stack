@@ -388,8 +388,11 @@ def split_combined(combined: Path, targets: dict[int, Path], season: int,
             cmd = ["ffmpeg", "-v", "error", "-ss", f"{start_s:.3f}",
                    "-i", str(combined), "-t", f"{end_s - start_s:.3f}",
                    "-map", "0", "-c", "copy", str(target)]
-            result = run(cmd, capture_output=True, text=True)
-            if result.returncode != 0 or not target.exists():
+            try:
+                result = run(cmd, capture_output=True, text=True)
+            except (OSError, subprocess.TimeoutExpired):
+                result = None
+            if result is None or result.returncode != 0 or not target.exists():
                 sweep()
                 log.note("split", f"skipped: ffmpeg failed on "
                          f"S{season:02d}E{e:02d} — partials deleted, "
@@ -399,5 +402,10 @@ def split_combined(combined: Path, targets: dict[int, Path], season: int,
         combined.unlink()
         log.note("split", f"{hi - lo + 1} episodes cut — combined deleted")
     except KeyboardInterrupt:
+        if len(cut) == hi - lo + 1 and not combined.exists():
+            # The unlink already happened: the split completed, only its note
+            # was pending — sweeping here would lose the only copy of the rip.
+            log.note("split", f"{hi - lo + 1} episodes cut — combined deleted")
+            return
         sweep()
         log.note("split", "interrupted — partials deleted, combined kept")

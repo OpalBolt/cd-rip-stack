@@ -576,3 +576,56 @@ def test_split_combined_piece_that_did_not_land_keeps_combined(
     assert combined.exists()
     notes = _split_notes(log)
     assert len(notes) == 1 and "ffmpeg failed on S01E01" in notes[0]
+
+
+def test_split_combined_missing_ffmpeg_sweeps_partials(tmp_path, monkeypatch):
+    """A cut that cannot even launch (missing/unexecutable ffmpeg raises
+    OSError from the run seam) is the same failure as a bad exit: partials
+    swept, combined kept, the ffmpeg-failed note, and the phase returns."""
+    _stage(monkeypatch, [""])
+    combined, targets = _split_paths(tmp_path)
+    log = Mock()
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "ffprobe":
+            return SimpleNamespace(returncode=0,
+                                   stdout=ffprobe_json(DOWNTON_STARTS,
+                                                       DOWNTON_DURATION),
+                                   stderr="")
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    split_combined(combined, targets, 1, 1, 3, DOWNTON_RUNTIMES, log, run=run)
+
+    assert not targets[1].exists()       # cut, then swept
+    assert not targets[2].exists()       # never landed
+    assert not targets[3].exists()       # never attempted
+    assert combined.exists()
+    notes = _split_notes(log)
+    assert len(notes) == 1
+    assert "ffmpeg failed on S01E01" in notes[0]
+
+
+def test_split_combined_interrupt_after_unlink_keeps_pieces(
+        tmp_path, monkeypatch):
+    """Ctrl+C landing between the combined file's unlink and the success note
+    must not sweep: every piece is cut and the combined file is already gone,
+    so the split completed — success note, pieces kept, phase returns."""
+    _stage(monkeypatch, [""])
+    combined, targets = _split_paths(tmp_path)
+    log = Mock()
+    real_unlink = Path.unlink
+
+    def interrupt_after_unlink(self, missing_ok=False):
+        real_unlink(self)
+        if self == combined:
+            raise KeyboardInterrupt()    # the signal arrives post-unlink
+
+    monkeypatch.setattr(Path, "unlink", interrupt_after_unlink)
+
+    split_combined(combined, targets, 1, 1, 3, DOWNTON_RUNTIMES, log,
+                   run=_split_run(DOWNTON_STARTS, DOWNTON_DURATION))
+
+    assert all(t.exists() for t in targets.values())
+    assert not combined.exists()
+    notes = _split_notes(log)
+    assert notes == ["3 episodes cut — combined deleted"]
