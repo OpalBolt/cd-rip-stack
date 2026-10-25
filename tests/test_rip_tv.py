@@ -71,12 +71,13 @@ def _gk_titles():
             TitleInfo(3, 11482, 1, "dan", "", False)]
 
 
-def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, staged_names=()):
+def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
+                staged_names=(), titles_arg="all"):
     """Drive rip_tv through season/range/confirm prompts over a temp stage.
 
     staged_names are created in the show's title folder before the run
-    (already-ripped episodes shape the pre-fill). Returns (rename_tv mock,
-    console mock, rc).
+    (already-ripped episodes shape the pre-fill). titles_arg is the -T flag
+    value ("all" rips everything). Returns (rename_tv mock, console mock, rc).
     """
     from skive.tmdb import TMDBPick
 
@@ -88,7 +89,7 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers, stag
 
     @dataclass
     class FakeArgs:
-        titles = "all"
+        titles = titles_arg
         extras = False
         tmdbid = None
         verified = True
@@ -134,6 +135,12 @@ def _table_texts(console) -> list[str]:
             plain.print(c.args[0])
             texts.append(plain.export_text())
     return texts
+
+
+def _captions(console) -> list[str]:
+    """Every printed line carrying the play-all-only split caption."""
+    return [str(c.args[0]) for c in console.print.call_args_list
+            if c.args and "play-all-only disc" in str(c.args[0])]
 
 
 def test_range_prefill_skips_staged_and_fills_disc(tmp_path, monkeypatch):
@@ -777,6 +784,85 @@ def test_fix_row_can_assign_playall_to_episode():
                                                             pass
 
     assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (5, 5)}
+
+
+# The play-all-only caption (ADR 0009): recomputed from the final map every
+# confirm-loop iteration, under the table, before the drive spins.
+def test_playall_only_caption_arms_on_fix_row(tmp_path, monkeypatch):
+    """A disc whose only title carries the whole season: the fix row `0=1-3`
+    declares the range and the caption appears under the confirm table,
+    naming the title and the episode range it carries."""
+    titles = [TitleInfo(0, 9643, 1, "dan", "", False)]
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, titles, episodes,
+        ["", "1", "0=1-3", ""])  # season, range 1, fix row arms it, Enter=rip
+
+    assert rc == 0
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 3)}
+    captions = _captions(console)
+    assert len(captions) == 1
+    assert "title 0" in captions[0]
+    assert "S01E01-E03" in captions[0]
+    assert "split after the rip" in captions[0]
+    # Under the table, before the ok? prompt.
+    prints = [c for c in console.print.call_args_list if c.args]
+    cap_idx = next(i for i, c in enumerate(prints)
+                   if "play-all-only disc" in str(c.args[0]))
+    tbl_idx = max(i for i, c in enumerate(prints) if isinstance(c.args[0], Table))
+    ok_idx = max(i for i, c in enumerate(prints)
+                 if str(c.args[0]).startswith("ok?"))
+    assert tbl_idx < cap_idx < ok_idx
+
+
+def test_playall_only_caption_disarms_on_n_reask(tmp_path, monkeypatch):
+    """The caption is recomputed every loop iteration: armed by the fix row,
+    disarmed again within one session by an `n` re-ask restating a single
+    episode for the lone title — the caption prints exactly once."""
+    titles = [TitleInfo(0, 9643, 1, "dan", "", False)]
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, titles, episodes,
+        ["", "1", "0=1-3", "n", "1", ""])  # fix row arms, n re-ask disarms, Enter=rip
+
+    assert rc == 0
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1)}
+    assert len(_captions(console)) == 1
+
+
+def test_playall_only_caption_hides_on_multi_title_disc(tmp_path, monkeypatch):
+    """The ordinary multi-title disc — double-free, play-all skipped — never
+    captions, whatever the table shows."""
+    episodes = [(e, f"ep{e}", rt) for e, rt in
+                ((1, 3932), (2, 3897), (3, 3653))]
+
+    _mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), episodes, ["", "", ""])
+
+    assert rc == 0
+    assert _captions(console) == []
+
+
+def test_playall_only_caption_on_title_selection(tmp_path, monkeypatch):
+    """A -T title selection that reduces the table to one eligible title
+    qualifies with no special case: the final map reads one ranged title and
+    the caption names it."""
+    titles = [TitleInfo(0, 3000, 1, "dan", "", False),
+              TitleInfo(1, 9643, 1, "dan", "", False)]
+    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, titles, episodes,
+        ["", "1", "1=1-3", ""], titles_arg="1")  # -T 1, range 1, fix row, Enter=rip
+
+
+    assert rc == 0
+    assert mock_rename_tv.call_args.args[3] == {1: (1, 3)}
+    captions = _captions(console)
+    assert len(captions) == 1
+    assert "title 1" in captions[0] and "S01E01-E03" in captions[0]
 
 
 # --- Fast scan: duration join + rename (ADR 0002, DVD half) ---

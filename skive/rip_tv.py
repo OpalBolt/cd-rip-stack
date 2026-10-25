@@ -25,7 +25,7 @@ from skive.validation import (
 from skive.tv_match import (
     tv_floor, sum_disqualified, parse_range, next_unstaged, assign_range,
     range_mismatch_note, range_past_end_note, apply_fixes, audit_cell,
-    playall_skip, guess_range,
+    playall_skip, playall_only, guess_range,
 )
 
 console = Console()
@@ -593,6 +593,14 @@ def rip_tv(args) -> None:
                 console.print(note)
             print_table(display, season, titles_info, assignment, ep_names, ep_runtimes,
                         playalls=playalls)
+            # Play-all-only caption (ADR 0009), recomputed from the final map
+            # every iteration: fix rows and `n` re-asks arm or disarm it
+            # before the drive spins.
+            lone = playall_only(titles_info, playalls, assignment)
+            if lone:
+                t, clo, chi = lone
+                console.print(f"title {t} carries S{season:02d}E{clo:02d}-E{chi:02d}"
+                              f" — play-all-only disc, split after the rip")
             console.print("ok? (Enter=rip, fixes like 3=7 / 1=1-2 / 2=e, n=episode range, c=clear staged, q=quit): ", end="")
             ans = Prompt.ask("") or ""
 

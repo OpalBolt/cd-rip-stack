@@ -5,8 +5,8 @@ import pytest
 from skive.tv_match import (
     parse_range, next_unstaged, assign_range, range_mismatch_note,
     range_past_end_note, parse_fix_rows, apply_fixes, map_str,
-    tv_floor, sum_disqualified, playall_skip, audit_ratio, audit_cell,
-    guess_range,
+    tv_floor, sum_disqualified, playall_skip, playall_only, audit_ratio,
+    audit_cell, guess_range,
 )
 
 
@@ -277,3 +277,36 @@ def test_playall_skip_all_rescued_or_pinned():
     today); every play-all pinned extra: all of it skips."""
     assert playall_skip({3, 4}, {3: (1, 2), 4: (5, 5)}) == set()
     assert playall_skip({3, 4}, {3: (0, 0), 4: (0, 0)}) == {3, 4}
+
+
+# The play-all-only trigger: one eligible title assigned a range (ADR 0009)
+def test_playall_only_fires():
+    """One eligible title whose final assignment is a range: the trigger
+    names the title and the range it carries."""
+    assert playall_only([(0, 9643, 1)], set(), {0: (1, 3)}) == (0, 1, 3)
+
+
+def test_playall_only_lone_eligible_beside_playall():
+    """The play-all set shrinks the pool: a ranged title beside a pinned
+    play-all is still the lone eligible title."""
+    titles = [(0, 9643, 1), (1, 3000, 1)]
+    assert playall_only(titles, {1}, {0: (2, 4), 1: (0, 0)}) == (0, 2, 4)
+
+
+def test_playall_only_disarm_two_eligible():
+    """Multi-title discs never fire — even when only one title carries a
+    range: a double on a multi-title disc stays a double (ADR 0009)."""
+    titles = [(0, 3000, 1), (1, 6200, 1)]
+    assert playall_only(titles, set(), {0: (1, 1), 1: (2, 3)}) is None
+    assert playall_only(titles, set(), {0: (0, 0), 1: (1, 3)}) is None
+
+
+def test_playall_only_disarm_single_episode():
+    """The lone eligible title assigned one episode is an ordinary disc."""
+    assert playall_only([(0, 3000, 1)], set(), {0: (2, 2)}) is None
+
+
+def test_playall_only_disarm_extra():
+    """The lone eligible title left extra — or unmapped — fires nothing."""
+    assert playall_only([(0, 3000, 1)], set(), {0: (0, 0)}) is None
+    assert playall_only([(0, 3000, 1)], set(), {}) is None

@@ -1,6 +1,6 @@
 """TV assignment math: the TV floor, play-all disqualification, range parsing,
 position assignment, fix-row parsing and application, the episode map string,
-and the ratio audit."""
+the play-all-only trigger, and the ratio audit."""
 
 import re
 import sys
@@ -75,6 +75,34 @@ def playall_skip(playalls: set[int], assignment: dict[int, tuple[int, int]]) -> 
         Set of title numbers to leave out of the rip selection
     """
     return {t for t in playalls if assignment.get(t, (0, 0)) == (0, 0)}
+
+
+def playall_only(titles: list[tuple[int, int, int]], playalls: set[int],
+                 assignment: dict[int, tuple[int, int]]) -> tuple[int, int, int] | None:
+    """The play-all-only trigger: the lone eligible title carrying a range.
+
+    Fires — returning (title, lo, hi) — when exactly one eligible title
+    (floored titles minus play-alls) remains and its final assignment is a
+    multi-episode range (lo >= 1, hi > lo): the disc's episodes live as
+    chapter ranges inside one title (ADR 0009). None for every disarming
+    shape — two or more eligible titles, a lone title assigned a single
+    episode, the lone title extra.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        playalls: Title numbers disqualified as play-alls
+        assignment: Final title -> (lo, hi) mapping (post fix rows)
+
+    Returns:
+        (title_number, lo, hi) of the lone ranged title, or None
+    """
+    eligible = [t for t, _, _ in titles if t not in playalls]
+    if len(eligible) != 1:
+        return None
+    lo, hi = assignment.get(eligible[0], (0, 0))
+    if lo >= 1 and hi > lo:
+        return (eligible[0], lo, hi)
+    return None
 
 
 def parse_range(s: str) -> tuple[int, int] | None:
