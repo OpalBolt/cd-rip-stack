@@ -37,7 +37,7 @@ A disc title that can become an episode: at or above the TV floor (`max(RIP_MINL
 _Avoid_: candidate title
 
 **Play-all title**:
-A disc title whose duration equals the sum of a subset of other eligible titles (±120s) — a compilation, never an episode, never ripped: fast-scan detection escalates to the full scan (ADR 0002) so the rip selects around it, and a fix row assigning it an episode still rips it.
+A disc title whose duration equals the sum of a subset of other eligible titles (±120s) — a compilation, never an episode, never ripped: fast-scan detection escalates to the full scan (ADR 0002) so the rip selects around it, and a fix row assigning it an episode still rips it. The lone title of a play-all-only disc never matches this sum — it is not this term.
 _Avoid_: compilation, sum title
 
 **Season**:
@@ -64,8 +64,16 @@ _Avoid_: mapping string
 The library folder holding one season's episodes: `Season 01` under the show's `library/tv/` dir. Season 0's folder is named `Specials`.
 
 **Double episode**:
-Two episodes on one disc title. Kept as one file, named `S01E01-E02`. Never split.
+Two episodes on one disc title. Kept as one file, named `S01E01-E02` — never split, except by the Chapter split when the disc is a play-all-only disc.
 _Avoid_: split episode
+
+**Play-all-only disc**:
+A disc whose only eligible title carries every episode as chapter ranges — no per-episode titles exist to sum, so play-all detection never flags it; the shape itself (one eligible title, assigned a range) is the signal. Ripped as one title, then divided by the Chapter split.
+_Avoid_: one-title disc, chapter disc
+
+**Chapter split**:
+The post-rip divide of a play-all-only disc's combined file into per-episode files. Chapter starts graded against summed TMDB runtimes suggest each boundary; a table after the rip confirms them (`2=14` = episode 2 starts at chapter 14, 1-based); `ffmpeg -c copy` cuts losslessly at the keyframe-aligned chapters; the combined file is deleted once every piece exists. A declined table, a missing runtime, or any failure keeps the combined `_S01E01-E03` file — the split never loses bytes.
+_Avoid_: episode split, cutting
 
 **Main feature**:
 The staged title chosen as the film itself — the candidate main nearest TMDB runtime when one clearly matches, or the pick recorded in the validation file when several do; biggest-bytes is only the fallback for legacy folders and shorts. Movies only — never computed for a TV show.
