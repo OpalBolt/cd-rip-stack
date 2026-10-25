@@ -64,7 +64,18 @@ def test_validate_dispatches_to_the_report_only_runner(monkeypatch):
 
     args.func(args)
 
-    runner.assert_called_once_with()
+    runner.assert_called_once_with(json_=False, issues=False, fix=False)
+
+
+def test_validate_json_issues_and_fix_flags_pass_through(monkeypatch):
+    """--json, --issues and --fix compose and reach the runner as kwargs."""
+    runner = Mock()
+    monkeypatch.setattr("skive.validation.run_validate", runner)
+    args = build_parser().parse_args(["validate", "--json", "--issues", "--fix"])
+
+    args.func(args)
+
+    runner.assert_called_once_with(json_=True, issues=True, fix=True)
 
 
 def test_validate_clean_library_exits_zero(tmp_path, monkeypatch, capsys):
@@ -138,4 +149,4 @@ def test_validate_doc_folder_walk_needs_no_network(tmp_path, monkeypatch, capsys
 
     out = capsys.readouterr().out
     assert "X (2000)" in out
-    assert "duration unreadable" in out
+    assert "unreadable" in out

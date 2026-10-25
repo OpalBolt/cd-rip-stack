@@ -8,7 +8,10 @@ the recorded main, the run that produced it. The transcoder appends its
 encode results; nothing else in the pipeline writes the document. Pure
 functions and file IO — the flows own every prompt and table. The library
 checker (skive validate) is report-only: it walks the share, prints one
-findings table, touches nothing, exits 0.
+findings table (or JSON via --json, or the issues-only view with its
+action plan via --issues), exits 0. The one exception: --fix renames
+staging-labelled extras files to the " - Extra NN" form — the safe automatic
+fix; everything else stays a lead for the human.
 """
 
 import json
@@ -391,10 +394,16 @@ def merge_tv_document(old: dict, doc: dict) -> dict:
 
 console = Console()
 
-STAGING_NAME = re.compile(r"_t\d+")
-"""A leftover staging label in a library file name — the MakeMKV junk tags and
-staged `_tNN` title numbers that must never survive into the library (the
-Mamma Mia extras pollution; CONTEXT.md: Library checker)."""
+STAGING_NAME = re.compile(r"_[te]\d+")
+"""A leftover staging label in a library file name — the MakeMKV junk tags
+and staged `_tNN` title numbers (and the older `_eNN` extras labels) that
+must never survive into the library (the Mamma Mia extras pollution;
+CONTEXT.md: Library checker)."""
+
+STAGING_LABEL = re.compile(r"^(?P<base>.+)_[te](?P<num>\d+)(?P<part>\.p\d+)?$")
+"""A staging-labelled stem split for renaming: `<base>_<tNN|eNN>[.pN]` — the
+fixer's parse, greedy so the LAST label wins (a base may itself contain
+underscores)."""
 
 SEASON_DIR = re.compile(r"^(?:Season (\d{2,})|Specials)$")
 """A TV season folder under a show folder; `Specials` is season 0 — the folder
@@ -414,21 +423,73 @@ is one file, never split (CONTEXT.md: Double episode) — its one ratio row
 covers every episode in the range."""
 
 
+PAL_NTSC_SPEEDUP = 0.0417
+"""The PAL-vs-NTSC runtime disparity (25/24 fps ≈ 4.17%): PAL discs run this
+much shorter than the 24fps runtime TMDB records, and RATIO_GREEN already
+absorbs it. A ratio beyond the band by MORE than this reads red — no
+standards conversion explains it (the checker's display tier; the document
+record keeps green/yellow)."""
+
+
+def ratio_severity(ratio: float) -> str:
+    """The checker's tier for an exact ratio: green inside RATIO_GREEN,
+    yellow outside it, red outside by more than the PAL-vs-NTSC speedup.
+
+    Args:
+        ratio: The exact disc÷TMDB duration quotient
+
+    Returns:
+        "green", "yellow" or "red"
+    """
+    if RATIO_GREEN[0] <= ratio <= RATIO_GREEN[1]:
+        return "green"
+    if RATIO_GREEN[0] - PAL_NTSC_SPEEDUP <= ratio <= RATIO_GREEN[1] + PAL_NTSC_SPEEDUP:
+        return "yellow"
+    return "red"
+
+
+def band_delta(ratio: float) -> float:
+    """How far an exact ratio sits from the norm band, 2dp: inside it the
+    margin to the nearest edge; outside it the signed overshoot — negative
+    short of the band, positive over it.
+
+    Args:
+        ratio: The exact disc÷TMDB duration quotient
+
+    Returns:
+        The 2dp signed distance from RATIO_GREEN
+    """
+    lo, hi = RATIO_GREEN
+    if ratio < lo:
+        return round(ratio - lo, 2)
+    if ratio > hi:
+        return round(ratio - hi, 2)
+    return round(min(ratio - lo, hi - ratio), 2)
+
+
 class Finding(NamedTuple):
     """One row of the `skive validate` report.
 
     folder is the title folder as walked ("movies/Mamma Mia! (2008)"); check
     names the rule ("ratio", "staging name", "missing episodes", "duplicate
     id", "unidentified", "unreadable"); detail is the one-line human text.
-    band is set on ratio rows only ("green"/"yellow", the shared band's
-    verdict on that file) and None elsewhere; a ratio row with band None is a
-    blank cell — a file graded against an unknown runtime, never yellow.
+    band is set on ratio rows only — "green" inside RATIO_GREEN, "yellow"
+    outside it, "red" outside by more than the PAL-vs-NTSC speedup — and None
+    elsewhere; a ratio row with band None is a blank cell — a file graded
+    against an unknown runtime, never yellow. path is the folder-relative
+    file on file-scoped rows (ratio, staging name, unreadable); ratio is the
+    row's 2dp disc÷TMDB quotient; delta is the 2dp amount inside the norm
+    (the margin to the nearest edge) or outside it (negative short, positive
+    over).
     """
 
     folder: str
     check: str
     detail: str
     band: str | None = None
+    path: str | None = None
+    ratio: float | None = None
+    delta: float | None = None
 
 
 def probe_duration(path: Path, run=subprocess.run) -> int | None:
@@ -465,9 +526,43 @@ def staging_name_findings(folder: Path, rel: str) -> list[Finding]:
     Returns:
         One "staging name" finding per offending file, sorted by path
     """
-    return [Finding(rel, "staging name", str(p.relative_to(folder)))
+    return [Finding(rel, "staging name", str(p.relative_to(folder)),
+                    path=str(p.relative_to(folder)))
             for p in sorted(folder.rglob("*"))
             if p.is_file() and STAGING_NAME.search(p.name)]
+
+
+def fix_staging_names(root: Path) -> list[tuple[Path, Path]]:
+    """The --fix arm: rename every extras/ file wearing a `_tNN`/`_eNN`
+    staging label to the pipeline's own `<base> - Extra NN[.pN].mkv` form —
+    the label's number, rolled forward past names already taken (makemkv's
+    staging pattern). Staging-labelled files elsewhere (a stray at folder
+    root) are left in place: never guessed, the report keeps flagging them.
+    Idempotent — a clean tree renames nothing.
+
+    Args:
+        root: The library root (movies/ and tv/ walked for extras/ dirs)
+
+    Returns:
+        The (old, new) renames applied, in walk order
+    """
+    renames: list[tuple[Path, Path]] = []
+    for extras in sorted(p for p in root.rglob("extras") if p.is_dir()):
+        for p in sorted(extras.iterdir()):
+            if not p.is_file():
+                continue
+            m = STAGING_LABEL.match(p.stem)
+            if m is None:
+                continue
+            base, num = m.group("base"), int(m.group("num"))
+            part = m.group("part") or ""
+            n = num
+            while (extras / f"{base} - Extra {n:02d}{part}.mkv").exists():
+                n += 1
+            target = extras / f"{base} - Extra {n:02d}{part}.mkv"
+            p.rename(target)
+            renames.append((p, target))
+    return renames
 
 
 def _doc_identity(block: object) -> tuple[str, str, int | None] | None:
@@ -497,13 +592,17 @@ def _ratio_finding(rel: str, relpath: str, dur_s: int,
     """
     graded = grade_main(dur_s, runtime_s)
     if graded is None:
-        return Finding(rel, "ratio", relpath)
+        return Finding(rel, "ratio", relpath, path=relpath)
     label = f"  {ep_label}" if ep_label else ""
-    return Finding(rel, "ratio", f"{relpath}{label}  {graded[0]:.2f}", graded[1])
+    exact = graded[0]
+    return Finding(rel, "ratio", f"{relpath}{label}  {exact:.2f}",
+                   ratio_severity(exact), path=relpath,
+                   ratio=round(exact, 2), delta=band_delta(exact))
 
 
 def _unreadable_finding(rel: str, relpath: str) -> Finding:
-    return Finding(rel, "unreadable", f"{relpath}: duration unreadable")
+    return Finding(rel, "unreadable", f"{relpath}: duration unreadable",
+                   path=relpath)
 
 
 def _double_runtime(runtimes: dict[int, int | None], lo: int, hi: int) -> int | None:
@@ -821,9 +920,181 @@ def validate_library(root: Path, *, run=subprocess.run, search=None,
     return findings
 
 
+def is_issue(finding: Finding) -> bool:
+    """The issues-only filter: every non-ratio check is an issue; a ratio
+    row is an issue when off-band (yellow/red) or when it is a graded
+    `extras/` file — a full-length extra beside the main, the two-
+    candidates lead, even when its own grade reads green.
+
+    Args:
+        finding: One report row
+
+    Returns:
+        True when the row belongs in the issues view
+    """
+    if finding.check != "ratio":
+        return True
+    if finding.band not in ("green", None):
+        return True
+    return bool(finding.path and finding.path.startswith("extras/"))
+
+
+def _ratio_action(r: Finding) -> str:
+    """One manual-review sentence for a ratio issue row."""
+    where = r.path or r.detail
+    is_movie_main = r.folder.startswith("movies/") \
+        and not (r.path or "").startswith("extras/")
+    reading = f"{'main ' if is_movie_main else ''}{where} reads {r.ratio:.2f}"
+    if r.band == "green":  # a graded extra inside the norm
+        return (f"{reading} — a full-length extra beside the main (the "
+                f"two-candidates signature); confirm the right title is the main")
+    off = f"{abs(r.delta):.0%} short" if r.delta < 0 else f"{abs(r.delta):.0%} over"
+    extra = (r.path or "").startswith("extras/")
+    if r.band == "red":
+        if extra:
+            return (f"{reading} ({off}) — a feature-length extra far off the "
+                    f"film runtime; check which disc title this is")
+        return (f"{reading} ({off}) — beyond what any PAL-vs-NTSC conversion "
+                f"or cut difference explains; suspect a partial/broken encode "
+                f"or the wrong file as main: verify against validation.json "
+                f"and re-rip if needed")
+    if extra:
+        return (f"{reading} ({off}) — a feature-length extra off the film "
+                f"runtime; check which disc title this is")
+    if r.delta < 0:
+        return (f"{reading} ({off}) — just outside the norm; check the TMDB "
+                f"runtime names the intended cut before re-ripping")
+    return (f"{reading} ({off}) — likely an extended cut vs the TMDB "
+            f"runtime; confirm which cut you want")
+
+
+def _row_recommendation(f: Finding) -> str:
+    """The one action sentence for a single issue row (the JSON embeds it
+    per finding; the folder plan reuses it per row).
+
+    Args:
+        f: An issue row (is_issue)
+
+    Returns:
+        The sentence
+    """
+    if f.check == "ratio":
+        return _ratio_action(f)
+    if f.check == "unreadable":
+        return f"{f.path or f.detail}: duration unreadable — check the file"
+    if f.check == "missing episodes":
+        return f"{f.detail} — re-check the episode map or re-rip the disc"
+    if f.check == "duplicate id":
+        return f"{f.detail} — deduplicate the folders"
+    if f.check == "unidentified":
+        return (f"{f.detail} — identify the folder manually (re-rip with a "
+                f"TMDB match or add validation.json)")
+    if f.check == "staging name":
+        return (f"rename {f.path or f.detail} to the ` - Extra NN` form "
+                f"(`skive validate --fix` does the extras/ files)")
+    return f.detail
+
+
+def _folder_actions(rows: list[Finding]) -> list[str]:
+    """The action lines for one folder's issues: the per-row sentences in
+    walk order, staging names as one counted line pointing at --fix."""
+    actions = [_row_recommendation(r) for r in rows
+               if r.check != "staging name"]
+    staging = [r for r in rows if r.check == "staging name"]
+    if staging:
+        actions.append(f"{len(staging)} file(s) still carry `_tNN` staging "
+                       f"labels — run `skive validate --fix` to rename them")
+    return actions
+
+
+def recommendations(findings: list[Finding]) -> list[dict]:
+    """The manual-review action plan: one entry per folder carrying at least
+    one issue, worst priority first (red, then yellow, then note), walk
+    order within a tier. Each entry is {"folder", "priority", "actions"}.
+
+    Args:
+        findings: The walk's findings (unfiltered — the issues filter runs here)
+
+    Returns:
+        The plan entries, worst first
+    """
+    by_folder: dict[str, list[Finding]] = {}
+    for f in findings:
+        if is_issue(f):
+            by_folder.setdefault(f.folder, []).append(f)
+    plan = []
+    for folder, rows in by_folder.items():
+        prio = "note"
+        for r in rows:
+            if r.check == "ratio" and r.band == "red":
+                prio = "red"
+            elif r.check == "ratio" and r.band == "yellow" and prio != "red":
+                prio = "yellow"
+            elif r.check == "ratio" and r.band == "green" \
+                    and prio not in ("red", "yellow"):
+                prio = "yellow"  # the full-length-extra lead still asks
+        plan.append({"folder": folder, "priority": prio,
+                     "actions": _folder_actions(rows)})
+    plan.sort(key=lambda e: {"red": 0, "yellow": 1, "note": 2}[e["priority"]])
+    return plan
+
+
+def _band_style(band: str | None) -> str | None:
+    """The rich style for a band: red reads bold — the alarm tier."""
+    return "bold red" if band == "red" else band
+
+
+def _delta_cell(f: Finding) -> object:
+    """The Δ cell: the signed 0.xx amount outside the norm (− short, +
+    over), or the plain margin when inside it; empty on rows with no grade.
+    Compact by design — the worded phrasing lives in the action plan."""
+    if f.ratio is None or f.delta is None:
+        return ""
+    if f.band != "green":
+        return Text(f"{f.delta:+.2f}", style=_band_style(f.band))
+    return Text(f"in {f.delta:.2f}", style="green")
+
+
+def _collapse_staging(issues: list[Finding]) -> list[Finding]:
+    """One staging-name row per folder ("N files with _tNN names, e.g. …"),
+    at the folder's first staging position — hundreds of per-file rows
+    otherwise drown the issues they accompany."""
+    counts: dict[str, list[str]] = {}
+    for f in issues:
+        if f.check == "staging name":
+            counts.setdefault(f.folder, []).append(f.path or f.detail)
+    collapsed: list[Finding] = []
+    emitted: set[str] = set()
+    for f in issues:
+        if f.check != "staging name":
+            collapsed.append(f)
+        elif f.folder not in emitted:
+            paths = counts[f.folder]
+            collapsed.append(Finding(f.folder, "staging name",
+                                     f"{len(paths)} files with _tNN names, "
+                                     f"e.g. {paths[0]}"))
+            emitted.add(f.folder)
+    return collapsed
+
+
+def _findings_table(findings: list[Finding]) -> Table:
+    """The shared rich table (repo print_table style): folder, check,
+    detail, and the Δ-from-norm column on graded rows."""
+    table = Table()
+    table.add_column("folder", style="cyan")
+    table.add_column("check", style="yellow", width=17)
+    table.add_column("detail")
+    table.add_column("Δ", width=8)
+    for f in findings:
+        detail = Text(f.detail, style=_band_style(f.band)) \
+            if f.band else f.detail
+        table.add_row(f.folder, f.check, detail, _delta_cell(f))
+    return table
+
+
 def print_findings(findings: list[Finding], root: Path) -> None:
-    """The ONE rich table (repo print_table style): every graded ratio, every
-    finding, in walk order. Prints only — nothing here writes or deletes.
+    """The ONE rich table: every graded ratio, every finding, in walk order.
+    Prints only — nothing here writes or deletes.
 
     Args:
         findings: The walk's findings
@@ -833,30 +1104,113 @@ def print_findings(findings: list[Finding], root: Path) -> None:
     if not findings:
         console.print("no findings")
         return
-    table = Table()
-    table.add_column("folder", style="cyan")
-    table.add_column("check", style="yellow", width=17)
-    table.add_column("detail")
-    for f in findings:
-        detail = Text(f.detail, style=f.band) if f.band else f.detail
-        table.add_row(f.folder, f.check, detail)
-    console.print(table)
+    console.print(_findings_table(findings))
 
 
-def run_validate(videos_root: Path | None = None, *,
-                 run=subprocess.run) -> None:
+def print_issues(findings: list[Finding], root: Path) -> None:
+    """The issues-only view: off-band ratios and every other finding (green
+    mains stay out, staging names collapse to one row per folder), then the
+    per-folder action plan. Prints only — nothing here writes or deletes.
+
+    Args:
+        findings: The walk's findings (unfiltered — the filter runs here)
+        root: The share root the walk covered
+    """
+    issues = [f for f in findings if is_issue(f)]
+    console.print(f"\nLibrary validation — {root} (issues only)")
+    if not issues:
+        console.print("no issues")
+        return
+    console.print(_findings_table(_collapse_staging(issues)))
+    console.print("\n[bold]Manual review — action plan[/bold]")
+    for entry in recommendations(findings):
+        console.print(f"  [bold]{entry['folder']}[/bold] — {entry['priority']}")
+        for action in entry["actions"]:
+            console.print(f"    • {action}")
+
+
+def json_report(findings: list[Finding], root: Path, *, issues: bool = False) -> dict:
+    """The report as data: the band definitions, summary counts, every
+    finding row (parsed ratio/delta/band), and the action plan — the same
+    data the tables show, for anything that consumes it downstream.
+
+    Args:
+        findings: The walk's findings
+        root: The library root the walk covered
+        issues: Filter to issue rows only (is_issue), like --issues
+
+    Returns:
+        The report dict; callers serialize with json.dumps
+    """
+    rows = [f for f in findings if not issues or is_issue(f)]
+    ratio_counts = {"green": 0, "yellow": 0, "red": 0, "blank": 0}
+    other: dict[str, int] = {}
+    for f in rows:
+        if f.check == "ratio":
+            ratio_counts[f.band or "blank"] += 1
+        else:
+            other[f.check] = other.get(f.check, 0) + 1
+    return {
+        "root": str(root),
+        "ratio_band": {"norm": list(RATIO_GREEN),
+                       "red_beyond": [round(RATIO_GREEN[0] - PAL_NTSC_SPEEDUP, 4),
+                                      round(RATIO_GREEN[1] + PAL_NTSC_SPEEDUP, 4)]},
+        "summary": {"findings": len(rows), "ratio": ratio_counts,
+                    "other": other},
+        "findings": [{"folder": f.folder, "check": f.check, "path": f.path,
+                      "detail": f.detail, "band": f.band, "ratio": f.ratio,
+                      "delta": f.delta,
+                      "recommendation": _row_recommendation(f) if is_issue(f)
+                      else None} for f in rows],
+        "recommendations": recommendations(findings),
+    }
+
+
+def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
+                 json_: bool = False, issues: bool = False,
+                 fix: bool = False) -> None:
     """The `skive validate` entry: resolve the share root ($VIDEOS_MOUNT, else
-    /mnt/videos), walk its library/, print the table. Report-only, exit 0
-    always — findings are leads, not verdicts; a missing library warns
-    instead of walking the wrong tree.
+    /mnt/videos), optionally apply the safe automatic fix (--fix renames
+    staging-labelled extras files), then walk its library/ and print — the
+    one table by default, the issues view with --issues, JSON with --json
+    (the flags compose: --json --issues emits the filtered report; --fix
+    adds a "fixed" list and the walk reflects the applied renames).
+    Findings are leads, not verdicts; a missing library warns instead of
+    walking the wrong tree.
 
     Args:
         videos_root: Share root override (tests); None reads $VIDEOS_MOUNT
         run: subprocess.run callable for the ffprobe probes
+        json_: Emit the report as JSON instead of a table
+        issues: Show only the issues plus the action plan (or filter the JSON)
+        fix: Apply the staging-name renames before reporting
     """
     share = videos_root or Path(os.environ.get("VIDEOS_MOUNT", "/mnt/videos"))
     library = share / "library"
     if not library.is_dir():
-        print(f"skive: validate: no library/ under {share}", file=sys.stderr)
+        message = f"no library/ under {share}"
+        if json_:
+            print(json.dumps({"root": str(library), "error": message,
+                              "findings": [], "recommendations": []}, indent=2))
+        else:
+            print(f"skive: validate: {message}", file=sys.stderr)
         return
-    print_findings(validate_library(library, run=run), library)
+    renames = fix_staging_names(library) if fix else []
+    findings = validate_library(library, run=run)
+    if json_:
+        report = json_report(findings, library, issues=issues)
+        if fix:
+            report["fixed"] = [{"from": str(o.relative_to(library)),
+                                "to": str(n.relative_to(library))}
+                               for o, n in renames]
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+    if renames:
+        console.print(f"\nFixed — {len(renames)} staging label(s) renamed:")
+        for old, new in renames:
+            console.print(f"  {old.relative_to(library)} → "
+                          f"{new.relative_to(library)}")
+    if issues:
+        print_issues(findings, library)
+    else:
+        print_findings(findings, library)

@@ -105,7 +105,7 @@ A movie-rip title at or above the main floor (2400 s). One candidate near the TM
 _Avoid_: main title, feature-length title
 
 **Library checker**:
-The report-only consistency pass over `library/` (`skive validate`): durations vs TMDB, duplicate ids, stray staging names, missing episodes. Touches nothing.
+The consistency pass over `library/` (`skive validate`): durations vs TMDB, duplicate ids, stray staging names (`_tNN` and old `_eNN` labels), missing episodes. Ratio rows carry a severity — red once the deviation exceeds what a PAL-vs-NTSC conversion explains — and a Δ-from-norm value. `--json` emits the report as data; `--issues` shows only the problems plus a per-folder action plan. Report-only except `--fix`, the one mutation: it renames staging-labelled `extras/` files to the ` - Extra NN` form.
 _Avoid_: lint, audit (that name belongs to the ratio audit)
 
 ### Subtitles

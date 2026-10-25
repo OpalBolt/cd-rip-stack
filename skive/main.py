@@ -33,7 +33,7 @@ def cmd_sync_sd(args):
 
 def cmd_validate(args):
     from skive.validation import run_validate
-    run_validate()
+    run_validate(json_=args.json, issues=args.issues, fix=args.fix)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -99,6 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
     # validate — report-only library checker: findings are leads, exit 0 always
     validate_parser = subparsers.add_parser("validate",
                                             help="report library findings (read-only, never changes anything)")
+    validate_parser.add_argument("--json", action="store_true",
+                                 help="emit the report as JSON instead of the table")
+    validate_parser.add_argument("--issues", action="store_true",
+                                 help="only the issues (off-band ratios, full-length extras, every other check) "
+                                      "plus a per-folder action plan")
+    validate_parser.add_argument("--fix", action="store_true",
+                                 help="apply the safe automatic fix: rename staging-labelled extras files "
+                                      "to the ' - Extra NN' form (report-only without it)")
     validate_parser.set_defaults(func=cmd_validate)
 
     return parser
