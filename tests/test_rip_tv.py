@@ -1321,23 +1321,28 @@ def test_post_rip_writes_probed_rows_and_identity_block(tmp_path):
                         {1: 4140, 2: 4080}, run=fake_run)
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert list(doc) == ["tmdb", "volume_label", "run", "episodes", "encodes"]
-    assert doc["tmdb"] == {"id": "5", "type": "tv", "title": "Show (2000)", "season": 1}
-    assert doc["volume_label"] == "SHOW_S2"
-    assert doc["run"] == "newrun1"
-    assert doc["episodes"] == [
-        {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 0, "dur_s": 3930,
-         "runtime_s": 4140, "ratio": 0.95, "band": "green"},
-        {"ep": 2, "file": "Show (2000)_S01E02.mkv", "t": 1, "dur_s": 3895,
-         "runtime_s": 4080, "ratio": 0.95, "band": "green"},
-    ]
+    assert list(doc) == ["tmdb", "seasons", "encodes"]
+    assert doc["tmdb"] == {"id": "5", "type": "tv", "title": "Show (2000)"}
+    assert doc["seasons"] == [{
+        "season": 1,
+        "episodes": [
+            {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 0, "dur_s": 3930,
+             "runtime_s": 4140, "ratio": 0.95, "band": "green"},
+            {"ep": 2, "file": "Show (2000)_S01E02.mkv", "t": 1, "dur_s": 3895,
+             "runtime_s": 4080, "ratio": 0.95, "band": "green"}],
+        "discs": [{"volume_label": "SHOW_S2", "run": "newrun1",
+                   "staged": [1, 2]}],  # this run's map; 9=extra never stages
+    }]
     assert doc["encodes"] == []
     log.note.assert_any_call("validation", "2 episodes, 0 yellow")
 
 
 def test_post_rip_double_records_lo_extra_and_junk_skipped(tmp_path):
-    """A double (S01E05-E06) records one row under its lo episode; extras
-    (" - Extra NN") and junk-labeled files never match the episode shape."""
+    """A double (S01E05-E06) records one row under its lo episode, graded
+    against the range's summed runtime (a healthy double reads 1.00, never a
+    false 2.00); extras (" - Extra NN") and junk-labeled files never match
+    the episode shape; the disc entry's staged list expands the double to
+    both episodes."""
     import json
     pre, _log = _tv_preamble_for(tmp_path)
     pre.title_dir.mkdir()
@@ -1346,13 +1351,16 @@ def test_post_rip_double_records_lo_extra_and_junk_skipped(tmp_path):
     (pre.title_dir / "Show (2000)_t00.mkv").write_bytes(b"x")
 
     post_rip_validation(pre, 1, {0: (5, 6)}, {5: 2580, 6: 2580},
-                        run=Mock(return_value=Mock(stdout="2578\n")))
+                        run=Mock(return_value=Mock(stdout="5160\n")))
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["episodes"] == [
-        {"ep": 5, "file": "Show (2000)_S01E05-E06.mkv", "t": 0, "dur_s": 2578,
-         "runtime_s": 2580, "ratio": 1.0, "band": "green"},
+    season = doc["seasons"][0]
+    assert season["episodes"] == [
+        {"ep": 5, "file": "Show (2000)_S01E05-E06.mkv", "t": 0, "dur_s": 5160,
+         "runtime_s": 5160, "ratio": 1.0, "band": "green"},
     ]
+    assert season["discs"] == [{"volume_label": "SHOW_S2", "run": "newrun1",
+                                "staged": [5, 6]}]
 
 
 def test_post_rip_fast_scan_rows_record_t_none(tmp_path):
@@ -1368,7 +1376,7 @@ def test_post_rip_fast_scan_rows_record_t_none(tmp_path):
                         run=Mock(return_value=Mock(stdout="3930\n")))
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["episodes"][0]["t"] is None
+    assert doc["seasons"][0]["episodes"][0]["t"] is None
 
 
 def test_post_rip_unknown_runtime_and_yellow_band(tmp_path):
@@ -1388,7 +1396,7 @@ def test_post_rip_unknown_runtime_and_yellow_band(tmp_path):
     post_rip_validation(pre, 1, {0: (1, 1), 1: (2, 2)}, {1: 0, 2: 4140}, run=fake_run)
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    by_ep = {r["ep"]: r for r in doc["episodes"]}
+    by_ep = {r["ep"]: r for r in doc["seasons"][0]["episodes"]}
     assert by_ep[1]["runtime_s"] is None and by_ep[1]["band"] is None
     assert by_ep[2]["ratio"] == 1.45 and by_ep[2]["band"] == "yellow"
     log.note.assert_any_call("validation", "2 episodes, 1 yellow")
@@ -1406,16 +1414,18 @@ def test_post_rip_unreadable_duration_still_writes(tmp_path, capsys):
                         run=Mock(return_value=Mock(stdout="")))
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["episodes"] == [{"ep": 1, "file": "Show (2000)_S01E01.mkv",
-                                "t": 0, "dur_s": None, "runtime_s": 4140,
-                                "ratio": None, "band": None}]
+    assert doc["seasons"][0]["episodes"] == [
+        {"ep": 1, "file": "Show (2000)_S01E01.mkv",
+         "t": 0, "dur_s": None, "runtime_s": 4140,
+         "ratio": None, "band": None}]
     assert "cannot read duration of Show (2000)_S01E01.mkv" in capsys.readouterr().err
 
 
 def test_post_rip_rerip_same_season_merges_replaces_and_keeps(tmp_path):
-    """Re-rip of the next disc, same season: this run's rows replace the
-    episodes they record, episodes this disc didn't carry stay recorded, the
-    latest run and label win."""
+    """Re-rip of the next disc, same season (an old one-season document on
+    disk): this run's rows replace the episodes they record, episodes this
+    disc didn't carry stay recorded, this run's disc entry appends to the
+    migrated season's empty index."""
     import json
     pre, _log = _tv_preamble_for(tmp_path)
     pre.title_dir.mkdir()
@@ -1434,12 +1444,15 @@ def test_post_rip_rerip_same_season_merges_replaces_and_keeps(tmp_path):
                         run=Mock(return_value=Mock(stdout="3930\n")))
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["run"] == "newrun1" and doc["volume_label"] == "SHOW_S2"
-    assert [(r["ep"], r["dur_s"], r["t"]) for r in doc["episodes"]] == [
+    assert [s["season"] for s in doc["seasons"]] == [1]
+    season = doc["seasons"][0]
+    assert [(r["ep"], r["dur_s"], r["t"]) for r in season["episodes"]] == [
         (3, 3840, 9),  # episode this disc didn't carry — kept as recorded
         (1, 3930, 0),  # replaced by this run's row
         (2, 3930, 1),  # this run's new episode appended
     ]
+    assert season["discs"] == [{"volume_label": "SHOW_S2", "run": "newrun1",
+                                "staged": [1, 2]}]
 
 
 def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
@@ -1461,32 +1474,38 @@ def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
                              "existing validation.json names a different show — kept")
 
 
-def test_post_rip_same_id_different_season_refuses_with_shortcut_note(tmp_path, capsys):
-    """One season per document: the same show's season-2 record refuses to
-    merge a season-1 rip — stderr note, logged with the shortcut, old file
-    kept byte-for-byte."""
+def test_post_rip_second_season_merges_into_show_document(tmp_path):
+    """The same show's second season merges into the folder's document: the
+    seasons list holds both, sorted, each season keeping its own rows and
+    disc entry (the old one-season-per-document refusal is gone — the
+    Downton Abbey case)."""
     import json
     pre, log = _tv_preamble_for(tmp_path)
     pre.title_dir.mkdir()
-    old_text = json.dumps({"tmdb": {"id": "5", "type": "tv",
-                                    "title": "Show (2000)", "season": 2},
-                           "volume_label": "S2", "run": "oldrun1",
-                           "episodes": [], "encodes": []})
-    path = pre.title_dir / "validation.json"
-    path.write_text(old_text, encoding="utf-8")
+    old = json.dumps({
+        "tmdb": {"id": "5", "type": "tv", "title": "Show (2000)", "season": 2},
+        "volume_label": "S2", "run": "oldrun1",
+        "episodes": [{"ep": 1, "file": "Show (2000)_S02E01.mkv", "t": 0,
+                      "dur_s": 3900, "runtime_s": 4140, "ratio": 0.94,
+                      "band": "green"}],
+        "encodes": []})
+    (pre.title_dir / "validation.json").write_text(old, encoding="utf-8")
     (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
 
     post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
                         run=Mock(return_value=Mock(stdout="3930\n")))
 
-    assert path.read_text(encoding="utf-8") == old_text
-    err = capsys.readouterr().err
-    assert "records season 2, this is season 1" in err
-    assert "one season per document" in err
-    log.note.assert_any_call(
-        "validation",
-        "existing validation.json records a different season — kept "
-        "(one season per document; multi-season merge needs a schema change, when it bites)")
+    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
+    assert [s["season"] for s in doc["seasons"]] == [1, 2]
+    assert doc["seasons"][0]["episodes"] == [
+        {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 0, "dur_s": 3930,
+         "runtime_s": 4140, "ratio": 0.95, "band": "green"}]
+    assert doc["seasons"][0]["discs"] == [
+        {"volume_label": "SHOW_S2", "run": "newrun1", "staged": [1]}]
+    # season 2's recorded rows survive the merge, index empty (old shape)
+    assert doc["seasons"][1]["episodes"][0]["file"] == "Show (2000)_S02E01.mkv"
+    assert doc["seasons"][1]["discs"] == []
+    assert log.note.called
 
 
 def test_post_rip_corrupt_existing_file_reads_fresh(tmp_path):
@@ -1502,7 +1521,7 @@ def test_post_rip_corrupt_existing_file_reads_fresh(tmp_path):
 
     doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
     assert doc["tmdb"]["id"] == "5"
-    assert [r["ep"] for r in doc["episodes"]] == [1]
+    assert [r["ep"] for r in doc["seasons"][0]["episodes"]] == [1]
 
 
 @dataclass
@@ -1566,10 +1585,12 @@ def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
 
     assert e.value.code == 0
     doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["tmdb"] == {"id": "5", "type": "tv", "title": "Show (2000)", "season": 1}
-    assert doc["run"] == "run-1"
-    assert doc["volume_label"] == ""  # the scan mock carries no volume label
-    assert doc["episodes"] == [
+    assert doc["tmdb"] == {"id": "5", "type": "tv", "title": "Show (2000)"}
+    season = doc["seasons"][0]
+    assert season["season"] == 1
+    assert season["discs"] == [{"volume_label": "", "run": "run-1",
+                                "staged": [1, 2, 3]}]  # the scan mock carries no label
+    assert season["episodes"] == [
         {"ep": 1, "file": "Show (2000)_S01E01.mkv", "t": 0, "dur_s": 3930,
          "runtime_s": 4140, "ratio": 0.95, "band": "green"},
         {"ep": 2, "file": "Show (2000)_S01E02.mkv", "t": 1, "dur_s": 3895,
@@ -1631,9 +1652,10 @@ def test_fast_scan_flow_rows_record_t_none(tmp_path):
     assert e.value.code == 0
     mock_scan_disc.assert_not_called()  # the fast scan gated the disc
     doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
-    assert [r["ep"] for r in doc["episodes"]] == [1, 2, 3]
-    assert [r["dur_s"] for r in doc["episodes"]] == [3930, 3895, 3653]
-    assert [r["t"] for r in doc["episodes"]] == [None, None, None]
+    episodes = doc["seasons"][0]["episodes"]
+    assert [r["ep"] for r in episodes] == [1, 2, 3]
+    assert [r["dur_s"] for r in episodes] == [3930, 3895, 3653]
+    assert [r["t"] for r in episodes] == [None, None, None]
 
 
 def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):

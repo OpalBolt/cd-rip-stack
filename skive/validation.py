@@ -4,7 +4,9 @@ One module the rip flow, the transcoder, and the library checker all import
 (CONTEXT.md: Validation file). The file is born in the title folder at rip,
 travels staging -> transcode -> library, and is the durable record of what
 was ripped and what was chosen: identity, per-title durations and grades,
-the recorded main, the run that produced it. The transcoder appends its
+the recorded main, the run that produced it. TV shows index one document
+per show: every season with its episodes (the current actuals) and its
+disc index (which run staged which episodes). The transcoder appends its
 encode results; nothing else in the pipeline writes the document. Pure
 functions and file IO — the flows own every prompt and table. The library
 checker (skive validate) is report-only: it walks the share, prints one
@@ -33,23 +35,27 @@ VALIDATION_FILENAME = "validation.json"
 """The document's one name in every title folder it travels through."""
 
 
-def movie_document(tmdb_id: str, title: str, runtime_s: int, volume_label: str,
-                   run: str, main: str | None, titles: list[dict]) -> dict:
+def movie_document(tmdb_id: str, title: str, runtime_s: int | None,
+                   volume_label: str | None, run: str | None,
+                   main: str | None, titles: list[dict]) -> dict:
     """The movie document at rip time, in the shape transcode and the checker read.
 
     `titles` entries are {"file", "t", "dur_s", "ratio", "band"} — one per
     scanned title kept for the record, ratio grading disc against the TMDB
     runtime in the shared RATIO_GREEN band. `main` is the recorded pick
     ("t21"); None when no candidate main was chosen (shorts, bonus discs) —
-    transcode then falls back to biggest-bytes. `encodes` starts empty and is
-    appended by the transcoder as {"file", "src", "dur_s"}.
+    transcode then falls back to biggest-bytes. The backfill script writes
+    the same shape with runtime_s/volume_label/run/main null — the
+    reconstruction cannot know what the rip run knew.
+    `encodes` starts empty and is appended by the transcoder as {"file",
+    "src", "dur_s"}.
 
     Args:
         tmdb_id: TMDB id as string
         title: TMDB display title with year, e.g. "Mamma Mia! (2008)"
-        runtime_s: TMDB runtime in seconds
-        volume_label: Disc volume label the rip came from
-        run: Short-uuid of the rip run that produced the file
+        runtime_s: TMDB runtime in seconds, None when unknown
+        volume_label: Disc volume label the rip came from, None when unknown
+        run: Short-uuid of the rip run that produced the file, None unknown
         main: Chosen main title ("t21"), or None when none was chosen
         titles: Per-title record entries
 
@@ -67,16 +73,21 @@ def movie_document(tmdb_id: str, title: str, runtime_s: int, volume_label: str,
 
 
 def tv_document(tmdb_id: str, title: str, season: int, volume_label: str,
-                run: str, episodes: list[dict]) -> dict:
-    """The TV document at rip time: the shared identity block plus the episode map.
+                run: str, staged: list[int], episodes: list[dict]) -> dict:
+    """The TV document at rip time: the shared identity block plus the
+    per-season record — episodes and the disc index.
 
-    The episode map stands in for `main`/candidate ratios: `episodes` entries
-    are {"ep", "file", "t", "dur_s", "runtime_s", "ratio", "band"} — one per
-    staged episode, ratio grading the staged duration against that episode's
-    TMDB runtime in the shared RATIO_GREEN band. Discs rip in order into one
-    title folder, so each disc's flow merges its episodes into the existing
-    document (load, extend, write). `encodes` starts empty and is appended by
-    the transcoder as {"file", "src", "dur_s"}.
+    One `seasons` entry per season: `episodes` entries are {"ep", "file",
+    "t", "dur_s", "runtime_s", "ratio", "band"} — one per staged episode,
+    ratio grading the staged duration against that episode's TMDB runtime in
+    the shared RATIO_GREEN band; a double (S02E05-E06) records one row under
+    its lo episode. `discs` is the append-only provenance index, one entry
+    per rip run: {"volume_label", "run", "staged"} — which disc, which run
+    log, the episodes that run staged. Discs rip in order into one title
+    folder (staging has no season subfolders), so each disc's flow merges
+    its season into the existing document (load, merge, write). `encodes`
+    starts empty and is appended by the transcoder as {"file", "src",
+    "dur_s"}.
 
     Args:
         tmdb_id: TMDB show id as string
@@ -84,16 +95,20 @@ def tv_document(tmdb_id: str, title: str, season: int, volume_label: str,
         season: Season number the disc belongs to
         volume_label: Disc volume label the rip came from
         run: Short-uuid of the rip run that produced the file
+        staged: Episode numbers this run staged (from its assignment map)
         episodes: Per-episode record entries
 
     Returns:
         The TV document, key order fixed for diff-friendly files
     """
     return {
-        "tmdb": {"id": tmdb_id, "type": "tv", "title": title, "season": season},
-        "volume_label": volume_label,
-        "run": run,
-        "episodes": list(episodes),
+        "tmdb": {"id": tmdb_id, "type": "tv", "title": title},
+        "seasons": [{
+            "season": season,
+            "episodes": list(episodes),
+            "discs": [{"volume_label": volume_label, "run": run,
+                       "staged": list(staged)}],
+        }],
         "encodes": [],
     }
 
@@ -365,28 +380,76 @@ def tv_row(ep: int, file: str, t: int | None, dur_s: int | None,
             "band": graded[1] if graded else None}
 
 
-def merge_tv_document(old: dict, doc: dict) -> dict:
-    """A same-show, same-season re-rip's document merged into the folder's
-    existing one.
-
-    episodes: the existing rows kept, this run's appended — an ep already
-    recorded is replaced by this run's row, not duplicated (each run probes
-    the season's staged files, so its rows are the current actuals). run:
-    latest wins. encodes start empty — the record travels on with the new rip.
+def _tv_seasons(doc: dict) -> list[dict]:
+    """The document's season entries; an old one-season document (tmdb.season
+    + episodes, no seasons key — the first schema) reads as one entry with
+    no disc provenance. Malformed entries drop out — callers see what is
+    usable, nothing raises.
 
     Args:
-        old: The existing document (same tmdb id and season, caller-checked)
+        doc: A loaded TV document
+
+    Returns:
+        The usable season entries, in the document's own order
+    """
+    seasons = doc.get("seasons")
+    if isinstance(seasons, list):
+        return [s for s in seasons if isinstance(s, dict)]
+    tmdb = doc.get("tmdb")
+    season = tmdb.get("season") if isinstance(tmdb, dict) else None
+    if not isinstance(season, int):
+        return []
+    eps = doc.get("episodes")
+    return [{"season": season,
+             "episodes": [r for r in eps if isinstance(r, dict)]
+             if isinstance(eps, list) else [],
+             "discs": []}]
+
+
+def merge_tv_document(old: dict, doc: dict) -> dict:
+    """A same-show re-rip's document merged into the folder's existing one.
+
+    Per season: the existing entries kept, this run's appended — an ep
+    already recorded is replaced by this run's row, not duplicated (each run
+    probes the season's staged files, so its rows are the current actuals);
+    the run's disc entry appends to the season's index (re-merging the same
+    run replaces its entry — idempotent). Seasons the new document doesn't
+    touch survive untouched; the merged list sorts by season number,
+    diff-friendly whatever order the discs ripped in. An old one-season
+    document migrates to the seasons shape on the merge. encodes start
+    empty — the record travels on with the new rip.
+
+    Args:
+        old: The existing document (same tmdb id, caller-checked)
         doc: This run's document
 
     Returns:
         The merged document, this run's shape throughout
     """
-    old_eps = old.get("episodes")
-    old_rows = list(old_eps) if isinstance(old_eps, list) else []
-    redone = {r.get("ep") for r in doc["episodes"]}
+    old_by_season = {s["season"]: s for s in _tv_seasons(old)
+                     if isinstance(s.get("season"), int)}
     merged = dict(doc)
-    merged["episodes"] = [r for r in old_rows if r.get("ep") not in redone] \
-        + list(doc["episodes"])
+    seasons: list[dict] = []
+    for entry in doc["seasons"]:
+        prev = old_by_season.pop(entry.get("season"), None)
+        if prev is None:
+            seasons.append(entry)
+            continue
+        old_rows = prev.get("episodes")
+        redone = {r.get("ep") for r in entry.get("episodes", [])}
+        episodes = [r for r in (old_rows if isinstance(old_rows, list) else [])
+                    if isinstance(r, dict) and r.get("ep") not in redone] \
+            + list(entry.get("episodes", []))
+        entry_discs = entry.get("discs") or []
+        run = entry_discs[0].get("run") if entry_discs else None
+        old_discs = prev.get("discs")
+        discs = [d for d in (old_discs if isinstance(old_discs, list) else [])
+                 if isinstance(d, dict) and d.get("run") != run] \
+            + list(entry_discs)
+        seasons.append({**entry, "episodes": episodes, "discs": discs})
+    seasons.extend(old_by_season.values())
+    seasons.sort(key=lambda s: s["season"] if isinstance(s.get("season"), int) else -1)
+    merged["seasons"] = seasons
     return merged
 
 
@@ -747,24 +810,27 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
     """One Season NN folder: a ratio row per episode file, and the
     missing-episode check.
 
-    Episode runtimes come from the season's document rows (offline) or the
-    TMDB season list (legacy folders); an episode with neither is a blank
-    cell, never yellow. A double episode (`S..E05-E06`, one file) is one row:
-    every episode in its range counts as present, and the file's duration
-    grades against the range's summed runtime. The missing check grades the
-    folder's `S..E..` names against the TMDB season list when it fetched,
-    else the document's episode rows; with neither source it skips — never
-    guesses. A season-list fetch failure degrades to the doc source with one
-    stderr warning.
+    Episode runtimes come from the season's entry in the show document
+    (offline) or the TMDB season list (legacy folders); an episode with
+    neither is a blank cell, never yellow. A double episode (`S..E05-E06`,
+    one file) is one row: every episode in its range counts as present, and
+    the file's duration grades against the range's summed runtime. The
+    missing check grades the folder's `S..E..` names against the TMDB season
+    list when it fetched, else the document's episode rows; with neither
+    source it skips — never guesses. A season-list fetch failure degrades to
+    the doc source with one stderr warning.
     """
     season = int(SEASON_DIR.match(season_dir.name).group(1) or "00")
     findings: list[Finding] = []
     doc_rows: dict[int, dict] = {}
-    if doc and isinstance(doc.get("tmdb"), dict) and doc["tmdb"].get("season") == season:
-        rows = doc.get("episodes")
-        for row in rows if isinstance(rows, list) else []:
-            if isinstance(row, dict) and isinstance(row.get("ep"), int):
-                doc_rows[row["ep"]] = row
+    if doc is not None:
+        entry = next((s for s in _tv_seasons(doc) if s.get("season") == season),
+                     None)
+        if entry is not None:
+            rows = entry.get("episodes")
+            for row in rows if isinstance(rows, list) else []:
+                if isinstance(row, dict) and isinstance(row.get("ep"), int):
+                    doc_rows[row["ep"]] = row
     try:
         listed = season_list(show_id, season)
     except (RuntimeError, ValueError) as e:

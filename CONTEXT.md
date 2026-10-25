@@ -97,7 +97,7 @@ _Avoid_: failed folder, retry queue
 ### Validation
 
 **Validation file**:
-`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main. Travels staging → transcode → library; transcode appends its encode results to it.
+`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main. A TV show holds one document per show — every season with its episodes (the current actuals) and its disc index (volume label, run, the episodes each rip run staged). Travels staging → transcode → library (TV: into each Season folder beside the encodes); transcode appends its encode results to it. Pre-feature rips get theirs reconstructed by `scripts/backfill_validation.py` (dry-run default, `--apply` writes).
 _Avoid_: manifest, metadata file
 
 **Candidate main**:

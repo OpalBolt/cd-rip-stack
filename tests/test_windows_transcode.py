@@ -341,6 +341,48 @@ def test_scenario6_tv_seasons_specials_junk(env, capsys):
     assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 5
 
 
+# -- TV validation: the show doc travels into the Season folders -------------
+def test_tv_show_doc_copies_into_season_folders(env):
+    """A show carrying validation.json (the whole-show document, every
+    season): each episode's encode ships the doc into its Season folder —
+    the checker reads it there. The doc sits at the show root while the
+    sources may still sit in their d<disc> staging dir; extras folders get
+    no copy (the checker reads Season folders only)."""
+    import json
+    vid = env / "vid"
+    doc = json.dumps({
+        "tmdb": {"id": "456", "type": "tv", "title": "Show (2010)"},
+        "seasons": [{"season": 1, "episodes": [], "discs": []},
+                    {"season": 0, "episodes": [], "discs": []}],
+        "encodes": []})
+    mk(vid, "rip/tv/Show (2010)/validation.json", doc)
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S01E02.mkv", "TV-E02")
+    mk(vid, "rip/tv/Show (2010)/d1/Show (2010)_S00E01.mkv", "TV-SPECIAL")
+    mk(vid, "rip/tv/Show (2010)/d1/Show (2010) - Extra 03.mkv", "TV-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    TL = vid / "library" / "tv" / "Show (2010)"
+    assert json.loads((TL / "Season 01" / "validation.json").read_text())["tmdb"]["id"] == "456"
+    assert json.loads((TL / "Specials" / "validation.json").read_text())["tmdb"]["id"] == "456"
+    assert not (TL / "extras" / "validation.json").exists()
+
+
+def test_tv_show_doc_absent_is_silent(env):
+    """No validation.json in staging (a pre-feature show): the TV encodes
+    ship exactly as before — no doc, no crash, no note."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Old (2009)/d0/Old (2009)_S01E01.mkv", "TV-E01")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    TL = vid / "library" / "tv" / "Old (2009)"
+    assert (TL / "Season 01" / "Old (2009) - S01E01.mkv").read_text() == "TV-E01"
+    assert not (TL / "Season 01" / "validation.json").exists()
+
+
 # -- scenario 7: TV-extras-only disc routes to the TV tree --------------------
 def test_scenario7_tv_extras_disc(env):
     vid = env / "vid"

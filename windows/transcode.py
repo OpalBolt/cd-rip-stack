@@ -19,7 +19,8 @@ sidecars beside the encode); extras keep every track embedded.
 For movies carrying a validation.json (the rip's record in the title folder),
 the recorded main IS the film — biggest-bytes is only the fallback; a successful
 main encode is appended to the doc's encodes list and the doc copies into the
-library folder beside the encode.
+library folder beside the encode. For TV, the show's document (every season,
+the disc index) copies into each Season folder beside the episodes it ships.
 
 Ships go to `library\\movies\\<Name>\\` and `library\\tv\\<Name>\\Season NN\\`;
 -Keep parks sources under `lossless\\<type>\\<Name (Year)>\\`; failures are
@@ -56,6 +57,7 @@ _RX_EP = re.compile(
     r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$"
 )
 _RX_MAIN = re.compile(r"^t\d+$")  # validation.json's recorded main: "tNN"
+_RX_DDIR = re.compile(r"^d\d+$")  # rip/<type>/<Name (Year)>/d<disc> staging subdir
 _TV_ROOTS = ("TV", "tv")  # rip\TV (legacy ps1 staging) and rip\tv (SPEC layout)
 _VALIDATION_FILENAME = "validation.json"
 # duplicate of skive.validation.VALIDATION_FILENAME on purpose (standalone
@@ -683,6 +685,27 @@ def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> 
         pass
 
 
+def _copy_show_doc(src_path: str, dest_dir: str) -> None:
+    """Copy the show's validation.json from rip staging into the library
+    Season folder beside the encodes -- the checker reads it there. The
+    document holds every staged season, so each Season folder carries the
+    whole show record; a plain overwrite per item keeps it fresh. The
+    staging folder is the file's title folder, walking up past the d<disc>
+    subdir a collision straggler still sits in. Absent doc or unreadable
+    copy: skip silently -- the record never crashes the pipeline (the
+    _record_encode discipline)."""
+    folder = os.path.dirname(src_path)
+    while _RX_DDIR.match(os.path.basename(folder)):
+        folder = os.path.dirname(folder)
+    src = os.path.join(folder, _VALIDATION_FILENAME)
+    if not os.path.isfile(src):
+        return
+    try:
+        shutil.copyfile(src, os.path.join(dest_dir, _VALIDATION_FILENAME))
+    except OSError:
+        pass
+
+
 def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
               ffprobe_exe: str, log: RipLog | None = None):
     """Inline subtitle pass on the local copy/merge; the caller creates the
@@ -858,6 +881,8 @@ def run_transcode(args) -> int:
                     shutil.move(local_out, dest)
                     if side_dir is not None:
                         _ship_sidecars(side_dir, dest_dir, res)
+                    if episode:
+                        _copy_show_doc(i.path, dest_dir)  # the doc travels beside its encodes
                     _rmf(local_src)
                     if res is None or res.ok:
                         _archive(i.path, i, lossless_root, args.keep)

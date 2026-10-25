@@ -36,19 +36,25 @@ def test_movie_document_shape():
 
 
 def test_tv_document_shape():
-    """The TV document keeps the shared identity block plus the episode map."""
+    """The TV document keeps the shared identity block; the season entry
+    carries the episode rows and the disc provenance index."""
     doc = tv_document(
         tmdb_id="456", title="Show (2019)", season=2,
-        volume_label="SHOW_S2", run="a1b2c3d4",
+        volume_label="SHOW_S2", run="a1b2c3d4", staged=[5, 6],
         episodes=[{"ep": 5, "file": "Show S02E05.mkv", "t": 12, "dur_s": 2611,
                    "runtime_s": 2580, "ratio": 0.99, "band": "green"}],
     )
-    assert list(doc) == ["tmdb", "volume_label", "run", "episodes", "encodes"]
+    assert list(doc) == ["tmdb", "seasons", "encodes"]
     assert doc["tmdb"] == {"id": "456", "type": "tv",
-                           "title": "Show (2019)", "season": 2}
-    assert doc["episodes"] == [{"ep": 5, "file": "Show S02E05.mkv", "t": 12,
-                                "dur_s": 2611, "runtime_s": 2580,
-                                "ratio": 0.99, "band": "green"}]
+                           "title": "Show (2019)"}
+    assert doc["seasons"] == [{
+        "season": 2,
+        "episodes": [{"ep": 5, "file": "Show S02E05.mkv", "t": 12,
+                      "dur_s": 2611, "runtime_s": 2580,
+                      "ratio": 0.99, "band": "green"}],
+        "discs": [{"volume_label": "SHOW_S2", "run": "a1b2c3d4",
+                   "staged": [5, 6]}],
+    }]
     assert doc["encodes"] == []
 
 
@@ -69,11 +75,11 @@ def test_movie_round_trip(tmp_path):
 
 
 def test_tv_round_trip(tmp_path):
-    """The full TV document — episode map with per-episode runtimes —
-    survives write -> load unchanged."""
+    """The full TV document — seasons with their episode rows and disc
+    index — survives write -> load unchanged."""
     doc = tv_document(
         tmdb_id="456", title="Show (2019)", season=2,
-        volume_label="SHOW_S2", run="a1b2c3d4",
+        volume_label="SHOW_S2", run="a1b2c3d4", staged=[5, 6],
         episodes=[{"ep": 5, "file": "Show S02E05.mkv", "t": 12, "dur_s": 2611,
                    "runtime_s": 2580, "ratio": 0.99, "band": "green"},
                   {"ep": 6, "file": "Show S02E06.mkv", "t": 13, "dur_s": 2602,
@@ -365,13 +371,13 @@ def test_tv_row_band_grades_exact_quotient_ratio_stores_2dp():
 
 def test_merge_tv_document_appends_rows_and_replaces_by_ep():
     """Same-show, same-season re-rip: old rows kept, this run's appended; an
-    ep already recorded is replaced by this run's row, not duplicated; run:
-    latest wins; encodes start empty."""
-    old = tv_document("456", "Show (2019)", 2, "OLD", "oldrun",
+    ep already recorded is replaced by this run's row, not duplicated; the
+    run's disc entry appends to the season's index; encodes start empty."""
+    old = tv_document("456", "Show (2019)", 2, "OLD", "oldrun", [5],
                       [{"ep": 5, "file": "Show (2019)_S02E05.mkv", "t": 12,
                         "dur_s": 2611, "runtime_s": 2580, "ratio": 1.01,
                         "band": "green"}])
-    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun",
+    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun", [5, 6],
                       [{"ep": 5, "file": "Show (2019)_S02E05.mkv", "t": None,
                         "dur_s": 2600, "runtime_s": 2580, "ratio": 1.01,
                         "band": "green"},
@@ -380,18 +386,70 @@ def test_merge_tv_document_appends_rows_and_replaces_by_ep():
                         "band": "green"}])
 
     merged = merge_tv_document(old, new)
-    assert [r["ep"] for r in merged["episodes"]] == [5, 6]
-    assert merged["episodes"][0]["dur_s"] == 2600  # this run's row replaced
-    assert merged["run"] == "newrun"                # latest wins
-    assert merged["volume_label"] == "NEW"
+    season = merged["seasons"][0]
+    assert [r["ep"] for r in season["episodes"]] == [5, 6]
+    assert season["episodes"][0]["dur_s"] == 2600  # this run's row replaced
+    assert season["discs"] == [
+        {"volume_label": "OLD", "run": "oldrun", "staged": [5]},
+        {"volume_label": "NEW", "run": "newrun", "staged": [5, 6]},
+    ]
     assert merged["encodes"] == []
+
+
+def test_merge_tv_document_second_season_merges_by_season():
+    """A second season's rip merges into the same document: each season
+    keeps its own rows and discs, the list sorts by season number whatever
+    order the discs ripped in."""
+    s1 = tv_document("456", "Show (2019)", 1, "S1", "run1", [1],
+                     [tv_row(1, "Show (2019)_S01E01.mkv", 0, 2600, 2580)])
+    s2 = tv_document("456", "Show (2019)", 2, "S2", "run2", [1],
+                     [tv_row(1, "Show (2019)_S02E01.mkv", 3, 2600, 2580)])
+
+    merged = merge_tv_document(s2, s1)  # season 1 ripped after season 2
+
+    assert [s["season"] for s in merged["seasons"]] == [1, 2]
+    assert merged["seasons"][1]["episodes"][0]["file"] == "Show (2019)_S02E01.mkv"
+    assert merged["seasons"][1]["discs"] == [
+        {"volume_label": "S2", "run": "run2", "staged": [1]}]
+
+
+def test_merge_tv_document_migrates_one_season_shape():
+    """An old one-season document (tmdb.season + episodes, no seasons key —
+    the first schema) migrates on the merge: its rows survive as a seasons
+    entry with no disc provenance, this run's shape throughout."""
+    old = {"tmdb": {"id": "456", "type": "tv", "title": "Show (2019)",
+                    "season": 3},
+           "volume_label": "OLD", "run": "oldrun",
+           "episodes": [tv_row(1, "Show (2019)_S03E01.mkv", 0, 2600, 2580)],
+           "encodes": []}
+    new = tv_document("456", "Show (2019)", 1, "S1", "newrun", [1],
+                      [tv_row(1, "Show (2019)_S01E01.mkv", 0, 2600, 2580)])
+
+    merged = merge_tv_document(old, new)
+
+    assert [s["season"] for s in merged["seasons"]] == [1, 3]
+    assert merged["seasons"][1]["episodes"][0]["file"] == "Show (2019)_S03E01.mkv"
+    assert merged["seasons"][1]["discs"] == []  # the old shape had no index
+    assert "season" not in merged["tmdb"]
+
+
+def test_merge_tv_document_remerge_same_run_replaces_disc_entry():
+    """Idempotent re-merge: the same run's disc entry replaces its own old
+    one, never duplicates; episode rows replace per ep as always."""
+    doc = tv_document("456", "Show (2019)", 2, "S2", "run1", [5],
+                      [tv_row(5, "Show (2019)_S02E05.mkv", 0, 2600, 2580)])
+
+    merged = merge_tv_document(doc, doc)
+
+    assert merged["seasons"][0]["discs"] == doc["seasons"][0]["discs"]
+    assert [r["ep"] for r in merged["seasons"][0]["episodes"]] == [5]
 
 
 def test_merge_tv_document_tolerates_rowless_old():
     """An old document without a readable episodes list merges as empty."""
-    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun", [])
+    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun", [], [])
     merged = merge_tv_document({"tmdb": {"id": "456"}}, new)
-    assert merged["episodes"] == []
+    assert merged["seasons"][0]["episodes"] == []
 
 
 # --- Library checker (skive validate) ----------------------------------------
@@ -695,7 +753,7 @@ def _show_tree(tmp_path):
 
 
 def _show_doc():
-    return tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4",
+    return tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [1, 2],
                        [tv_row(1, "Show (2019) - S02E01.mkv", 3, 2600, 2580),
                         tv_row(2, "Show (2019) - S02E02.mkv", 4, 2601, 2580)])
 
@@ -760,7 +818,7 @@ def test_validate_tv_specials_folder_is_season_0(tmp_path):
     specials.mkdir(parents=True)
     (specials / "Show (2010) - S00E01.mkv").touch()
     write_validation(specials / VALIDATION_FILENAME,
-                     tv_document("456", "Show (2010)", 0, "SHOW_S0", "a1b2c3d4",
+                     tv_document("456", "Show (2010)", 0, "SHOW_S0", "a1b2c3d4", [1],
                                  [tv_row(1, "Show (2010) - S00E01.mkv", 3,
                                          2580, 2580)]))
 
@@ -789,7 +847,7 @@ def test_validate_tv_double_episode_grades_sum_and_is_never_missing(tmp_path):
     show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E05-E06.mkv").touch()
     write_validation(season / VALIDATION_FILENAME,
-                     tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4",
+                     tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [5],
                                  [tv_row(5, "Show (2019) - S02E05-E06.mkv", 9,
                                          5160, 2580)]))
 
@@ -806,6 +864,40 @@ def test_validate_tv_double_episode_grades_sum_and_is_never_missing(tmp_path):
         Finding("tv/Show (2019)", "ratio",
                 "Season 02/Show (2019) - S02E05-E06.mkv  E05-E06  1.00",
                 "green", "Season 02/Show (2019) - S02E05-E06.mkv", 1.00, 0.04),
+    ]
+
+
+def test_validate_tv_whole_show_doc_reads_only_its_season(tmp_path):
+    """The whole-show document the rip flow now writes (every season, one
+    file) copied into each Season folder: a folder's rows come from its own
+    season's entry only — the other seasons' rows never leak in."""
+    show = tmp_path / "library" / "tv" / "Show (2019)"
+    s1, s2 = show / "Season 01", show / "Season 02"
+    s1.mkdir(parents=True)
+    s2.mkdir()
+    (s1 / "Show (2019) - S01E01.mkv").touch()
+    (s2 / "Show (2019) - S02E01.mkv").touch()
+    doc = merge_tv_document(
+        tv_document("456", "Show (2019)", 1, "S1", "run1", [1],
+                    [tv_row(1, "Show (2019) - S01E01.mkv", 0, 1800, 1800)]),
+        tv_document("456", "Show (2019)", 2, "S2", "run2", [1],
+                    [tv_row(1, "Show (2019) - S02E01.mkv", 0, 2600, 2580)]))
+    write_validation(s1 / VALIDATION_FILENAME, doc)
+    write_validation(s2 / VALIDATION_FILENAME, doc)
+
+    findings = validate_library(
+        tmp_path / "library",
+        run=_fake_probe({"Show (2019) - S01E01.mkv": 1800,
+                         "Show (2019) - S02E01.mkv": 2600}),
+        search=_no_search, season_list=lambda tv_id, n: [])
+
+    assert findings == [
+        Finding("tv/Show (2019)", "ratio",
+                "Season 01/Show (2019) - S01E01.mkv  1.00",
+                "green", "Season 01/Show (2019) - S01E01.mkv", 1.00, 0.04),
+        Finding("tv/Show (2019)", "ratio",
+                "Season 02/Show (2019) - S02E01.mkv  1.01",
+                "green", "Season 02/Show (2019) - S02E01.mkv", 1.01, 0.03),
     ]
 
 
@@ -867,7 +959,7 @@ def test_validate_tv_episode_without_runtime_is_blank(tmp_path):
     yellow (TMDB lists it with none; the doc records null)."""
     show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E05.mkv").touch()
-    doc = tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4",
+    doc = tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [5],
                       [tv_row(5, "Show (2019) - S02E05.mkv", None, 2600, None)])
     write_validation(season / VALIDATION_FILENAME, doc)
 
@@ -887,7 +979,7 @@ def test_validate_tv_unreadable_episode_is_a_row_not_a_crash(tmp_path):
     show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E01.mkv").touch()
     (season / "Show (2019) - S02E02.mkv").touch()
-    doc = tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4",
+    doc = tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [1],
                       [tv_row(1, "Show (2019) - S02E01.mkv", 3, 2600, 2580)])
     write_validation(season / VALIDATION_FILENAME, doc)
 
