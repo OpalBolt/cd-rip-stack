@@ -635,6 +635,18 @@ def _load_validation(path: str) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
+def _extra_name(dest_dir: str, safe: str, num: int, ext: str) -> str:
+    """The extras dest name: `<movie> - Extra NN[.pN].mkv`, the number rolled
+    forward past names already on disk (makemkv's staging pattern). Bonus _t
+    titles keep their disc number when it is free; a staging label never
+    reaches the library."""
+    n = num
+    while os.path.exists(os.path.join(
+            dest_dir, f"{safe} - Extra {n:02d}{ext}.mkv")):
+        n += 1
+    return f"{safe} - Extra {n:02d}{ext}.mkv"
+
+
 def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> None:
     """Append the main encode's result to the title folder's validation.json
     and copy the doc into the library folder beside the encode. The encodes
@@ -822,8 +834,7 @@ def run_transcode(args) -> int:
                 else:
                     ext = f".p{i.part}" if i.part >= 0 else ""
                     dest_dir = os.path.join(show_dir, "extras")
-                    name = (f"{safe} - Extra {i.num_str}{ext}.mkv"
-                            if i.sfx == "e" else f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
+                    name = _extra_name(dest_dir, safe, i.num, ext)
                     dest = os.path.join(dest_dir, name)
                 os.makedirs(dest_dir, exist_ok=True)
                 local_src = os.path.join(tmp_dir, i.name)
@@ -989,12 +1000,12 @@ def run_transcode(args) -> int:
                     log.phase_end()
                 continue
 
-            # -- extras (non-main _t title, or an extras-disc title): as-is.
-            # the .pN suffix is kept so split-disc extras never collide.
+            # -- extras (non-main _t title, or an extras-disc title): the
+            # ` - Extra NN` form, number rolled forward past taken names —
+            # no staging label ever reaches the library.
             ext = f".p{i.part}" if i.part >= 0 else ""
             dest_dir = os.path.join(lib_dir, "movies", safe, "extras")
-            name = (f"{safe} - Extra {i.num_str}{ext}.mkv"
-                    if i.sfx == "e" else f"{safe}_{i.sfx}{i.num_str}{ext}.mkv")
+            name = _extra_name(dest_dir, safe, i.num, ext)
             dest = os.path.join(dest_dir, name)
             os.makedirs(dest_dir, exist_ok=True)
             local_src = os.path.join(tmp_dir, i.name)

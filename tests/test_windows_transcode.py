@@ -185,9 +185,9 @@ def test_scenario1_end_to_end_movie_batch(env, capsys):
     assert (L / "Bar (2002)" / "Bar (2002).mkv").read_text() == \
         "BAR-P1-BYTES-BYTES-BYTES-BYTESBAR-P2-BYTES-BYTES-BYTES-BYTES-BYTES-BYTES"
     assert (L / "Foo (2001)" / "Foo (2001).mkv").read_text() == "FOO-MAIN-BYTES-BYTES-BYTES"
-    assert (L / "Foo (2001)" / "extras" / "Foo (2001)_t01.mkv").read_text() == "FOO-EXTRA"
-    assert (L / "Bar (2002)" / "extras" / "Bar (2002)_t00.mkv").read_text() == "BAR-DECOY"
-    assert (L / "Bar (2002)" / "extras" / "Bar (2002)_t02.mkv").read_text() == "BAR-EXTRA"
+    assert (L / "Foo (2001)" / "extras" / "Foo (2001) - Extra 01.mkv").read_text() == "FOO-EXTRA"
+    assert (L / "Bar (2002)" / "extras" / "Bar (2002) - Extra 00.mkv").read_text() == "BAR-DECOY"
+    assert (L / "Bar (2002)" / "extras" / "Bar (2002) - Extra 02.mkv").read_text() == "BAR-EXTRA"
     assert (L / "Baz Extras (2003)" / "extras" / "Baz Extras (2003) - Extra 00.mkv").read_text() == "BAZ-E0"
     assert (L / "Baz Extras (2003)" / "extras" / "Baz Extras (2003) - Extra 02.mkv").read_text() == "BAZ-E2"
     assert (L / "Qux (2004)" / "Qux (2004).mkv").read_text() == "QUX-MAIN"
@@ -1185,11 +1185,30 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     assert rc == 0
     L = vid / "library" / "movies" / "Mamma Mia! (2008)"
     assert (L / "Mamma Mia! (2008).mkv").read_text() == "MAMMA-DUR-6251"
-    assert (L / "extras" / "Mamma Mia! (2008)_t12.mkv").read_text().startswith("RED-BYTES")
+    assert (L / "extras" / "Mamma Mia! (2008) - Extra 12.mkv").read_text().startswith("RED-BYTES")
     entry = {"file": "Mamma Mia! (2008).mkv", "src": "t21", "dur_s": 6251}
     assert json.loads((L / "validation.json").read_text())["encodes"] == [entry]
     staged = vid / "rip" / "movies" / "Mamma Mia! (2008)" / "validation.json"
     assert json.loads(staged.read_text())["encodes"] == [entry]
+
+
+def test_extra_number_rolls_past_taken_names(env):
+    """A bonus _t title files as ` - Extra NN`: its disc number when free,
+    rolled forward when an existing Extra file already claims it — never a
+    collision, never a staging label in the library."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t00.mkv",
+       "COLL-MAIN-BYTES-BYTES-BYTES")
+    mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t03.mkv", "COLL-EXTRA")
+    ex = vid / "library" / "movies" / "Coll (2006)" / "extras"
+    ex.mkdir(parents=True)
+    (ex / "Coll (2006) - Extra 03.mkv").write_text("TAKEN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (ex / "Coll (2006) - Extra 03.mkv").read_text() == "TAKEN"
+    assert (ex / "Coll (2006) - Extra 04.mkv").read_text() == "COLL-EXTRA"
 
 
 def test_null_main_and_absent_doc_keep_bytes_fallback(env):
