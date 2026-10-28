@@ -35,11 +35,11 @@ def rip_music(args) -> None:
 
     # Mount staging dir
     ensure_mounted(music_mnt, nfs_music)
-    rip_dir = Path(music_mnt) / "rip"
+    rip_dir = Path(music_mnt) / "rip" / "cd"
     rip_dir.mkdir(parents=True, exist_ok=True)
 
     # RipLog
-    log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-")
+    log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-", root=music_mnt)
     log.start()
 
     # Log the total on every exit — success, Ctrl-C, or failure — so the raw
@@ -71,8 +71,9 @@ def rip_music(args) -> None:
         log.phase_end()
 
         # Rip name from newest FLAC
-        name = _newest_flac_album(rip_dir)
+        name, rel_folder = _newest_flac_album(rip_dir)
         log.name = name
+        log.note("rip", f"folder: {rel_folder}")
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: _cyanrip_run already stopped the child (SIGINT,
         # grace window, kill). Music staging has no junk labels — cyanrip writes
@@ -140,28 +141,37 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tupl
     return rc, "".join(captured)
 
 
-def _newest_flac_album(rip_dir: Path) -> str:
-    """Get rip name from the newest FLAC's ALBUM tag.
+def _newest_flac_album(rip_dir: Path) -> tuple[str, str]:
+    """Get rip name and relative folder from the newest FLAC under rip_dir.
 
-    Returns "Artist - Album" or just "Album" or "-" if no FLAC/tags.
+    Returns (name, rel_folder) where:
+    - name is "Artist - Album", "Album", or "-" if no FLAC/tags.
+    - rel_folder is the relative path from rip_dir to the FLAC's parent ('.' when flat, or '-' if no FLAC).
     """
-    flacs = list(rip_dir.glob("*.flac"))
+    flacs = list(rip_dir.rglob("*.flac"))
     if not flacs:
-        return "-"
+        return "-", "-"
 
     # Find newest by mtime
     newest = max(flacs, key=lambda f: f.stat().st_mtime)
+
+    # Relative folder to rip_dir ('.' if directly in rip_dir)
+    try:
+        rel_path = newest.parent.relative_to(rip_dir)
+        rel_folder = str(rel_path)
+    except ValueError:
+        rel_folder = "."
 
     # Run metaflac to get ALBUM and ARTIST
     album = _metaflac_tag(newest, "ALBUM")
     artist = _metaflac_tag(newest, "ARTIST")
 
     if not album:
-        return "-"
+        return "-", rel_folder
 
     if artist:
-        return f"{artist} - {album}"
-    return album
+        return f"{artist} - {album}", rel_folder
+    return album, rel_folder
 
 
 def _metaflac_tag(flac: Path, tag: str) -> str:

@@ -109,7 +109,7 @@ def test_multiple_releases_prompts(tmp_path):
 
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.RipLog") as MockLog, \
-            patch("skive.rip_music._newest_flac_album", return_value="-"), \
+            patch("skive.rip_music._newest_flac_album", return_value=("-", "-")), \
             patch("skive.rip_music.Prompt.ask", return_value="2"), \
             patch("skive.rip_music._cyanrip_run", side_effect=[
                 (1, "Multiple releases found\n"),
@@ -119,7 +119,7 @@ def test_multiple_releases_prompts(tmp_path):
             rip_music(args)
 
     assert exc.value.code == 0
-    rip_dir = tmp_path / "rip"
+    rip_dir = tmp_path / "rip" / "cd"
     log = MockLog.return_value  # the raw log rides along to _cyanrip_run
     assert mock_run.call_args_list == [
         (("100", ["-N"], rip_dir, log),),
@@ -167,7 +167,7 @@ def test_online_gate_skipped_with_minus_N():
 
         with patch("skive.rip_music.require_online") as mock_require:
             with patch("skive.rip_music._cyanrip_run", return_value=(0, "")):
-                with patch("skive.rip_music._newest_flac_album", return_value="-"):
+                with patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
                     try:
                         rip_music(args)
                     except SystemExit:
@@ -183,7 +183,7 @@ def test_online_gate_without_minus_N():
         with patch("skive.rip_music.ensure_mounted"):
             with patch("skive.rip_music.require_online") as mock_require:
                 with patch("skive.rip_music._cyanrip_run", return_value=(0, "")):
-                    with patch("skive.rip_music._newest_flac_album", return_value="-"):
+                    with patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
                         with patch("skive.rip_music.RipLog"):
                             try:
                                 rip_music(args)
@@ -218,15 +218,17 @@ def test_rip_name_from_tags():
             return ""
 
         with patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
-            name = _newest_flac_album(rip_dir)
+            name, rel_folder = _newest_flac_album(rip_dir)
             assert name == "TestArtist - TestAlbum"
+            assert rel_folder == "."
 
 
 def test_rip_name_no_flac():
     """Test rip name is '-' when no FLAC files."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        name = _newest_flac_album(Path(tmpdir))
+        name, rel_folder = _newest_flac_album(Path(tmpdir))
         assert name == "-"
+        assert rel_folder == "-"
 
 
 def test_rip_name_no_tags():
@@ -236,8 +238,9 @@ def test_rip_name_no_tags():
         (rip_dir / "test.flac").touch()
 
         with patch("skive.rip_music._metaflac_tag", return_value=""):
-            name = _newest_flac_album(rip_dir)
+            name, rel_folder = _newest_flac_album(rip_dir)
             assert name == "-"
+            assert rel_folder == "."
 
 
 def test_rip_name_album_only():
@@ -252,8 +255,69 @@ def test_rip_name_album_only():
             return ""
 
         with patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
-            name = _newest_flac_album(rip_dir)
+            name, rel_folder = _newest_flac_album(rip_dir)
             assert name == "TestAlbum"
+            assert rel_folder == "."
+
+
+def test_rip_name_in_album_subfolder():
+    """Test rip name and folder when FLAC is inside an album subfolder."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rip_dir = Path(tmpdir)
+        album_dir = rip_dir / "Cool Album"
+        album_dir.mkdir()
+        flac = album_dir / "01.flac"
+        flac.touch()
+
+        def mock_metaflac(flac_path, tag):
+            if tag == "ALBUM":
+                return "Cool Album"
+            if tag == "ARTIST":
+                return "Cool Artist"
+            return ""
+
+        with patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
+            name, rel_folder = _newest_flac_album(rip_dir)
+            assert name == "Cool Artist - Cool Album"
+            assert rel_folder == "Cool Album"
+
+
+def test_rip_music_logs_under_music_mount_and_notes_folder(tmp_path):
+    """Test RipLog writes under MUSIC_MOUNT and notes the relative folder."""
+    import json
+
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    rip_cd = tmp_path / "rip" / "cd"
+    album_dir = rip_cd / "My Album"
+    album_dir.mkdir(parents=True)
+    flac = album_dir / "track.flac"
+    flac.touch()
+
+    def mock_metaflac(flac_path, tag):
+        if tag == "ALBUM":
+            return "My Album"
+        if tag == "ARTIST":
+            return "Artist"
+        return ""
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+            patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    log_file = tmp_path / "logs" / "rip.jsonl"
+    assert log_file.exists()
+    lines = [json.loads(line) for line in log_file.read_text().splitlines()]
+    assert lines[0]["status"] == "started"
+    # RipLog note for folder
+    note_lines = [l for l in lines if l.get("status") == "folder: My Album"]
+    assert len(note_lines) == 1
+    assert note_lines[0]["phase"] == "rip"
+    # Phase rip ok
+    phase_lines = [l for l in lines if l.get("phase") == "rip" and l.get("status") == "ok"]
+    assert len(phase_lines) == 1
 
 
 def test_metaflac_tag_parser():

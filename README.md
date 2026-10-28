@@ -271,8 +271,9 @@ any further arguments pass straight through to cyanrip. If cyanrip's
 MusicBrainz lookup matches several releases, skive lists them, asks for a
 number, and re-runs with `-R <n>`.
 
-Rips land in `/mnt/music/rip/cd/` (mounted on demand from `NFS_MUSIC`). A clean
-rip just finishes — swap discs by hand.
+Rips land in `/mnt/music/rip/cd/` (mounted on demand from `NFS_MUSIC`).
+cyanrip keeps its default folder naming, creating `<album>/` subfolders (or flat
+FLACs). A clean rip just finishes — swap discs by hand.
 
 ### tag
 
