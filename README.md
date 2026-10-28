@@ -295,9 +295,13 @@ The source decides the beets mode:
   getting library paths, ReplayGain, cover art, and genres.
 
 Each filed album gets a `validation.json` provenance record with its source,
-release identity, tracks, filing run, date, and beets mode. The local beets
-plugin also carries cyanrip `.log` and `.cue` sidecars into the album folder;
-CD-specific AccurateRip details are retained when a staged record provides them.
+release identity, tracks, filing run, date, and beets mode. A clean CD rip's
+staged record also records the cyanrip run, drive sample offset, and each
+track's AccurateRip status (`accurate`, `partial`, or `not_found`) and
+confidence. The local beets plugin carries cyanrip `.log` and `.cue` sidecars
+into the album folder and merges each disc entry, so filing disc 2 keeps disc
+1's proof. If cyanrip's report cannot be parsed, the record is still written
+without AccurateRip results and the run log calls out the surprise.
 
 The beets library database (`/mnt/music/music.db`) and beets import log
 (`/mnt/music/logs/import.log`) live on the music share beside `logs/` (never

@@ -11,6 +11,8 @@ from rich.prompt import Prompt
 
 from skive import common
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
+from skive.cyanrip_log import parse_cyanrip_log
+from skive.validation import album_document, write_validation, VALIDATION_FILENAME
 
 
 def rip_music(args) -> None:
@@ -74,6 +76,8 @@ def rip_music(args) -> None:
         name, rel_folder = _newest_flac_album(rip_dir)
         log.name = name
         log.note("rip", f"folder: {rel_folder}")
+        if rc == 0:
+            _write_cd_record(rip_dir, rel_folder, args.offset, log)
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: _cyanrip_run already stopped the child (SIGINT,
         # grace window, kill). Music staging has no junk labels — cyanrip writes
@@ -89,6 +93,48 @@ def rip_music(args) -> None:
         log.finish(rc)
 
     sys.exit(rc)
+
+
+def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
+                     log: RipLog) -> None:
+    """Write the CD provenance record without making parsing a failure gate."""
+    if rel_folder in {"", "-"}:
+        return
+    folder = rip_dir / rel_folder
+    if not folder.is_dir():
+        log.note("rip", f"artifacts missing in {folder}: folder does not exist")
+        return
+    files = sorted(path.name for path in folder.iterdir())
+    log_files = sorted(path for path in folder.glob("*.log") if path.is_file())
+    cue_files = sorted(path for path in folder.glob("*.cue") if path.is_file())
+    if not log_files or not cue_files:
+        log.note("rip", f"artifacts missing in {folder}: found {files}")
+
+    parsed = {"offset": None, "tracks": []}
+    if log_files:
+        report_path = log_files[0]
+        try:
+            report = report_path.read_text(encoding="utf-8", errors="replace")
+            parsed = parse_cyanrip_log(report)
+        except OSError:
+            report = ""
+        if not parsed["tracks"]:
+            log.note("rip", "accuraterip: unparsed")
+            log.keep_raw()
+            for line in report.splitlines()[:20]:
+                log.raw("cyanrip.log", line)
+
+    try:
+        parsed_offset = parsed.get("offset")
+        if parsed_offset is None:
+            parsed_offset = int(offset)
+    except (TypeError, ValueError):
+        parsed_offset = offset
+    disc = {"rip_run": log.run, "offset": parsed_offset}
+    if parsed["tracks"]:
+        disc["accuraterip"] = parsed["tracks"]
+    doc = album_document("cd", None, [], discs={"1": disc})
+    write_validation(folder / VALIDATION_FILENAME, doc)
 
 
 def _progress_line(line: str) -> bool:

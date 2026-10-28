@@ -406,3 +406,54 @@ def test_rip_music_interrupt_records_interrupted_and_exits_130(tmp_path, monkeyp
     err = capsys.readouterr().err
     assert "skive: interrupted" in err
     assert err.count("skive: interrupted") == 1
+
+
+def test_clean_rip_writes_cd_record_from_cyanrip_log(tmp_path):
+    """A clean fake rip leaves the CD proof beside its staged FLACs."""
+    import json
+
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "Album.log").write_text(
+        "Offset:         +123 samples\n"
+        "  Track 1\n"
+        "    Accurip v1:  1234 (accurately ripped, confidence 7)\n",
+        encoding="utf-8",
+    )
+    (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
+    args = FakeArgs(offset="123", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+    assert exc.value.code == 0
+    doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
+    assert doc["source"] == "cd"
+    assert doc["discs"]["1"]["offset"] == 123
+    assert doc["discs"]["1"]["accuraterip"][0]["status"] == "accurate"
+
+
+def test_unparsed_cyanrip_log_keeps_record_and_raw_note(tmp_path, capsys):
+    import json
+
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "Album.log").write_text("unexpected cyanrip output\nfirst detail\n",
+                                     encoding="utf-8")
+    (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
+    args = FakeArgs(offset="123", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+    assert exc.value.code == 0
+    doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
+    assert "accuraterip" not in doc["discs"]["1"]
+    lines = (tmp_path / "logs" / "rip.jsonl").read_text(encoding="utf-8").splitlines()
+    assert any("accuraterip: unparsed" in json.loads(line)["status"] for line in lines)
+    run = json.loads(lines[0])["run"]
+    raw = tmp_path / "logs" / "raw" / f"{run}.jsonl"
+    assert raw.exists()
+    assert "unexpected cyanrip output" in raw.read_text(encoding="utf-8")
