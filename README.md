@@ -272,8 +272,9 @@ MusicBrainz lookup matches several releases, skive lists them, asks for a
 number, and re-runs with `-R <n>`.
 
 Rips land in `/mnt/music/rip/cd/` (mounted on demand from `NFS_MUSIC`).
-cyanrip keeps its default folder naming, creating `<album>/` subfolders (or flat
-FLACs). A clean rip just finishes — swap discs by hand.
+The expected layout is `<album>/` subfolders, but this is unconfirmed until ticket
+09; flat FLACs directly in `rip/cd/` also work until then. A clean rip just
+finishes — swap discs by hand.
 
 ### tag
 
