@@ -133,7 +133,11 @@ def unmount_card(mnt: Path, run=subprocess.run) -> None:
 
 def rsync_library(src: Path, card: str, run=subprocess.run) -> int:
     """Copy the library onto the card (source kept). Trailing slashes matter."""
-    return run(["rsync", "-r", "--size-only", "--info=progress2", f"{src}/", f"{card}/"]).returncode
+    return run([
+        "rsync", "-r", "--size-only", "--info=progress2",
+        "--exclude=validation.json", "--exclude=*.log", "--exclude=*.cue",
+        f"{src}/", f"{card}/",
+    ]).returncode
 
 
 def sync_sd(args) -> None:

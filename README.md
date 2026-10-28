@@ -317,9 +317,10 @@ skive sync-sd /media/USER/CARD # skip detection, use this mountpoint
 ```
 
 Mounts `/mnt/music`, then copies `/mnt/music/library/` onto the card with
-`rsync -r --size-only` — a copy, the source stays. Size-only works on any card
-filesystem (FAT/exFAT choke on `-a`'s timestamps), and re-runs skip files
-already on the card.
+`rsync -r --size-only` — a copy, the source stays. `validation.json`, `*.log`,
+and `*.cue` are excluded because the card contains only playable music.
+Size-only works on any card filesystem (FAT/exFAT choke on `-a`'s timestamps),
+and re-runs skip files already on the card.
 
 It auto-detects a mounted removable device, or one auto-mounted under
 `/media` or `/run/media` (catches internal SD readers). If none is mounted, it

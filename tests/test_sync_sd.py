@@ -185,13 +185,16 @@ def test_unmount_card_failure_warns(capsys):
 
 # --- rsync argv --------------------------------------------------------------
 
-def test_rsync_argv_exact():
-    """--size-only and both trailing slashes are the contract."""
+def test_rsync_argv_excludes_sidecars():
+    """Rsync copies playable files but not album records or rip artifacts."""
     run, calls = scripted_run(("rsync", FakeResult(returncode=0)))
     rc = rsync_library(Path("/mnt/music/library"), "/media/CARD", run=run)
     assert rc == 0
-    assert calls[0] == ["rsync", "-r", "--size-only", "--info=progress2",
-                        "/mnt/music/library/", "/media/CARD/"]
+    assert calls[0] == [
+        "rsync", "-r", "--size-only", "--info=progress2",
+        "--exclude=validation.json", "--exclude=*.log", "--exclude=*.cue",
+        "/mnt/music/library/", "/media/CARD/",
+    ]
 
 
 # --- sync_sd orchestration ---------------------------------------------------
