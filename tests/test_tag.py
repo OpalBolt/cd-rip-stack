@@ -21,14 +21,13 @@ def test_mount_before_beets():
 
         mock_ensure = Mock()
 
-        with patch("skive.tag.ensure_mounted", mock_ensure):
-            with patch("pathlib.Path.exists", return_value=True):
-                with patch("sys.executable", "/fake/python"):
-                    with patch("os.execvp", side_effect=SystemExit(0)):
-                        try:
-                            tag_cmd(FakeArgs())
-                        except SystemExit:
-                            pass
+        with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir, "NFS_MUSIC": ""}):
+            with patch("skive.tag.ensure_mounted", mock_ensure):
+                with patch("pathlib.Path.exists", return_value=True):
+                    try:
+                        tag_cmd(FakeArgs())
+                    except SystemExit:
+                        pass
 
         # Check mount was called with /mnt/music default
         mock_ensure.assert_called_once()
@@ -49,12 +48,10 @@ def test_nothing_to_import(tmp_path, monkeypatch):
 
     with patch("skive.tag.ensure_mounted", mock_ensure):
         with patch("pathlib.Path.exists", new=selective_exists):
-            with patch("sys.executable", "/fake/python"):
-                with patch("os.execvp", side_effect=SystemExit(0)):
-                    try:
-                        tag_cmd(FakeArgs())
-                    except SystemExit as e:
-                        assert e.code == 0
+            try:
+                tag_cmd(FakeArgs())
+            except SystemExit as e:
+                assert e.code == 0
 
 
 def test_config_path_resolution():
@@ -71,24 +68,23 @@ def test_beets_invoked_correctly():
         config_path.write_text("plugins: []")
 
         rip_dir = Path(tmpdir) / "rip"
-        rip_dir.mkdir()
+        cd_dir = rip_dir / "cd"
+        cd_dir.mkdir(parents=True)
+        (cd_dir / "album").mkdir()
 
-        mock_exec = Mock()
+        mock_run = Mock(return_value=Mock(returncode=0))
         mock_ensure = Mock()
 
-        with patch("skive.tag.ensure_mounted", mock_ensure):
-            with patch("pathlib.Path.exists", return_value=True):
-                with patch("sys.executable", "/fake/python"):
-                    with patch("os.execvp", mock_exec):
-                        try:
-                            tag_cmd(FakeArgs())
-                        except SystemExit:
-                            pass
+        with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir, "NFS_MUSIC": ""}):
+            with patch("skive.tag.ensure_mounted", mock_ensure):
+                with patch("pathlib.Path.exists", return_value=True):
+                    with patch("sys.executable", "/fake/python"):
+                        tag_cmd(FakeArgs(), run=mock_run)
 
-        # Check execvp was called with beets
-        assert mock_exec.called
-        argv = mock_exec.call_args[0][1]
-        assert argv[:3] == ["/fake/python", "-m", "beets"]
+        # Check beets was called
+        assert mock_run.called
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:3] == ["/fake/python", "-m", "beets"]
 
 
 def test_music_mount_env_override():
@@ -102,12 +98,168 @@ def test_music_mount_env_override():
         with patch.dict(os.environ, {"MUSIC_MOUNT": "/custom/music", "NFS_MUSIC": ""}):
             with patch("skive.tag.ensure_mounted", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
-                    with patch("sys.executable", "/fake/python"):
-                        with patch("os.execvp", side_effect=SystemExit(0)):
-                            try:
-                                tag_cmd(FakeArgs())
-                            except SystemExit:
-                                pass
+                    try:
+                        tag_cmd(FakeArgs())
+                    except SystemExit:
+                        pass
 
         # Check ensure_mounted was called with custom mount
         mock_ensure.assert_called_once_with("/custom/music", "")
+
+
+def test_three_sources_order_and_flags(tmp_path, monkeypatch):
+    """Test three sources mean three calls with the right flags and order."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+
+    # Populate albums in cd, bandcamp, other
+    for source in ("cd", "bandcamp", "other"):
+        sdir = tmp_path / "rip" / source / "Album"
+        sdir.mkdir(parents=True)
+
+    calls = []
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Mock(returncode=0)
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(FakeArgs(), run=fake_run)
+
+    assert len(calls) == 3
+    # Order: cd, other, bandcamp
+    assert calls[0][-1].endswith("/rip/cd")
+    assert "-A" not in calls[0]
+
+    assert calls[1][-1].endswith("/rip/other")
+    assert "-A" not in calls[1]
+
+    assert calls[2][-1].endswith("/rip/bandcamp")
+    assert "-A" in calls[2]
+    # Check -A is passed as an option before source path
+    a_idx = calls[2].index("-A")
+    assert calls[2][a_idx + 1] == str(tmp_path / "rip" / "bandcamp")
+
+
+def test_tag_single_source_bandcamp(tmp_path, monkeypatch):
+    """Test `tag bandcamp` means one call with -A flag."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+
+    for source in ("cd", "bandcamp", "other"):
+        sdir = tmp_path / "rip" / source / "Album"
+        sdir.mkdir(parents=True)
+
+    calls = []
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Mock(returncode=0)
+
+    args = FakeArgs()
+    args.source = "bandcamp"
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(args, run=fake_run)
+
+    assert len(calls) == 1
+    assert calls[0][-1].endswith("/rip/bandcamp")
+    assert "-A" in calls[0]
+
+
+def test_tag_single_source_cd(tmp_path, monkeypatch):
+    """Test `tag cd` means one call without -A flag."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+
+    sdir = tmp_path / "rip" / "cd" / "Album"
+    sdir.mkdir(parents=True)
+
+    calls = []
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Mock(returncode=0)
+
+    args = FakeArgs()
+    args.source = "cd"
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(args, run=fake_run)
+
+    assert len(calls) == 1
+    assert calls[0][-1].endswith("/rip/cd")
+    assert "-A" not in calls[0]
+
+
+def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
+    """Test empty source folders mean a clean exit 0 with 'nothing to import'."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+
+    # Create empty source dirs
+    for source in ("cd", "bandcamp", "other"):
+        (tmp_path / "rip" / source).mkdir(parents=True)
+
+    mock_run = Mock()
+
+    with patch("skive.tag.ensure_mounted"):
+        try:
+            tag_cmd(FakeArgs(), run=mock_run)
+        except SystemExit as e:
+            assert e.code == 0
+
+    assert not mock_run.called
+    assert "skive: nothing to import" in capsys.readouterr().err
+
+
+def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
+    """Test non-empty folders run, empty ones are skipped."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+
+    # cd is empty, bandcamp has album, other does not exist
+    (tmp_path / "rip" / "cd").mkdir(parents=True)
+    (tmp_path / "rip" / "bandcamp" / "Album").mkdir(parents=True)
+
+    calls = []
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Mock(returncode=0)
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(FakeArgs(), run=fake_run)
+
+    assert len(calls) == 1
+    assert calls[0][-1].endswith("/rip/bandcamp")
+
+
+def test_tag_nonzero_exit_if_beets_fails(tmp_path, monkeypatch):
+    """Test nonzero exit if any beets invocation fails."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+
+    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
+    (tmp_path / "rip" / "other" / "Album").mkdir(parents=True)
+
+    calls = []
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Mock(returncode=42)
+
+    with patch("skive.tag.ensure_mounted"):
+        try:
+            tag_cmd(FakeArgs(), run=fake_run)
+            assert False, "Should have exited"
+        except SystemExit as e:
+            assert e.code == 42
+
+    # Should stop after first failed call
+    assert len(calls) == 1
+
+
+def test_tag_argparse_unknown_source():
+    """Test unknown source argument causes argparse error."""
+    import pytest
+    from skive.main import build_parser
+
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["tag", "vinyl"])

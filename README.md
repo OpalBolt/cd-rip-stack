@@ -251,6 +251,13 @@ extra — it is a season 0 episode through the normal flow.
 
 ## Ripping music
 
+Music enters the library from three sources: CD rips, Bandcamp downloads,
+and downloads from elsewhere. Staging is `/mnt/music/rip/<source>/<album>/`,
+where source is `cd`, `bandcamp`, or `other`.
+
+Downloads have no skive command — unzip or copy them into `rip/bandcamp/<album>/`
+or `rip/other/<album>/`. Always use an album folder.
+
 ### rip music
 
 ```bash
@@ -264,19 +271,41 @@ any further arguments pass straight through to cyanrip. If cyanrip's
 MusicBrainz lookup matches several releases, skive lists them, asks for a
 number, and re-runs with `-R <n>`.
 
-Rips land in `/mnt/music/rip/` (mounted on demand from `NFS_MUSIC`). A clean
+Rips land in `/mnt/music/rip/cd/` (mounted on demand from `NFS_MUSIC`). A clean
 rip just finishes — swap discs by hand.
 
 ### tag
 
 ```bash
-skive tag
+skive tag                      # files all sources in order: cd, other, bandcamp
+skive tag cd                   # files only cd
+skive tag bandcamp             # files only bandcamp
+skive tag other                # files only other
 ```
 
-Runs beets over `/mnt/music/rip/`: MusicBrainz metadata, cover art, Last.fm
-genres, ReplayGain, then moves the tagged FLAC into `/mnt/music/library/`.
-The originals stay in `rip/` — clean that by hand when done. Rip several
-discs, then `tag` the batch.
+Files staged albums from `/mnt/music/rip/<source>/` into `/mnt/music/library/`
+by **moving** them. Because filing moves, anything still in `rip/` is unfiled by
+definition and offered again next run. An album skipped at the beets prompt stays
+in `rip/`. Duplicates prompt you (keep, remove, merge).
+
+The source decides the beets mode:
+- `cd` and `other` get normal MusicBrainz autotagging.
+- `bandcamp` gets as-is import (`-A`), keeping its own good tags while still
+  getting library paths, ReplayGain, cover art, and genres.
+
+The beets library database (`/mnt/music/music.db`) and beets import log
+(`/mnt/music/logs/import.log`) live on the music share beside `logs/` (never
+inside `library/`), so nothing depends on the current directory or a per-machine
+config dir.
+
+#### One-time database initialization
+
+To seed the beets library DB with your existing library without moving or
+copying files, run this one-time command from the repo environment:
+
+```bash
+uv run beet -c config/beets-config.yaml import -A -C /mnt/music/library
+```
 
 ### sync-sd
 

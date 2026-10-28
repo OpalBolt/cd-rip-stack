@@ -93,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # tag
     tag_parser = subparsers.add_parser("tag", help="tag and file music")
+    tag_parser.add_argument("source", nargs="?", choices=["cd", "bandcamp", "other"],
+                            help="music source to file (default: cd, other, bandcamp)")
     tag_parser.set_defaults(func=cmd_tag)
 
     # sync-sd

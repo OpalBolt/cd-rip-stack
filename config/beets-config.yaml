@@ -1,5 +1,6 @@
 # beets config — edit directory/paths to taste
 directory: /mnt/music/library
+library: /mnt/music/music.db
 
 plugins: fetchart embedart lastgenre ftintitle replaygain scrub the zero musicbrainz bandcamp
 
@@ -19,17 +20,16 @@ paths:
   comp: _Compilations/$year $album%aunique{}/$track - %the{$artist} - $title
 
 import:
-  copy: yes
-  move: no
+  copy: no
+  move: yes
   write: yes
   timid: no
   resume: ask
-  incremental: yes
-  incremental_skip_later: yes
+  incremental: no
   quiet_fallback: skip
   default_action: apply
-  duplicate_action: skip
-  log: import.txt
+  duplicate_action: ask
+  log: /mnt/music/logs/import.log
 
 match:
   strong_rec_thresh: 0.1 # auto-apply >=85% (default 0.04 = 96%; tune to 0.10 = 90%)
