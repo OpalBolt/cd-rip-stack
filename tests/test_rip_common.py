@@ -737,17 +737,79 @@ def test_wrong_name_gate_silent_when_folder_records_the_same_id(tmp_path, monkey
     assert result.stage.is_dir()
     assert prompts == ["already ripped — continue? (y/N): "]
 
-def test_gates_pass_silently_for_a_legacy_title_folder(tmp_path, monkeypatch):
-    """A title folder with no validation.json (legacy rip) never prompts."""
-    folder = tmp_path / "rip" / "movies" / "Mamma Mia! (2008)"
-    folder.mkdir(parents=True)
-    (folder / "Mamma Mia! (2008)_t00.mkv").touch()
+def test_duplicate_gate_name_match_catches_a_legacy_folder(tmp_path, monkeypatch, capsys):
+    """A same-name folder with no validation.json trips the gate on name
+    alone — the library today holds zero documents, so ids are blind to
+    every finished encode. Bare Enter refuses before staging."""
+    existing = tmp_path / "library" / "movies" / "Mamma Mia! (2008)"
+    existing.mkdir(parents=True)
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    log, prompts = _movie_run(monkeypatch, answers=[""])
+
+    with pytest.raises(SystemExit) as e:
+        rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
+
+    assert e.value.code == 1
+    assert prompts == ["already ripped — continue? (y/N): "]
+    assert len(_gate_notes(log)) == 1
+    assert str(existing) in capsys.readouterr().err
+
+
+def test_gates_pass_silently_for_a_foreign_legacy_folder(tmp_path, monkeypatch):
+    """A legacy folder of a different title never prompts."""
+    tmp_path.joinpath("rip", "movies", "Other (2005)").mkdir(parents=True)
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _movie_run(monkeypatch)  # no answers: any prompt stops the test
 
     result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
 
-    assert result.stage == folder / "d0"
+    assert result.stage == tmp_path / "rip" / "movies" / "Mamma Mia! (2008)" / "d0"
+
+
+def test_extras_run_skips_the_already_ripped_gate(tmp_path, monkeypatch):
+    """-E adds to an owned title: the movie on disk is the normal case —
+    the already-ripped gate never fires."""
+    tmp_path.joinpath("library", "movies", "Mamma Mia! (2008)").mkdir(parents=True)
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    _movie_run(monkeypatch)  # no answers: any prompt stops the test
+
+    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args(extras=True))
+
+    assert result.stage == tmp_path / "rip" / "movies" / "Mamma Mia! (2008)" / "d0"
+
+
+# -- TV rip preflight (season gate) --
+
+def test_tv_season_gate_exact_season_escalates_default_no(tmp_path, monkeypatch, capsys):
+    """The exact season on disk prints the folders and escalates to the
+    default-No confirm; bare Enter refuses (exit 1, gate note in the log)."""
+    show = tmp_path / "library" / "tv" / "Show (2020)"
+    (show / "Season 01").mkdir(parents=True)
+    monkeypatch.setattr("builtins.input", lambda _p: "")
+    log = Mock()
+
+    with pytest.raises(SystemExit) as e:
+        rip_common.tv_season_gate(tmp_path, log, "Show (2020)", 1)
+
+    assert e.value.code == 1
+    assert log.note.call_args.args == (
+        "gate", '"Show (2020)" S01 already ripped — nothing ripped')
+    assert str(show) in capsys.readouterr().err
+
+
+def test_tv_season_gate_other_seasons_only_inform(tmp_path, monkeypatch, capsys):
+    """A show on disk with other seasons never prompts — a new season of an
+    owned show is a normal rip; the info line names both sides."""
+    show = tmp_path / "library" / "tv" / "Show (2020)"
+    (show / "Season 01").mkdir(parents=True)
+    monkeypatch.setattr("builtins.input", lambda _p: pytest.fail("must not prompt"))
+    log = Mock()
+
+    rip_common.tv_season_gate(tmp_path, log, "Show (2020)", 2)
+
+    log.note.assert_not_called()
+    err = capsys.readouterr().err
+    assert "S01" in err and "S02" in err
 
 
 # -- movies only: TV untouched --

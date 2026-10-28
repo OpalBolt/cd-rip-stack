@@ -1,7 +1,7 @@
 # skive
 
 Rip CDs to AccurateRip-verified FLAC. Rip DVDs and Blu-rays to lossless MKV on
-Linux, then transcode to 1080p H.265 on a Windows box. One Python app, five
+Linux, then transcode to 1080p H.265 on a Windows box. One Python app, six
 commands:
 
 ```text
@@ -10,6 +10,7 @@ skive rip tv     [-T SPEC] [-E] [--tmdbid tv:N|URL] [-V]            rip a TV dis
 skive rip music  [offset] [cyanrip flags…]                                        rip a CD to FLAC
 skive tag                                                                         file the CD rip into the library
 skive sync-sd    [mountpoint]                                                     copy the library to an SD card
+skive search     QUERY                                                             check what's already ripped
 ```
 
 Ripping happens on the Linux machine with the drive. Transcoding runs on a
@@ -294,6 +295,27 @@ It auto-detects a mounted removable device, or one auto-mounted under
 lists the removable disks (`sdx`/`mmcblk`) and mounts the one you pick. A card
 this run mounted is unmounted again on exit — success, Ctrl-C, or failure. A
 card that was already mounted stays mounted.
+
+### search
+
+```bash
+skive search fight      # any state: staging, library, lossless, issues
+skive search downton    # TV hits list their seasons
+```
+
+Answers "have I already ripped this?" — a case-insensitive name match over
+every on-disk root (`library/`, `rip/`, `lossless/`, `issues/`), reporting
+each hit with its state; TV hits list their seasons (`Specials` for season
+0). Zero hits answer with a did-you-mean suggestion. No index to keep
+current — the directory walk over NFS is the search, milliseconds at this
+scale. Exit 0 either way.
+
+The rip flows run the same lookup as a preflight: a movie whose exact folder
+name is on disk (or whose TMDB id is already recorded) escalates its gate to
+`already ripped — continue? (y/N)` — bare Enter refuses, `y` rips anyway. A
+TV rip escalates only when that exact season exists in library, lossless or
+issues; other seasons print one informational line, and `-E` extras runs
+skip the check entirely.
 
 ## Drives
 

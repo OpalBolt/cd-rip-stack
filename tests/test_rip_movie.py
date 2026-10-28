@@ -444,7 +444,9 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
         (d0 / "C2_t1.mkv").write_text("in-flight partial")  # makemkvcon's junk label
         raise KeyboardInterrupt
 
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+    # The name gate sees the interrupted run's staged titles — confirm through
+    with patch("builtins.input", return_value="y"), \
+            patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.require_online"), \

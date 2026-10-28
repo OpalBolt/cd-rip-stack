@@ -10,6 +10,7 @@ from skive.makemkv import purge_junk
 from skive.scan import (
     TitleInfo, ambiguous, fast_scan_bluray, fast_scan_dvd, is_recordable, iso2b, scan_disc, sniff_disc,
 )
+from skive.search import folder_states, fmt_seasons, seasons_in
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
 from skive.validation import VALIDATION_FILENAME, load_validation
 
@@ -152,7 +153,8 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     # staging mkdir, so "already ripped" and "wrong name" are caught before
     # anything spins — a refusal exits with nothing created.
     if kind == "movie":
-        _identity_gates(videos_mnt, log, display, pick)
+        _identity_gates(videos_mnt, log, display, pick,
+                        extras=getattr(args, "extras", False))
 
     # The title staging exists only once the TMDB pick has named it (CONTEXT.md:
     # Staging): rip/<type>/<Name (Year)>/d{disc}/ — the per-drive subdir so two
@@ -239,23 +241,38 @@ def _duplicate_id_folders(videos_mnt: Path, tmdb_id: str) -> list[Path]:
     return matches
 
 
-def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick) -> None:
+def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick,
+                    extras: bool = False) -> None:
     """The movie identity gates (map.md decision 2), run after the TMDB pick
     resolves and before any staging folder is created: (a) the picked id
     already has a folder under rip/, lossless/ or library/ — including this
-    run's own folder, a re-rip is genuinely already ripped; (b) the title
+    run's own folder, a re-rip is genuinely already ripped — or the exact
+    folder name exists under any root (the ripped search's states): the
+    library holds no validation.json yet, so ids alone miss every finished
+    encode, and legacy folders carry no document at all; (b) the title
     folder exists and its validation.json records a different film. Both
     warn-and-confirm, default No: a refusal logs phase "gate" and exits with
     nothing staged; gate (b)'s same-id case never prompts (the documented
-    re-rip path). Movies only — TV is untouched.
+    re-rip path). -E extras runs skip gate (a) — adding to an owned title is
+    the normal case (CONTEXT.md: Rip preflight). Movies only — TV is the
+    season gate's job.
 
     Args:
         videos_mnt: The mounted videos share root
         log: The run's RipLog, already started
         display: The pick's sanitized folder name
         pick: The resolved TMDB pick
+        extras: -E run — the already-ripped gate never fires
     """
     duplicates = _duplicate_id_folders(videos_mnt, pick.id)
+    if not extras:
+        for _state, folder in folder_states(display, videos_mnt, "movies"):
+            if folder in duplicates:
+                continue
+            recorded = _recorded_identity(folder)
+            if recorded is not None and recorded[0] != pick.id:
+                continue  # a different film under this name — gate (b)'s case
+            duplicates.append(folder)
     if duplicates:
         print(f'"{display}" is already ripped:', file=sys.stderr)
         for folder in duplicates:
@@ -270,6 +287,37 @@ def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick)
                         f'you picked "{display}" — continue? (y/N): '):
             _refuse(log, f'title folder "{display}" holds "{recorded[1]}", '
                          "not the picked film — nothing ripped")
+
+
+def tv_season_gate(videos_mnt: Path, log: RipLog, display: str, season: int) -> None:
+    """The TV rip preflight (CONTEXT.md: Rip preflight), right after the
+    season prompt: the exact season already in library, lossless or issues
+    escalates to the same default-No confirm as the movie gates. Staging
+    never escalates — staged episodes are the interrupted-re-rip path the
+    flow already surfaces — and a show on disk with other seasons only
+    informs: a new season of an owned show is a normal rip.
+
+    Args:
+        videos_mnt: The mounted videos share root
+        log: The run's RipLog, already started
+        display: The pick's sanitized folder name
+        season: The stated season number
+    """
+    label = fmt_seasons({season})
+    clashing: list[Path] = []
+    for state, folder in folder_states(display, videos_mnt, "tv"):
+        seasons = seasons_in(folder)
+        if season in seasons and state != "staging":
+            clashing.append(folder)
+        elif seasons:
+            print(f"already on disk: {state} {fmt_seasons(seasons)} — this disc is {label}",
+                  file=sys.stderr)
+    if clashing:
+        print(f'"{display}" {label} is already ripped:', file=sys.stderr)
+        for folder in clashing:
+            print(f"  {folder}", file=sys.stderr)
+        if not _confirm("already ripped — continue? (y/N): "):
+            _refuse(log, f'"{display}" {label} already ripped — nothing ripped')
 
 
 def interrupted_exit(log, stage_dirs: list[Path]) -> None:

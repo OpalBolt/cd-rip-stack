@@ -36,6 +36,11 @@ def cmd_validate(args):
     run_validate(json_=args.json, issues=args.issues, fix=args.fix)
 
 
+def cmd_search(args):
+    from skive.search import run_search
+    run_search(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The skive argument parser: -v/-vv live on the TOP level so they apply
     to every subcommand (skive -v rip movie, not skive rip movie -v)."""
@@ -108,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="apply the safe automatic fix: rename staging-labelled extras files "
                                       "to the ' - Extra NN' form (report-only without it)")
     validate_parser.set_defaults(func=cmd_validate)
+
+    # search — the ripped search (CONTEXT.md): every on-disk root, exit 0 always
+    search_parser = subparsers.add_parser(
+        "search", help="search every on-disk root for an already-ripped title")
+    search_parser.add_argument("query", help="title substring, case-insensitive")
+    search_parser.set_defaults(func=cmd_search)
 
     return parser
 

@@ -116,6 +116,16 @@ _Avoid_: main title, feature-length title
 The consistency pass over `library/` (`skive validate`): durations vs TMDB, duplicate ids, stray staging names (`_tNN` and old `_eNN` labels), missing episodes. Ratio rows carry a severity — red once the deviation exceeds what a PAL-vs-NTSC conversion explains — and a Δ-from-norm value. `--json` emits the report as data; `--issues` shows only the problems plus a per-folder action plan. Report-only except `--fix`, the one mutation: it renames staging-labelled `extras/` files to the ` - Extra NN` form.
 _Avoid_: lint, audit (that name belongs to the ratio audit)
 
+### Search
+
+**Ripped search**:
+The `skive search QUERY` answer to "have I already ripped this?" — a case-insensitive name match across every on-disk root (`library/`, `rip/`, `lossless/`, `issues/`), each hit reported with its state (staging, library, lossless, issues); TV hits list their seasons. Zero hits answer with a did-you-mean suggestion. Always exit 0, never a database — the directory walk is the index.
+_Avoid_: library search, catalog, index
+
+**Rip preflight**:
+The duplicate gate fired once the run's name is settled — after the movie pick (inside the identity gates) and after the TV season prompt: an exact-name title folder on disk escalates the confirm to default-No (bare Enter refuses, explicit `y` rips anyway). TV staging never escalates — staged episodes are the interrupted-re-rip path; a TV show on disk with other seasons only informs; `-E` extras runs skip it — adding to an owned title is the normal case.
+_Avoid_: duplicate check, pre-scan
+
 ### Subtitles
 
 **Sidecar**:

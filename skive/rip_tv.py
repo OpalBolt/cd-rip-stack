@@ -1,6 +1,7 @@
 """TV rip flow: season prompt, episode-range prompt, confirm table, renames,
 staging inspection, post-rip validation record."""
 
+import os
 import re
 import subprocess
 import sys
@@ -16,7 +17,9 @@ from skive.makemkv import (
     CONFIG_DIR, build_selection, inject_profile, promote_staged, rename_staged,
     rip_header, subtitle_note, rip_titles, hsize,
 )
-from skive.rip_common import fast_scan_header, interrupted_exit, rip_preamble
+from skive.rip_common import (
+    fast_scan_header, interrupted_exit, rip_preamble, tv_season_gate,
+)
 from skive.scan import resolve_titles, scan_disc
 from skive.tmdb import fetch_season
 from skive.validation import (
@@ -515,6 +518,11 @@ def rip_tv(args) -> None:
             sys.exit(1)
 
         log.note("type", f"type=tv season={season}")
+
+        # Rip preflight (CONTEXT.md): the exact season on disk escalates to
+        # the default-No confirm; other seasons only inform
+        tv_season_gate(Path(os.environ.get("VIDEOS_MOUNT", "/mnt/videos")),
+                       log, display, season)
 
         # The gate already scanned the disc; reuse that result (no second scan)
         if not titles_full:

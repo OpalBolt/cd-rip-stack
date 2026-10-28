@@ -16,6 +16,7 @@ skive [-v|-vv] rip tv    [-T SPEC] [-E] [--tmdbid tv:N|URL] [-V] [-d N]
 skive [-v|-vv] rip music [offset] [cyanrip flags…]
 skive tag
 skive sync-sd   [mountpoint]
+skive search    QUERY
 ```
 
 - The `rip` subcommand is the declared type. No mid-flow movie-or-TV prompt.
@@ -169,6 +170,7 @@ cd-rip-stack/
 │   ├── scan.py          # disc sniff, full scan and parsers, both fast scans, ambiguity, title menu
 │   ├── makemkv.py       # profile injection, rip loop + status block, junk purge, renames, promotion
 │   ├── rip_common.py    # shared preamble: mount → gates → TMDB pick → staging tree; interrupt exit
+│   ├── search.py        # ripped search: name walk over every on-disk root; the rip preflight lookups
 │   ├── tv_match.py      # pure assignment math: floor, play-alls, range, fixes, audit
 │   ├── tmdb.py          # search loop, season fetch, id/URL parse
 │   ├── rip_movie.py
