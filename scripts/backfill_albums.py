@@ -23,15 +23,10 @@ from mutagen import File as mutagen_file
 _repo = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo))
 
+from skive.tag import AUDIO_EXTENSIONS
 from skive.validation import VALIDATION_FILENAME, album_document, write_validation
 
 
-# Mutagen understands more formats than this list, but these are the audio
-# files that can occur in a beets album and avoid treating cover art as tracks.
-_AUDIO_SUFFIXES = {
-    ".aac", ".aiff", ".alac", ".ape", ".flac", ".m4a", ".mp3", ".mp4",
-    ".oga", ".ogg", ".opus", ".wav", ".wv",
-}
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 # Tests replace this callable; keeping it at module scope also keeps all file
 # decoding behind one seam, so the script never needs a real audio fixture.
@@ -67,7 +62,7 @@ def _release(audio_files: list) -> str | None:
     """Use the MusicBrainz id, or a Bandcamp URL in comment/url tags."""
     for audio in audio_files:
         value = _first(audio, "musicbrainz_albumid", "mb_albumid",
-                       "musicbrainz release id")
+                       "mb_release_id", "musicbrainz release id")
         if value:
             return str(value)
     for audio in audio_files:
@@ -121,7 +116,7 @@ def build_album_document(folder: Path, reader=None) -> dict:
     audio_files = []
     for path in sorted(folder.rglob("*")):
         if not path.is_file() or path.name == VALIDATION_FILENAME \
-                or path.suffix.lower() not in _AUDIO_SUFFIXES:
+                or path.suffix.lower() not in AUDIO_EXTENSIONS:
             continue
         try:
             audio = read(path, easy=True)

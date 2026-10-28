@@ -83,3 +83,15 @@ def test_backfill_uses_bandcamp_url_when_no_musicbrainz_id(tmp_path):
         info=SimpleNamespace(length=10), format="FLAC")
     doc = bf.build_album_document(album, reader=lambda path, easy=True: fake)
     assert doc["release"] == "https://artist.bandcamp.com/album/album"
+
+
+def test_backfill_accepts_mb_release_id_and_counts_wma(tmp_path):
+    album = tmp_path / "library" / "Artist" / "Album"
+    _track(album / "01.wma")
+    fake = SimpleNamespace(
+        tags={"mb_release_id": ["release-id"], "tracknumber": ["1/1"]},
+        info=SimpleNamespace(length=10), format="WMA")
+    doc = bf.build_album_document(album, reader=lambda path, easy=True: fake)
+    assert doc["release"] == "release-id"
+    assert doc["tracks_found"] == 1
+    assert doc["tracks"] == [{"file": "01.wma", "dur_s": 10, "format": "WMA"}]
