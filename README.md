@@ -272,9 +272,8 @@ MusicBrainz lookup matches several releases, skive lists them, asks for a
 number, and re-runs with `-R <n>`.
 
 Rips land in `/mnt/music/rip/cd/` (mounted on demand from `NFS_MUSIC`).
-The expected layout is `<album>/` subfolders, but this is unconfirmed until ticket
-09; flat FLACs directly in `rip/cd/` also work until then. A clean rip just
-finishes — swap discs by hand.
+The expected layout is `<album>/` subfolders. A clean rip just finishes — swap
+discs by hand.
 
 ### tag
 
@@ -371,18 +370,20 @@ MakeMKV enumerates drives through `/dev/sg*` (SCSI-generic), not `/dev/sr*`.
 
 ## Logging
 
-Every command appends JSON lines to `logs/rip.jsonl` on the videos share —
-one object per line, `{ts, run, script, software, name, phase, status,
-elapsed_s}` — one line per phase plus a total on exit. `run` is a short UUID
-minted per invocation; `status` carries `started`, `ok`, `FAIL(rc)`,
-`interrupted`, or note text. Both machines append to the same file over NFS
-(`tag` is not logged).
+Every command appends JSON lines to `logs/rip.jsonl` on its share — video
+commands use the videos share, while `rip music` and `tag` use the music share.
+Each object has `{ts, run, script, software, name, phase, status, elapsed_s}`;
+`tag` has one phase for each non-empty source and one note per album, marked
+`filed` or `left`. `run` is a short UUID minted per invocation; `status` carries
+`started`, `ok`, `FAIL(rc)`, `interrupted`, or note text.
 
 Each run's raw tool output is captured to `logs/raw/<run>.jsonl`
-(`{ts, run, tool, line}`). A clean exit deletes it; a failure or interrupt
-keeps it. When transcode quarantines a source to `issues/`, that run's log
-lines and raw log are copied in beside it, so everything about one failure
-sits in one folder.
+(`{ts, run, tool, line}`). A clean video exit deletes it; a failure or interrupt
+keeps it. For `tag`, it is also kept when any album is `left` in `rip/`, even if
+beets exits successfully. A `left` line means the album folder still contains an
+audio file after beets ran; it is offered again on the next `tag` run. When
+transcode quarantines a source to `issues/`, that run's log lines and raw log are
+copied in beside it, so everything about one failure sits in one folder.
 
 Every full MakeMKV scan also writes a scan dump — the verbatim
 `makemkvcon info` output — to `logs/scan/<run>_<volume-label>.txt`, never

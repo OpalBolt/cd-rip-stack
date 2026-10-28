@@ -1,5 +1,6 @@
 """Tests for tag.py — no NAS, no beets run, stub everything."""
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -253,6 +254,78 @@ def test_tag_nonzero_exit_if_beets_fails(tmp_path, monkeypatch):
 
     # Should stop after first failed call
     assert len(calls) == 1
+
+
+def _tag_log_lines(root):
+    """Read the JSONL run log written on a temporary music share."""
+    return [json.loads(line) for line in (root / "logs" / "rip.jsonl").read_text().splitlines()]
+
+
+def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
+    """A moved album is filed, a remaining audio file is left, and raw stays."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+    filed = tmp_path / "rip" / "cd" / "Filed"
+    left = tmp_path / "rip" / "cd" / "Left"
+    filed.mkdir(parents=True)
+    left.mkdir()
+    (left / "track.flac").write_bytes(b"audio")
+
+    def fake_run(cmd):
+        filed.rmdir()
+        return Mock(returncode=0, stdout="beets imported\n")
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(FakeArgs(), run=fake_run)
+
+    lines = _tag_log_lines(tmp_path)
+    notes = {line["name"]: line["status"] for line in lines
+             if line["status"] in {"filed", "left"}}
+    assert notes == {"Filed": "filed", "Left": "left"}
+    run = lines[0]["run"]
+    assert (tmp_path / "logs" / "raw" / f"{run}.jsonl").exists()
+
+
+def test_clean_tag_deletes_raw_log(tmp_path, monkeypatch):
+    """When all album folders lose their audio, a clean raw log is removed."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+
+    def fake_run(cmd):
+        album.rmdir()
+        return Mock(returncode=0, stdout="done\n")
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(FakeArgs(), run=fake_run)
+
+    lines = _tag_log_lines(tmp_path)
+    run = lines[0]["run"]
+    assert not (tmp_path / "logs" / "raw" / f"{run}.jsonl").exists()
+
+
+def test_tag_interrupt_records_130_and_keeps_raw(tmp_path, monkeypatch):
+    """An interrupted beets session is logged and its raw transcript remains."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
+
+    def fake_run(cmd):
+        raise KeyboardInterrupt
+
+    with patch("skive.tag.ensure_mounted"):
+        try:
+            tag_cmd(FakeArgs(), run=fake_run)
+        except SystemExit as exc:
+            assert exc.code == 130
+        else:
+            assert False, "interrupt should exit 130"
+
+    lines = _tag_log_lines(tmp_path)
+    assert any(line["status"] == "interrupted" for line in lines)
+    run = lines[0]["run"]
+    assert (tmp_path / "logs" / "raw" / f"{run}.jsonl").exists()
 
 
 def test_tag_argparse_unknown_source():

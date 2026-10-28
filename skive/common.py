@@ -153,6 +153,7 @@ class RipLog:
         self._phase_name = None
         self._phase_start = None
         self._interrupted = False
+        self._keep_raw = False
 
     def _emit(self, now, phase, status, elapsed_s):
         _append_jsonl(self._run_log, {
@@ -189,7 +190,9 @@ class RipLog:
         (scan_dir / name).write_text(out, encoding="utf-8")
 
     def start(self):
-        """Log the immediate 'started' marker line."""
+        """Log the immediate 'started' marker line and open the raw log."""
+        self._raw_log.parent.mkdir(parents=True, exist_ok=True)
+        self._raw_log.touch()
         now = self._now()
         self._start = now
         self._emit(now, "-", "started", 0)
@@ -224,8 +227,18 @@ class RipLog:
         self._emit(now, "total", "interrupted",
                    int((now - self._start).total_seconds()))
 
+    def keep_raw(self) -> None:
+        """Keep this run's raw log even when the caller exits cleanly.
+
+        Some callers have a successful tool exit but still need the transcript
+        for an outcome that needs investigation (for example, albums left in
+        staging).  The default remains the historical clean-run deletion.
+        """
+        self._keep_raw = True
+
     def finish(self, rc):
-        """Log the total line, then drop the raw log on a clean exit.
+        """Log the total line, then drop the raw log on a clean exit unless
+        the caller explicitly retained it.
 
         The total line is skipped when rc==0 and exactly one phase succeeded —
         that lone phase line already records the run — and after interrupted(),
@@ -241,7 +254,7 @@ class RipLog:
             status = "ok" if rc == 0 else f"FAIL({rc})"
             self._emit(now, "total", status,
                        int((now - self._start).total_seconds()))
-        if rc == 0:
+        if rc == 0 and not self._keep_raw:
             self._raw_log.unlink(missing_ok=True)
 
 
