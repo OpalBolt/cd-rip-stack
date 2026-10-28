@@ -116,9 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
                                       "to the ' - Extra NN' form (report-only without it)")
     validate_parser.set_defaults(func=cmd_validate)
 
-    # search — the ripped search (CONTEXT.md): every on-disk root, exit 0 always
+    # search — the scoped ripped search (CONTEXT.md), exit 0 even on no hits
     search_parser = subparsers.add_parser(
-        "search", help="search every on-disk root for an already-ripped title")
+        "search", help="search selected on-disk roots for an already-ripped title")
+    search_parser.add_argument("scope", choices=("movie", "tv", "video", "music", "all"),
+                               help="share roots to search")
     search_parser.add_argument("query", help="title substring, case-insensitive")
     search_parser.set_defaults(func=cmd_search)
 

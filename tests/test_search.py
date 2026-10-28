@@ -1,7 +1,13 @@
-"""Tests for the ripped search (CONTEXT.md: Ripped search, Rip preflight)."""
+"""Tests for the scoped ripped search (CONTEXT.md: Ripped search)."""
 
+from types import SimpleNamespace
+
+import pytest
+
+from skive.main import build_parser
 from skive.search import (
-    find_hits, folder_states, fmt_seasons, seasons_in, suggestions,
+    find_hits, find_music_hits, folder_states, fmt_seasons, run_search,
+    seasons_in, suggestions,
 )
 
 
@@ -62,3 +68,58 @@ def test_zero_hits_suggest_near_miss(tmp_path):
 
 def test_fmt_seasons_sorts_and_spells_specials():
     assert fmt_seasons({11, 0, 2}) == "Specials, S02, S11"
+
+
+def test_video_scope_filters_title_kind(tmp_path):
+    _mkv(tmp_path / "library/movies/Movie (2020)/movie.mkv")
+    _mkv(tmp_path / "library/tv/Show (2020)/Show_S01E01.mkv")
+
+    assert [hit.kind for hit in find_hits("", tmp_path, ("movies",))] == ["movie"]
+    assert [hit.kind for hit in find_hits("", tmp_path, ("tv",))] == ["tv"]
+
+
+def test_music_hits_include_staging_source_and_library_album(tmp_path):
+    (tmp_path / "rip/cd/Artist - First Album").mkdir(parents=True)
+    (tmp_path / "library/Artist/2024 Second Album").mkdir(parents=True)
+
+    staging = find_music_hits("first", tmp_path)
+    filed = find_music_hits("second", tmp_path)
+
+    assert staging[0].name == "Artist / First Album"
+    assert staging[0].kind == "album"
+    assert staging[0].states == ["staging (cd)"]
+    assert filed[0].name == "Artist / 2024 Second Album"
+    assert filed[0].states == ["library"]
+
+
+def test_search_music_walks_only_music_mount(tmp_path, monkeypatch, capsys):
+    (tmp_path / "rip/other/Artist - Album").mkdir(parents=True)
+    video = tmp_path / "videos"
+    (video / "library/movies/Album (2020)").mkdir(parents=True)
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("VIDEOS_MOUNT", str(video))
+    monkeypatch.setattr("skive.search.ensure_mounted", lambda *_args: None)
+
+    run_search(SimpleNamespace(scope="music", query="album"))
+
+    output = capsys.readouterr().out
+    assert "Artist / Album" in output
+    assert "staging (other)" in output
+    assert "Album (2020)" not in output
+
+
+def test_search_mount_failure_is_one_note_and_successful_exit(monkeypatch, capsys):
+    monkeypatch.setattr("skive.search.ensure_mounted", lambda *_args: (_ for _ in ()).throw(SystemExit(1)))
+
+    run_search(SimpleNamespace(scope="music", query="album"))
+
+    assert capsys.readouterr().out.strip() == "skive: cannot mount music share; skipping"
+
+
+def test_search_scope_is_required_and_limited():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["search", "query"])
+    assert parser.parse_args(["search", "music", "query"]).scope == "music"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["search", "podcasts", "query"])

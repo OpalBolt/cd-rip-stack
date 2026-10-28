@@ -10,7 +10,7 @@ skive rip tv     [-T SPEC] [-E] [--tmdbid tv:N|URL] [-V]            rip a TV dis
 skive rip music  [offset] [cyanrip flags…]                                        rip a CD to FLAC
 skive tag                                                                         file the CD rip into the library
 skive sync-sd    [mountpoint]                                                     copy the library to an SD card
-skive search     QUERY                                                             check what's already ripped
+skive search     SCOPE QUERY                                                             check what's already ripped
 ```
 
 Ripping happens on the Linux machine with the drive. Transcoding runs on a
@@ -331,16 +331,21 @@ card that was already mounted stays mounted.
 ### search
 
 ```bash
-skive search fight      # any state: staging, library, lossless, issues
-skive search downton    # TV hits list their seasons
+skive search movie fight      # movie roots on the videos share
+skive search tv downton       # TV roots; hits list their seasons
+skive search video fight      # movie and TV roots
+skive search music radiohead  # music staging and filed library
+skive search all fight        # both shares
 ```
 
-Answers "have I already ripped this?" — a case-insensitive name match over
-every on-disk root (`library/`, `rip/`, `lossless/`, `issues/`), reporting
-each hit with its state; TV hits list their seasons (`Specials` for season
-0). Zero hits answer with a did-you-mean suggestion. No index to keep
-current — the directory walk over NFS is the search, milliseconds at this
-scale. Exit 0 either way.
+The scope is required: `movie`, `tv`, `video` (both video kinds), `music`, or
+`all`. Video scopes walk only the selected video roots (`library/`, `rip/`,
+`lossless/`, and `issues/`). Music walks `rip/cd/`, `rip/other/`,
+and `rip/bandcamp/` plus `library/<Artist>/<Year Album>/`; staging hits show
+`staging (source)` and album hits display `Artist / Album`. Names are matched
+case-insensitively. A scoped share that cannot be mounted is noted and the
+command still exits 0. Zero hits include a did-you-mean suggestion when one is
+available. This is a directory walk, not a database or index.
 
 The rip flows run the same lookup as a preflight: a movie whose exact folder
 name is on disk (or whose TMDB id is already recorded) escalates its gate to
