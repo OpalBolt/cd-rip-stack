@@ -1,6 +1,7 @@
 """Run beets over staged music sources and record filing outcomes."""
 
 import errno
+import inspect
 import os
 import selectors
 import subprocess
@@ -69,7 +70,8 @@ def _record_output(log: RipLog, output, tool: str = "beets") -> None:
         log.raw(tool, line.rstrip("\r"))
 
 
-def _run_beets_pty(cmd: list[str], log: RipLog) -> int:
+def _run_beets_pty(cmd: list[str], log: RipLog,
+                   env: dict[str, str] | None = None) -> int:
     """Run beets on a pseudo-terminal, relaying its session to the console.
 
     A pty is required rather than pipes because beets prompts based on whether
@@ -81,11 +83,9 @@ def _run_beets_pty(cmd: list[str], log: RipLog) -> int:
     selector = selectors.DefaultSelector()
     stdin_fd = None
     try:
-        # pluginpath in the shipped config is relative to config/, not the
-        # caller's working directory; tag's config is always shipped with it.
         process = subprocess.Popen(
             cmd, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
-            cwd=Path(__file__).parent.parent / "config",
+            env=env,
         )
         os.close(slave)
         slave = None
@@ -148,11 +148,21 @@ def _run_beets_pty(cmd: list[str], log: RipLog) -> int:
         os.close(master)
 
 
-def _run_beets(cmd: list[str], log: RipLog, run=None) -> int:
+def _run_beets(cmd: list[str], log: RipLog, run=None,
+               env: dict[str, str] | None = None) -> int:
     """Run beets, using an injected non-pty runner for tests."""
     if run is None:
-        return _run_beets_pty(cmd, log)
-    result = run(cmd)
+        return _run_beets_pty(cmd, log, env=env)
+    # Keep the existing one-argument test seam while allowing callers to
+    # inspect the exact child environment.
+    try:
+        parameters = inspect.signature(run).parameters.values()
+        accepts_env = any(parameter.name == "env" or
+                          parameter.kind == inspect.Parameter.VAR_KEYWORD
+                          for parameter in parameters)
+    except (TypeError, ValueError):
+        accepts_env = False
+    result = run(cmd, env=env) if accepts_env else run(cmd)
     _record_output(log, getattr(result, "stdout", None))
     _record_output(log, getattr(result, "stderr", None))
     if isinstance(result, int):
@@ -208,8 +218,17 @@ def tag(args, run=None) -> None:
             if source == "bandcamp":
                 cmd.append("-A")
             cmd.append(str(source_dir))
+            # beets loads local plugins as the beetsplug namespace package.
+            # Supplying the repository root here avoids pluginpath's cwd
+            # dependence while keeping the shipped config portable.
+            beets_env = os.environ.copy()
+            repo_root = str(Path(__file__).parent.parent.resolve())
+            pythonpath = beets_env.get("PYTHONPATH", "")
+            entries = pythonpath.split(os.pathsep) if pythonpath else []
+            if repo_root not in entries:
+                beets_env["PYTHONPATH"] = os.pathsep.join([repo_root, *entries])
             try:
-                source_rc = _run_beets(cmd, log, run=run)
+                source_rc = _run_beets(cmd, log, run=run, env=beets_env)
             except KeyboardInterrupt:
                 any_left = _log_album_outcomes(log, source, source_dir, before) or any_left
                 raise

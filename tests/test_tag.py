@@ -88,6 +88,25 @@ def test_beets_invoked_correctly():
         assert cmd[:3] == ["/fake/python", "-m", "beets"]
 
 
+def test_beets_child_gets_repo_on_pythonpath(tmp_path, monkeypatch):
+    """The local filing plugin is importable regardless of subprocess cwd."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
+    captured = {}
+
+    def fake_run(cmd, env=None):
+        captured["cmd"] = cmd
+        captured["env"] = env
+        return Mock(returncode=0)
+
+    with patch("skive.tag.ensure_mounted"):
+        tag_cmd(FakeArgs(), run=fake_run)
+
+    repo_root = str(Path(__file__).parent.parent.resolve())
+    assert repo_root in captured["env"]["PYTHONPATH"].split(os.pathsep)
+
+
 def test_music_mount_env_override():
     """Test MUSIC_MOUNT env overrides the mountpoint."""
     with tempfile.TemporaryDirectory() as tmpdir:

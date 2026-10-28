@@ -86,6 +86,40 @@ def test_plugin_second_disc_keeps_first_and_suffixes_sidecar(tmp_path):
     assert (destination / "cyanrip.disc2.log").exists()
 
 
+def test_plugin_multiple_source_dirs_merges_discs_and_sidecars(tmp_path):
+    destination = tmp_path / "library" / "Artist" / "Album"
+    first = tmp_path / "rip" / "bandcamp" / "Album" / "disc1"
+    second = tmp_path / "rip" / "bandcamp" / "Album" / "disc2"
+    for source, number in ((first, "1"), (second, "2")):
+        source.mkdir(parents=True)
+        (source / "validation.json").write_text(json.dumps({
+            "kind": "album", "source": "bandcamp", "release": "url",
+            "tracks": [], "discs": {number: {"rip_run": "rip-" + number}},
+            "reconstructed": False,
+        }))
+        (source / "cyanrip.log").write_text(number)
+        (source / "disc.cue").write_text(number)
+    task = _task(first, destination)
+    second_item = SimpleNamespace(path=str(destination / "02.flac"), length=124,
+                                  format="FLAC", comment="https://artist.bandcamp.com/album/release")
+    second_item_path = Path(second_item.path)
+    second_item_path.write_bytes(b"audio")
+    task.paths = [str(first), str(second)]
+    task.items.append(second_item)
+
+    handle_import_task_files(task, tag_run="tag-run")
+
+    doc = json.loads((destination / "validation.json").read_text())
+    assert set(doc["discs"]) == {"1", "2"}
+    assert doc["source"] == "bandcamp"
+    assert (destination / "cyanrip.disc1.log").exists()
+    assert (destination / "cyanrip.disc2.log").exists()
+    assert (destination / "disc.disc1.cue").exists()
+    assert (destination / "disc.disc2.cue").exists()
+    assert not (first / "cyanrip.log").exists()
+    assert not (second / "cyanrip.log").exists()
+
+
 def test_plugin_logs_errors_without_raising():
     plugin = object.__new__(SkiveAlbumPlugin)
     plugin._log = Mock()

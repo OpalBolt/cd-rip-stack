@@ -54,11 +54,26 @@ def _destination(task) -> Path:
     return Path(os.path.commonpath([str(path.parent) for path in paths]))
 
 
-def _source(task) -> Path:
+def _source_paths(task) -> list[Path]:
     paths = getattr(task, "paths", None) or []
     if not paths:
         raise ValueError("import task has no source path")
-    return _path(next(iter(paths)))
+    return [_path(path) for path in paths]
+
+
+def _source(task) -> Path:
+    """Return the first source folder in an import task."""
+    return _source_paths(task)[0]
+
+
+def _source_kind(source: Path) -> str:
+    """Find the music source folder beneath the task's ``rip`` root."""
+    current = source
+    while current != current.parent:
+        if current.parent.name == "rip":
+            return current.name
+        current = current.parent
+    return "unknown"
 
 
 def _track(item) -> dict:
@@ -90,9 +105,14 @@ def _release(items, source_doc: dict | None, source: str) -> str | None:
     return None
 
 
-def _disc_number(source_doc: dict | None, items) -> str:
+def _disc_number(source_doc: dict | None, items,
+                 source: Path | None = None) -> str:
     if source_doc and isinstance(source_doc.get("discs"), dict) and source_doc["discs"]:
         return str(next(reversed(source_doc["discs"])))
+    if source is not None:
+        match = re.search(r"(?:disc|cd)[ _-]?(\d+)$", source.name, re.IGNORECASE)
+        if match:
+            return match.group(1)
     for item in items:
         number = _value(item, "disc", "discnumber", "disc_number")
         if number:
@@ -115,41 +135,45 @@ def _file_sidecars(source: Path, destination: Path, disc_number: str,
 def handle_import_task_files(task, *, tag_run: str | None = None,
                              mode: str | None = None) -> None:
     """Write one album record after beets has moved an import task's files."""
-    source = _source(task)
+    sources = _source_paths(task)
     destination = _destination(task)
-    source_doc = load_validation(source / VALIDATION_FILENAME)
-    source_name = source.parent.name
     items = list(task.imported_items()) if callable(getattr(task, "imported_items", None)) else list(getattr(task, "items", []))
     # The folder directly under rip is authoritative; never use the album
     # folder (or stale metadata) as the music source.
-    source_kind = source_name if source_name in {"cd", "bandcamp", "other"} else "unknown"
+    source_kind = _source_kind(sources[0])
     run = tag_run or os.environ.get("SKIVE_TAG_RUN")
     beets_mode = mode or os.environ.get("SKIVE_TAG_MODE")
     if beets_mode not in {"autotag", "as-is"}:
         beets_mode = "as-is" if source_kind == "bandcamp" else "autotag"
-    disc_number = _disc_number(source_doc, items)
     old = load_validation(destination / VALIDATION_FILENAME) or {}
-    prior_discs = source_doc.get("discs") if source_doc else None
-    if not isinstance(prior_discs, dict):
-        prior_discs = None
+    discs = {}
+    release = None
     filed = date.today().isoformat()
-    if prior_discs is None:
-        prior_discs = {disc_number: {}}
-    else:
-        prior_discs = {str(number): dict(entry) for number, entry in prior_discs.items()
-                       if isinstance(entry, dict)}
-    entry = dict(prior_discs.get(disc_number, {}))
-    entry.update({"tag_run": run, "filed_at": filed, "mode": beets_mode})
-    prior_discs[disc_number] = entry
+    for source in sources:
+        source_doc = load_validation(source / VALIDATION_FILENAME)
+        disc_number = _disc_number(source_doc, items, source)
+        source_discs = source_doc.get("discs") if source_doc else None
+        if isinstance(source_discs, dict):
+            discs.update({str(number): dict(entry) for number, entry in source_discs.items()
+                          if isinstance(entry, dict)})
+        entry = dict(discs.get(disc_number, {}))
+        entry.update({"tag_run": run, "filed_at": filed, "mode": beets_mode})
+        discs[disc_number] = entry
+        if release is None:
+            release = _release(items, source_doc, source_kind)
+
     doc = album_document(
-        source_kind, _release(items, source_doc, source_kind),
-        [_track(item) for item in items], reconstructed=False,
-        discs=prior_discs,
+        source_kind, release, [_track(item) for item in items],
+        reconstructed=False, discs=discs,
     )
     merged = merge_album_document(old, doc)
     destination.mkdir(parents=True, exist_ok=True)
     write_validation(destination / VALIDATION_FILENAME, merged)
-    _file_sidecars(source, destination, disc_number, len(merged["discs"]))
+    disc_count = len(merged["discs"])
+    for source in sources:
+        disc_number = _disc_number(load_validation(source / VALIDATION_FILENAME),
+                                   items, source)
+        _file_sidecars(source, destination, disc_number, disc_count)
 
 
 class SkiveAlbumPlugin(BeetsPlugin):
