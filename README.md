@@ -8,7 +8,7 @@ commands:
 skive rip movie  [-T SPEC] [--part N] [-E] [--tmdbid ID|URL] [-V]   rip a movie to lossless MKV
 skive rip tv     [-T SPEC] [-E] [--tmdbid tv:N|URL] [-V]            rip a TV disc to named episodes
 skive rip music  [offset] [cyanrip flags…]                                        rip a CD to FLAC
-skive tag                                                                         file the CD rip into the library
+skive tag                                                                         file staged music into the library
 skive sync-sd    [mountpoint]                                                     copy the library to an SD card
 skive search     SCOPE QUERY                                                             check what's already ripped
 ```
@@ -293,6 +293,11 @@ The source decides the beets mode:
 - `cd` and `other` get normal MusicBrainz autotagging.
 - `bandcamp` gets as-is import (`-A`), keeping its own good tags while still
   getting library paths, ReplayGain, cover art, and genres.
+
+Each filed album gets a `validation.json` provenance record with its source,
+release identity, tracks, filing run, date, and beets mode. The local beets
+plugin also carries cyanrip `.log` and `.cue` sidecars into the album folder;
+CD-specific AccurateRip details are retained when a staged record provides them.
 
 The beets library database (`/mnt/music/music.db`) and beets import log
 (`/mnt/music/logs/import.log`) live on the music share beside `logs/` (never

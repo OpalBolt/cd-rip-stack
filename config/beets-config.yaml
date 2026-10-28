@@ -2,7 +2,9 @@
 directory: /mnt/music/library
 library: /mnt/music/music.db
 
-plugins: fetchart embedart lastgenre ftintitle replaygain scrub the zero musicbrainz bandcamp
+# Relative paths in a config file resolve from this file, not beets' cwd.
+pluginpath: ../beetsplug
+plugins: fetchart embedart lastgenre ftintitle replaygain scrub the zero musicbrainz bandcamp skive_album
 
 # "The Beatles" sorts under B. Required for %the{} used in paths below.
 the:

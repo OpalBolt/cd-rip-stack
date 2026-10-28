@@ -81,8 +81,11 @@ def _run_beets_pty(cmd: list[str], log: RipLog) -> int:
     selector = selectors.DefaultSelector()
     stdin_fd = None
     try:
+        # pluginpath in the shipped config is relative to config/, not the
+        # caller's working directory; tag's config is always shipped with it.
         process = subprocess.Popen(
             cmd, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+            cwd=Path(__file__).parent.parent / "config",
         )
         os.close(slave)
         slave = None
@@ -192,11 +195,15 @@ def tag(args, run=None) -> None:
     log.start()
     rc = 0
     any_left = False
+    old_tag_run = os.environ.get("SKIVE_TAG_RUN")
+    old_tag_mode = os.environ.get("SKIVE_TAG_MODE")
+    os.environ["SKIVE_TAG_RUN"] = log.run
     try:
         for source in active_sources:
             source_dir = rip_dir / source
             before = _album_folders(source_dir)
             log.phase(source)
+            os.environ["SKIVE_TAG_MODE"] = "as-is" if source == "bandcamp" else "autotag"
             cmd = [sys.executable, "-m", "beets", "-c", str(config_path), "import"]
             if source == "bandcamp":
                 cmd.append("-A")
@@ -217,6 +224,14 @@ def tag(args, run=None) -> None:
         log.interrupted()
         print("skive: interrupted", file=sys.stderr)
     finally:
+        if old_tag_run is None:
+            os.environ.pop("SKIVE_TAG_RUN", None)
+        else:
+            os.environ["SKIVE_TAG_RUN"] = old_tag_run
+        if old_tag_mode is None:
+            os.environ.pop("SKIVE_TAG_MODE", None)
+        else:
+            os.environ["SKIVE_TAG_MODE"] = old_tag_mode
         if any_left:
             log.keep_raw()
         log.finish(rc)

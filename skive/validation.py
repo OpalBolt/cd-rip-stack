@@ -35,6 +35,65 @@ VALIDATION_FILENAME = "validation.json"
 """The document's one name in every title folder it travels through."""
 
 
+def album_document(source: str, release: str | None, tracks: list[dict],
+                   disc_number: int | str = 1, tag_run: str | None = None,
+                   filing_date: str | None = None, mode: str = "autotag",
+                   reconstructed: bool = False,
+                   discs: dict | None = None) -> dict:
+    """Build the provenance document written beside a filed music album.
+
+    ``tracks`` entries are ``{"file", "dur_s", "format"}``.  Disc
+    numbers are serialized as strings because JSON object keys are strings;
+    accepting integers here keeps callers' disc indexes natural.  ``discs``
+    is useful when carrying the CD rip's richer disc entry into filing; when
+    omitted, this run's tag metadata makes one entry.
+    """
+    if discs is None:
+        discs = {str(disc_number): {
+            "tag_run": tag_run,
+            "filed_at": filing_date,
+            "mode": mode,
+        }}
+    else:
+        discs = {str(number): dict(entry) for number, entry in discs.items()
+                 if isinstance(entry, dict)}
+    return {
+        "kind": "album",
+        "source": source,
+        "release": release,
+        "tracks": list(tracks),
+        "discs": discs,
+        "reconstructed": reconstructed,
+    }
+
+
+def merge_album_document(old: dict, doc: dict) -> dict:
+    """Merge one filed album record into the record already in its folder.
+
+    Disc entries are append-or-replace by number.  The incoming track list is
+    authoritative because it was rebuilt from the destination album's items.
+    The incoming document's source and release win when present; an absent
+    release does not erase an identity already recorded for the album.
+    """
+    merged = dict(doc)
+    old_discs = old.get("discs", {}) if isinstance(old, dict) else {}
+    new_discs = doc.get("discs", {}) if isinstance(doc, dict) else {}
+    combined = {}
+    if isinstance(old_discs, dict):
+        combined.update({str(number): dict(entry) for number, entry in old_discs.items()
+                         if isinstance(entry, dict)})
+    if isinstance(new_discs, dict):
+        combined.update({str(number): dict(entry) for number, entry in new_discs.items()
+                         if isinstance(entry, dict)})
+    merged["discs"] = combined
+    if merged.get("release") is None and isinstance(old, dict):
+        merged["release"] = old.get("release")
+    if not merged.get("source") and isinstance(old, dict):
+        merged["source"] = old.get("source")
+    merged["kind"] = "album"
+    return merged
+
+
 def movie_document(tmdb_id: str, title: str, runtime_s: int | None,
                    volume_label: str | None, run: str | None,
                    main: str | None, titles: list[dict]) -> dict:
