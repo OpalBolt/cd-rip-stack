@@ -39,14 +39,19 @@ def album_document(source: str, release: str | None, tracks: list[dict],
                    disc_number: int | str = 1, tag_run: str | None = None,
                    filing_date: str | None = None, mode: str = "autotag",
                    reconstructed: bool = False,
-                   discs: dict | None = None) -> dict:
+                   discs: dict | None = None,
+                   tracks_found: int | None = None,
+                   tracktotal: int | None = None,
+                   disctotal: int | None = None) -> dict:
     """Build the provenance document written beside a filed music album.
 
     ``tracks`` entries are ``{"file", "dur_s", "format"}``.  Disc
     numbers are serialized as strings because JSON object keys are strings;
     accepting integers here keeps callers' disc indexes natural.  ``discs``
     is useful when carrying the CD rip's richer disc entry into filing; when
-    omitted, this run's tag metadata makes one entry.
+    omitted, this run's tag metadata makes one entry.  The optional count
+    fields are used by reconstructed records and are omitted for normal
+    filing records.
     """
     if discs is None:
         discs = {str(disc_number): {
@@ -57,7 +62,7 @@ def album_document(source: str, release: str | None, tracks: list[dict],
     else:
         discs = {str(number): dict(entry) for number, entry in discs.items()
                  if isinstance(entry, dict)}
-    return {
+    doc = {
         "kind": "album",
         "source": source,
         "release": release,
@@ -65,6 +70,12 @@ def album_document(source: str, release: str | None, tracks: list[dict],
         "discs": discs,
         "reconstructed": reconstructed,
     }
+    # Counts are only part of reconstructed records. Omitting them by default
+    # keeps the filing plugin's established document shape unchanged.
+    if any(value is not None for value in (tracks_found, tracktotal, disctotal)):
+        doc.update({"tracks_found": tracks_found, "tracktotal": tracktotal,
+                    "disctotal": disctotal})
+    return doc
 
 
 def merge_album_document(old: dict, doc: dict) -> dict:

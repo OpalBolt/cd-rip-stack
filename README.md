@@ -304,6 +304,21 @@ The beets library database (`/mnt/music/music.db`) and beets import log
 inside `library/`), so nothing depends on the current directory or a per-machine
 config dir.
 
+#### Backfill existing album records
+
+Albums already in the library can get reconstructed provenance records with a
+dry run first (the script never replaces an existing record):
+
+```bash
+python scripts/backfill_albums.py             # print every planned write
+python scripts/backfill_albums.py --apply      # write missing records
+python scripts/backfill_albums.py --root /mnt/music
+```
+
+A reconstructed record has `source: unknown`, the release identity found in
+tags, per-track file/duration/format, and `tracks_found` alongside the tagged
+`tracktotal` and `disctotal`. It contains no AccurateRip data.
+
 #### One-time database initialization
 
 To seed the beets library DB with your existing library without moving or
