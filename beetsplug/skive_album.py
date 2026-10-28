@@ -19,6 +19,7 @@ from skive.validation import (
 )
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
+_DISC_SIDECAR_RE = re.compile(r"\s+CD\d+(?:\s+\(\d+\))?$", re.IGNORECASE)
 
 
 def _value(item, *names):
@@ -120,6 +121,35 @@ def _disc_number(source_doc: dict | None, items,
     return "1"
 
 
+def _has_disc_marker(stem: str) -> bool:
+    return _DISC_SIDECAR_RE.search(stem) is not None
+
+
+def _unique_sidecar_target(destination: Path, name: str) -> Path:
+    """Return a non-existing target, retaining both files on a collision."""
+    target = destination / name
+    if not target.exists():
+        return target
+    suffix = target.suffix
+    base = target.stem
+    number = 2
+    while True:
+        candidate = destination / f"{base} ({number}){suffix}"
+        if not candidate.exists():
+            return candidate
+        number += 1
+
+
+def _rename_unmarked_sidecars(destination: Path) -> None:
+    """Bring old single-disc sidecars into the multi-disc naming form."""
+    for suffix in (".log", ".cue"):
+        for sidecar in list(destination.glob(f"*{suffix}")):
+            if _has_disc_marker(sidecar.stem):
+                continue
+            target_name = f"{sidecar.stem} CD1{sidecar.suffix}"
+            sidecar.replace(_unique_sidecar_target(destination, target_name))
+
+
 def _file_sidecars(source: Path, destination: Path, disc_number: str,
                    disc_count: int) -> None:
     if not source.is_dir():
@@ -127,9 +157,9 @@ def _file_sidecars(source: Path, destination: Path, disc_number: str,
     for suffix in (".log", ".cue"):
         for sidecar in source.glob(f"*{suffix}"):
             name = sidecar.name
-            if disc_count > 1:
-                name = f"{sidecar.stem}.disc{disc_number}{sidecar.suffix}"
-            sidecar.replace(destination / name)
+            if disc_count > 1 and not _has_disc_marker(sidecar.stem):
+                name = f"{sidecar.stem} CD{disc_number}{sidecar.suffix}"
+            sidecar.replace(_unique_sidecar_target(destination, name))
 
 
 def handle_import_task_files(task, *, tag_run: str | None = None,
@@ -170,6 +200,8 @@ def handle_import_task_files(task, *, tag_run: str | None = None,
     destination.mkdir(parents=True, exist_ok=True)
     write_validation(destination / VALIDATION_FILENAME, merged)
     disc_count = len(merged["discs"])
+    if disc_count > 1:
+        _rename_unmarked_sidecars(destination)
     for source in sources:
         disc_number = _disc_number(load_validation(source / VALIDATION_FILENAME),
                                    items, source)

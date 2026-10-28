@@ -1,6 +1,12 @@
 """Pure cyanrip report parsing tests."""
 
-from skive.cyanrip_log import parse_cyanrip_log
+from skive.cyanrip_log import disc_number_from_log, parse_cyanrip_log
+
+
+def test_disc_number_uses_header_then_cd_stem_then_one():
+    assert disc_number_from_log("Disc number:    3\n", "Album CD1") == "3"
+    assert disc_number_from_log("cyanrip report\n", "Album CD2") == "2"
+    assert disc_number_from_log("cyanrip report\n", "Album") == "1"
 
 
 def test_parse_upstream_accuraterip_report():

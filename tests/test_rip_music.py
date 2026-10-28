@@ -10,7 +10,14 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 
 from skive import common
-from skive.rip_music import rip_music, _cyanrip_run, _newest_flac_album, _metaflac_tag, require_online
+from skive.rip_music import (
+    _cyanrip_run,
+    _newest_flac_album,
+    _metaflac_tag,
+    _write_cd_record,
+    require_online,
+    rip_music,
+)
 from rich.prompt import Prompt
 
 
@@ -190,6 +197,31 @@ def test_online_gate_without_minus_N():
                             except SystemExit:
                                 pass
                         mock_require.assert_called_once()
+
+
+def test_cd_record_merges_newest_log_for_each_disc(tmp_path):
+    folder = tmp_path / "Album [FLAC]"
+    folder.mkdir()
+    log = Mock()
+    log.run = "rip-1"
+    first_log = folder / "Album CD1.log"
+    first_log.write_text("Disc number: 1\nOffset: +10 samples\n")
+    (folder / "Album CD1.cue").write_text("cue")
+    os.utime(first_log, (100, 100))
+    _write_cd_record(tmp_path, folder.name, "10", log)
+
+    log.run = "rip-2"
+    second_log = folder / "Album CD2.log"
+    second_log.write_text("Disc number: 2\nOffset: +20 samples\n")
+    (folder / "Album CD2.cue").write_text("cue")
+    os.utime(second_log, (200, 200))
+    _write_cd_record(tmp_path, folder.name, "20", log)
+
+    import json
+    doc = json.loads((folder / "validation.json").read_text())
+    assert set(doc["discs"]) == {"1", "2"}
+    assert doc["discs"]["1"]["offset"] == 10
+    assert doc["discs"]["2"]["offset"] == 20
 
 
 def test_rip_name_from_tags():

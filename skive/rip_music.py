@@ -11,8 +11,14 @@ from rich.prompt import Prompt
 
 from skive import common
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
-from skive.cyanrip_log import parse_cyanrip_log
-from skive.validation import album_document, write_validation, VALIDATION_FILENAME
+from skive.cyanrip_log import disc_number_from_log, parse_cyanrip_log
+from skive.validation import (
+    VALIDATION_FILENAME,
+    album_document,
+    load_validation,
+    merge_album_document,
+    write_validation,
+)
 
 
 def rip_music(args) -> None:
@@ -105,17 +111,22 @@ def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
         log.note("rip", f"artifacts missing in {folder}: folder does not exist")
         return
     files = sorted(path.name for path in folder.iterdir())
-    log_files = sorted(path for path in folder.glob("*.log") if path.is_file())
-    cue_files = sorted(path for path in folder.glob("*.cue") if path.is_file())
+    log_files = [path for path in folder.glob("*.log") if path.is_file()]
+    cue_files = [path for path in folder.glob("*.cue") if path.is_file()]
     if not log_files or not cue_files:
         log.note("rip", f"artifacts missing in {folder}: found {files}")
 
     parsed = {"offset": None, "tracks": []}
+    disc_number = "1"
     if log_files:
-        report_path = log_files[0]
+        # cyanrip appends each rip's report to the same album folder.  The
+        # newest report is the one produced by this invocation; its cue has
+        # the same stem when the pair is complete.
+        report_path = max(log_files, key=lambda path: path.stat().st_mtime)
         try:
             report = report_path.read_text(encoding="utf-8", errors="replace")
             parsed = parse_cyanrip_log(report)
+            disc_number = disc_number_from_log(report, report_path.stem)
         except OSError:
             report = ""
         if not parsed["tracks"]:
@@ -133,8 +144,9 @@ def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
     disc = {"rip_run": log.run, "offset": parsed_offset}
     if parsed["tracks"]:
         disc["accuraterip"] = parsed["tracks"]
-    doc = album_document("cd", None, [], discs={"1": disc})
-    write_validation(folder / VALIDATION_FILENAME, doc)
+    doc = album_document("cd", None, [], discs={disc_number: disc})
+    old = load_validation(folder / VALIDATION_FILENAME) or {}
+    write_validation(folder / VALIDATION_FILENAME, merge_album_document(old, doc))
 
 
 def _progress_line(line: str) -> bool:

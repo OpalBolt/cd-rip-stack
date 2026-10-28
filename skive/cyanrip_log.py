@@ -5,10 +5,28 @@ from __future__ import annotations
 import re
 
 _OFFSET = re.compile(r"^\s*Offset:\s*([+-]?\d+)\s+samples?\b", re.IGNORECASE | re.MULTILINE)
+_DISC = re.compile(r"^\s*Disc\s+number\s*:\s*(\d+)\b", re.IGNORECASE | re.MULTILINE)
+_DISC_STEM = re.compile(r"\s+CD(\d+)$", re.IGNORECASE)
 _TRACK = re.compile(r"^\s*Track\s+(\d+)\b", re.IGNORECASE)
 _AR = re.compile(r"^\s*Accurip\s+(v1|v2|450):\s*(.*)$", re.IGNORECASE)
 _DETAIL = re.compile(r"\((.*?)\)")
 _CONFIDENCE = re.compile(r"confidence\s+(\d+)", re.IGNORECASE)
+
+
+def disc_number_from_log(text: str = "", stem: str = "") -> str:
+    """Return a cyanrip disc number, using the filename only as fallback.
+
+    Current cyanrip reports the disc number in a ``Disc number:`` header.
+    Older or altered reports may omit it, while cyanrip's multi-disc output
+    names the corresponding log ``... CD<n>.log``.  The fallback is kept
+    here, alongside report parsing, so callers do not need to duplicate the
+    naming convention.
+    """
+    header = _DISC.search(text or "")
+    if header:
+        return header.group(1)
+    filename = _DISC_STEM.search(stem or "")
+    return filename.group(1) if filename else "1"
 
 
 def parse_cyanrip_log(text: str) -> dict:

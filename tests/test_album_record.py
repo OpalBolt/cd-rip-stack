@@ -64,7 +64,7 @@ def test_plugin_writes_record_and_moves_sidecars(tmp_path, monkeypatch):
     assert not (source / "cyanrip.log").exists()
 
 
-def test_plugin_second_disc_keeps_first_and_suffixes_sidecar(tmp_path):
+def test_plugin_second_disc_uses_consistent_cd_sidecar_names(tmp_path):
     destination = tmp_path / "library" / "Artist" / "Album"
     first = tmp_path / "rip" / "cd" / "Album-1"
     second = tmp_path / "rip" / "cd" / "Album-2"
@@ -82,8 +82,8 @@ def test_plugin_second_disc_keeps_first_and_suffixes_sidecar(tmp_path):
     assert set(doc["discs"]) == {"1", "2"}
     assert doc["discs"]["1"]["tag_run"] == "tag-1"
     assert doc["discs"]["2"]["tag_run"] == "tag-2"
-    assert (destination / "cyanrip.log").exists()
-    assert (destination / "cyanrip.disc2.log").exists()
+    assert (destination / "cyanrip CD1.log").exists()
+    assert (destination / "cyanrip CD2.log").exists()
 
 
 def test_plugin_multiple_source_dirs_merges_discs_and_sidecars(tmp_path):
@@ -112,10 +112,10 @@ def test_plugin_multiple_source_dirs_merges_discs_and_sidecars(tmp_path):
     doc = json.loads((destination / "validation.json").read_text())
     assert set(doc["discs"]) == {"1", "2"}
     assert doc["source"] == "bandcamp"
-    assert (destination / "cyanrip.disc1.log").exists()
-    assert (destination / "cyanrip.disc2.log").exists()
-    assert (destination / "disc.disc1.cue").exists()
-    assert (destination / "disc.disc2.cue").exists()
+    assert (destination / "cyanrip CD1.log").exists()
+    assert (destination / "cyanrip CD2.log").exists()
+    assert (destination / "disc CD1.cue").exists()
+    assert (destination / "disc CD2.cue").exists()
     assert not (first / "cyanrip.log").exists()
     assert not (second / "cyanrip.log").exists()
 
