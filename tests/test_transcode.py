@@ -11,11 +11,12 @@ VIDEOS_MOUNT replaces the Windows suite's VIDEOS env; Args drives
 skive.transcode.run_transcode directly. Slice 03 ported the sub-pass
 scenarios; slice 04 ported the TV scenarios (seasons/specials/junk, the
 show-doc copy and its absence, TV extras, the episode pass, the TV
-interrupt). The merge/movie-extras/keep/retry scenarios stay in the Windows
-file until the later slices port them, and the earlier slices' scope changes
-show up as adapted assertions: split mains skip whole (slice 05 merges),
-movie extras fall through unencoded, and skive's RipLog skips the total
-when a clean run had exactly one phase.
+interrupt); slice 05 ported the part-merge scenarios (ordering, guard,
+mkvmerge failure) and the movie-extras scenarios. The keep/retry scenarios
+stay in the Windows file until slice 06 ports them, and the earlier slices'
+scope changes show up as adapted assertions: demoted byte-winners now file
+as extras, and skive's RipLog skips the total when a clean run had exactly
+one phase.
 """
 
 import json
@@ -256,7 +257,7 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     the main, the encode is appended to the doc's encodes with the probed
     actual duration, and the doc copies beside the encode into the library
     folder; the source is gone after the verified ship. The byte-winner _t
-    title stays in staging (it files as an extra from slice 04)."""
+    title files as an extra beside it (slice 05's extras arm)."""
     vid = env / "vid"
     mk(vid, "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t12.mkv",
        "RED-BYTES-BYTES-BYTES-BYTES-BYTES")  # biggest bytes: the wrong film
@@ -273,11 +274,11 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     assert json.loads((L / "validation.json").read_text())["encodes"] == [entry]
     staged = vid / "rip" / "movies" / "Mamma Mia! (2008)" / "validation.json"
     assert json.loads(staged.read_text())["encodes"] == [entry]
-    # the shipped main's source is deleted; the demoted byte-winner waits for
-    # slice 04's extras arm
+    # the shipped main's source is deleted; the demoted byte-winner files as
+    # an extra (slice 05's extras arm)
     assert not (vid / "rip" / "movies" / "Mamma Mia! (2008)" / "Mamma Mia! (2008)_t21.mkv").exists()
-    assert (vid / "rip" / "movies" / "Mamma Mia! (2008)" / "Mamma Mia! (2008)_t12.mkv").exists()
-    assert not (L / "extras").exists()
+    assert not (vid / "rip" / "movies" / "Mamma Mia! (2008)" / "Mamma Mia! (2008)_t12.mkv").exists()
+    assert (L / "extras" / "Mamma Mia! (2008) - Extra 12.mkv").read_text().startswith("RED-BYTES")
 
 
 def test_null_main_and_absent_doc_keep_bytes_fallback(env):
@@ -301,27 +302,227 @@ def test_null_main_and_absent_doc_keep_bytes_fallback(env):
         {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580}]
     # no doc ever existed for the legacy folder -> no library copy
     assert not (L / "Legacy (2002)" / "validation.json").exists()
-    # the non-main _t title waits for the movie extras arm (a later slice)
-    assert (vid / "rip" / "movies" / "Shorts (2001)" / "Shorts (2001)_t21.mkv").exists()
+    # the non-main _t title files as an extra (slice 05's extras arm)
+    assert (L / "Shorts (2001)" / "extras" / "Shorts (2001) - Extra 21.mkv").read_text() == "NULL-SMALL"
+    assert not (vid / "rip" / "movies" / "Shorts (2001)" / "Shorts (2001)_t21.mkv").exists()
 
 
-def test_split_main_skips_whole_until_merge(env, capsys):
-    """Slice 05 adds the part merge; until then a split main (.pN parts)
-    skips whole — no partial ship, no source move, one stderr + log note."""
+# -- split main merge (slice 05): ordering, guard, mkvmerge failure -----------
+
+def test_merge_orders_nosuffix_first_then_parts(env):
+    """Windows test_merge_orders_nosuffix_first_then_parts: a two-part main
+    with matching stream signatures ships as one merged file, the unsuffixed
+    title first (rescues a forgotten --part on disc 1), then the .pN parts
+    ascending."""
     vid = env / "vid"
-    mk(vid, "rip/movies/Bar (2002)/d1/Bar (2002)_t01.p1.mkv", "BAR-P1-BYTES")
-    mk(vid, "rip/movies/Bar (2002)/d1/Bar (2002)_t01.p2.mkv", "BAR-P2-BYTES")
+    mk(vid, "rip/movies/Multi (2003)/d1/Multi (2003)_t00.mkv", "A-NOSUFFIX")
+    mk(vid, "rip/movies/Multi (2003)/d1/Multi (2003)_t00.p2.mkv", "B-P2")
+    mk(vid, "rip/movies/Multi (2003)/d1/Multi (2003)_t00.p1.mkv", "C-P1")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Multi (2003)" / "Multi (2003).mkv").read_text() == "A-NOSUFFIXC-P1B-P2"
+
+
+def test_merge_failure_leaves_sources_and_continues(env, capsys):
+    """Windows test_merge_failure_leaves_sources_and_continues: an mkvmerge
+    failure (rc 2) logs FAILED mkvmerge, leaves the parts in staging, fails
+    the run — and the batch continues with the next movie."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Bad (2001)/d1/Bad (2001)_t00.p1.mkv", "BADMERGE-P1")
+    mk(vid, "rip/movies/Bad (2001)/d1/Bad (2001)_t00.p2.mkv", "BADMERGE-P2")
+    mk(vid, "rip/movies/Good (2002)/d1/Good (2002)_t00.mkv", "GOOD")
 
     rc = transcode.run_transcode(Args())
     err = capsys.readouterr().err
 
-    assert rc == 0
-    assert not (vid / "library" / "movies" / "Bar (2002)").exists()
-    assert (vid / "rip" / "movies" / "Bar (2002)" / "d1" / "Bar (2002)_t01.p1.mkv").exists()
-    assert (vid / "rip" / "movies" / "Bar (2002)" / "d1" / "Bar (2002)_t01.p2.mkv").exists()
-    assert "split main (2 parts)" in err
+    assert rc == 1
+    assert "FAILED mkvmerge" in err
+    assert sorted(p.name for p in (vid / "rip" / "movies" / "Bad (2001)" / "d1").iterdir()) == \
+        ["Bad (2001)_t00.p1.mkv", "Bad (2001)_t00.p2.mkv"]
+    assert (vid / "library" / "movies" / "Good (2002)" / "Good (2002).mkv").read_text() == "GOOD"
+
+
+def test_guard_mismatch_quarantines_all_parts_no_encode(env, capsys):
+    """Windows test_guard_mismatch_quarantines_all_parts_no_encode: a part set
+    whose stream signatures differ never merges or encodes — all parts
+    quarantine to issues/movies with the run's evidence, the batch continues,
+    exit non-zero. (Windows prints "FAILED (track guard)" itself; skive's
+    log.note tee carries the FAIL words to stderr instead.)"""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "PART-ONE")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "TRACKS-DIFFER")
+    mk(vid, "rip/movies/Next (2002)/d1/Next (2002)_t00.mkv", "NEXT")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    issues = vid / "issues" / "movies" / "Two (2001)"
+    assert sorted(p.name for p in issues.glob("*.mkv")) == \
+        ["Two (2001)_t00.p1.mkv", "Two (2001)_t00.p2.mkv"]
+    assert (issues / "rip.jsonl").exists()  # the run's evidence rides along
+    assert sorted(p.name for p in (vid / "rip" / "movies" / "Two (2001)" / "d1").iterdir()) == []
+    assert not (vid / "library" / "movies" / "Two (2001)").exists()
+    assert (vid / "library" / "movies" / "Next (2002)" / "Next (2002).mkv").read_text() == "NEXT"
+    assert "FAIL tracks differ" in err
     log = " ".join(l["status"] for l in run_log(env))
-    assert "split main (2 parts)" in log
+    assert "FAIL tracks differ" in log and "p2" in log
+    hb = (env / "hb-calls.log").read_text()
+    assert len(hb.strip().splitlines()) == 1  # only Next encoded
+
+
+def test_guard_quarantine_carries_run_evidence(env):
+    """Windows test_guard_quarantine_carries_run_evidence: a quarantined
+    item's issues folder holds the run's rip.jsonl lines (selected by the run
+    field) and a copy of its raw log."""
+    vid = env / "vid"
+    # Next encodes first, so the run's raw log exists when the later guard
+    # quarantines Two's parts — the copy carries the whole run's evidence.
+    mk(vid, "rip/movies/Next (2002)/d1/Next (2002)_t00.mkv", "NEXT")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "PART-ONE")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "TRACKS-DIFFER")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 1
+    folder = vid / "issues" / "movies" / "Two (2001)"
+    runs = {json.loads(l)["run"] for l in (vid / "logs" / "rip.jsonl").read_text().splitlines()}
+    assert len(runs) == 1
+    run = runs.pop()
+    ev_lines = [json.loads(l) for l in (folder / "rip.jsonl").read_text().splitlines()]
+    assert ev_lines and all(l["run"] == run for l in ev_lines)
+    assert any("FAIL tracks differ" in l["status"] for l in ev_lines)
+    assert any(l["phase"] == "encode" for l in ev_lines)  # Next's shipped phase
+    # both parts quarantine into the same folder — each evidence line exactly
+    # once, not once per part (and only the run's own raw-log copy beside them)
+    assert len(ev_lines) == len({json.dumps(l, sort_keys=True) for l in ev_lines})
+    assert {p.name for p in folder.glob("*.jsonl")} == {"rip.jsonl", f"{run}.jsonl"}
+    # the run failed, so its raw log exists in logs/raw/ AND is copied in
+    raw = vid / "logs" / "raw" / f"{run}.jsonl"
+    assert raw.exists()
+    assert (folder / f"{run}.jsonl").read_text() == raw.read_text()
+
+
+def test_guard_ffprobe_failure_quarantines(env):
+    """Windows test_guard_ffprobe_failure_quarantines: a part ffprobe cannot
+    read counts as a signature mismatch — the parts quarantine, nothing
+    encodes."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Rip (2001)/d1/Rip (2001)_t00.p1.mkv", "PROBEBAD")
+    mk(vid, "rip/movies/Rip (2001)/d1/Rip (2001)_t00.p2.mkv", "PROBEBAD")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 1
+    assert sorted(p.name for p in (vid / "issues" / "movies" / "Rip (2001)").glob("*.mkv")) == \
+        ["Rip (2001)_t00.p1.mkv", "Rip (2001)_t00.p2.mkv"]
+    assert not (env / "hb-calls.log").exists()
+
+
+def test_guard_match_still_merges_and_passes_merged_file(env):
+    """Windows test_guard_match_still_merges_and_passes_merged_file: matching
+    signatures merge, and the inline subtitle pass runs ONCE on the merged
+    file, never per part."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Merge (2003)/d1/Merge (2003)_t00.p1.mkv", "SUBS-ENG-DAN")
+    mk(vid, "rip/movies/Merge (2003)/d1/Merge (2003)_t00.p2.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Merge (2003)"
+    assert (L / "Merge (2003).mkv").read_text() == "SUBS-ENG-DANSUBS-ENG-DAN"
+    assert (L / "Merge (2003).dan.forced.srt").exists()
+    assert (L / "Merge (2003).eng.srt").exists()
+    # the pass ran once, on the merged file, never per part
+    sc = (env / "seconv-calls.log").read_text().strip().splitlines()
+    assert len(sc) == 2 and all("merged.mkv" in l for l in sc)
+    assert sorted(p.name for p in (vid / "rip" / "movies" / "Merge (2003)" / "d1").iterdir()) == []
+
+
+def test_mkvmerge_output_captured_and_replayed_on_failure(env, capsys):
+    """Windows test_mkvmerge_output_captured_and_replayed_on_failure: every
+    mkvmerge line reaches the run's raw log (tool "mkvmerge", stderr
+    included); the console hides them at the default verbosity and replays
+    them verbatim because the merge failed."""
+    vid = env / "vid"
+    (env / "bin" / "mkvmerge").write_text("""#!/bin/sh
+out="$2"; shift 2
+echo "mkvmerge v99.0"
+echo "Progress: 50%"
+echo "Error: the source is broken" >&2
+rm -f "$out"
+exit 2
+""")
+    mk(vid, "rip/movies/Bad (2001)/d0/Bad (2001)_t00.p1.mkv", "BAD-P1")
+    mk(vid, "rip/movies/Bad (2001)/d0/Bad (2001)_t00.p2.mkv", "BAD-P2")
+
+    rc = transcode.run_transcode(Args())
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    # failure replay: hidden mkvmerge output reaches the console verbatim
+    assert "mkvmerge v99.0" in out
+    assert "Progress: 50%" in out
+    assert "Error: the source is broken" in out
+    raws = list((vid / "logs" / "raw").glob("*.jsonl"))
+    assert len(raws) == 1  # failure keeps the run's raw log
+    lines = [json.loads(l) for l in raws[0].read_text(encoding="utf-8").splitlines()]
+    mkv = [l for l in lines if l["tool"] == "mkvmerge"]
+    assert [l["line"] for l in mkv] == \
+        ["mkvmerge v99.0", "Progress: 50%", "Error: the source is broken"]
+
+
+def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monkeypatch):
+    """Windows test_interrupt_drops_part_copies_in_multi_part_copy_window:
+    Ctrl+C during a split main's part copies drops the local copies registered
+    in `inflight` AS CREATED (the completed part-1 copy plus the partial
+    part-2 copy); the sources stay in staging, exit 130."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Slit (2004)/d1/Slit (2004)_t00.p1.mkv", "SLIT-P1")
+    mk(vid, "rip/movies/Slit (2004)/d2/Slit (2004)_t00.p2.mkv", "SLIT-P2")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+
+    real_copy2 = transcode._copy2
+
+    def fake_copy2(src, dst):
+        if pathlib.Path(dst).name.endswith(".p2.mkv"):
+            pathlib.Path(dst).write_text("PARTIAL-COPY")  # half-copied second part
+            raise Interrupted()
+        real_copy2(src, dst)
+
+    monkeypatch.setattr(transcode, "_copy2", fake_copy2)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 130
+    assert (vid / "rip" / "movies" / "Slit (2004)" / "d1" / "Slit (2004)_t00.p1.mkv").exists()
+    assert (vid / "rip" / "movies" / "Slit (2004)" / "d2" / "Slit (2004)_t00.p2.mkv").exists()
+    assert list(work.iterdir()) == []  # part-1 local copy + partial part-2 dropped
+    log = run_log(env)
+    assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
+    assert "transcode: interrupted -- partial temp output deleted, source left in staging" \
+        in capsys.readouterr().err
+
+
+def test_recorded_main_parts_still_merge(env):
+    """Windows test_recorded_main_parts_still_merge: the recorded main's .pN
+    parts merge under the stream-signature guard; one encodes entry records
+    the merged encode."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Parts (2007)/Parts (2007)_t21.p1.mkv", "P1-DUR-6251")
+    mk(vid, "rip/movies/Parts (2007)/Parts (2007)_t21.p2.mkv", "P2")
+    mk(vid, "rip/movies/Parts (2007)/validation.json", _movie_doc("t21"))
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Parts (2007)"
+    assert (L / "Parts (2007).mkv").read_text() == "P1-DUR-6251P2"
+    assert json.loads((L / "validation.json").read_text())["encodes"] == [
+        {"file": "Parts (2007).mkv", "src": "t21", "dur_s": 6251}]
 
 
 # -- inline subtitle pass on mains (slice 03) -------------------------------------
@@ -472,6 +673,71 @@ def test_dvd_not_upscaled(env):
     hb = (env / "hb-calls.log").read_text()
     assert "--preset H.265 MKV 480p30" in hb
     assert "--detelecine" in hb and "--decomb" in hb
+
+
+# -- movie extras (slice 05): rolled names, legacy labels, pass-through argv ---
+
+def test_extra_number_rolls_past_taken_names(env):
+    """Windows test_extra_number_rolls_past_taken_names: a bonus _t title files
+    as ` - Extra NN` — its disc number when free, rolled forward when an
+    existing Extra file already claims it; never a collision, never a staging
+    label in the library."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t00.mkv",
+       "COLL-MAIN-BYTES-BYTES-BYTES")
+    mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t03.mkv", "COLL-EXTRA")
+    ex = vid / "library" / "movies" / "Coll (2006)" / "extras"
+    ex.mkdir(parents=True)
+    (ex / "Coll (2006) - Extra 03.mkv").write_text("TAKEN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (ex / "Coll (2006) - Extra 03.mkv").read_text() == "TAKEN"
+    assert (ex / "Coll (2006) - Extra 04.mkv").read_text() == "COLL-EXTRA"
+
+
+def test_legacy_eNN_extras_still_file(env):
+    """Windows test_legacy_eNN_extras_still_file: old _eNN staged names still
+    parse and file under extras/ (backward compat)."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Old (2001)/d0/Old (2001)_e02.mkv", "OLD-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Old (2001)" / "extras" /
+            "Old (2001) - Extra 02.mkv").read_text() == "OLD-EXTRA"
+
+
+_ARGV_TAIL = ('--preset H.265 MKV 1080p30 --all-audio --aencoder copy '
+              '--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm '
+              '--audio-fallback ac3 ')
+
+
+def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
+    """Windows test_feature_argv_zero_subs_and_extras_argv_byte_identical:
+    the feature's HandBrake argv rides the no-match language list in front of
+    --all-subtitles (zero subtitle tracks) while an extra's argv is the bare
+    pass-through (every embedded track stays) — byte for byte, mod -i/-o
+    paths."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t00.mkv", "ARG-MAIN-BYTES")  # outweighs t01 so t00 is the main
+    mk(vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t01.mkv", "ARG-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    lines = (env / "hb-calls.log").read_text().strip().splitlines()
+    assert len(lines) == 2
+    feat = next(l for l in lines if "_t00.h265.mkv" in l)
+    extra = next(l for l in lines if "_t01.h265.mkv" in l)
+    # feature: the no-match language list rides in front of --all-subtitles
+    assert feat.split(".h265.mkv ", 1)[1] == _ARGV_TAIL + \
+        "--subtitle-lang-list zzz --all-subtitles --subtitle-burned=none"
+    # extra: byte-identical to the pass-through argv
+    assert extra.split(".h265.mkv ", 1)[1] == \
+        _ARGV_TAIL + "--all-subtitles --subtitle-burned=none"
 
 
 # -- run log / raw log shapes -----------------------------------------------------

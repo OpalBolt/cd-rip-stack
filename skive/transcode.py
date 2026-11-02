@@ -18,8 +18,13 @@ staged episode — no main pick, no merge, a double stays one file — into
 Season NN (season 0 in Specials) with the same subtitle pass and the show's
 validation document copied into each Season folder beside the encodes; TV
 extras file under the show's extras/ with embedded subs kept, no pass.
-Split mains skip whole until the merge pass (slice 05); movie extras-disc
-titles fall through the batch unencoded until their arm lands.
+A split main merges into one encode when every part's stream signature
+matches (mkvmerge: the unsuffixed title first, then the .pN parts in order);
+a signature mismatch quarantines the parts whole for a human, and an
+mkvmerge failure leaves the sources in place — logged, batch continuing.
+Movie extras — bonus _t titles and ` - Extra NN` disc labels alike — keep
+every embedded track (no subtitle pass, no zero-subs trick) and file under
+the movie's extras/, the number rolled past taken names.
 
 Shared policy (run log, verbosity tiers, interrupt machinery, sanitize)
 comes from skive.common; the validation document's reader/writer/name from
@@ -86,6 +91,47 @@ def _find_on_path(exe: str) -> str | None:
         print(f"{exe} not found on PATH -- see README (transcode box: Install)",
               file=sys.stderr)
     return found
+
+
+def _stream_sig(src: str, ffprobe_exe: str) -> list[tuple[str, str, str]] | None:
+    """(codec_type, codec_name, language-or-'und') per stream, in order; None if unreadable."""
+    r = subprocess.run(
+        [ffprobe_exe, "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name:stream_tags=language", "-of", "json", src],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        streams = json.loads(r.stdout).get("streams", [])
+        return [(s.get("codec_type") or "", s.get("codec_name") or "",
+                 (s.get("tags") or {}).get("language") or "und") for s in streams]
+    except (ValueError, AttributeError):
+        return None
+
+
+def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
+    """Why a split main must not merge: '' when every part's stream signature
+    matches part 1, else a FAIL detail naming the part and stream position."""
+    sigs = []
+    for p in parts:
+        sig = _stream_sig(p.path, ffprobe_exe)
+        if sig is None:
+            return f"{p.name}: ffprobe failed"
+        sigs.append(sig)
+    first = sigs[0]
+
+    def fmt(s):
+        return f"{s[0]}/{s[1]}/{s[2]}" if s else "-"
+
+    for p, sig in zip(parts[1:], sigs[1:]):
+        for k in range(max(len(sig), len(first))):
+            a = sig[k] if k < len(sig) else None
+            b = first[k] if k < len(first) else None
+            if a != b:
+                return (f"{p.name} stream {k} ({fmt(a)}) != "
+                        f"{parts[0].name} stream {k} ({fmt(b)})")
+    return ""
 
 
 def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
@@ -242,6 +288,39 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         for line in hidden:
             print(line, flush=True)
     return rc == 0
+
+
+def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None = None) -> int:
+    """Concatenate a split main's parts into dst with mkvmerge ("+"-joined).
+    Every mkvmerge output line is written verbatim to the run's raw log (log.raw),
+    the same tee discipline as _encode, while the console sees everything at -vv,
+    "Error:" lines at -v, nothing at 0; anything the level hid is replayed
+    verbatim when the merge fails (rc 2+ -- rc 1 is a warning, the merged file
+    is still usable, so no replay)."""
+    cmd = [mkv_exe, "-o", dst, parts[0]]
+    for p in parts[1:]:
+        cmd += ["+", p]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    hidden: list[str] = []  # console-suppressed lines, replayed on failure
+    try:
+        for line in proc.stdout:
+            stripped = line.rstrip()
+            if common.VERBOSITY >= 2 or (common.VERBOSITY >= 1 and stripped.startswith("Error")):
+                print(line, end="", flush=True)
+            elif stripped:
+                hidden.append(stripped)
+            if log is not None:
+                log.raw("mkvmerge", stripped)
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: stop the merge child; the partial merged file
+        # itself is dropped by run_transcode (sources only move on success).
+        common.kill_child_after_grace(proc)
+        raise
+    if rc >= 2:
+        for line in hidden:
+            print(line, flush=True)
+    return rc
 
 
 def _rmf(path: str) -> None:
@@ -638,40 +717,72 @@ def run_transcode(args) -> int:
                     log.note("validation", msg)
                 continue
 
-            # -- main feature: encode as one movie (a split main skips whole
-            # -- until the merge pass, slice 05).
+            # -- main feature: merge its .pN parts (if any), encode as one
+            # -- movie.
             if i.sfx == "t" and i.movie in main_num and main_num[i.movie][0] == i.num:
+                # part order: no-suffix first (-1 -- rescues a forgotten
+                # --part on disc 1), then .pN ascending.
                 siblings = sorted(
                     (s for s in items if s.movie == i.movie and s.sfx == "t" and s.num == i.num),
                     key=lambda s: s.part,
                 )
                 dest_dir = os.path.join(lib_dir, "movies", safe)
                 dest = os.path.join(dest_dir, safe + ".mkv")
-                if len(siblings) > 1:
-                    # slice 05 adds the part merge; until then a split main
-                    # skips entire -- no partial ship, no source move.
-                    names = " ".join(s.name for s in siblings)
-                    msg = (f"{i.movie}: split main ({len(siblings)} parts) needs the "
-                           f"merge pass -- parts left in staging")
-                    log.note("merge", msg)
-                    for s in siblings:
-                        handled.add(s.path)
-                    continue
                 log.phase("encode")
-                os.makedirs(dest_dir, exist_ok=True)
-                # the local copy is registered in `inflight` AS CREATED so an
-                # interrupt during the copy window drops the partial too
+                # cleanup removes this item's temps AFTER the encode; every
+                # entry is also registered in `inflight` AS CREATED so an
+                # interrupt during the copy/merge window drops it too
                 # (CONTEXT.md: Interrupt)
                 cleanup: list[str] = []
-                local_src = os.path.join(tmp_dir, i.name)
-                print(f"copying {i.name} to local temp...")
-                inflight.append(local_src)  # BEFORE the copy
-                _copy2(i.path, local_src)
-                cleanup.append(local_src)
-                # the inline subtitle pass runs on the local copy BEFORE the
-                # encode (the main encodes zero-track meanwhile); the sidecar
-                # dir is this item's temp from creation, so an interrupt
-                # mid-pass drops it too (CONTEXT.md: Interrupt)
+                if len(siblings) > 1:
+                    # track guard: a mismatched part set never merges or
+                    # encodes -- all parts quarantine whole for a human
+                    bad = _split_mismatch(siblings, ffprobe_exe)
+                    if bad:
+                        log.note("guard", f"FAIL tracks differ: {bad} -- all parts to issues/movies")
+                        for s in siblings:
+                            _quarantine(s.path, s, issues_root, log)
+                            handled.add(s.path)
+                        failed = 1
+                        log.phase_end()
+                        continue
+                    os.makedirs(dest_dir, exist_ok=True)
+                    local_parts = []
+                    for s in siblings:
+                        lb = os.path.join(tmp_dir, s.name)
+                        print(f"copying {s.name} to local temp...")
+                        inflight.append(lb)  # BEFORE the copy: mid-copy interrupt drops the partial
+                        _copy2(s.path, lb)
+                        local_parts.append(lb)
+                        cleanup.append(lb)
+                    local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
+                    inflight.append(local_src)  # BEFORE the merge: mid-merge interrupt drops the partial
+                    mrc = _merge(local_src, local_parts, mkv_exe, log=log)
+                    if mrc <= 1:  # 0 ok, 1 warning (still usable)
+                        cleanup.append(local_src)
+                    else:  # 2+ failure: sources left in place, run continues
+                        names = " ".join(s.name for s in siblings)
+                        log.note("encode", f"FAILED mkvmerge ({mrc}): {names} -- sources left in place")
+                        for p in cleanup:
+                            _rmf(p)
+                        for s in siblings:
+                            handled.add(s.path)
+                        failed = 1
+                        log.phase_end()
+                        continue
+                else:
+                    os.makedirs(dest_dir, exist_ok=True)
+                    local_src = os.path.join(tmp_dir, i.name)
+                    print(f"copying {i.name} to local temp...")
+                    inflight.append(local_src)  # BEFORE the copy
+                    _copy2(i.path, local_src)
+                    cleanup.append(local_src)
+
+                # the inline subtitle pass runs on the merged (or single) local
+                # copy BEFORE the encode (the main encodes zero-track
+                # meanwhile); the sidecar dir is this item's temp from
+                # creation, so an interrupt mid-pass drops it too (CONTEXT.md:
+                # Interrupt)
                 side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                 inflight_side = side_dir
                 side_dir, res = _sub_pass(local_src, side_dir, safe,
@@ -689,29 +800,64 @@ def run_transcode(args) -> int:
                     for p in cleanup:
                         _rmf(p)
                     # nothing is deleted until its sidecars are verified: the
-                    # source only moves after the ship — a failed pass leaves
-                    # it parked in issues/ with the run's evidence (the encode
-                    # stays shipped subless; the batch continues, the run fails)
+                    # sources only move after the ship — a failed pass leaves
+                    # them parked in issues/ with the run's evidence (the
+                    # encode stays shipped subless; the batch continues, the
+                    # run fails)
+                    names = " ".join(s.name for s in siblings)
                     if res.ok:
-                        _archive(i.path, i, lossless_root, keep)
+                        for s in siblings:
+                            _archive(s.path, s, lossless_root, keep)
                     else:
-                        _fail_quarantine(log, [i], issues_root, i.name, res.notes)
+                        _fail_quarantine(log, siblings, issues_root, names, res.notes)
+                    for s in siblings:
+                        handled.add(s.path)
+                    if not res.ok:
                         failed = 1
-                    handled.add(i.path)
                     log.phase_end()
                 else:
                     shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
                         _rmf(p)
-                    log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
-                    handled.add(i.path)
+                    log.note("encode", f"FAILED handbrake: {i.name} -- sources left in place")
+                    for s in siblings:
+                        handled.add(s.path)
                     failed = 1
                     log.phase_end()
                 continue
 
             # -- extras (non-main _t title, or an extras-disc title): the
-            # -- ` - Extra NN` arm is a later slice — they fall through
-            # -- unencoded.
+            # ` - Extra NN` form, number rolled forward past taken names —
+            # no staging label ever reaches the library. Every embedded track
+            # stays: no subtitle pass, no zero-subs trick.
+            ext = f".p{i.part}" if i.part >= 0 else ""
+            dest_dir = os.path.join(lib_dir, "movies", safe, "extras")
+            dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
+            log.phase("encode")
+            os.makedirs(dest_dir, exist_ok=True)
+            cleanup: list[str] = []
+            local_src = os.path.join(tmp_dir, i.name)
+            print(f"copying {i.name} to local temp...")
+            inflight.append(local_src)  # BEFORE the copy
+            _copy2(i.path, local_src)
+            cleanup.append(local_src)
+            local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
+            inflight = cleanup + [local_out]
+            if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
+                       log=log):  # no no_subs: embedded subs stay in the file
+                shutil.move(local_out, dest)
+                for p in cleanup:
+                    _rmf(p)
+                _archive(i.path, i, lossless_root, keep)
+                handled.add(i.path)
+                log.phase_end()
+            else:
+                for p in cleanup + [local_out]:
+                    _rmf(p)
+                log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
+                handled.add(i.path)
+                failed = 1
+                log.phase_end()
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: drop this item's partial temp output (the local
         # copy, the unshipped sidecar dir, and .h265 encode live in the work
