@@ -12,8 +12,8 @@ skive.transcode.run_transcode directly. Slice 03 ported the sub-pass
 scenarios; slice 04 ported the TV scenarios (seasons/specials/junk, the
 show-doc copy and its absence, TV extras, the episode pass, the TV
 interrupt); slice 05 ported the part-merge scenarios (ordering, guard,
-mkvmerge failure) and the movie-extras scenarios. The keep/retry scenarios
-stay in the Windows file until slice 06 ports them, and the earlier slices'
+mkvmerge failure) and the movie-extras scenarios; slice 06 ported the
+keep/retry scenarios. The earlier slices'
 scope changes show up as adapted assertions: demoted byte-winners now file
 as extras, and skive's RipLog skips the total when a clean run had exactly
 one phase.
@@ -738,6 +738,140 @@ def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
     # extra: byte-identical to the pass-through argv
     assert extra.split(".h265.mkv ", 1)[1] == \
         _ARGV_TAIL + "--all-subtitles --subtitle-burned=none"
+
+
+# -- -k keep + --retry (slice 06): source disposition -------------------------
+
+def test_scenario2_keep_archive(env, capsys):
+    """Windows test_scenario2_keep_archive: -k parks the verified lossless
+    sources (main and extras alike) under lossless/<type>/<Name (Year)>/
+    with rip/ staging emptied; the encode still ships normally."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Keep (2005)/d1/Keep (2005)_t00.mkv", "KEEP-MAIN")
+    mk(vid, "rip/movies/Keep (2005)/d2/Keep (2005) - Extra 01.p2.mkv", "KEEP-EXTRA-P2")
+
+    rc = transcode.run_transcode(Args(keep=True))
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert not list((vid / "rip" / "movies" / "Keep (2005)" / "d1").iterdir())  # sources moved out
+    assert sorted(p.name for p in (vid / "lossless" / "movies" / "Keep (2005)").iterdir()) == \
+        ["Keep (2005) - Extra 01.p2.mkv", "Keep (2005)_t00.mkv"]
+    assert (vid / "library" / "movies" / "Keep (2005)" / "extras" / "Keep (2005) - Extra 01.p2.mkv").read_text() == "KEEP-EXTRA-P2"
+    assert "--keep: lossless sources moved to" in out
+
+
+def test_keep_clobber_refusal(env, capsys):
+    """Windows test_keep_clobber_refusal: an existing lossless target is
+    refused, never overwritten — the source stays in staging."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Keep (2005)/d1/Keep (2005)_t00.mkv", "KEEP-MAIN")
+    done = vid / "lossless" / "movies" / "Keep (2005)"
+    done.mkdir(parents=True)
+    (done / "Keep (2005)_t00.mkv").write_text("EXISTING")
+
+    rc = transcode.run_transcode(Args(keep=True))
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    assert "already exists -- source left in" in err
+    assert (vid / "rip" / "movies" / "Keep (2005)" / "d1" / "Keep (2005)_t00.mkv").exists()
+    assert (done / "Keep (2005)_t00.mkv").read_text() == "EXISTING"
+
+
+def test_retry_success_ships_and_empties_issues(env):
+    """Windows test_retry_success_ships_and_empties_issues: --retry scans
+    issues/ as its input tree; success ships to the normal library
+    destination and the source leaves issues/ (moved out only on success)."""
+    vid = env / "vid"
+    mk(vid, "issues/movies/Heal (2002)/Heal (2002)_t00.mkv", "HEAL-MAIN")
+
+    rc = transcode.run_transcode(Args(retry=True))
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Heal (2002)" / "Heal (2002).mkv").read_text() == "HEAL-MAIN"
+    assert not list((vid / "issues" / "movies" / "Heal (2002)").glob("*.mkv"))
+
+
+def test_retry_success_with_keep_archives_to_lossless(env):
+    """Windows test_retry_success_with_keep_archives_to_lossless: a --retry
+    success under -k parks the source in lossless/, never back into
+    issues/."""
+    vid = env / "vid"
+    mk(vid, "issues/tv/Ret Show (2003)/Ret Show (2003)_S01E01.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args(retry=True, keep=True))
+
+    assert rc == 0
+    assert (vid / "library" / "tv" / "Ret Show (2003)" / "Season 01" /
+            "Ret Show (2003) - S01E01.mkv").read_text() == "SUBS-ENG-DAN"
+    assert sorted(p.name for p in (vid / "lossless" / "tv" / "Ret Show (2003)").iterdir()) == \
+        ["Ret Show (2003)_S01E01.mkv"]
+    assert not list((vid / "issues" / "tv" / "Ret Show (2003)").glob("*.mkv"))
+
+
+def test_retry_failure_requarantines_in_place(env, capsys):
+    """Windows test_retry_failure_requarantines_in_place: --retry on a
+    still-failing item — the source never leaves its issues folder, the run
+    fails, and the retried run's evidence lands beside the source like in
+    every other arm."""
+    vid = env / "vid"
+    mk(vid, "issues/movies/Stuck (2004)/Stuck (2004)_t00.mkv", "FAILME")
+
+    rc = transcode.run_transcode(Args(retry=True))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "FAILED handbrake" in err  # skive's log.note tee carries the FAIL words
+    folder = vid / "issues" / "movies" / "Stuck (2004)"
+    assert (folder / "Stuck (2004)_t00.mkv").read_text() == "FAILME"
+    assert not list((vid / "library" / "movies" / "Stuck (2004)").glob("*.mkv"))  # nothing shipped
+    # the handbrake arm copied the run's evidence beside the in-issues source:
+    # the run's rip.jsonl lines (incl. the FAILED note) and the kept raw log
+    runs = {json.loads(l)["run"] for l in (vid / "logs" / "rip.jsonl").read_text().splitlines()}
+    assert len(runs) == 1
+    run = runs.pop()
+    ev = [json.loads(l) for l in (folder / "rip.jsonl").read_text().splitlines()]
+    assert ev and all(l["run"] == run for l in ev)
+    assert any("FAILED handbrake: Stuck (2004)_t00.mkv" in l["status"] for l in ev)
+    assert (folder / f"{run}.jsonl").read_text() == (vid / "logs" / "raw" / f"{run}.jsonl").read_text()
+
+
+def test_retry_subtitle_failure_leaves_source_in_issues(env, capsys):
+    """Windows test_retry_subtitle_failure_leaves_source_in_issues: a
+    --retry whose encode succeeds but whose subtitle pass fails ships the
+    encode subless and re-quarantines the source in place with fresh
+    evidence."""
+    vid = env / "vid"
+    mk(vid, "issues/movies/Ocr2 (2005)/Ocr2 (2005)_t00.mkv", "SUBS-FAIL")
+
+    rc = transcode.run_transcode(Args(retry=True))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    folder = vid / "issues" / "movies" / "Ocr2 (2005)"
+    assert (folder / "Ocr2 (2005)_t00.mkv").read_text() == "SUBS-FAIL"
+    assert "already exists -- source left in place" in err  # re-quarantine no-clobber
+    # the retried run's evidence lands beside the source again
+    assert (folder / "rip.jsonl").exists()
+
+
+def test_retry_obeys_traveled_doc(env):
+    """Windows test_retry_obeys_traveled_doc: a doc that traveled into
+    issues/ beside the quarantined source still steers the --retry run:
+    recorded main, encodes append, library copy."""
+    vid = env / "vid"
+    mk(vid, "issues/movies/Heal (2008)/Heal (2008)_t12.mkv", "HEAL-BIG-BYTES-BYTES")
+    mk(vid, "issues/movies/Heal (2008)/Heal (2008)_t21.mkv", "HEAL-REAL")
+    mk(vid, "issues/movies/Heal (2008)/validation.json", _movie_doc("t21"))
+
+    rc = transcode.run_transcode(Args(retry=True))
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Heal (2008)"
+    assert (L / "Heal (2008).mkv").read_text() == "HEAL-REAL"
+    assert json.loads((L / "validation.json").read_text())["encodes"] == [
+        {"file": "Heal (2008).mkv", "src": "t21", "dur_s": 5580}]
 
 
 # -- run log / raw log shapes -----------------------------------------------------

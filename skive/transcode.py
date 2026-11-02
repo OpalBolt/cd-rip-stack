@@ -13,8 +13,10 @@ kept, per-language full tracks settled by OCR'd cue count into `.sdh`; a
 failed pass ships the encode subless and parks the sources in the issues
 folder with the run's evidence, failing the run. Nothing is deleted until
 its sidecars are verified: the lossless source only moves after the ship
-(slice 06 adds the -k park and --retry). The TV arm (slice 04) encodes every
-staged episode — no main pick, no merge, a double stays one file — into
+(-k parks it under lossless/<type>/<Name (Year)> instead of deleting it;
+--retry re-runs quarantined items from the issues folder). The TV arm
+(slice 04) encodes every staged episode — no main pick, no merge, a double
+stays one file — into
 Season NN (season 0 in Specials) with the same subtitle pass and the show's
 validation document copied into each Season folder beside the encodes; TV
 extras file under the show's extras/ with embedded subs kept, no pass.
@@ -135,7 +137,7 @@ def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
 
 
 def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
-    """Walk the input tree (rip/ staging; issues/ with --retry, slice 06) for
+    """Walk the input tree (rip/ staging; issues/ with --retry) for
     .mkv files; return parsed items + which prefixes hit.
 
     Type detection is positional: the first path segment under the input root
@@ -356,7 +358,7 @@ def _copy2(src: str, dst: str) -> None:
 def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> None:
     """-Keep parks the lossless source under lossless/<type>/<Name (Year)>
     (CONTEXT.md: Lossless folder — never clobbering, never auto-deleted);
-    else delete. Slice 06 adds the flag; until then keep is always False."""
+    else delete. keep comes from the -k/--keep flag."""
     if not keep:
         _rmf(src)
         return
@@ -541,10 +543,11 @@ def run_transcode(args) -> int:
             file=sys.stderr,
         )
         return 1
-    keep = getattr(args, "keep", False)    # slice 06 adds the -k flag
-    retry = getattr(args, "retry", False)  # slice 06 adds the --retry flag
-    # --retry re-runs quarantined items from issues/ (slice 06); this slice
-    # always walks rip/ staging.
+    keep = args.keep
+    retry = args.retry
+    # --retry walks the issues folder instead of rip/ staging; the source
+    # only leaves issues/ on success (delete, or -k park), a failure rests
+    # in place with this run's evidence.
     input_dir = os.path.join(vid, "issues" if retry else "rip")
     lib_dir = os.path.join(vid, "library")
     lossless_root = os.path.join(vid, "lossless")
@@ -820,6 +823,13 @@ def run_transcode(args) -> int:
                     for p in cleanup + [local_out]:
                         _rmf(p)
                     log.note("encode", f"FAILED handbrake: {i.name} -- sources left in place")
+                    if args.retry:
+                        # unlike the sub-pass/guard arms this arm never moves
+                        # the source — only a --retry leaves it resting in its
+                        # issues folder, and then this run's evidence lands
+                        # beside it like every other quarantine
+                        _copy_run_evidence(
+                            log, os.path.join(issues_root, "tv" if i.is_tv else "movies", i.movie))
                     for s in siblings:
                         handled.add(s.path)
                     failed = 1

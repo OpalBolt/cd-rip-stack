@@ -110,10 +110,15 @@ def build_parser() -> argparse.ArgumentParser:
     sync_sd_parser.set_defaults(func=cmd_sync_sd)
 
     # transcode — batch re-encode rip/ staging into the library (movies;
-    # flags mirror the frozen windows/transcode.py one-for-one; -k/--retry
-    # arrive with slice 06, global -v/-vv live on the top level)
+    # flags mirror the frozen windows/transcode.py one-for-one; global
+    # -v/-vv live on the top level)
     transcode_parser = subparsers.add_parser(
         "transcode", help="transcode staged lossless MKVs into the Jellyfin library")
+    transcode_parser.add_argument("-k", "--keep", action="store_true",
+                                  help="move lossless sources to lossless/<type>/<Name> instead of deleting them (verify, then clean by hand)")
+    transcode_parser.add_argument("--retry", action="store_true",
+                                  help="re-run items from the issues folder instead of rip staging: success ships/archives "
+                                       "normally and moves the source out, failure stays quarantined")
     transcode_parser.add_argument("-e", "--encoder", choices=["x265", "nvenc", "qsv", "vce"], default="x265",
                                   help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
     transcode_parser.add_argument("-w", "--workdir", metavar="DIR",
