@@ -129,8 +129,8 @@ def test_multiple_releases_prompts(tmp_path):
     rip_dir = tmp_path / "rip" / "cd"
     log = MockLog.return_value  # the raw log rides along to _cyanrip_run
     assert mock_run.call_args_list == [
-        (("100", ["-N"], rip_dir, log),),
-        (("100", ["-R", "2", "-N"], rip_dir, log),),
+        (("100", ["-N"], rip_dir, log, {}),),
+        (("100", ["-R", "2", "-N"], rip_dir, log, {}),),
     ]
 
 
@@ -374,6 +374,225 @@ def test_metaflac_tag_parser():
             artist = _metaflac_tag(flac, "ARTIST")
             assert album == "MyAlbum"
             assert artist == "MyArtist"
+
+
+# -- Run-log name lifecycle (album header pair, decision notes) ----------------
+
+# Genuine column-0 header shapes, from the top of
+# tests/fixtures/cyanrip/summertime-blues.log.
+SUMMERTIME_HEADER = [
+    "cyanrip 0.9.3 (523e132)\n",
+    "Album:          Summertime Blues\n",
+    "Album artist:   Various Artists\n",
+    "Track 1 ripped and encoded successfully!\n",
+]
+
+
+def _rip_jsonl(tmp_path):
+    import json
+
+    return [json.loads(line)
+            for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+
+
+def test_header_pair_names_run_on_success(tmp_path):
+    """The streamed Album/Album artist pair names the run mid-rip: every
+    rip.jsonl line — started, the rip ok phase line included — carries
+    'Various Artists - Summertime Blues', with no FLAC scan needed."""
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    process = Mock(stdout=iter(SUMMERTIME_HEADER))
+    process.wait.return_value = 0
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    lines = _rip_jsonl(tmp_path)
+    assert lines[0]["status"] == "started"
+    # 'started' printed before cyanrip ran; everything after the pair
+    # streamed mid-rip carries the name, the rip ok phase line included.
+    assert lines[0]["name"] == "-"
+    assert all(line["name"] == "Various Artists - Summertime Blues"
+               for line in lines[1:])
+    ok = [line for line in lines if line["phase"] == "rip" and line["status"] == "ok"]
+    assert ok and ok[0]["name"] == "Various Artists - Summertime Blues"
+
+
+def test_header_pair_names_failed_run_on_total_line(tmp_path):
+    """A failed run keeps the header pair's name: the FAIL total line carries
+    it, and staging is never scanned for a failed run."""
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    process = Mock(stdout=iter(SUMMERTIME_HEADER))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 1
+    lines = _rip_jsonl(tmp_path)
+    total = [line for line in lines if line["phase"] == "total"]
+    assert total and total[0]["status"].startswith("FAIL")
+    assert total[0]["name"] == "Various Artists - Summertime Blues"
+
+
+def test_header_pair_names_interrupted_run(tmp_path, monkeypatch):
+    """Ctrl+C after the pair streamed: the name set mid-rip persists through
+    the interrupted total line."""
+    import json
+
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace", lambda proc: None)
+
+    def gen():
+        yield from SUMMERTIME_HEADER
+        raise KeyboardInterrupt
+
+    process = Mock(stdout=gen())
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 130
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    interrupted = [line for line in lines if line["status"] == "interrupted"]
+    assert interrupted and interrupted[0]["name"] == "Various Artists - Summertime Blues"
+
+
+def test_album_header_without_artist_success_uses_flac_tags(tmp_path):
+    """Album header with no Album artist line: on success the FLAC ARTIST tag
+    names the run, exactly as when no header streamed."""
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    album_dir = tmp_path / "rip" / "cd" / "My Album"
+    album_dir.mkdir(parents=True)
+    (album_dir / "track.flac").touch()
+    process = Mock(stdout=iter(["Album:          My Album\n",
+                                "Track 1 ripped and encoded successfully!\n"]))
+    process.wait.return_value = 0
+
+    def mock_metaflac(flac_path, tag):
+        return {"ALBUM": "My Album", "ARTIST": "Artist"}.get(tag, "")
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process), \
+            patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    ok = [line for line in _rip_jsonl(tmp_path)
+          if line["phase"] == "rip" and line["status"] == "ok"]
+    assert ok and ok[0]["name"] == "Artist - My Album"
+
+
+def test_album_header_without_artist_failure_keeps_album_name(tmp_path):
+    """The same album-only header on a failing run keeps that album's name —
+    not the previous album's name from a staging scan."""
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    stale = tmp_path / "rip" / "cd" / "Old Album"
+    stale.mkdir(parents=True)
+    (stale / "old.flac").touch()
+    process = Mock(stdout=iter(["Album:          My Album\n", "Read error\n"]))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process), \
+            patch("skive.rip_music._metaflac_tag", return_value="Old Artist"):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 1
+    lines = _rip_jsonl(tmp_path)
+    # The album-only header never sets the name mid-rip (success would fall
+    # back to the FLAC tags); post-run the failed run keeps the header album.
+    assert lines[0] == {**lines[0], "status": "started", "name": "-"}
+    assert all(line["name"] == "My Album" for line in lines[1:])
+    assert all("Old Album" not in line["status"] for line in lines)
+
+
+def test_failed_run_without_header_inherits_nothing_from_staging(tmp_path):
+    """Regression: a failed run with no header keeps name '-' and folder '-'
+    even when another album's tagged FLACs sit in staging — the old
+    always-scan bug let the previous album lend its name."""
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    stale = tmp_path / "rip" / "cd" / "Old Album"
+    stale.mkdir(parents=True)
+    (stale / "old.flac").touch()
+    process = Mock(stdout=iter(["Ripping track 1\n", "Read error\n"]))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process), \
+            patch("skive.rip_music._metaflac_tag", return_value="Old Artist"):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 1
+    lines = _rip_jsonl(tmp_path)
+    assert all(line["name"] == "-" for line in lines)
+    folder_notes = [line["status"] for line in lines
+                    if line["status"].startswith("folder:")]
+    assert folder_notes == ["folder: -"]
+
+
+def test_release_pick_note_logged_before_rerun(tmp_path):
+    """Answering the Multiple-releases prompt with 3 logs 'release pick: 3'
+    before the -R re-run starts, and exactly once."""
+    import json
+
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    rip_jsonl = tmp_path / "logs" / "rip.jsonl"
+    runs = []
+
+    def fake_run(offset, flags, rip_dir, log, header):
+        runs.append((list(flags),
+                     rip_jsonl.read_text() if rip_jsonl.exists() else ""))
+        if len(runs) == 1:
+            return 1, "Multiple releases found\n"
+        return 0, "Rip complete\n"
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.Prompt.ask", return_value="3"), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    assert [flags for flags, _ in runs] == [["-N"], ["-R", "3", "-N"]]
+    assert "release pick: 3" not in runs[0][1]
+    assert "release pick: 3" in runs[1][1]
+    lines = [json.loads(line) for line in rip_jsonl.read_text().splitlines()]
+    assert [line["status"] for line in lines].count("release pick: 3") == 1
+
+
+def test_no_release_failure_notes_submit_url(tmp_path):
+    """A no-release failure logs one note carrying the attach URL from that
+    run's own captured output (fixture lines, nothing hard-coded)."""
+    fixture = Path(__file__).parent / "fixtures" / "cyanrip" / "no-release.txt"
+    out_lines = [line + "\n" for line in fixture.read_text().splitlines()]
+    url = next(line for line in out_lines
+               if line.startswith("https://musicbrainz.org/cdtoc/attach?")).strip()
+
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    process = Mock(stdout=iter(out_lines))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 1
+    lines = _rip_jsonl(tmp_path)
+    notes = [line["status"] for line in lines
+             if "no MusicBrainz release" in line["status"]]
+    assert notes == [f"no MusicBrainz release: submit this disc — {url}"]
+    assert all(line["name"] == "-" for line in lines)
 
 
 def test_repo_sweep_no_local_paths():

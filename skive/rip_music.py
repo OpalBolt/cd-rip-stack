@@ -1,6 +1,7 @@
 """Music rip orchestration: cyanrip wrapper, Multiple releases prompt, rip name from tags."""
 
 import os
+import re
 import sys
 import subprocess
 import urllib.error
@@ -11,7 +12,12 @@ from rich.prompt import Prompt
 
 from skive import common
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
-from skive.cyanrip_log import disc_number_from_log, parse_cyanrip_log
+from skive.cyanrip_log import (
+    album_header_field,
+    album_header_name,
+    disc_number_from_log,
+    parse_cyanrip_log,
+)
 from skive.validation import (
     VALIDATION_FILENAME,
     album_document,
@@ -63,24 +69,49 @@ def rip_music(args) -> None:
 
         log.phase("rip")
 
-        # Run cyanrip with tee-like capture
-        rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log)
+        # Run cyanrip with tee-like capture. The stream watch fills `header`
+        # with the album header pair mid-rip and names the run as soon as the
+        # pair is complete.
+        header: dict = {}
+        rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header)
 
         # Handle "Multiple releases found"
         if rc != 0 and "Multiple releases found" in cap_text:
             choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
             if choice:
-                # Re-run with -R <choice>
-                rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log)
+                log.note("rip", f"release pick: {choice}")
+                # Re-run with -R <choice>; a fresh header, so the re-run's
+                # own header re-print renames the run.
+                header = {}
+                rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log, header)
             else:
                 print("skive: aborting", file=sys.stderr)
                 rc = 1
 
-        log.phase_end()
+        # cyanrip found no MusicBrainz release for this TOC — hand the user
+        # the attach URL it printed so the disc can be submitted.
+        if rc != 0 and "Unable to find release info" in cap_text:
+            attach = re.search(r"https://musicbrainz\.org/cdtoc/attach\?\S+", cap_text)
+            if attach:
+                log.note("rip", f"no MusicBrainz release: submit this disc — {attach.group(0)}")
 
-        # Rip name from newest FLAC
-        name, rel_folder = _newest_flac_album(rip_dir)
+        # Name before phase_end so the rip ok line already carries it. The
+        # album-artist header pair wins over the staging scan (a Various
+        # Artists disc is not named after whichever track artist encoded
+        # last); on success everything else falls back to the FLAC tag scan,
+        # which also yields the staging folder. A failed run never scans
+        # staging — its name is the header's (pair, or album alone) or '-'.
+        # An interrupt keeps whatever the stream set mid-rip (no header: '-').
+        name, rel_folder = "-", "-"
+        if rc == 0:
+            name, rel_folder = _newest_flac_album(rip_dir)
+        header_name = album_header_name(header)
+        if header_name and header.get("album_artist"):
+            name = header_name
+        elif rc != 0:
+            name = header_name or "-"
         log.name = name
+        log.phase_end()
         log.note("rip", f"folder: {rel_folder}")
         if rc == 0:
             _write_cd_record(rip_dir, rel_folder, args.offset, log)
@@ -157,11 +188,17 @@ def _progress_line(line: str) -> bool:
     return "%" in line
 
 
-def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tuple[int, str]:
+def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
+                 header: dict | None = None) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
     verbosity tiers (quiet by default, progress lines at -v, everything at
     -vv; a failed run replays what was hidden, story 7), and written verbatim
-    to the run's raw log (log is None in tests)."""
+    to the run's raw log (log is None in tests).
+
+    When header is a dict, the stream watch fills it with the Album /
+    Album artist header pair as those lines print mid-rip, setting log.name
+    the moment the pair is complete. A -R re-run gets a fresh dict from its
+    caller, so the re-run's own header names the run."""
     cmd = ["cyanrip", "-s", offset] + flags
     process = subprocess.Popen(
         cmd,
@@ -185,6 +222,15 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None) -> tupl
                     hidden.append(stripped)
                 if log is not None:
                     log.raw("cyanrip", stripped)
+                if header is not None:
+                    field = album_header_field(stripped)
+                    if field is not None:
+                        key, value = field
+                        header[key] = value
+                        if log is not None and header.get("album_artist"):
+                            header_name = album_header_name(header)
+                            if header_name:
+                                log.name = header_name
                 captured.append(line)
 
         rc = process.wait()

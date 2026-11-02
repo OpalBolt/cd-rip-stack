@@ -38,6 +38,31 @@ def disc_number_from_log(text: str = "", stem: str = "") -> str:
     return filename.group(1) if filename else "1"
 
 
+def album_header_field(line: str) -> tuple[str, str] | None:
+    """Classify one cyanrip output line as the album header: ('album', value)
+    or ('album_artist', value) when the line is one of the column-0 header
+    lines (same patterns as parse_cyanrip_log), else None. Used by the rip's
+    line stream, where the header prints mid-rip before any track result."""
+    album_match = _ALBUM.match(line)
+    if album_match:
+        return "album", album_match.group(1)
+    artist_match = _ALBUM_ARTIST.match(line)
+    if artist_match:
+        return "album_artist", artist_match.group(1)
+    return None
+
+
+def album_header_name(header: dict) -> str | None:
+    """Run name from a streamed album header dict: 'Album artist - Album'
+    when the pair is present, or the album alone without an artist line;
+    None when no album header streamed."""
+    album = header.get("album")
+    artist = header.get("album_artist")
+    if album and artist:
+        return f"{artist} - {album}"
+    return album or None
+
+
 def parse_cyanrip_log(text: str) -> dict:
     """Parse header facts and per-track results from a cyanrip log.
 
