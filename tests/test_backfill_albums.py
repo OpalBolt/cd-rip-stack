@@ -50,7 +50,7 @@ def test_backfill_dry_run_apply_gap_and_existing_record(tmp_path, capsys):
         bf.reader = original
     assert not (album / "validation.json").exists()
     assert json.loads((existing / "validation.json").read_text()) == old
-    assert "write  library/Artist/2020 Album/validation.json: 2 of 12 tracks" in capsys.readouterr().out
+    assert "write  library/Artist/2020 Album/validation.json: 2 of 12 tracks, release-id" in capsys.readouterr().out
 
     # The injected reader is the only non-filesystem dependency.
     original = bf.reader

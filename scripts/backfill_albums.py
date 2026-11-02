@@ -176,8 +176,9 @@ def main(argv=None) -> int:
             skipped += 1
             continue
         doc = backfill_album(folder)
+        release = doc["release"] or "no release reference"
         print(f"write  {rel}: {doc['tracks_found']} of "
-              f"{doc['tracktotal'] if doc['tracktotal'] is not None else '?'} tracks")
+              f"{doc['tracktotal'] if doc['tracktotal'] is not None else '?'} tracks, {release}")
         if args.apply:
             write_validation(destination, doc)
         planned += 1
