@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-off backfill: convert the existing library in place on Linux.
 
-Runs the shared subtitle pass (windows/subs.py) per encode, ships the SRT
+Runs the shared subtitle pass (skive/subs.py) per encode, ships the SRT
 sidecars beside the video, and strips the embedded bitmap tracks only after
 the sidecars verify (ADR 0006). Idempotent and resumable from library state
 alone -- re-runs skip finished files and skip OCR when the expected sidecars
@@ -14,7 +14,6 @@ Usage:  python scripts/backfill.py [LIBRARY]
 """
 
 import argparse
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -22,17 +21,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+from skive import subs
+
 
 def _rmf(path: str) -> None:
     try:
         os.remove(path)
     except OSError:
         pass
-
-_repo = Path(__file__).resolve().parent.parent
-_spec = importlib.util.spec_from_file_location("subs", _repo / "windows" / "subs.py")
-subs = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(subs)
 
 
 def probe_tools() -> dict[str, str]:

@@ -1,21 +1,16 @@
-"""Tests for windows/subs.py — fake inventories + stubbed subprocess, no real tools.
+"""Tests for skive/subs.py — fake inventories + stubbed subprocess, no real tools.
 
 subprocess.run is replaced wholesale: the fake ffprobe returns a canned
 inventory (shape hand-checked against real library MKVs), the fake seconv
 writes SRT files into whatever --output-folder it was given.
 """
 
-import importlib.util
 import json
 import pathlib
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "subs", pathlib.Path(__file__).parent.parent / "windows" / "subs.py"
-)
-subs = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(subs)
+from skive import subs
 
 
 def trk(i, lang, codec="dvd_subtitle", forced=False):
