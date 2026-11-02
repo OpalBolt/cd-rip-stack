@@ -1,16 +1,21 @@
 """skive transcode — batch re-encode rip/ staging into the Jellyfin library.
 
-BC-250 slice 02, ported from the frozen windows/transcode.py: the movie MAIN
-arm only. The batch walks the videos share's rip/ staging at both resting
-depths, skips junk labels, picks each movie's main (the validation file's
-recorded main, biggest-bytes only as the legacy fallback), encodes with
-HandBrake at native resolution (zero subtitle tracks), and ships to
-library/movies/<Name>/<Name>.mkv with the validation document travelling
-beside the encode and the encode result appended to it; the lossless source
-is deleted after the verified ship (slice 06 adds the -k park). Split mains
-skip whole until the merge pass (slice 05); TV, extras and the inline
-subtitle pass are later slices — those staged items fall through the batch
-unencoded.
+BC-250 slices 02+03, ported from the frozen windows/transcode.py: the movie
+MAIN arm with its inline subtitle pass. The batch walks the videos share's
+rip/ staging at both resting depths, skips junk labels, picks each movie's
+main (the validation file's recorded main, biggest-bytes only as the legacy
+fallback), encodes with HandBrake at native resolution (zero subtitle
+tracks), and ships to library/movies/<Name>/<Name>.mkv with the validation
+document travelling beside the encode and the encode result appended to it.
+The inline subtitle pass (skive.subs, the graduated windows module) OCRs the
+main's eng/dan tracks into sidecars beside the encode — forced tracks always
+kept, per-language full tracks settled by OCR'd cue count into `.sdh`; a
+failed pass ships the encode subless and parks the sources in the issues
+folder with the run's evidence, failing the run. Nothing is deleted until
+its sidecars are verified: the lossless source only moves after the ship
+(slice 06 adds the -k park and --retry). Split mains skip whole until the
+merge pass (slice 05); TV and extras are later slices — those staged items
+fall through the batch unencoded.
 
 Shared policy (run log, verbosity tiers, interrupt machinery, sanitize)
 comes from skive.common; the validation document's reader/writer/name from
@@ -18,6 +23,7 @@ skive.validation. The Windows original's deliberate duplicates are not
 repeated here.
 """
 
+import json
 import os
 import re
 import shutil
@@ -28,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skive import common
+from skive import subs
 from skive.validation import (
     VALIDATION_FILENAME,
     load_validation,
@@ -277,6 +284,68 @@ def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> None:
         shutil.move(src, dest)
 
 
+def _quarantine(src: str, item: Item, issues_root: str,
+                log: common.RipLog) -> None:
+    """Sources that must not be lost wait in issues/<type>/<Name (Year)>
+    (CONTEXT.md: Issues folder, never clobbering), together with this run's
+    log evidence."""
+    d = os.path.join(issues_root, "tv" if item.is_tv else "movies", item.movie)
+    os.makedirs(d, exist_ok=True)
+    dest = os.path.join(d, os.path.basename(src))
+    if os.path.exists(dest):
+        print(f"quarantine: {dest} already exists -- source left in place", file=sys.stderr)
+    else:
+        shutil.move(src, dest)
+    _copy_run_evidence(log, d)
+
+
+def _copy_run_evidence(log: common.RipLog, dest_dir: str) -> None:
+    """Copy the run's evidence beside a quarantined source: the run's lines
+    from logs/rip.jsonl (selected by the run field) are appended to the
+    folder's rip.jsonl, and the run's raw log is copied in when it still
+    exists (a clean exit deletes it; a failure keeps it). One copy per run
+    and folder: a multi-part item quarantines part by part into the same
+    folder, and a --retry re-quarantines into its existing folder — a
+    folder already holding this run's evidence (its run id in rip.jsonl)
+    is left alone, so lines are never appended twice and the same-named
+    raw-log copy never clobbers."""
+    rip_jsonl = os.path.join(dest_dir, "rip.jsonl")
+    if os.path.exists(rip_jsonl):
+        try:
+            with open(rip_jsonl, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get("run") == log.run:
+                        return  # this run's evidence already landed here
+        except OSError:
+            pass
+    kept: list[str] = []
+    try:
+        with open(log._run_log, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get("run") == log.run:
+                    kept.append(json.dumps(obj, ensure_ascii=False))
+    except OSError:
+        pass
+    if kept:
+        with open(rip_jsonl, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(kept) + "\n")
+    if os.path.exists(log._raw_log):
+        dst = os.path.join(dest_dir, os.path.basename(log._raw_log))
+        if not os.path.exists(dst):
+            shutil.copy2(log._raw_log, dst)
+
+
 def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> None:
     """Append the main encode's result to the title folder's validation.json
     and copy the doc into the library folder beside the encode. The encodes
@@ -311,6 +380,39 @@ def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> 
         pass
 
 
+def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
+              ffprobe_exe: str, log: common.RipLog | None = None):
+    """Inline subtitle pass on the local copy; the caller creates the sidecar
+    dir (and registers it as the interrupt path's temp) and sidecars only move
+    beside the encode once it succeeds. Captured ffprobe/seconv output lines
+    go to the run's raw log via log.raw (and pass through to the console at
+    -vv). Returns (sidecar dir, PassResult)."""
+    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe,
+                        log=log, verbose=common.VERBOSITY)
+    for n in res.notes:
+        print(n)
+    return side_dir, res
+
+
+def _ship_sidecars(side_dir: str, dest_dir: str, res) -> None:
+    for name in res.sidecars:
+        shutil.move(os.path.join(side_dir, name), os.path.join(dest_dir, name))
+    shutil.rmtree(side_dir, ignore_errors=True)
+
+
+def _fail_quarantine(log: common.RipLog, items: list[Item], issues_root: str,
+                     label: str, notes: list[str]) -> None:
+    """Pass failed but the encode shipped subless: sources wait in their
+    issues/<type>/<Name (Year)> folder with the run's evidence."""
+    fails = "; ".join(n for n in notes if n.startswith("FAIL"))
+    log.note("subs", f"FAIL subtitle pass: {label} -- {fails}")
+    folder = os.path.join(issues_root, "tv" if items[0].is_tv else "movies", items[0].movie)
+    print(f"FAILED (subtitle pass): {label} -- encode shipped subless, "
+          f"sources quarantined to {folder}", file=sys.stderr)
+    for item in items:
+        _quarantine(item.path, item, issues_root, log)
+
+
 def run_transcode(args) -> int:
     common.set_verbosity(getattr(args, "verbose", 0))
     vid = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
@@ -328,6 +430,7 @@ def run_transcode(args) -> int:
     input_dir = os.path.join(vid, "issues" if retry else "rip")
     lib_dir = os.path.join(vid, "library")
     lossless_root = os.path.join(vid, "lossless")
+    issues_root = os.path.join(vid, "issues")  # sub-pass failures park sources here
     tmp_dir = args.workdir or os.environ.get("VIDEO_WORK_DIR") or os.path.join(tempfile.gettempdir(), "video-work")
     os.makedirs(tmp_dir, exist_ok=True)
 
@@ -404,12 +507,14 @@ def run_transcode(args) -> int:
     # success). Reset per item; stale entries after a finished item are
     # harmless (the files are already gone and _rmf tolerates that).
     inflight: list[str] = []
+    inflight_side: str | None = None  # this item's sidecar temp dir, once the pass starts
     log.start()
     try:
         for i in items:
             if i.path in handled:
                 continue
             inflight = []
+            inflight_side = None
             log.name = i.movie
             safe = common.sanitize(i.movie)
 
@@ -461,24 +566,39 @@ def run_transcode(args) -> int:
                 inflight.append(local_src)  # BEFORE the copy
                 _copy2(i.path, local_src)
                 cleanup.append(local_src)
-                # the inline subtitle pass (sidecars, slice 03) runs here in
-                # the full flow; the main already encodes with zero subtitle
-                # tracks meanwhile
+                # the inline subtitle pass runs on the local copy BEFORE the
+                # encode (the main encodes zero-track meanwhile); the sidecar
+                # dir is this item's temp from creation, so an interrupt
+                # mid-pass drops it too (CONTEXT.md: Interrupt)
+                side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
+                inflight_side = side_dir
+                side_dir, res = _sub_pass(local_src, side_dir, safe,
+                                          seconv_exe, ffprobe_exe, log=log)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
                 if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
                            no_subs=True, log=log):
                     shutil.move(local_out, dest)
+                    _ship_sidecars(side_dir, dest_dir, res)
                     # the doc that picked this main gets the encode appended
                     # (append-once) and a library copy beside the encode
                     if i.movie in doc_path:
                         _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe)
                     for p in cleanup:
                         _rmf(p)
-                    _archive(i.path, i, lossless_root, keep)
+                    # nothing is deleted until its sidecars are verified: the
+                    # source only moves after the ship — a failed pass leaves
+                    # it parked in issues/ with the run's evidence (the encode
+                    # stays shipped subless; the batch continues, the run fails)
+                    if res.ok:
+                        _archive(i.path, i, lossless_root, keep)
+                    else:
+                        _fail_quarantine(log, [i], issues_root, i.name, res.notes)
+                        failed = 1
                     handled.add(i.path)
                     log.phase_end()
                 else:
+                    shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
                         _rmf(p)
                     log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
@@ -491,11 +611,13 @@ def run_transcode(args) -> int:
             # -- ` - Extra NN` arm is slice 04 — they fall through unencoded.
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: drop this item's partial temp output (the local
-        # copy and .h265 encode live in the work dir), leave the SOURCE in
-        # staging — sources only move on success — record status=interrupted,
-        # exit 130.
+        # copy, the unshipped sidecar dir, and .h265 encode live in the work
+        # dir), leave the SOURCE in staging — sources only move on success —
+        # record status=interrupted, exit 130.
         for p in inflight:
             _rmf(p)
+        if inflight_side is not None:
+            shutil.rmtree(inflight_side, ignore_errors=True)
         log.interrupted()
         print("skive transcode: interrupted -- partial temp output deleted, source left in staging",
               file=sys.stderr)

@@ -8,11 +8,12 @@ ffprobe answers height (csv) and duration (csv, format=duration — the
 validation encode record's probe) keyed off content markers, plus the
 subtitle-inventory and merge-guard query shapes the later slices reuse.
 VIDEOS_MOUNT replaces the Windows suite's VIDEOS env; Args drives
-skive.transcode.run_transcode directly. The sub-pass/merge/TV/extras/keep/
-retry scenarios stay in the Windows file until slices 03-06 port them, and
-this slice's scope changes show up as adapted assertions: split mains skip
-whole (slice 05 merges), extras and TV fall through unencoded (slices 04/05),
-and skive's RipLog skips the total when a clean run had exactly one phase.
+skive.transcode.run_transcode directly. Slice 03 ported the sub-pass
+scenarios; the merge/TV/extras/keep/retry scenarios stay in the Windows file
+until slices 04-06 port them, and this slice's scope changes show up as
+adapted assertions: split mains skip whole (slice 05 merges), extras and TV
+fall through unencoded (slices 04/05), and skive's RipLog skips the total
+when a clean run had exactly one phase.
 """
 
 import json
@@ -119,6 +120,10 @@ if [ "$sel" = "s" ]; then
     printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
   elif grep -q SUBS-ENG-DAN "$in" 2>/dev/null; then
     printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":1},"tags":{"language":"dan"}},{"index":3,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
+  elif grep -q SUBS-SETTLE "$in" 2>/dev/null; then
+    printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":1},"tags":{"language":"eng"}},{"index":3,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}},{"index":4,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
+  elif grep -q SUBS-EMPTY "$in" 2>/dev/null; then
+    printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
   else
     printf '%s\\n' '{"streams":[]}'
   fi
@@ -141,7 +146,11 @@ out=""
 for a in "$@"; do
   case "$a" in --output-folder:*) out="${{a#--output-folder:}}" ;; esac
 done
-printf '1\\n00:00:01,000 --> 00:00:02,000\\ncue\\n\\n' > "$out/track.srt"
+if grep -q SUBS-EMPTY "$in" 2>/dev/null; then
+  : > "$out/track.srt"  # OCR ran but produced zero cues
+else
+  printf '1\\n00:00:01,000 --> 00:00:02,000\\ncue\\n\\n' > "$out/track.srt"
+fi
 """
     )
     (bin_dir / "tesseract").write_text("#!/bin/sh\nexit 0\n")
@@ -311,6 +320,108 @@ def test_split_main_skips_whole_until_merge(env, capsys):
     assert "split main (2 parts)" in err
     log = " ".join(l["status"] for l in run_log(env))
     assert "split main (2 parts)" in log
+
+
+# -- inline subtitle pass on mains (slice 03) -------------------------------------
+
+def test_pass_success_sidecars_beside_encode_and_archived(env):
+    """Windows test_pass_success_sidecars_beside_encode_and_archived: the main
+    ships zero-track with its OCR'd sidecars beside the encode (forced dan
+    always kept, full eng shipped), the source archives to lossless with -k
+    only after that verified ship, and no temp dirs survive."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Side (2001)/d0/Side (2001)_t00.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args(keep=True))
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Side (2001)"
+    assert (L / "Side (2001).mkv").read_text() == "SUBS-ENG-DAN"
+    assert (L / "Side (2001).dan.forced.srt").read_text().count(" --> ") == 1
+    assert (L / "Side (2001).eng.srt").exists()
+    assert sorted(p.name for p in (vid / "lossless" / "movies" / "Side (2001)").iterdir()) == ["Side (2001)_t00.mkv"]
+    assert len((env / "seconv-calls.log").read_text().strip().splitlines()) == 2
+    assert list((env / "work").iterdir()) == []  # sidecar temp dir cleaned up
+
+
+def test_pass_settles_full_track_dupes_to_sdh(env):
+    """The settlement triple (tests/test_subs.py's run_pass settlement, through
+    the transcode flow): a forced eng track always keeps .eng.forced.srt while
+    the two full eng tracks settle by OCR'd cue count into .eng.srt (winner)
+    and .eng.sdh.srt (>=30% runner-up) beside the encode."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Settle (2004)/d0/Settle (2004)_t00.mkv", "SUBS-SETTLE")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Settle (2004)"
+    assert (L / "Settle (2004).mkv").read_text() == "SUBS-SETTLE"
+    assert sorted(p.name for p in L.glob("*.srt")) == [
+        "Settle (2004).eng.forced.srt", "Settle (2004).eng.sdh.srt",
+        "Settle (2004).eng.srt"]
+    assert (L / "Settle (2004).eng.srt").read_text().count(" --> ") == 1
+    assert len((env / "seconv-calls.log").read_text().strip().splitlines()) == 3
+
+
+def test_pass_failure_ships_encode_and_quarantines_source(env, capsys):
+    """Windows test_pass_failure_ships_encode_and_quarantines_source, plus the
+    batch contract: a failing OCR track ships the encode subless, parks the
+    source in issues/movies/<Name (Year)> with the run's rip.jsonl lines and
+    raw log, never archives despite -k, fails the run (exit non-zero) — and
+    the next staged movie still encodes."""
+    vid = env / "vid"
+    # After encodes first, so the run's raw log is final when Ocr's quarantine
+    # copies it as evidence (same ordering trick as the windows guard test).
+    mk(vid, "rip/movies/After (2002)/d0/After (2002)_t00.mkv", "AFTER-MAIN")
+    mk(vid, "rip/movies/Ocr (2001)/d0/Ocr (2001)_t00.mkv", "SUBS-FAIL")
+
+    rc = transcode.run_transcode(Args(keep=True))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert (vid / "library" / "movies" / "Ocr (2001)" / "Ocr (2001).mkv").read_text() == "SUBS-FAIL"
+    assert not (vid / "lossless" / "movies" / "Ocr (2001)").exists()  # never archived despite -k
+    issues = vid / "issues" / "movies" / "Ocr (2001)"
+    assert (issues / "Ocr (2001)_t00.mkv").read_text() == "SUBS-FAIL"
+    assert "FAILED (subtitle pass)" in err
+    log = " ".join(l["status"] for l in run_log(env))
+    assert "FAIL subtitle pass" in log and "seconv failed" in log
+    # the quarantined item carries the run's evidence: rip.jsonl lines and the
+    # raw log (the encode ran, so a raw log exists and is kept by the failure)
+    runs = {json.loads(l)["run"] for l in (vid / "logs" / "rip.jsonl").read_text().splitlines()}
+    assert len(runs) == 1
+    run = runs.pop()
+    ev = [json.loads(l) for l in (issues / "rip.jsonl").read_text().splitlines()]
+    assert ev and all(l["run"] == run for l in ev)
+    assert (issues / f"{run}.jsonl").read_text() == (vid / "logs" / "raw" / f"{run}.jsonl").read_text()
+    # batch continued: the second movie shipped (and archived, -k)
+    assert (vid / "library" / "movies" / "After (2002)" / "After (2002).mkv").read_text() == "AFTER-MAIN"
+    assert not (vid / "rip" / "movies" / "After (2002)" / "d0" / "After (2002)_t00.mkv").exists()
+    assert (vid / "lossless" / "movies" / "After (2002)" / "After (2002)_t00.mkv").exists()
+
+
+def test_pass_empty_sidecar_fails_like_a_failed_track(env, capsys):
+    """The empty-sidecar failure path (tests/test_subs.py's
+    test_run_pass_empty_sidecar_fails, through the transcode flow): seconv
+    produces a zero-cue SRT, the encode still ships subless, no sidecar
+    ships, the source parks in issues/ with the run's evidence, exit
+    non-zero."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Blank (2006)/d0/Blank (2006)_t00.mkv", "SUBS-EMPTY")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    L = vid / "library" / "movies" / "Blank (2006)"
+    assert (L / "Blank (2006).mkv").read_text() == "SUBS-EMPTY"
+    assert not list(L.glob("*.srt"))  # the empty sidecar never shipped
+    issues = vid / "issues" / "movies" / "Blank (2006)"
+    assert (issues / "Blank (2006)_t00.mkv").read_text() == "SUBS-EMPTY"
+    assert "FAILED (subtitle pass)" in err
+    log = " ".join(l["status"] for l in run_log(env))
+    assert "empty sidecar (0 events)" in log
 
 
 # -- HandBrake argument mapping --------------------------------------------------
