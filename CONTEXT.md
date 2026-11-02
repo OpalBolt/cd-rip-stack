@@ -92,7 +92,11 @@ MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; tra
 _Avoid_: label, code
 
 **Staging**:
-Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/` until `tag` files it into the library. A mid-rip file still wears its junk label.
+Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/<music source>/<album>/` — one folder per album, the source level tells `tag` how to file it; `tag` moves it into the library, so an album still in `rip/` is not yet filed. A mid-rip file still wears its junk label.
+
+**Music source**:
+Where an album came from: `cd` (a cyanrip rip), `bandcamp` (a download), or `other` (any other download). The first folder under `/mnt/music/rip/`; `cd` and `other` are autotagged by beets against MusicBrainz, `bandcamp` keeps its own tags (`beet import -A`) but still gets the library path, ReplayGain and art.
+_Avoid_: ingestion method, origin
 
 **Lossless folder**:
 Where `-Keep` parks lossless sources after transcode, until the encode is verified by eye and purged by hand: `lossless/<type>/<Name (Year)>/`. Never clobbered, never auto-deleted. Replaces the old flat `rip-DONE`.
@@ -105,8 +109,8 @@ _Avoid_: failed folder, retry queue
 ### Validation
 
 **Validation file**:
-`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main. A TV show holds one document per show — every season with its episodes (the current actuals) and its disc index (volume label, run, the episodes each rip run staged). Travels staging → transcode → library (TV: into each Season folder beside the encodes); transcode appends its encode results to it. Pre-feature rips get theirs reconstructed by `scripts/backfill_validation.py` (dry-run default, `--apply` writes).
-_Avoid_: manifest, metadata file
+`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main. A TV show holds one document per show — every season with its episodes (the current actuals) and its disc index (volume label, run, the episodes each rip run staged). Travels staging → transcode → library (TV: into each Season folder beside the encodes); transcode appends its encode results to it. Pre-feature rips get theirs reconstructed by `scripts/backfill_validation.py` (dry-run default, `--apply` writes). An album holds a `kind: "album"` document: music source, release identity (MusicBrainz id or Bandcamp URL), per-track file/duration/format, and a disc index (run, drive offset, per-track AccurateRip status, confidence and CRC32 for `cd`). A CD rip's record is born complete in `rip/cd/<album>/` — cyanrip's report names the release, every track, and each checksum; downloads get theirs at filing. The filing step stamps each disc's filing facts, rebuilds the track list from the filed files, and carries the document into the library album folder together with cyanrip's `.log`/`.cue`. AccurateRip results are proof, never a gate: a disc missing from the database still rips and exits clean, with its not_found tracks named in the run log. Pre-feature albums get a `reconstructed` one (source `unknown`, no AccurateRip).
+_Avoid_: manifest, metadata file, verification.json
 
 **Candidate main**:
 A movie-rip title at or above the main floor (2400 s). One candidate near the TMDB runtime names the main outright; several near it demand a human pick (default: biggest) before the drive spins.
@@ -119,7 +123,7 @@ _Avoid_: lint, audit (that name belongs to the ratio audit)
 ### Search
 
 **Ripped search**:
-The `skive search QUERY` answer to "have I already ripped this?" — a case-insensitive name match across every on-disk root (`library/`, `rip/`, `lossless/`, `issues/`), each hit reported with its state (staging, library, lossless, issues); TV hits list their seasons. Zero hits answer with a did-you-mean suggestion. Always exit 0, never a database — the directory walk is the index.
+The `skive search <scope> QUERY` answer to "have I already ripped this?" — scope is required: `movie`, `tv`, `video` (both), `music`, or `all`. A case-insensitive name match across every on-disk root of the scoped shares (`library/`, `rip/`, `lossless/`, `issues/`), each hit reported with its state (staging, library, lossless, issues); TV hits list their seasons, album hits match artist or album folder names and staging hits name their music source. Zero hits answer with a did-you-mean suggestion. Always exit 0, never a database — the directory walk is the index.
 _Avoid_: library search, catalog, index
 
 **Rip preflight**:
@@ -156,7 +160,8 @@ _Avoid_: subtitle extraction, sub rip
 ### Logging
 
 **Run log**:
-The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). Replaces the old 8-column text `rip.log`.
+The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. Replaces the old 8-column text `rip.log`.
+_Avoid_: verification log, event log
 
 **Raw log**:
 Verbatim tool output for one run, captured while it runs: `logs/raw/<run>.jsonl`. Deleted on a clean exit; kept when a run fails or is interrupted. Verbosity (`-v`, `-vv`) only gates the console — both logs are always written.
