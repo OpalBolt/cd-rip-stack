@@ -175,9 +175,44 @@ def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
     disc = {"rip_run": log.run, "offset": parsed_offset}
     if parsed["tracks"]:
         disc["accuraterip"] = parsed["tracks"]
-    doc = album_document("cd", None, [], discs={disc_number: disc})
+    tracks = _staged_tracks(folder, parsed["tracks"])
+    doc = album_document("cd", parsed.get("release"), tracks,
+                         discs={disc_number: disc})
     old = load_validation(folder / VALIDATION_FILENAME) or {}
     write_validation(folder / VALIDATION_FILENAME, merge_album_document(old, doc))
+    if parsed["tracks"]:
+        # Proof summary, never a gate: counts over the parsed tracks, with the
+        # not_found/partial counts named only when nonzero.
+        accurate = sum(1 for track in parsed["tracks"] if track["status"] == "accurate")
+        confidence = max((track["confidence"] or 0) for track in parsed["tracks"])
+        note = f"validation: {len(tracks)} tracks, {accurate} accurate (conf {confidence})"
+        not_found = sum(1 for track in parsed["tracks"] if track["status"] == "not_found")
+        partial = sum(1 for track in parsed["tracks"] if track["status"] == "partial")
+        if not_found:
+            note += f", {not_found} not_found"
+        if partial:
+            note += f", {partial} partial"
+        log.note("rip", note)
+
+
+_TRACK_FILE_NUMBER = re.compile(r"^(\d+)\s*-\s")
+
+
+def _staged_tracks(folder: Path, parsed_tracks: list[dict]) -> list[dict]:
+    """The staged record's track list, born at rip from the folder's FLACs
+    (cyanrip Outputs: flac) plus the parsed report: a file pairs to its
+    parsed track by the leading ``NN - `` number in its name, positionally
+    without one. The parsed durations are the record — no ffprobe."""
+    by_number = {track["track"]: track for track in parsed_tracks}
+    tracks = []
+    for position, path in enumerate(sorted(folder.glob("*.flac")), start=1):
+        number_match = _TRACK_FILE_NUMBER.match(path.name)
+        number = int(number_match.group(1)) if number_match else position
+        parsed = by_number.get(number)
+        tracks.append({"file": path.name,
+                       "dur_s": parsed["dur_s"] if parsed else None,
+                       "format": path.suffix.lstrip(".").lower()})
+    return tracks
 
 
 def _progress_line(line: str) -> bool:

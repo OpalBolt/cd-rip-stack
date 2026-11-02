@@ -708,3 +708,214 @@ def test_unparsed_cyanrip_log_keeps_record_and_raw_note(tmp_path, capsys):
     raw = tmp_path / "logs" / "raw" / f"{run}.jsonl"
     assert raw.exists()
     assert "unexpected cyanrip output" in raw.read_text(encoding="utf-8")
+
+
+# -- Born-complete staged record and validation note ----------------------------
+
+
+def _fixture_report() -> str:
+    """The real cyanrip report (spec: genuine output, not guesses)."""
+    return (Path(__file__).parent / "fixtures" / "cyanrip"
+            / "summertime-blues.log").read_text(encoding="utf-8")
+
+
+def _rip_statuses(tmp_path):
+    import json
+
+    return [json.loads(line)["status"]
+            for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+
+
+def test_clean_rip_writes_born_complete_record_from_real_report(tmp_path):
+    """A clean rip with the real report shape leaves a born-complete staged
+    record: the parsed release, 19 tracks (file/dur_s/format) built from the
+    staged FLACs, crc32 on every Accurip entry, and the validation note in
+    the run log."""
+    import json
+
+    folder_name = "Summertime Blues [FLAC]"
+    album = tmp_path / "rip" / "cd" / folder_name
+    album.mkdir(parents=True)
+    report = _fixture_report()
+    (album / "Summertime Blues.log").write_text(report, encoding="utf-8")
+    (album / "Summertime Blues.cue").write_text("FILE image.flac\n", encoding="utf-8")
+    flac_names = [Path(line.strip()).name for line in report.splitlines()
+                  if line.strip().endswith(".flac")]
+    for name in flac_names:
+        (album / name).touch()
+
+    args = FakeArgs(offset="6", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+            patch("skive.rip_music._newest_flac_album",
+                  return_value=("Various Artists - Summertime Blues", folder_name)):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
+    assert doc["release"] == "0ba5b04b-db78-46cd-95e9-9fcf1945fa23"
+    assert len(doc["tracks"]) == 19
+    assert all(set(track) == {"file", "dur_s", "format"} for track in doc["tracks"])
+    assert doc["tracks"][0] == {
+        "file": "01 - Damn Right, I've Got the Blues.flac",
+        "dur_s": 269,
+        "format": "flac",
+    }
+    accuraterip = doc["discs"]["1"]["accuraterip"]
+    assert all(entry["crc32"] for entry in accuraterip)
+    assert accuraterip[0]["crc32"] == "6C421A41"
+    assert "validation: 19 tracks, 19 accurate (conf 3)" in _rip_statuses(tmp_path)
+
+
+def test_validation_note_extends_not_found_and_partial(tmp_path):
+    """A report with unmatched tracks extends the note: the not_found and
+    partial counts appear only when nonzero, after the accurate count."""
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "Album.log").write_text(
+        "Offset:         +123 samples\n"
+        "  Track 1\n"
+        "    Accurip v1:  1234 (accurately ripped, confidence 7)\n"
+        "  Track 2\n"
+        "    Accurip v1:  5678 (not found)\n"
+        "  Track 3\n"
+        "    Accurip v1:  9abc (partially accurately ripped, confidence 2)\n",
+        encoding="utf-8",
+    )
+    (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
+    for name in ("01 - One.flac", "02 - Two.flac", "03 - Three.flac"):
+        (album / name).touch()
+
+    args = FakeArgs(offset="123", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    assert ("validation: 3 tracks, 1 accurate (conf 7), 1 not_found, 1 partial"
+            in _rip_statuses(tmp_path))
+
+
+def test_offline_minus_N_record_lists_files_without_report_facts(tmp_path):
+    """Offline -N: the report parses no release and no AccurateRip, yet the
+    record is still born from what's on disk: release null, the folder's
+    FLACs as tracks with null durations, and no validation note (the
+    accuraterip: unparsed note covers that case)."""
+    import json
+
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "Album.log").write_text(
+        "Offset:         +6 samples\n"
+        "Album:          Unknown Album\n",
+        encoding="utf-8",
+    )
+    (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
+    (album / "01 - One.flac").touch()
+    (album / "02 - Two.flac").touch()
+
+    args = FakeArgs(offset="6", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 0
+    doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
+    assert doc["release"] is None
+    assert doc["tracks"] == [
+        {"file": "01 - One.flac", "dur_s": None, "format": "flac"},
+        {"file": "02 - Two.flac", "dur_s": None, "format": "flac"},
+    ]
+    assert "accuraterip" not in doc["discs"]["1"]
+    statuses = _rip_statuses(tmp_path)
+    assert not any(status.startswith("validation:") for status in statuses)
+    assert "accuraterip: unparsed" in statuses
+
+
+def test_interrupted_run_writes_no_record(tmp_path):
+    """Interrupt contract: the CD record is written only on rc == 0 — an
+    interrupted rip leaves no validation.json beside the staged FLACs."""
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "Album.log").write_text("Offset:         +123 samples\n", encoding="utf-8")
+    (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
+    (album / "01 - One.flac").touch()
+
+    args = FakeArgs(offset="123", cyanrip_flags=["-N"])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 130
+    assert not list((tmp_path / "rip" / "cd").rglob("validation.json"))
+
+
+def test_tracks_pair_positionally_without_number_prefix(tmp_path):
+    """A staged file with no leading 'NN - ' number pairs to its parsed
+    track by position in the sorted file list."""
+    import json
+
+    album = tmp_path / "Album"
+    album.mkdir()
+    (album / "Album.log").write_text(
+        "Offset: +10 samples\n"
+        "  Track 1\n"
+        "    Duration:    00:01:10\n"
+        "    Accurip v1:  AAAA (accurately ripped, confidence 1)\n"
+        "  Track 2\n"
+        "    Duration:    00:02:20\n"
+        "    Accurip v1:  BBBB (accurately ripped, confidence 1)\n",
+        encoding="utf-8",
+    )
+    (album / "side a.flac").touch()
+    (album / "side b.flac").touch()
+    log = Mock()
+    log.run = "rip-1"
+
+    _write_cd_record(tmp_path, "Album", "10", log)
+
+    doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
+    assert [track["dur_s"] for track in doc["tracks"]] == [70, 140]
+
+
+def test_rerip_record_rebuilds_from_newest_log(tmp_path):
+    """-R re-rip: cyanrip appends per-rip logs to the album folder; each run
+    rebuilds the disc entry from the newest log by mtime."""
+    import json
+
+    folder = tmp_path / "Album"
+    folder.mkdir()
+    old_log = folder / "Album.log"
+    old_log.write_text(
+        "Disc number: 1\nOffset: +10 samples\n"
+        "  Track 1\n"
+        "    EAC CRC32:   AAAAAAAA\n"
+        "    Accurip v1:  CCCCCCCC (accurately ripped, confidence 2)\n",
+        encoding="utf-8",
+    )
+    (folder / "Album.cue").write_text("cue\n", encoding="utf-8")
+    os.utime(old_log, (100, 100))
+    log = Mock()
+    log.run = "rip-1"
+    _write_cd_record(tmp_path, "Album", "10", log)
+
+    new_log = folder / "Album CD1.log"
+    new_log.write_text(
+        "Disc number: 1\nOffset: +10 samples\n"
+        "  Track 1\n"
+        "    EAC CRC32:   BBBBBBBB\n"
+        "    Accurip v1:  DDDDDDDD (accurately ripped, confidence 3)\n",
+        encoding="utf-8",
+    )
+    os.utime(new_log, (200, 200))
+    log.run = "rip-2"
+    _write_cd_record(tmp_path, "Album", "10", log)
+
+    doc = json.loads((folder / "validation.json").read_text(encoding="utf-8"))
+    assert doc["discs"]["1"]["accuraterip"][0]["crc32"] == "BBBBBBBB"
