@@ -9,10 +9,12 @@ validation encode record's probe) keyed off content markers, plus the
 subtitle-inventory and merge-guard query shapes the later slices reuse.
 VIDEOS_MOUNT replaces the Windows suite's VIDEOS env; Args drives
 skive.transcode.run_transcode directly. Slice 03 ported the sub-pass
-scenarios; the merge/TV/extras/keep/retry scenarios stay in the Windows file
-until slices 04-06 port them, and this slice's scope changes show up as
-adapted assertions: split mains skip whole (slice 05 merges), extras and TV
-fall through unencoded (slices 04/05), and skive's RipLog skips the total
+scenarios; slice 04 ported the TV scenarios (seasons/specials/junk, the
+show-doc copy and its absence, TV extras, the episode pass, the TV
+interrupt). The merge/movie-extras/keep/retry scenarios stay in the Windows
+file until the later slices port them, and the earlier slices' scope changes
+show up as adapted assertions: split mains skip whole (slice 05 merges),
+movie extras fall through unencoded, and skive's RipLog skips the total
 when a clean run had exactly one phase.
 """
 
@@ -299,7 +301,7 @@ def test_null_main_and_absent_doc_keep_bytes_fallback(env):
         {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580}]
     # no doc ever existed for the legacy folder -> no library copy
     assert not (L / "Legacy (2002)" / "validation.json").exists()
-    # the non-main _t title waits for slice 04's extras arm
+    # the non-main _t title waits for the movie extras arm (a later slice)
     assert (vid / "rip" / "movies" / "Shorts (2001)" / "Shorts (2001)_t21.mkv").exists()
 
 
@@ -549,3 +551,169 @@ def test_interrupt_drops_temp_partial_source_stays_log_130(env, capsys, monkeypa
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
     assert "interrupted -- partial temp output deleted, source left in staging" \
         in capsys.readouterr().err
+
+
+# -- TV branch (slice 04): seasons/specials/doubles/junk, show doc, extras -----
+
+def test_scenario6_tv_seasons_specials_junk(env, capsys):
+    """Windows test_scenario6: the TV root encodes every staged episode (the
+    double stays one S01E05-E06 file), season 0 files into Specials, the TV
+    extra into the show's extras/, the junk label stays in staging, and the
+    movie beside the TV tree still picks and encodes its main — no TV item
+    ever fires a main pick or merge."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S01E02.mkv", "TV-E02")
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S01E05-E06.mkv", "TV-DOUBLE")
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S00E01.mkv", "TV-SPECIAL")
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010) - Extra 03.mkv", "TV-EXTRA")
+    mk(vid, "rip/tv/Show (2010)/d1/B1_S01E02.mkv", "TV-JUNK")  # parallel drive's junk label
+    mk(vid, "rip/movies/Mov (2011)/d0/Mov (2011)_t00.mkv", "MOV-MAIN")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    TL = vid / "library" / "tv" / "Show (2010)"
+    assert (TL / "Season 01" / "Show (2010) - S01E02.mkv").read_text() == "TV-E02"
+    assert (TL / "Season 01" / "Show (2010) - S01E05-E06.mkv").read_text() == "TV-DOUBLE"
+    assert (TL / "Specials" / "Show (2010) - S00E01.mkv").read_text() == "TV-SPECIAL"
+    assert (TL / "extras" / "Show (2010) - Extra 03.mkv").read_text() == "TV-EXTRA"
+    assert (vid / "library" / "movies" / "Mov (2011)" / "Mov (2011).mkv").read_text() == "MOV-MAIN"
+    assert [p.name for p in (vid / "rip" / "tv" / "Show (2010)" / "d1").iterdir()] == ["B1_S01E02.mkv"]
+    assert "skip (junk label" in err
+    assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 5
+
+
+def test_tv_show_doc_copies_into_season_folders(env):
+    """Windows test_tv_show_doc_copies_into_season_folders: a show carrying
+    validation.json (the whole-show document, every season) ships the doc
+    into each Season folder beside its encodes — the checker reads it there;
+    the extras folder gets no copy."""
+    vid = env / "vid"
+    doc = json.dumps({
+        "tmdb": {"id": "456", "type": "tv", "title": "Show (2010)"},
+        "seasons": [{"season": 1, "episodes": [], "discs": []},
+                    {"season": 0, "episodes": [], "discs": []}],
+        "encodes": []})
+    mk(vid, "rip/tv/Show (2010)/validation.json", doc)
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S01E02.mkv", "TV-E02")
+    mk(vid, "rip/tv/Show (2010)/d1/Show (2010)_S00E01.mkv", "TV-SPECIAL")
+    mk(vid, "rip/tv/Show (2010)/d1/Show (2010) - Extra 03.mkv", "TV-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    TL = vid / "library" / "tv" / "Show (2010)"
+    assert json.loads((TL / "Season 01" / "validation.json").read_text())["tmdb"]["id"] == "456"
+    assert json.loads((TL / "Specials" / "validation.json").read_text())["tmdb"]["id"] == "456"
+    assert not (TL / "extras" / "validation.json").exists()
+
+
+def test_tv_show_doc_absent_is_silent(env):
+    """Windows test_tv_show_doc_absent_is_silent: no validation.json in
+    staging (a pre-feature show) — the encodes ship exactly as before, no
+    doc, no crash, no note."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Old (2009)/d0/Old (2009)_S01E01.mkv", "TV-E01")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    TL = vid / "library" / "tv" / "Old (2009)"
+    assert (TL / "Season 01" / "Old (2009) - S01E01.mkv").read_text() == "TV-E01"
+    assert not (TL / "Season 01" / "validation.json").exists()
+
+
+def test_scenario7_tv_extras_disc(env):
+    """Windows test_scenario7: a TV-extras-only disc routes to the TV tree's
+    extras/ folder — never a movie folder, never a merge."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Solo Show (2012)/d0/Solo Show (2012) - Extra 04.mkv", "TVONLY-EXTRA")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (vid / "library" / "tv" / "Solo Show (2012)" / "extras" /
+            "Solo Show (2012) - Extra 04.mkv").read_text() == "TVONLY-EXTRA"
+    assert not (vid / "library" / "movies" / "Solo Show (2012)").exists()
+    assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 1
+
+
+def test_tv_lowercase_root_is_tv(env):
+    """Windows test_tv_lowercase_root_is_tv: rip/tv (the SPEC layout's root)
+    decides TV, so the episode encodes into Season NN — no main-feature
+    pick."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Show (2013)/d0/Show (2013)_S01E01.mkv", "LOW-TV")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (vid / "library" / "tv" / "Show (2013)" / "Season 01" /
+            "Show (2013) - S01E01.mkv").read_text() == "LOW-TV"
+
+
+def test_tv_episode_pass_and_zero_subs_encode(env):
+    """Windows test_tv_episode_pass_and_zero_subs_encode: the episode ships
+    zero-track with the inline pass's sidecars beside it (the sidecar base
+    name is the episode label, not the bare show name), and the source
+    leaves staging."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S01E02.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    S1 = vid / "library" / "tv" / "Show (2010)" / "Season 01"
+    assert (S1 / "Show (2010) - S01E02.mkv").read_text() == "SUBS-ENG-DAN"
+    assert (S1 / "Show (2010) - S01E02.dan.forced.srt").exists()
+    assert (S1 / "Show (2010) - S01E02.eng.srt").exists()
+    assert "--subtitle-lang-list zzz" in (env / "hb-calls.log").read_text()
+    assert sorted(p.name for p in (vid / "rip" / "tv" / "Show (2010)" / "d0").iterdir()) == []
+
+
+def test_tv_extra_unchanged_no_pass(env):
+    """Windows test_tv_extra_unchanged_no_pass: a TV extra keeps every
+    embedded track — no subtitle pass, no sidecars, no zero-subs trick."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Show (2010)/d0/Show (2010) - Extra 03.mkv", "SUBS-ENG-DAN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    ex = vid / "library" / "tv" / "Show (2010)" / "extras"
+    assert (ex / "Show (2010) - Extra 03.mkv").read_text() == "SUBS-ENG-DAN"
+    assert not list(ex.glob("*.srt"))  # embedded subs stay, no sidecars
+    assert not (env / "seconv-calls.log").exists()  # no pass ran
+    assert "--subtitle-lang-list" not in (env / "hb-calls.log").read_text()
+
+
+def test_interrupt_drops_tv_sidecar_dir_and_temp(env, monkeypatch):
+    """Windows test_interrupt_drops_tv_sidecar_dir_and_temp: Ctrl+C during a
+    TV episode's encode also drops the never-shipped sidecar dir from the
+    work dir."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Halt (2011)/d0/Halt (2011)_S01E01.mkv", "HALT-EPISODE")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+
+    fake_side = None
+    real_sub_pass = transcode._sub_pass
+
+    def spy_sub_pass(local_src, side_dir, base, *a, **k):
+        nonlocal fake_side
+        fake_side = side_dir
+        res = real_sub_pass(local_src, side_dir, base, *a, **k)
+        return res
+
+    def fake_encode(src, out, *a, **k):
+        raise Interrupted()
+
+    monkeypatch.setattr(transcode, "_sub_pass", spy_sub_pass)
+    monkeypatch.setattr(transcode, "_encode", fake_encode)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 130
+    assert fake_side is not None  # the sidecar dir existed for the interrupt to drop
+    assert list(work.iterdir()) == []  # local copy, sidecar dir, no partial shipped
+    assert (vid / "rip" / "tv" / "Halt (2011)" / "d0" / "Halt (2011)_S01E01.mkv").exists()

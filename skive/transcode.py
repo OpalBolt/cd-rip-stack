@@ -13,9 +13,13 @@ kept, per-language full tracks settled by OCR'd cue count into `.sdh`; a
 failed pass ships the encode subless and parks the sources in the issues
 folder with the run's evidence, failing the run. Nothing is deleted until
 its sidecars are verified: the lossless source only moves after the ship
-(slice 06 adds the -k park and --retry). Split mains skip whole until the
-merge pass (slice 05); TV and extras are later slices — those staged items
-fall through the batch unencoded.
+(slice 06 adds the -k park and --retry). The TV arm (slice 04) encodes every
+staged episode — no main pick, no merge, a double stays one file — into
+Season NN (season 0 in Specials) with the same subtitle pass and the show's
+validation document copied into each Season folder beside the encodes; TV
+extras file under the show's extras/ with embedded subs kept, no pass.
+Split mains skip whole until the merge pass (slice 05); movie extras-disc
+titles fall through the batch unencoded until their arm lands.
 
 Shared policy (run log, verbosity tiers, interrupt machinery, sanitize)
 comes from skive.common; the validation document's reader/writer/name from
@@ -51,6 +55,7 @@ _RX_EXTRA = re.compile(
 )
 _RX_EP = re.compile(r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$")
 _RX_MAIN = re.compile(r"^t\d+$")  # validation.json's recorded main: "tNN"
+_RX_DDIR = re.compile(r"^d\d+$")  # rip/<type>/<Name (Year)>/d<disc> staging subdir
 _TV_ROOTS = ("TV", "tv")  # rip/TV (legacy ps1 staging) and rip/tv (SPEC layout)
 # one comma-joined argument: stays a single argv entry
 _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm"
@@ -188,8 +193,9 @@ def _preset(height: int) -> str:
 def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
             no_subs: bool = False, log: common.RipLog | None = None) -> bool:
     """HandBrake pass-through re-encode at native resolution. GPU encoders override
-    the encoder. no_subs selects zero subtitle tracks (features/TV, the language-list
-    trick); extras keep pass-through (slice 04). Every HandBrake output line is
+    the encoder. no_subs selects zero subtitle tracks (features and TV
+    episodes, the language-list trick); extras keep pass-through (embedded
+    subs stay). Every HandBrake output line is
     written verbatim to the run's raw log (log.raw), the same tee discipline as
     skive/makemkv.py, while the console sees it gated by the verbosity tiers
     (common.VERBOSITY): quiet at 0, HandBrake error lines at -v, everything at -vv;
@@ -346,6 +352,18 @@ def _copy_run_evidence(log: common.RipLog, dest_dir: str) -> None:
             shutil.copy2(log._raw_log, dst)
 
 
+def _extra_name(dest_dir: str, safe: str, num: int, ext: str) -> str:
+    """The extras dest name: `<movie> - Extra NN[.pN].mkv`, the number rolled
+    forward past names already on disk (makemkv's staging pattern). Bonus _t
+    titles keep their disc number when it is free; a staging label never
+    reaches the library."""
+    n = num
+    while os.path.exists(os.path.join(
+            dest_dir, f"{safe} - Extra {n:02d}{ext}.mkv")):
+        n += 1
+    return f"{safe} - Extra {n:02d}{ext}.mkv"
+
+
 def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> None:
     """Append the main encode's result to the title folder's validation.json
     and copy the doc into the library folder beside the encode. The encodes
@@ -376,6 +394,27 @@ def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> 
     try:  # the doc's final copy lands beside the encode — simple overwrite
         shutil.copyfile(doc_path,
                         os.path.join(os.path.dirname(dest), VALIDATION_FILENAME))
+    except OSError:
+        pass
+
+
+def _copy_show_doc(src_path: str, dest_dir: str) -> None:
+    """Copy the show's validation.json from rip staging into the library
+    Season folder beside the encodes -- the checker reads it there. The
+    document holds every staged season, so each Season folder carries the
+    whole show record; a plain overwrite per item keeps it fresh. The
+    staging folder is the file's title folder, walking up past the d<disc>
+    subdir a collision straggler still sits in. Absent doc or unreadable
+    copy: skip silently -- the record never crashes the pipeline (the
+    _record_encode discipline)."""
+    folder = os.path.dirname(src_path)
+    while _RX_DDIR.match(os.path.basename(folder)):
+        folder = os.path.dirname(folder)
+    src = os.path.join(folder, VALIDATION_FILENAME)
+    if not os.path.isfile(src):
+        return
+    try:
+        shutil.copyfile(src, os.path.join(dest_dir, VALIDATION_FILENAME))
     except OSError:
         pass
 
@@ -518,9 +557,72 @@ def run_transcode(args) -> int:
             log.name = i.movie
             safe = common.sanitize(i.movie)
 
-            # -- TV episodes: the season/episode arm is slice 05 — they fall
-            # -- through the batch unencoded this slice.
+            # -- TV: no main feature, no merge. Every staged episode encodes
+            # -- (a double stays one file), episodes -> Season NN (00 =
+            # -- Specials) with the inline subtitle pass and the show doc
+            # -- copied beside the encodes, TV extras -> the show's extras/
+            # -- with embedded subs kept and no pass.
             if i.is_tv:
+                show_dir = os.path.join(lib_dir, "tv", safe)
+                episode = i.sfx == "S"
+                if episode:
+                    season = "Specials" if int(i.sn) == 0 else f"Season {i.sn}"
+                    dest_dir = os.path.join(show_dir, season)
+                    dest = os.path.join(dest_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}.mkv")
+                else:
+                    ext = f".p{i.part}" if i.part >= 0 else ""
+                    dest_dir = os.path.join(show_dir, "extras")
+                    dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
+                log.phase("encode")
+                os.makedirs(dest_dir, exist_ok=True)
+                # the local copy is registered in `inflight` AS CREATED so an
+                # interrupt during the copy window drops the partial too
+                # (CONTEXT.md: Interrupt)
+                cleanup: list[str] = []
+                local_src = os.path.join(tmp_dir, i.name)
+                print(f"copying {i.name} to local temp...")
+                inflight.append(local_src)  # BEFORE the copy
+                _copy2(i.path, local_src)
+                cleanup.append(local_src)
+                side_dir = res = None  # extras: no pass, embedded subs stay
+                if episode:
+                    # the sidecar dir is created up front and registered as
+                    # this item's temp BEFORE the pass runs, so an interrupt
+                    # mid-pass drops it too (CONTEXT.md: Interrupt); the
+                    # sidecar base name carries the episode label, not the
+                    # bare show name
+                    side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
+                    inflight_side = side_dir
+                    side_dir, res = _sub_pass(local_src, side_dir,
+                                              f"{safe} - S{i.sn}E{i.en}{i.tail}",
+                                              seconv_exe, ffprobe_exe, log=log)
+                local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
+                inflight = cleanup + [local_out]
+                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
+                           no_subs=episode, log=log):
+                    shutil.move(local_out, dest)
+                    if side_dir is not None:
+                        _ship_sidecars(side_dir, dest_dir, res)
+                    if episode:
+                        _copy_show_doc(i.path, dest_dir)  # the doc travels beside its encodes
+                    for p in cleanup:
+                        _rmf(p)
+                    if res is None or res.ok:
+                        _archive(i.path, i, lossless_root, keep)
+                    else:
+                        _fail_quarantine(log, [i], issues_root, i.name, res.notes)
+                        failed = 1
+                    handled.add(i.path)
+                    log.phase_end()
+                else:
+                    if side_dir is not None:
+                        shutil.rmtree(side_dir, ignore_errors=True)
+                    for p in cleanup + [local_out]:
+                        _rmf(p)
+                    log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
+                    handled.add(i.path)
+                    failed = 1
+                    log.phase_end()
                 continue
 
             # -- recorded main with no staged title: loud skip, never a
@@ -608,7 +710,8 @@ def run_transcode(args) -> int:
                 continue
 
             # -- extras (non-main _t title, or an extras-disc title): the
-            # -- ` - Extra NN` arm is slice 04 — they fall through unencoded.
+            # -- ` - Extra NN` arm is a later slice — they fall through
+            # -- unencoded.
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: drop this item's partial temp output (the local
         # copy, the unshipped sidecar dir, and .h265 encode live in the work
