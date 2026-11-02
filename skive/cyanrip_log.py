@@ -5,10 +5,19 @@ from __future__ import annotations
 import re
 
 _OFFSET = re.compile(r"^\s*Offset:\s*([+-]?\d+)\s+samples?\b", re.IGNORECASE | re.MULTILINE)
+# Header lines sit at column 0; per-track metadata lines are indented, so
+# anchoring these at the line start keeps a track's ``album:`` tag from matching.
+_RELEASE_ID = re.compile(r"^Release ID:\s*(\S+)", re.IGNORECASE | re.MULTILINE)
+_ALBUM = re.compile(r"^Album:\s*(.*?)\s*$", re.IGNORECASE | re.MULTILINE)
+_ALBUM_ARTIST = re.compile(r"^Album artist:\s*(.*?)\s*$", re.IGNORECASE | re.MULTILINE)
 _DISC = re.compile(r"^\s*Disc\s+number\s*:\s*(\d+)\b", re.IGNORECASE | re.MULTILINE)
 _DISC_STEM = re.compile(r"\s+CD(\d+)$", re.IGNORECASE)
 _TRACK = re.compile(r"^\s*Track\s+(\d+)\b", re.IGNORECASE)
 _AR = re.compile(r"^\s*Accurip\s+(v1|v2|450):\s*(.*)$", re.IGNORECASE)
+# ``Duration:`` carries an optional hour field (``hh:mm:ss.mmm`` or ``mm:ss.mmm``).
+_DURATION = re.compile(r"^\s*Duration:\s*(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)\s*$",
+                       re.IGNORECASE)
+_CRC32 = re.compile(r"^\s*EAC CRC32:\s*([0-9A-F]{8})\s*$", re.IGNORECASE)
 _DETAIL = re.compile(r"\((.*?)\)")
 _CONFIDENCE = re.compile(r"confidence\s+(\d+)", re.IGNORECASE)
 
@@ -30,7 +39,7 @@ def disc_number_from_log(text: str = "", stem: str = "") -> str:
 
 
 def parse_cyanrip_log(text: str) -> dict:
-    """Parse offset and per-track AccurateRip results from a cyanrip log.
+    """Parse header facts and per-track results from a cyanrip log.
 
     cyanrip's report is intended for people, not as a stable API.  This parser
     therefore ignores unfamiliar lines and returns an empty result for a
@@ -40,7 +49,13 @@ def parse_cyanrip_log(text: str) -> dict:
     neither database checksum matched.
     """
     offset_match = _OFFSET.search(text or "")
+    release_match = _RELEASE_ID.search(text or "")
+    album_match = _ALBUM.search(text or "")
+    artist_match = _ALBUM_ARTIST.search(text or "")
     result = {"offset": int(offset_match.group(1)) if offset_match else None,
+              "release": release_match.group(1) if release_match else None,
+              "album": album_match.group(1) if album_match else None,
+              "album_artist": artist_match.group(1) if artist_match else None,
               "tracks": []}
     current: dict[int, dict] = {}
     parsed: set[int] = set()
@@ -49,7 +64,19 @@ def parse_cyanrip_log(text: str) -> dict:
         if track_match:
             number = int(track_match.group(1))
             current.setdefault(number, {"track": number, "status": "unknown",
-                                        "confidence": None})
+                                        "confidence": None, "crc32": None,
+                                        "dur_s": None})
+            continue
+        duration_match = _DURATION.match(line)
+        if duration_match and current:
+            hours, minutes, seconds = duration_match.groups()
+            current[next(reversed(current))]["dur_s"] = (
+                int(hours or 0) * 3600 + int(minutes) * 60
+                + int(seconds.split(".", 1)[0]))
+            continue
+        crc_match = _CRC32.match(line)
+        if crc_match and current:
+            current[next(reversed(current))]["crc32"] = crc_match.group(1)
             continue
         ar_match = _AR.match(line)
         if not ar_match or not current:

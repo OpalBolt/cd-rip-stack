@@ -1,0 +1,9 @@
+Checking /dev/sr1 for cdrom...
+		CDROM sensed: hp       CDDVDW TS-L633R  0200 SCSI CD-ROM
+
+
+Opening drive...
+Unable to find release info for this CD, and metadata hasn't been manually added!
+Please help improve the MusicBrainz DB by submitting the disc info via the following URL:
+https://musicbrainz.org/cdtoc/attach?toc=1+19+354705+150+20335+45765+70122+85770+106592+125922+151877+168452+187122+209860+232147+250112+265927+284967+299585+312580+325957+339192&tracks=19&id=bOpGMzWaoGKqV7OC6onCHgXytfE-
+To continue add metadata via -a or -t, or ignore via -N!
