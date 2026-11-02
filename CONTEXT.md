@@ -1,6 +1,6 @@
 # cd-rip-stack
 
-Rip CDs to AccurateRip-verified FLAC. Rip DVDs and Blu-rays to lossless MKV, then transcode to 1080p H.265 for Jellyfin. Two machines share one NAS mount: `rip/` stages lossless MKVs, `library/` holds the encodes.
+Rip CDs to AccurateRip-verified FLAC. Rip DVDs and Blu-rays to lossless MKV, then transcode to 1080p H.265 for Jellyfin. Two machines share one NAS mount: the rip box (Linux) rips; the transcode box encodes. `rip/` stages lossless MKVs, `library/` holds the encodes.
 
 ## Language
 
@@ -90,6 +90,10 @@ _Avoid_: bonus, featurette, special
 **Junk label**:
 MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; transcode skips any file still wearing one.
 _Avoid_: label, code
+
+**Transcode box**:
+The machine that runs `skive transcode` over the NAS mount — an AMD BC-250 (PS5-derived Zen 2, 8 cores unlocked, Bazzite) in a distrobox, replacing the retired Windows box. Encodes CPU-only x265 via HandBrake: the BC-250's video engine is factory-disabled (VCN eFused off, firmware blocked), so hardware encode does not exist on this machine — HandBrake, ffmpeg, or any other tool alike.
+_Avoid_: encoder box, GPU box, Windows box
 
 **Staging**:
 Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/<music source>/<album>/` — one folder per album, the source level tells `tag` how to file it; `tag` moves it into the library, so an album still in `rip/` is not yet filed. A mid-rip file still wears its junk label.
