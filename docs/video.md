@@ -19,22 +19,21 @@ skive rip movie --tmdbid 680  # skip the search (tv:N for a show, or a URL)
    ±1s (decoy playlists) escalates to the full MakeMKV scan (~1–3 min, real
    title numbers). `-T` and `--extras` runs start on the full scan; a TV disc
    whose titles sum into a play-all escalates too.
-3. **Junk purge** — stale junk-labeled leftovers (`B1_t00.mkv`) from a failed
-   earlier run are deleted, scoped to this title's staging tree only.
-4. **TMDB** — TMDB must answer before anything spins. The disc's volume label
-   prefills the search and the results table appears: pick a hit, `s` types a
-   new query, an empty result re-prompts typed, `q` aborts; `--tmdbid` skips
-   the search.
-5. **Staging** — `rip/<type>/<Name (Year)>/d<N>/` (`N` = the drive) is created
-   only after your pick, then purged.
-6. **Rip** — one `makemkvcon` call per title at `--minlength=$RIP_MINLENGTH`
+3. **TMDB** — TMDB must answer before anything is ripped. The disc's volume
+   label prefills the search and the results table appears: pick a hit, `s`
+   types a new query, an empty result re-prompts typed, `q` aborts; `--tmdbid`
+   skips the search.
+4. **Staging** — `rip/<type>/<Name (Year)>/d<N>/` (`N` = the drive) is created
+   only after your pick; stale junk-labeled leftovers (`B1_t00.mkv`) from a
+   failed earlier run are purged, scoped to this title's staging tree only.
+5. **Rip** — one `makemkvcon` call per title at `--minlength=$RIP_MINLENGTH`
    (a fast-scan run rips all titles in one call). A failed title never kills
    the run: the worst return code becomes the exit code.
-7. **Promotion, then rename** — finished files move up from `d<N>/` into the
+6. **Promotion, then rename** — finished files move up from `d<N>/` into the
    title folder (a collision leaves the file in `d<N>/` with a note, never
    clobbers); then junk labels become `<Name (Year)>_tNN[.pN].mkv`,
    `<Name (Year)> - Extra NN[.pN].mkv`, or `<Show (Year)>_SNNENN[-ENNN].mkv`.
-8. **Done** — exit 0 just finishes; eject and swap discs by hand.
+7. **Done** — exit 0 just finishes; eject and swap discs by hand.
 
 `-T/--titles` takes `all` (default), one number, `N-M`, or a comma list
 (`0,5-7`); a stray `disc:N` is rejected before the drive spins. Bare `-T`
@@ -43,7 +42,7 @@ Enter rips the checked ones, `↑/↓` or `j/k` move, `q` quits.
 
 ## rip movie
 
-Before the drive spins, the pre-rip gate: a table (title, duration, size,
+Before the rip starts, the pre-rip gate: a table (title, duration, size,
 ratio vs the TMDB runtime), then `ok? (Enter=rip, q=quit)`. Several titles
 near the TMDB runtime raise a loud main-pick prompt — Enter takes the default
 (biggest), a number picks, `q` quits, anything else re-asks. Any yellow ratio
@@ -68,12 +67,13 @@ skive rip movie --part 1   # a split film; --part 2 on the other disc
 
 Confirm the show, then the season: Enter = 1, `0` = specials. Titles below
 the TV floor (`max(RIP_MINLENGTH, 600)` s) drop entirely, and a title whose
-duration matches the sum of 2–6 others is a play-all: it always rips as an
-extra. `--extras` skips the season prompt and table (a bonus disc).
+duration matches the sum of 2–6 others is a play-all: the rip skips it; a
+fix row assigning it an episode is the only way it rips. `--extras` skips
+the season prompt and table (a bonus disc).
 
-One prompt states which episodes this disc carries, pre-filled with the first
-episode not already staged and one episode per eligible title — Enter takes
-it. Titles are assigned to that stated range in disc order; the table's ratio
+One prompt states which episodes this disc carries, pre-filled with a guess
+from the first unstaged episode (runtime-matched when TMDB has runtimes, else
+one per eligible title) — Enter takes it. Titles are assigned to that stated range in disc order; the table's ratio
 column (disc ÷ TMDB runtime, green ~0.92–1.04 — PAL runs ~4–5% short) grades,
 never decides.
 
@@ -86,7 +86,7 @@ The confirm table is the single place to correct the map:
 | `2=e` | demote title 2 to an extra |
 | `n` | re-ask the episode range |
 | `c` | list the show's staged files; `y` deletes them (mis-file remedy) |
-| `q` | quit — nothing ripped, the drive never spun |
+| `q` | quit — nothing ripped, the rip never started |
 
 A title left outside the stated range lists as `→ extra`.
 
