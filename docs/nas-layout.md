@@ -59,19 +59,22 @@ files the album: `cd` and `other` are autotagged against MusicBrainz,
 `bandcamp` keeps its own tags as-is. Either way the album gets the library
 path, ReplayGain and art.
 
-## Staging: junk label → rename → promotion
+## Staging: junk label → promotion → rename
 
 The video rip's three steps, once a disc is in the drive:
 
 1. MakeMKV writes files under their junk label — its throwaway staging name
    like `B1_t00.mkv` — inside the drive's `d<disc>/` subdir.
-2. When the rip finishes, files are renamed away from the junk label to
-   their staged names (above).
-3. Promotion moves each finished file up out of `d<disc>/` into the title
-   folder. A name collision leaves the file where it is — never clobbered.
+2. When the rip finishes, promotion moves each finished file up out of
+   `d<disc>/` into the title folder. A name collision leaves the file where
+   it is — never clobbered.
+3. Files are then renamed away from the junk label to their staged names
+   (above) in the title folder.
 
-Transcode skips any file still wearing a junk label, so a mid-rip file never
-enters the queue. What "still in `rip/`" means per pipeline:
+Transcode skips any file still wearing a junk label, wherever it rests —
+mid-rip in `d<disc>/`, or post-promotion in the title folder (a promotion
+collision leaves the junk-labeled file in `d<disc>/`) — so it never enters
+the queue. What "still in `rip/`" means per pipeline:
 
 - Video: ripped lossless, not yet transcoded — `rip/` is transcode's input
   queue.
