@@ -97,8 +97,9 @@ their own `d<N>`.
 ## Logging
 
 Logs live on the share each command works on: video commands (`rip movie`,
-`rip tv`, `transcode`, `sync-sd`) under `VIDEOS_MOUNT`, `rip music` and `tag`
-under `MUSIC_MOUNT`. Three things, under `logs/`:
+`rip tv`, `transcode`) under `VIDEOS_MOUNT`, `rip music` and `tag` under
+`MUSIC_MOUNT` — `sync-sd` works on the music library but its log lands under
+`VIDEOS_MOUNT` too (the log root defaults there). Three things, under `logs/`:
 
 - `rip.jsonl` — the run log: one JSON line per event, append-only. Each line
   is `{ts, run, script, software, name, phase, status, elapsed_s}`; `run` is

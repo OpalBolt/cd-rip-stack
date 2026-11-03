@@ -10,6 +10,8 @@ Deferred work, with the reason each item waits.
 - **Lossy policy**: convert or refuse lossy files from `other`. Today they are filed as they are.
 - **Interrupt-safe filing**: copy, verify, then delete instead of beets' move. Today beets' `resume: ask` finishes a half-moved album.
 
-## Docs
+## Code
 
-- **README remake**: rewrite it bottom up. It still claims a Windows box does the transcoding (retired per ADR 0010), lists six of the eight commands, documents `skive transcode` and `skive validate` nowhere, and its project tree is stale (it also points at the deleted SPEC.md). Waits for a dedicated session; deliberately untouched in the 2025-11 cleanup.
+- **Delete the retired Windows module**: remove `windows/` (`transcode.py`,
+  `subs.py`) and its test `tests/test_windows_transcode.py`. Retired per
+  ADR 0010; kept only until the docs remake landed.
