@@ -16,23 +16,25 @@ CPU in a costume, its HEVC a CBR streaming encoder shaped for game streaming,
 not quality-based archival. The conclusion is one sentence: **only `x265`
 exists on this box** — `-e nvenc/qsv/vce` are dead weight here, the GPU idles.
 
-Build it:
+Build it from the repo's `distrobox.ini` — one command builds the container
+with everything installed: RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg,
+tesseract with eng+dan language data, seconv (pinned at v5.3.0 in the
+manifest), and skive itself (editable install via uv). The videos share
+bind-mounts at `/mnt/videos`; all skive runs happen inside the box.
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
-mise run install                  # python, uv, skive, seconv, ffmpeg on PATH
-distrobox create -n transcode --image fedora:41
-distrobox enter transcode         # all skive runs happen in here
-sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
-sudo dnf install HandBrake-cli mkvtoolnix \
-    tesseract tesseract-langpack-eng tesseract-langpack-dan
+distrobox assemble create          # builds the 'transcode' container
+distrobox enter transcode
 ```
 
-HandBrakeCLI comes from RPM Fusion; mkvtoolnix and tesseract (with eng+dan
-language data) from the Fedora repos — skive finds all of them on PATH inside
-the distrobox. The videos share mounts at `/mnt/videos` and the box uses the
-same env vars as the ripping machine — see [setup](setup.md). Runs are
-invoked by hand; nothing schedules them.
+Every enter re-runs the manifest's hooks, all guarded and idempotent — the
+box heals itself. Updating skive is just `git pull` inside
+`~/git/cd-rip-stack`; the editable install picks changes up. Bumping seconv
+means editing the pinned version in `distrobox.ini`. No mise here — mise.toml
+belongs to the rip box only. The box uses the same env vars as the ripping
+machine — see [setup](setup.md). Runs are invoked by hand; nothing
+schedules them.
 
 ## Running a batch
 
@@ -101,6 +103,21 @@ below — rerun it with `--retry` to get the sidecars.
   quarantine folders make every failure recoverable by rerun.
 - **Logs** — every run writes a JSONL run log plus a raw tool log under
   the videos share's `logs/`; `-v`/`-vv` gate the console only.
+
+### Reading the run
+
+The run log (`logs/rip.jsonl`) gets one timed line per item per part —
+`copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the
+part's numbers in `status`: copy and encode report `N MB at M MB/s`, the
+subs phase reports `K sidecar(s)[, B barren]`, the others `ok, N MB`. A
+phase that dies closes with `FAIL` and its elapsed; an interrupted run
+closes with `interrupted`. The console prints per-item summaries and ok/
+failed counts at the end; detailed tool output is throttled (verbosity
+gates the console only). A `barren` note means a bitmap subtitle track's
+OCR yielded zero cues — the track is dropped with a loud note in the run
+log and the encode ships without that sidecar. It is not a failure: no
+quarantine, exit stays clean. Only a real seconv/tesseract failure
+quarantines (see below).
 
 ## Existing library: subtitle backfill
 

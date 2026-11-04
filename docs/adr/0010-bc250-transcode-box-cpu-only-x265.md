@@ -41,3 +41,13 @@ unplanned; that bridge gets built when reached.
   separate concern from this pipeline.
 - `windows/transcode.py` and its tests stay as the retired box's frozen
   artifact; new transcode work happens only in skive.
+
+## Revision (2026-11-04)
+
+The "mise already provides python, uv, seconv and ffmpeg from the repo"
+consequence above is superseded: the transcode box is now self-contained,
+built from the repo's `distrobox.ini` (`distrobox assemble create`), which
+installs everything — HandBrake, mkvtoolnix, ffmpeg, tesseract, seconv
+(pinned v5.3.0) and skive itself — inside the container. Mise stays a
+rip-box tool; nothing on the transcode box comes from mise. Updating skive
+on the box is `git pull` in `~/git/cd-rip-stack`.
