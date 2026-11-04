@@ -118,7 +118,7 @@ INV = {"streams": [
 CUES = {3: 6, 4: 100, 5: 40, 6: 9}  # keyed by the TID seconv receives (ffprobe index + 1)
 
 
-def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0):
+def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0, barren_track=0):
     """Fake ffprobe (canned inventory) + fake seconv writing
     <stem>.<lang>.srt into its --output-folder — the same name for both eng
     full tracks, so a shared dir would collide and the test would catch it."""
@@ -129,8 +129,10 @@ def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0):
         lang = next(a.split(":", 1)[1] for a in cmd if a.startswith("--ocr-language:"))
         out_dir = next(a.split(":", 1)[1] for a in cmd if a.startswith("--output-folder:"))
         dirs.append(out_dir)
+        if num == barren_track:
+            return R(1, "No subtitle tracks matched", "")
         if num == fail_track:
-            return R(1, "", "boom")
+            return R(1, "3 image(s) produced no OCR text and were dropped", "boom")
         write_srt(pathlib.Path(out_dir) / f"Movie (2001).{lang}.srt",
                   0 if num == empty_track else CUES[num])
         return R(0, "", "")
@@ -173,15 +175,43 @@ def test_run_pass_failed_conversion_is_partial_success(tmp_path, monkeypatch):
     assert (out / "Movie (2001).eng.srt").exists()
 
 
-def test_run_pass_empty_sidecar_fails(tmp_path, monkeypatch):
+def test_run_pass_empty_sidecar_drops_track_as_barren(tmp_path, monkeypatch):
+    """Zero-cue sidecar is a barren track (CONTEXT.md): a drop-with-note, the
+    pass stays ok, the winner ships, the empty loser never became .sdh."""
     dirs = []
     stub_run(monkeypatch, dirs, empty_track=5)
     out = tmp_path / "out"
     res = subs.run_pass("x.mkv", str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe")
-    assert not res.ok
-    assert "FAIL eng (track 4): empty sidecar (0 events)" in res.notes
-    # winner ships; the empty loser never became .sdh
+    assert res.ok
+    assert ("barren eng (track 4): OCR yielded 0 cues -- dropped") in res.notes
     assert res.sidecars == ["Movie (2001).dan.forced.srt", "Movie (2001).eng.srt"]
+
+
+def test_run_pass_barren_seconv_failure_drops_track(tmp_path, monkeypatch):
+    """seconv rc=1 with 'No subtitle tracks matched' (every image dropped as
+    unreadable) is the barren sentinel: drop with a note, pass stays ok, no
+    quarantine-worthy failure."""
+    dirs = []
+    stub_run(monkeypatch, dirs, barren_track=5)
+    out = tmp_path / "out"
+    res = subs.run_pass("x.mkv", str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe")
+    assert res.ok
+    assert ("barren eng (track 4): OCR yielded 0 cues -- dropped") in res.notes
+    assert not any(n.startswith("FAIL") for n in res.notes)
+    assert res.sidecars == ["Movie (2001).dan.forced.srt", "Movie (2001).eng.srt"]
+
+
+def test_convert_real_failure_replays_full_output_on_console(tmp_path, monkeypatch, capsys):
+    """A real seconv failure replays the FULL captured output (stdout + stderr)
+    on stderr -- the Conan diagnosis lived in stdout."""
+    dirs = []
+    stub_run(monkeypatch, dirs, fail_track=5)
+    subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)",
+                  "seconv.exe", "ffprobe.exe")
+    err = capsys.readouterr().err
+    assert "seconv failed: track 4 (eng)" in err
+    assert "3 image(s) produced no OCR text and were dropped" in err  # stdout
+    assert "boom" in err  # stderr
 
 
 def test_run_pass_no_eng_dan_tracks(tmp_path, monkeypatch):

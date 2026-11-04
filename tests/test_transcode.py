@@ -125,7 +125,7 @@ if [ "$sel" = "s" ]; then
     printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":1},"tags":{"language":"dan"}},{"index":3,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
   elif grep -q SUBS-SETTLE "$in" 2>/dev/null; then
     printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":1},"tags":{"language":"eng"}},{"index":3,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}},{"index":4,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
-  elif grep -q SUBS-EMPTY "$in" 2>/dev/null; then
+  elif grep -q SUBS-EMPTY "$in" 2>/dev/null || grep -q SUBS-BARREN "$in" 2>/dev/null; then
     printf '%s\\n' '{"streams":[{"index":2,"codec_name":"dvd_subtitle","disposition":{"forced":0},"tags":{"language":"eng"}}]}'
   else
     printf '%s\\n' '{"streams":[]}'
@@ -144,6 +144,10 @@ fi
         f"""#!/bin/sh
 {{ printf 'CALL:'; printf ' %s' "$@"; echo; }} >> "{seconv_log}"
 in="$1"
+if grep -q SUBS-BARREN "$in" 2>/dev/null; then
+  echo 'No subtitle tracks matched'
+  exit 1
+fi
 if grep -q SUBS-FAIL "$in" 2>/dev/null; then exit 1; fi
 out=""
 for a in "$@"; do
@@ -604,27 +608,41 @@ def test_pass_failure_ships_encode_and_quarantines_source(env, capsys):
     assert (vid / "lossless" / "movies" / "After (2002)" / "After (2002)_t00.mkv").exists()
 
 
-def test_pass_empty_sidecar_fails_like_a_failed_track(env, capsys):
-    """The empty-sidecar failure path (tests/test_subs.py's
-    test_run_pass_empty_sidecar_fails, through the transcode flow): seconv
-    produces a zero-cue SRT, the encode still ships subless, no sidecar
-    ships, the source parks in issues/ with the run's evidence, exit
-    non-zero."""
+def test_pass_empty_sidecar_drops_track_as_barren(env, capsys):
+    """The barren drop path through the transcode flow (tests/test_subs.py's
+    test_run_pass_empty_sidecar_drops_track_as_barren): a zero-cue sidecar is
+    a barren track -- the encode ships, no sidecar, the barren note on the
+    console, no issues folder, run exits 0."""
     vid = env / "vid"
     mk(vid, "rip/movies/Blank (2006)/d0/Blank (2006)_t00.mkv", "SUBS-EMPTY")
 
     rc = transcode.run_transcode(Args())
-    err = capsys.readouterr().err
 
-    assert rc == 1
+    assert rc == 0
     L = vid / "library" / "movies" / "Blank (2006)"
     assert (L / "Blank (2006).mkv").read_text() == "SUBS-EMPTY"
-    assert not list(L.glob("*.srt"))  # the empty sidecar never shipped
-    issues = vid / "issues" / "movies" / "Blank (2006)"
-    assert (issues / "Blank (2006)_t00.mkv").read_text() == "SUBS-EMPTY"
-    assert "FAILED (subtitle pass)" in err
-    log = " ".join(l["status"] for l in run_log(env))
-    assert "empty sidecar (0 events)" in log
+    assert not list(L.glob("*.srt"))  # the barren sidecar never shipped
+    assert not (vid / "issues" / "movies" / "Blank (2006)").exists()
+    # the barren note prints to the console (movies run _sub_pass directly;
+    # the rip.jsonl subs-phase barren wiring is slice 03)
+    assert "barren eng (track 2): OCR yielded 0 cues -- dropped" in capsys.readouterr().out
+
+
+def test_pass_barren_seconv_failure_drops_track(env, capsys):
+    """seconv rc=1 'No subtitle tracks matched' through the transcode flow:
+    same barren drop -- encode ships, barren note on console, no issues, run
+    exits 0."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Fallow (2007)/d0/Fallow (2007)_t00.mkv", "SUBS-BARREN")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Fallow (2007)"
+    assert (L / "Fallow (2007).mkv").read_text() == "SUBS-BARREN"
+    assert not list(L.glob("*.srt"))
+    assert not (vid / "issues" / "movies" / "Fallow (2007)").exists()
+    assert "barren eng (track 2): OCR yielded 0 cues -- dropped" in capsys.readouterr().out
 
 
 # -- HandBrake argument mapping --------------------------------------------------

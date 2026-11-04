@@ -44,6 +44,11 @@ class PassResult:
     notes: list[str]  # human-readable report lines (skipped langs, dropped dupes, failures)
 
 
+# convert() returns this instead of a path when a track's OCR yields nothing
+# (CONTEXT.md: Barren track) -- a drop-with-note, not a pass failure
+BARREN = "barren-track"
+
+
 def sidecar_name(base: str, lang: str, flag: str) -> str:
     return f"{base}.{lang}" + (f".{flag}" if flag else "") + ".srt"
 
@@ -135,8 +140,11 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
             verbose: int = 0) -> str | None:
     """OCR one track into a FRESH temp subdir of out_dir (seconv names its
     output `<stem>.<lang>[.forced].srt`, so same-language tracks would collide
-    in one dir). Returns the produced SRT path, or None (stderr note) on
-    nonzero returncode / no file. Caller removes the temp dirs.
+    in one dir). Returns the produced SRT path, BARREN when the track's OCR
+    yielded nothing (CONTEXT.md: Barren track -- every image dropped as
+    unreadable, seconv reporting no matching tracks; a deterministic
+    re-failure that must not quarantine), or None (stderr note) on a real
+    conversion failure. Caller removes the temp dirs.
     verbose: -vv passes the captured seconv output through to the console."""
     work = tempfile.mkdtemp(dir=out_dir, prefix=f"track{track.index}-")
     r = subprocess.run(
@@ -149,8 +157,12 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
     _raw(log, "seconv", r.stdout + r.stderr, verbose)
     produced = sorted(f for f in os.listdir(work) if f.endswith(".srt"))
     if r.returncode != 0 or not produced:
+        # full replay, not just the stderr tail -- the Conan diagnosis lived in
+        # seconv's stdout ("N image(s) produced no OCR text and were dropped")
         print(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
-              f"rc={r.returncode}\n{r.stderr.strip()}", file=sys.stderr)
+              f"rc={r.returncode}\n{(r.stdout + r.stderr).strip()}", file=sys.stderr)
+        if "No subtitle tracks matched" in r.stdout + r.stderr:
+            return BARREN
         return None
     return os.path.join(work, produced[0])
 
@@ -182,14 +194,20 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
             print(f"  OCR {k.track.lang} track {k.track.index}"
                   f"{' (forced)' if k.track.forced else ''}...")
             srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
+            if srt == BARREN:
+                # CONTEXT.md: Barren track -- zero cues is a property of the
+                # disc, not a failure; a note, never a quarantine
+                notes.append(f"barren {k.track.lang} (track {k.track.index}): "
+                             f"OCR yielded 0 cues -- dropped")
+                continue
             if srt is None:
                 ok = False
                 notes.append(f"FAIL {k.track.lang} (track {k.track.index}): seconv failed")
                 continue
             n = count_events(srt)
             if n == 0:
-                ok = False
-                notes.append(f"FAIL {k.track.lang} (track {k.track.index}): empty sidecar (0 events)")
+                notes.append(f"barren {k.track.lang} (track {k.track.index}): "
+                             f"OCR yielded 0 cues -- dropped")
                 continue
             done.append((k, srt, n))
 
