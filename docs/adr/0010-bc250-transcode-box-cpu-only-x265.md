@@ -45,9 +45,10 @@ unplanned; that bridge gets built when reached.
 ## Revision (2026-11-04)
 
 The "mise already provides python, uv, seconv and ffmpeg from the repo"
-consequence above is superseded: the transcode box is now self-contained,
-built from the repo's `distrobox.ini` (`distrobox assemble create`), which
-installs everything — HandBrake, mkvtoolnix, ffmpeg, tesseract, seconv
-(pinned v5.3.0) and skive itself — inside the container. Mise stays a
-rip-box tool; nothing on the transcode box comes from mise. Updating skive
-on the box is `git pull` in `~/git/cd-rip-stack`.
+consequence above is superseded: the transcode box is now self-contained —
+a plain `distrobox create -n transcode --image fedora:41` plus the repo's
+`scripts/setup-transcode.sh` (run once, idempotent) installs everything:
+HandBrake, mkvtoolnix, ffmpeg, tesseract, seconv (pinned v5.3.0) and skive
+itself, inside the container. Mise stays a rip-box tool; nothing on the
+transcode box comes from mise. Updating skive on the box is `git pull` in
+`~/git/cd-rip-stack`.

@@ -16,25 +16,25 @@ CPU in a costume, its HEVC a CBR streaming encoder shaped for game streaming,
 not quality-based archival. The conclusion is one sentence: **only `x265`
 exists on this box** — `-e nvenc/qsv/vce` are dead weight here, the GPU idles.
 
-Build it from the repo's `distrobox.ini` — one command builds the container
-with everything installed: RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg,
-tesseract with eng+dan language data, seconv (pinned at v5.3.0 in the
-manifest), and skive itself (editable install via uv). The videos share
-bind-mounts at `/mnt/videos`; all skive runs happen inside the box.
+Build it from the repo's setup script — the container carries every tool:
+RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg, tesseract with eng+dan
+language data, seconv (pinned at v5.3.0 in the script), and skive itself
+(editable install via uv). The videos share bind-mounts at `/mnt/videos`;
+all skive runs happen inside the box.
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
-distrobox assemble create          # builds the 'transcode' container
+distrobox create -n transcode --image fedora:41
 distrobox enter transcode
+bash ~/git/cd-rip-stack/scripts/setup-transcode.sh   # once, inside the box
 ```
 
-Every enter re-runs the manifest's hooks, all guarded and idempotent — the
-box heals itself. Updating skive is just `git pull` inside
-`~/git/cd-rip-stack`; the editable install picks changes up. Bumping seconv
-means editing the pinned version in `distrobox.ini`. No mise here — mise.toml
-belongs to the rip box only. The box uses the same env vars as the ripping
-machine — see [setup](setup.md). Runs are invoked by hand; nothing
-schedules them.
+The script is idempotent — a `git pull` plus a re-run heals a broken box.
+Updating skive is just `git pull` inside `~/git/cd-rip-stack`; the editable
+install picks changes up. Bumping seconv means editing the pinned version
+in `scripts/setup-transcode.sh`. No mise here — mise.toml belongs to the
+rip box only. The box uses the same env vars as the ripping machine — see
+[setup](setup.md). Runs are invoked by hand; nothing schedules them.
 
 ## Running a batch
 
