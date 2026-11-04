@@ -108,8 +108,8 @@ below — rerun it with `--retry` to get the sidecars.
 
 The run log (`logs/rip.jsonl`) gets one timed line per item per part —
 `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the
-part's numbers in `status`: copy and encode report `N MB at M MB/s`, the
-subs phase reports `K sidecar(s)[, B barren]`, the others `ok, N MB`. A
+part's numbers in `status`: copy reports `N MB at M MB/s`, encode
+`ok, N MB`, merge `ok`, subs `K sidecar(s)[, B barren]`. A
 phase that dies closes with `FAIL` and its elapsed; an interrupted run
 closes with `interrupted`. The console prints per-item summaries and ok/
 failed counts at the end; detailed tool output is throttled (verbosity
