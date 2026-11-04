@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# One-off encoder benchmark: x265 medium (baseline) vs x265 fast.
+# One-off encoder benchmark: x265 medium (baseline) vs fast vs superfast.
 # Usage: bash scripts/bench.sh /path/to/staged-title_t00.mkv   (run inside the transcode distrobox)
-# Cuts a 5-min 1080p sample, encodes it both ways, prints a speed/size table.
+# Cuts a 5-min 1080p sample from the middle of the title, encodes it three
 # Progress streams live; SVT-AV1 is absent because the 2020 Chromecast with
 # Google TV cannot hardware-decode AV1 (jellyfin-androidtv#4838), so HEVC is
 # the only codec this library can commit to.
 set -euo pipefail
 src="$1"; work="$(mktemp -d /tmp/bench-XXXX)"
 sample="$work/sample.mkv"
-echo "cutting 5-min sample..."
-ffmpeg -hide_banner -loglevel error -y -i "$src" -t 300 -c copy "$sample"
+echo "cutting 5-min sample from the middle..."
+dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src")
+mid=$(echo "$dur / 2 - 150" | bc)
+ffmpeg -hide_banner -loglevel error -y -ss "$mid" -i "$src" -t 300 -c copy "$sample"
 
 run() { # label, extra encoder args...
   local label="$1"; shift
@@ -30,6 +32,7 @@ srcmb=$(( $(stat -c%s "$sample") / 1048576 ))
 echo "sample: 5 min, ${srcmb} MB -> $work"
 echo "--"
 run x265-medium
-run x265-fast    --encoder-preset fast
+run x265-fast      --encoder-preset fast
+run x265-superfast --encoder-preset superfast
 echo "--"
 echo "full logs and outputs in $work for eyeballing"
