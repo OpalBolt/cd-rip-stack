@@ -31,7 +31,11 @@ the movie's extras/, the number rolled past taken names.
 Shared policy (run log, verbosity tiers, interrupt machinery, sanitize)
 comes from skive.common; the validation document's reader/writer/name from
 skive.validation. The Windows original's deliberate duplicates are not
-repeated here.
+repeated here. Each item's parts (copy, merge, subs, encode) log their own
+timed rip.jsonl phase line carrying the part's throughput; the console gets
+a per-part duration line, one throttled encode progress line a minute, and a
+per-item summary at the end of the run. A phase that dies mid-run (FATAL,
+interrupt) closes with FAIL/interrupted and its elapsed.
 """
 
 import json
@@ -41,6 +45,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,7 +70,10 @@ _RX_MAIN = re.compile(r"^t\d+$")  # validation.json's recorded main: "tNN"
 _RX_DDIR = re.compile(r"^d\d+$")  # rip/<type>/<Name (Year)>/d<disc> staging subdir
 _TV_ROOTS = ("TV", "tv")  # rip/TV (legacy ps1 staging) and rip/tv (SPEC layout)
 # one comma-joined argument: stays a single argv entry
-_COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm"
+# pcm has no HandBrake passthru: the Fedora build rejects the whole job with
+# "Invalid audio codec in autopassthru copy mask (copy:pcm)" -- and still
+# exits 0 (the Conan failure). LPCM audio takes the ac3 fallback instead.
+_COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac"
 
 
 @dataclass
@@ -248,8 +256,11 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     skive/makemkv.py, while the console sees it gated by the verbosity tiers
     (common.VERBOSITY): quiet at 0, HandBrake error lines at -v, everything at -vv;
     anything the level hid is replayed verbatim when the encode fails.
-    HandBrakeCLI's exact line shapes were never observed on this box -- errors
-    are gated by its "ERROR" line prefix; verify on the first real transcode."""
+    Progress \\r updates ("Encoding: ... %") are not evidence: the console sees
+    one a minute (every line at -vv), and they never enter the failure replay
+    or the raw log. rc==0 alone is not success -- the output file must exist,
+    because a rejected job init (bad argv) exits 0 writing nothing (the
+    Conan FATAL)."""
     height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
     if encoder != "x265":
@@ -270,9 +281,23 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
+    last_prog = 0.0  # monotonic ts of the last console progress line
     try:
         for line in proc.stdout:
             stripped = line.rstrip()
+            if "Encoding:" in stripped and "%" in stripped:
+                # progress \\r updates: throttle, never hidden-replay, raw-log
+                # only what actually printed
+                if verbose >= 2:
+                    print(line, end="", flush=True)
+                    if log is not None:
+                        log.raw("handbrake", stripped)
+                elif time.monotonic() - last_prog >= 60:
+                    print(f"  {stripped}", flush=True)
+                    last_prog = time.monotonic()
+                    if log is not None:
+                        log.raw("handbrake", stripped)
+                continue
             if verbose >= 2 or (verbose >= 1 and stripped.startswith("ERROR")):
                 print(line, end="", flush=True)
             elif stripped:
@@ -289,7 +314,16 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     if rc != 0:
         for line in hidden:
             print(line, flush=True)
-    return rc == 0
+        return False
+    if not os.path.exists(out):
+        # rc==0 but no output: a rejected job init (bad argv, e.g. an invalid
+        # copy-mask codec) exits 0 writing nothing. Replay the hidden lines
+        # so the reason reaches the console instead of a FATAL two steps later.
+        for line in hidden:
+            print(line, flush=True)
+        print(f"handbrake exited 0 but wrote no output: {out}", file=sys.stderr)
+        return False
+    return True
 
 
 def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None = None) -> int:
@@ -332,6 +366,31 @@ def _rmf(path: str) -> None:
         pass
 
 
+def _hms(secs: int) -> str:
+    if secs < 60:
+        return f"{secs}s"
+    m, s = divmod(secs, 60)
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+
+def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
+    """Copy one file to local temp as the run's 'copy' phase. The throughput
+    line (MB/s) goes to the console and the run log's status -- the slippage
+    watch reads it (CONTEXT.md: Run log). The caller registers dst in
+    inflight BEFORE calling (CONTEXT.md: Interrupt)."""
+    print(f"copying {os.path.basename(src)} to local temp...")
+    log.phase("copy")
+    t0 = time.monotonic()
+    _copy2(src, dst)
+    secs = max(int(time.monotonic() - t0), 1)
+    mb = os.path.getsize(dst) // (1024 * 1024)
+    detail = f"{mb} MB at {mb // secs} MB/s"
+    print(f"copied in {_hms(secs)} ({detail})")
+    log.phase_end(detail)
+    parts.append(f"copy {_hms(secs)}")
+
+
 def _copy2(src: str, dst: str) -> None:
     """copy2 (mode + mtime preserved) with a progress line every 10%."""
     total = os.path.getsize(src)
@@ -355,20 +414,23 @@ def _copy2(src: str, dst: str) -> None:
     shutil.copystat(src, dst)
 
 
-def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> None:
+def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> bool:
     """-Keep parks the lossless source under lossless/<type>/<Name (Year)>
     (CONTEXT.md: Lossless folder — never clobbering, never auto-deleted);
-    else delete. keep comes from the -k/--keep flag."""
+    else delete. keep comes from the -k/--keep flag. Returns True only when a
+    source actually parked there (the run-end --keep banner prints only
+    then)."""
     if not keep:
         _rmf(src)
-        return
+        return False
     d = os.path.join(lossless_root, "tv" if item.is_tv else "movies", item.movie)
     os.makedirs(d, exist_ok=True)
     dest = os.path.join(d, os.path.basename(src))
     if os.path.exists(dest):
         print(f"--keep: {dest} already exists -- source left in {os.path.dirname(src)}", file=sys.stderr)
-    else:
-        shutil.move(src, dest)
+        return False
+    shutil.move(src, dest)
+    return True
 
 
 def _quarantine(src: str, item: Item, issues_root: str,
@@ -512,6 +574,49 @@ def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
     for n in res.notes:
         print(n)
     return side_dir, res
+
+
+def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
+               ffprobe_exe: str, log: common.RipLog, parts: list[str]):
+    """The subtitle pass as the run's 'subs' phase; status carries the
+    sidecar count and any barren drops (CONTEXT.md: Barren track)."""
+    log.phase("subs")
+    t0 = time.monotonic()
+    side_dir, res = _sub_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe, log=log)
+    secs = max(int(time.monotonic() - t0), 1)
+    barren = sum(1 for n in res.notes if n.startswith("barren"))
+    detail = f"{len(res.sidecars)} sidecar(s)" + (f", {barren} barren" if barren else "")
+    log.phase_end(detail if res.ok else f"FAIL: {detail}")
+    parts.append(f"subs {_hms(secs)}")
+    return side_dir, res
+
+
+def _encode_part(local_src: str, local_out: str, encoder: str, hb_exe: str,
+                 ffprobe_exe: str, no_subs: bool, log: common.RipLog,
+                 parts: list[str]) -> bool:
+    """The encode as the run's 'encode' phase; status carries the output size."""
+    log.phase("encode")
+    t0 = time.monotonic()
+    ok = _encode(local_src, local_out, encoder, hb_exe, ffprobe_exe,
+                 no_subs=no_subs, log=log)
+    secs = max(int(time.monotonic() - t0), 1)
+    detail = (f"ok, {os.path.getsize(local_out) // (1024 * 1024)} MB"
+              if ok else "FAIL")
+    log.phase_end(detail)
+    parts.append(f"encode {_hms(secs)}")
+    return ok
+
+
+def _merge_part(dst: str, local_parts: list[str], mkv_exe: str,
+                log: common.RipLog, parts: list[str]) -> int:
+    """mkvmerge as the run's 'merge' phase (0 ok, 1 warning, 2+ failure)."""
+    log.phase("merge")
+    t0 = time.monotonic()
+    mrc = _merge(dst, local_parts, mkv_exe, log=log)
+    secs = max(int(time.monotonic() - t0), 1)
+    log.phase_end("ok" if mrc <= 1 else f"FAIL({mrc})")
+    parts.append(f"merge {_hms(secs)}")
+    return mrc
 
 
 def _ship_sidecars(side_dir: str, dest_dir: str, res) -> None:

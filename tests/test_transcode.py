@@ -643,7 +643,7 @@ def test_x265_default_arg_list(env):
     assert re.search(
         r"ARGS: -i .+? -o .+? --preset H\.265 MKV 1080p30 "
         r"--all-audio --aencoder copy "
-        r"--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm "
+        r"--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac "
         r"--audio-fallback ac3 --subtitle-lang-list zzz --all-subtitles --subtitle-burned=none$",
         line)
     assert "--encoder" not in line  # default x265 passes no --encoder flag
@@ -711,7 +711,7 @@ def test_legacy_eNN_extras_still_file(env):
 
 
 _ARGV_TAIL = ('--preset H.265 MKV 1080p30 --all-audio --aencoder copy '
-              '--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac,pcm '
+              '--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac '
               '--audio-fallback ac3 ')
 
 
@@ -917,6 +917,92 @@ def test_failed_encode_keeps_source_and_raw_log(env, capsys):
     assert any(l["phase"] == "total" and l["status"] == "FAIL(1)" for l in lines)
     # a failed run keeps the raw log (only finish(0) deletes it)
     assert list((vid / "logs" / "raw").iterdir()) != []
+
+
+def test_encode_exit0_without_output_fails_like_encode_failure(env, tmp_path, capsys):
+    """HandBrake exiting 0 but writing no output (a rejected job init, the
+    Conan root cause) is a real failure: the console-suppressed output
+    replays, the 'wrote no output' note lands on stderr, the source stays,
+    the run exits 1, and no downstream FATAL happens."""
+    (tmp_path / "bin" / "HandBrakeCLI").write_text(
+        f"""#!/bin/sh
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / 'hb-calls.log'}"
+echo "hb: work initialization error"
+exit 0
+"""
+    )
+    vid = env / "vid"
+    mk(vid, "rip/movies/Noout (2003)/d0/Noout (2003)_t00.mkv", "NOOUT")
+
+    rc = transcode.run_transcode(Args())
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "hb: work initialization error" in captured.out  # hidden lines replayed
+    assert "handbrake exited 0 but wrote no output" in captured.err
+    assert "FATAL" not in captured.err
+    assert (vid / "rip" / "movies" / "Noout (2003)" / "d0" / "Noout (2003)_t00.mkv").exists()
+    assert not (vid / "library" / "movies" / "Noout (2003)" / "Noout (2003).mkv").exists()
+
+
+def test_progress_lines_throttled_and_never_replayed(env, tmp_path, capsys, monkeypatch):
+    """At quiet verbosity HandBrake's 'Encoding: x%' progress updates print
+    one a minute (fake emits three in quick succession, monotonic ticks are
+    scripted 30 s apart), they never enter the failure replay, and the real
+    error line does."""
+    (tmp_path / "bin" / "HandBrakeCLI").write_text(
+        """#!/bin/sh
+echo "Encoding: title 10.00 %"
+echo "Encoding: title 50.00 %"
+echo "Encoding: title 90.00 %"
+echo "ERROR: boom"
+exit 3
+"""
+    )
+    # pairs of (check, set-after-print) ticks: line 1 prints (1000), lines
+    # 2 and 3 are within the 60 s window and drop
+    ticks = iter([1000.0, 1000.0, 1030.0, 1030.0, 1060.0, 1060.0])
+    monkeypatch.setattr(transcode.time, "monotonic", lambda: next(ticks))
+    vid = env / "vid"
+    mk(vid, "rip/movies/Slow (2004)/d0/Slow (2004)_t00.mkv", "SLOW")
+
+    rc = transcode.run_transcode(Args())
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert captured.out.count("Encoding:") == 1
+    assert "ERROR: boom" in captured.out  # replayed on failure
+    assert "FAILED handbrake" in captured.err
+
+
+def test_progress_lines_all_print_at_vv(env, tmp_path, capsys):
+    """At -vv every progress update prints (and the run still succeeds)."""
+    (tmp_path / "bin" / "HandBrakeCLI").write_text(
+        f"""#!/bin/sh
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / 'hb-calls.log'}"
+in=""; out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -i) in="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+echo "Encoding: title 10.00 %"
+echo "Encoding: title 50.00 %"
+echo "Encoding: title 90.00 %"
+cat "$in" > "$out"
+"""
+    )
+    vid = env / "vid"
+    mk(vid, "rip/movies/Verbose (2005)/d0/Verbose (2005)_t00.mkv", "VERBOSE")
+
+    rc = transcode.run_transcode(Args(verbose=2))
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert captured.out.count("Encoding:") == 3
+    assert (vid / "library" / "movies" / "Verbose (2005)" / "Verbose (2005).mkv").read_text() == "VERBOSE"
 
 
 def test_unreachable_share_fails_loudly(tmp_path, monkeypatch, capsys):
