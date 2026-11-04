@@ -67,6 +67,9 @@ def build_parser() -> argparse.ArgumentParser:
                                   help="part number for multi-part movies")
     rip_movie_parser.add_argument("-E", "--extras", action="store_true",
                                   help="rip extras instead of main titles")
+    rip_movie_parser.add_argument("-i", "--include-extras", action="store_true",
+                                  help="mark this movie's extras as keepers: transcode encodes them "
+                                       "(superfast) instead of disposing them with the source")
     rip_movie_parser.add_argument("--tmdbid", metavar="ID|URL",
                                   help="TMDB movie ID or URL (skip prompt)")
     rip_movie_parser.add_argument("-V", "--verified", action="store_true",
@@ -123,6 +126,9 @@ def build_parser() -> argparse.ArgumentParser:
                                   help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
     transcode_parser.add_argument("-w", "--workdir", metavar="DIR",
                                   help="local temp work dir (default: $VIDEO_WORK_DIR or tempdir/video-work)")
+    transcode_parser.add_argument("-n", "--limit", type=int, default=4, metavar="N",
+                                  help="main features per session (default 4; 0 = unlimited) — a workday slice, "
+                                       "the rest stays staged for the next run")
     transcode_parser.add_argument("prefixes", nargs="*", metavar="NAME",
                                   help="transcode only movies whose staged filename starts with this prefix")
     transcode_parser.set_defaults(func=cmd_transcode)

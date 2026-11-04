@@ -48,12 +48,14 @@ class FakeArgs:
         part=None,
         tmdbid=None,
         verified=False,
+        include_extras=False,
     ):
         self.titles = titles
         self.extras = extras
         self.part = part
         self.tmdbid = tmdbid
         self.verified = verified
+        self.include_extras = include_extras
 
 
 def test_rip_movie_refuses_recordable():

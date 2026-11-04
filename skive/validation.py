@@ -32,6 +32,40 @@ from skive.tmdb import fetch_by_id, fetch_season, search_first
 from skive.tv_match import RATIO_GREEN  # re-exported: one band, never a copy
 
 VALIDATION_FILENAME = "validation.json"
+
+# The extras marker (CONTEXT.md: Extras marker): top-level "extras" key in
+# validation.json. include=false -- the movie's extras are not transcoded and
+# the source is disposed with the main; include=true -- they encode, at
+# quality "superfast" (default) or "full" (the main feature's preset).
+EXTRAS_MARKER_DEFAULT = {"include": False, "quality": "superfast"}
+
+
+def read_extras_marker(doc: dict | None) -> dict:
+    """The doc's extras marker, or the unmarked default. Never raises; a
+    malformed marker reads as unmarked (delete-at-transcode is the safe
+    default because staged extras are recoverable by re-ripping the disc)."""
+    m = doc.get("extras") if isinstance(doc, dict) else None
+    if not isinstance(m, dict) or not isinstance(m.get("include"), bool):
+        return dict(EXTRAS_MARKER_DEFAULT)
+    quality = m.get("quality")
+    return {"include": m["include"],
+            "quality": quality if quality in ("superfast", "full") else "superfast"}
+
+
+def set_extras_marker(path: Path, include: bool, quality: str = "superfast",
+                      force: bool = False) -> bool:
+    """Write the extras marker into validation.json at `path`. Idempotent
+    unless force=True: a document that already carries any extras key is left
+    untouched, so manual keep-edits survive backlog re-runs. Returns True when
+    the file was written."""
+    doc = load_validation(path)
+    if doc is None:
+        return False
+    if "extras" in doc and not force:
+        return False
+    doc["extras"] = {"include": include, "quality": quality}
+    write_validation(path, doc)
+    return True
 """The document's one name in every title folder it travels through."""
 
 

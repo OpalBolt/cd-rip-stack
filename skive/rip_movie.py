@@ -83,7 +83,8 @@ def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
 
 
 def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | None,
-                        graded_rows: list[dict], run=subprocess.run) -> None:
+                        graded_rows: list[dict], run=subprocess.run,
+                        include_extras: bool = False) -> None:
     """The post-rip record (map.md decision 5), run beside the subtitle note:
     probe what actually staged, grade it, resolve the main to a real file
     number, report one line per file, and write validation.json at the
@@ -139,6 +140,10 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
             log.note("validation", "existing validation.json names a different film — kept")
             return
         doc = merge_movie_document(old, doc)
+    if include_extras:
+        # -i/--include-extras (CONTEXT.md: Extras marker): the extras this
+        # run staged are keepers — transcode encodes them (superfast)
+        doc["extras"] = {"include": True, "quality": "superfast"}
     write_validation(path, doc)
 
 
@@ -383,7 +388,8 @@ def rip_movie(args) -> None:
             # subtitle note — actuals probed from what staged, the main
             # resolved to a real final file number, validation.json at the
             # title-folder root. Interrupts exit above and never reach this.
-            post_rip_validation(preamble, preexisting, chosen_main, graded_rows)
+            post_rip_validation(preamble, preexisting, chosen_main, graded_rows,
+                                include_extras=args.include_extras)
 
             log.phase_end()
             rc = worst_rc

@@ -31,13 +31,15 @@ from skive.common import Interrupted
 
 
 class Args:
-    def __init__(self, prefixes=None, keep=False, encoder="x265", workdir=None, verbose=0, retry=False):
+    def __init__(self, prefixes=None, keep=False, encoder="x265", workdir=None, verbose=0, retry=False,
+                 limit=4):
         self.prefixes = prefixes or []
         self.keep = keep
         self.encoder = encoder
         self.workdir = workdir
         self.verbose = verbose
         self.retry = retry
+        self.limit = limit
 
 
 def mk(vid, rel, content):
@@ -278,11 +280,11 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     assert json.loads((L / "validation.json").read_text())["encodes"] == [entry]
     staged = vid / "rip" / "movies" / "Mamma Mia! (2008)" / "validation.json"
     assert json.loads(staged.read_text())["encodes"] == [entry]
-    # the shipped main's source is deleted; the demoted byte-winner files as
-    # an extra (slice 05's extras arm)
+    # the shipped main's source is deleted; the unmarked byte-winner rides
+    # the main's disposal (Extras marker) -- no extras file, staging emptied
     assert not (vid / "rip" / "movies" / "Mamma Mia! (2008)" / "Mamma Mia! (2008)_t21.mkv").exists()
     assert not (vid / "rip" / "movies" / "Mamma Mia! (2008)" / "Mamma Mia! (2008)_t12.mkv").exists()
-    assert (L / "extras" / "Mamma Mia! (2008) - Extra 12.mkv").read_text().startswith("RED-BYTES")
+    assert not (L / "extras").exists()
 
 
 def test_null_main_and_absent_doc_keep_bytes_fallback(env):
@@ -306,9 +308,9 @@ def test_null_main_and_absent_doc_keep_bytes_fallback(env):
         {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580}]
     # no doc ever existed for the legacy folder -> no library copy
     assert not (L / "Legacy (2002)" / "validation.json").exists()
-    # the non-main _t title files as an extra (slice 05's extras arm)
-    assert (L / "Shorts (2001)" / "extras" / "Shorts (2001) - Extra 21.mkv").read_text() == "NULL-SMALL"
+    # the unmarked non-main title rode the main's disposal (Extras marker)
     assert not (vid / "rip" / "movies" / "Shorts (2001)" / "Shorts (2001)_t21.mkv").exists()
+    assert not (L / "Shorts (2001)" / "extras").exists()
 
 
 # -- split main merge (slice 05): ordering, guard, mkvmerge failure -----------
@@ -704,6 +706,8 @@ def test_extra_number_rolls_past_taken_names(env):
     mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t00.mkv",
        "COLL-MAIN-BYTES-BYTES-BYTES")
     mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t03.mkv", "COLL-EXTRA")
+    mk(vid, "rip/movies/Coll (2006)/validation.json",
+       _movie_doc("t00", extras={"include": True, "quality": "superfast"}))
     ex = vid / "library" / "movies" / "Coll (2006)" / "extras"
     ex.mkdir(parents=True)
     (ex / "Coll (2006) - Extra 03.mkv").write_text("TAKEN")
@@ -720,6 +724,8 @@ def test_legacy_eNN_extras_still_file(env):
     parse and file under extras/ (backward compat)."""
     vid = env / "vid"
     mk(vid, "rip/movies/Old (2001)/d0/Old (2001)_e02.mkv", "OLD-EXTRA")
+    mk(vid, "rip/movies/Old (2001)/validation.json",
+       _movie_doc(None, extras={"include": True, "quality": "superfast"}))
 
     rc = transcode.run_transcode(Args())
 
@@ -742,6 +748,8 @@ def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
     vid = env / "vid"
     mk(vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t00.mkv", "ARG-MAIN-BYTES")  # outweighs t01 so t00 is the main
     mk(vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t01.mkv", "ARG-EXTRA")
+    mk(vid, "rip/movies/Arg (2001)/validation.json",
+       _movie_doc("t00", extras={"include": True, "quality": "superfast"}))
 
     rc = transcode.run_transcode(Args())
 
@@ -753,9 +761,10 @@ def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
     # feature: the no-match language list rides in front of --all-subtitles
     assert feat.split(".h265.mkv ", 1)[1] == _ARGV_TAIL + \
         "--subtitle-lang-list zzz --all-subtitles --subtitle-burned=none"
-    # extra: byte-identical to the pass-through argv
+    # extra: byte-identical to the pass-through argv, plus the superfast
+    # encoder preset the marker asked for (Extras marker)
     assert extra.split(".h265.mkv ", 1)[1] == \
-        _ARGV_TAIL + "--all-subtitles --subtitle-burned=none"
+        _ARGV_TAIL + "--all-subtitles --subtitle-burned=none --encoder-preset superfast"
 
 
 # -- -k keep + --retry (slice 06): source disposition -------------------------
@@ -775,7 +784,9 @@ def test_scenario2_keep_archive(env, capsys):
     assert not list((vid / "rip" / "movies" / "Keep (2005)" / "d1").iterdir())  # sources moved out
     assert sorted(p.name for p in (vid / "lossless" / "movies" / "Keep (2005)").iterdir()) == \
         ["Keep (2005) - Extra 01.p2.mkv", "Keep (2005)_t00.mkv"]
-    assert (vid / "library" / "movies" / "Keep (2005)" / "extras" / "Keep (2005) - Extra 01.p2.mkv").read_text() == "KEEP-EXTRA-P2"
+    # the unmarked extra rode the main's disposal (Extras marker): parked,
+    # never encoded
+    assert not (vid / "library" / "movies" / "Keep (2005)" / "extras").exists()
     assert "--keep: lossless sources moved to" in out
 
 
@@ -1301,3 +1312,45 @@ def test_interrupt_drops_tv_sidecar_dir_and_temp(env, monkeypatch):
     assert fake_side is not None  # the sidecar dir existed for the interrupt to drop
     assert list(work.iterdir()) == []  # local copy, sidecar dir, no partial shipped
     assert (vid / "rip" / "tv" / "Halt (2011)" / "d0" / "Halt (2011)_S01E01.mkv").exists()
+
+
+# -- extras marker + session cap ------------------------------------------------
+
+def test_marked_extra_encodes_unmarked_rides_disposal(env, capsys):
+    """The extras marker gates the extras arm: include=true encodes at
+    superfast; unmarked extras never encode — they ride the main's disposal
+    (deleted without -k)."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Gate (2001)/d0/Gate (2001)_t00.mkv", "GATE-MAIN")
+    mk(vid, "rip/movies/Gate (2001)/d0/Gate (2001)_t01.mkv", "GATE-KEEPER")
+    mk(vid, "rip/movies/Gate (2001)/validation.json",
+       _movie_doc("t00", extras={"include": True, "quality": "superfast"}))
+    mk(vid, "rip/movies/Plain (2002)/d0/Plain (2002)_t00.mkv", "PLAIN-MAIN")
+    mk(vid, "rip/movies/Plain (2002)/d0/Plain (2002)_t01.mkv", "PLAIN-EX")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "Gate (2001)" / "extras" / "Gate (2001) - Extra 01.mkv").read_text() == "GATE-KEEPER"
+    assert not (L / "Plain (2002)" / "extras").exists()
+    assert not (vid / "rip" / "movies" / "Plain (2002)" / "d0" / "Plain (2002)_t01.mkv").exists()
+    out = capsys.readouterr().out
+    assert "disposed unmarked extra with main: Plain (2002)_t01.mkv" in out
+
+
+def test_session_cap_defers_beyond_limit(env, capsys):
+    """-n caps mains per session: the rest stays in staging, deferred loudly,
+    and rc stays 0."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
+    mk(vid, "rip/movies/Bbb (2002)/Bbb (2002)_t00.mkv", "BBB")
+
+    rc = transcode.run_transcode(Args(limit=1))
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "Aaa (2001)" / "Aaa (2001).mkv").exists()
+    assert not (L / "Bbb (2002)").exists()
+    assert (vid / "rip" / "movies" / "Bbb (2002)" / "Bbb (2002)_t00.mkv").exists()
+    assert "deferred (session cap 1): Bbb (2002)" in capsys.readouterr().out

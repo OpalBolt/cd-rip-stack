@@ -54,6 +54,7 @@ from skive import subs
 from skive.validation import (
     VALIDATION_FILENAME,
     load_validation,
+    read_extras_marker,
     write_validation,
 )
 
@@ -247,7 +248,8 @@ def _preset(height: int) -> str:
 
 
 def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
-            no_subs: bool = False, log: common.RipLog | None = None) -> bool:
+            no_subs: bool = False, log: common.RipLog | None = None,
+            speed: str | None = None) -> bool:
     """HandBrake pass-through re-encode at native resolution. GPU encoders override
     the encoder. no_subs selects zero subtitle tracks (features and TV
     episodes, the language-list trick); extras keep pass-through (embedded
@@ -278,6 +280,10 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         # matches selects zero subtitle tracks
         cmd += ["--subtitle-lang-list", "zzz"]
     cmd += ["--all-subtitles", "--subtitle-burned=none"]
+    if speed is not None:
+        # after --preset, so it overrides only the encoder preset (extras:
+        # superfast; the container settings stay the preset's)
+        cmd += ["--encoder-preset", speed]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
@@ -593,12 +599,12 @@ def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
 
 def _encode_part(local_src: str, local_out: str, encoder: str, hb_exe: str,
                  ffprobe_exe: str, no_subs: bool, log: common.RipLog,
-                 parts: list[str]) -> bool:
+                 parts: list[str], speed: str | None = None) -> bool:
     """The encode as the run's 'encode' phase; status carries the output size."""
     log.phase("encode")
     t0 = time.monotonic()
     ok = _encode(local_src, local_out, encoder, hb_exe, ffprobe_exe,
-                 no_subs=no_subs, log=log)
+                 no_subs=no_subs, log=log, speed=speed)
     secs = max(int(time.monotonic() - t0), 1)
     detail = (f"ok, {os.path.getsize(local_out) // (1024 * 1024)} MB"
               if ok else "FAIL")
@@ -636,6 +642,16 @@ def _fail_quarantine(log: common.RipLog, items: list[Item], issues_root: str,
           f"sources quarantined to {folder}", file=sys.stderr)
     for item in items:
         _quarantine(item.path, item, issues_root, log)
+
+
+def _title_dir_of(path: str) -> str:
+    """The movie's title folder for a staged file: its own dir, or the parent
+    when it sits in a d<disc> staging subdir (validation.json lives at the
+    title-folder root, beside the dN dirs)."""
+    d = os.path.dirname(path)
+    if _RX_DDIR.match(os.path.basename(d)):
+        d = os.path.dirname(d)
+    return d
 
 
 def run_transcode(args) -> int:
@@ -701,15 +717,21 @@ def run_transcode(args) -> int:
     # stands (legacy folders, shorts). A recorded main with no staged _tNN
     # (hand-edit typo, moved files) skips the movie's main encode loudly —
     # never a silent bytes fallback (that is the Mamma Mia failure mode).
+    # The extras marker is read for EVERY movie folder (t-titled or not) so a
+    # keep-marked extras-only folder encodes too.
     doc_path: dict[str, str] = {}      # movie -> its validation.json (append + copy)
+    extras_mark: dict[str, dict] = {}   # movie -> extras marker (CONTEXT.md: Extras marker)
     rec_missing: dict[str, str] = {}   # movie -> recorded main with no staged title
-    for movie in sorted({i.movie for i in items if i.sfx == "t" and not i.is_tv}):
-        dpath = os.path.join(os.path.dirname(
-            next(i.path for i in items if i.movie == movie and i.sfx == "t")),
+    for movie in sorted({i.movie for i in items if not i.is_tv}):
+        dpath = os.path.join(
+            _title_dir_of(next(i.path for i in items if i.movie == movie)),
             VALIDATION_FILENAME)
         doc = load_validation(Path(dpath))
         if doc is None:
             continue
+        extras_mark[movie] = read_extras_marker(doc)
+        if not any(i.movie == movie and i.sfx == "t" for i in items):
+            continue  # extras-only folder: no main arm, nothing more to read
         doc_path[movie] = dpath
         rec = doc.get("main")
         if rec is None:
@@ -724,8 +746,17 @@ def run_transcode(args) -> int:
         else:
             rec_missing[movie] = rec
 
+    # the very vague session estimate (CONTEXT.md: Session cap): ~1 h per
+    # main is a DVD-to-Blu-ray blur, stated once, never per title
+    if args.limit:
+        n_staged = len(main_num)
+        n_run = min(args.limit, n_staged)
+        print(f"session: {n_run} main(s) of {n_staged} staged "
+              f"(cap {args.limit}) -- expect roughly {n_run} h")
+
     failed = 0
     parked = 0  # sources actually parked in lossless/ (--keep banner honesty)
+    mains_started = 0  # session cap counter (CONTEXT.md: Session cap)
     n_ok = 0
     n_failed = 0
     handled: set[str] = set()
@@ -841,6 +872,19 @@ def run_transcode(args) -> int:
             # -- main feature: merge its .pN parts (if any), encode as one
             # -- movie.
             if i.sfx == "t" and i.movie in main_num and main_num[i.movie][0] == i.num:
+                # session cap (CONTEXT.md: Session cap): a workday run takes a
+                # predictable slice; the rest stays in staging for next run
+                if args.limit and mains_started >= args.limit:
+                    remaining = sum(1 for x in items
+                                    if x.sfx == "t" and not x.is_tv and x.path not in handled
+                                    and x.movie in main_num
+                                    and main_num[x.movie][0] == x.num)
+                    print(f"deferred (session cap {args.limit}): {i.movie} -- "
+                          f"{remaining} main(s) left for the next run")
+                    continue
+                mains_started += 1
+                mark_main_include = extras_mark.get(
+                    i.movie, {"include": False, "quality": "superfast"})["include"]
                 # part order: no-suffix first (-1 -- rescues a forgotten
                 # --part on disc 1), then .pN ascending.
                 siblings = sorted(
@@ -928,6 +972,19 @@ def run_transcode(args) -> int:
                         for s in siblings:
                             if _archive(s.path, s, lossless_root, keep):
                                 parked += 1
+                        # unmarked extras ride the main's disposal (CONTEXT.md:
+                        # Extras marker): the marker that shipped with this
+                        # movie decided they never encode
+                        if not mark_main_include:
+                            for x in items:
+                                if (x.is_tv or x.movie != i.movie
+                                        or (x.sfx == "t" and x.num == i.num)
+                                        or not os.path.exists(x.path)):
+                                    continue
+                                if _archive(x.path, x, lossless_root, keep):
+                                    parked += 1
+                                handled.add(x.path)
+                                print(f"disposed unmarked extra with main: {x.name}")
                     else:
                         _fail_quarantine(log, siblings, issues_root, names, res.notes)
                     for s in siblings:
@@ -956,7 +1013,23 @@ def run_transcode(args) -> int:
             # -- extras (non-main _t title, or an extras-disc title): the
             # ` - Extra NN` form, number rolled forward past taken names —
             # no staging label ever reaches the library. Every embedded track
-            # stays: no subtitle pass, no zero-subs trick.
+            # stays: no subtitle pass, no zero-subs trick. The extras marker
+            # (CONTEXT.md: Extras marker) gates the whole branch: unmarked
+            # extras never encode — they ride the main's disposal (delete, or
+            # -k park) once it ships; a folder whose movie has no staged main
+            # rides alone here. Marked extras encode at quality superfast
+            # (default) or full (the main's preset).
+            mark = extras_mark.get(i.movie, {"include": False, "quality": "superfast"})
+            if not mark["include"]:
+                handled.add(i.path)
+                if i.movie in main_num or i.movie in rec_missing:
+                    print(f"skip (unmarked extra -- rides the main's disposal): {i.name}")
+                else:
+                    if _archive(i.path, i, lossless_root, keep):
+                        parked += 1
+                    print(f"skip (unmarked extra -- no staged main, disposed): {i.name}")
+                continue
+            speed = None if mark["quality"] == "full" else "superfast"
             ext = f".p{i.part}" if i.part >= 0 else ""
             dest_dir = os.path.join(lib_dir, "movies", safe, "extras")
             dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
@@ -970,7 +1043,8 @@ def run_transcode(args) -> int:
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             inflight = cleanup + [local_out]
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
-                            ffprobe_exe, no_subs=False, log=log, parts=parts):
+                            ffprobe_exe, no_subs=False, log=log, parts=parts,
+                            speed=speed):
                 shutil.move(local_out, dest)
                 for p in cleanup:
                     _rmf(p)

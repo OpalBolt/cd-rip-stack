@@ -87,6 +87,14 @@ _Avoid_: side, disc file
 Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. An aired special is not an extra — it is a Season 0 episode.
 _Avoid_: bonus, featurette, special
 
+**Extras marker**:
+The validation.json `extras` key (`include`, `quality`) that decides a movie's extras at transcode. Unmarked (`include: false`) — the default — they never encode: the source is disposed with the main (deleted, or `-k` parks it). Marked (`rip movie -i`, or by hand after `scripts/backlog-mark.py`) they encode at `quality` — `superfast` (default) or `full` (the main's preset). `scripts/sync-marks.py` propagates the library copy's marker to rip and lossless.
+_Avoid_: extras flag, keep flag
+
+**Session cap**:
+The default slice of work one `skive transcode` run takes: at most 4 main features (`-n` overrides, 0 = unlimited). The rest stays in staging, deferred loudly with a count. Stated once with a deliberately vague estimate (~1 h per main) — never per title.
+_Avoid_: batch size, throttle
+
 **Junk label**:
 MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; transcode skips any file still wearing one.
 _Avoid_: label, code
