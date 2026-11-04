@@ -202,11 +202,32 @@ class RipLog:
         self._phase_name = name
         self._phase_start = self._now()
 
-    def phase_end(self):
-        """Log the just-finished phase."""
+    def phase_end(self, status="ok") -> int:
+        """Log the just-finished phase; status may carry the phase's numbers
+        (transcode parts log throughput, e.g. "5744 MB at 64 MB/s"). Returns
+        the phase's elapsed seconds. A phase already closed (or never opened)
+        logs nothing — a later fail_open_phase() on a closed phase is a no-op."""
+        if self._phase_name is None:
+            return 0
+        name = self._phase_name
         now = self._now()
+        elapsed = int((now - self._phase_start).total_seconds())
         self._phases += 1
-        self._emit(now, self._phase_name, "ok",
+        self._phase_name = None
+        self._emit(now, name, status, elapsed)
+        return elapsed
+
+    def fail_open_phase(self, status="FAIL"):
+        """Close a phase left open by an exception (transcode's FATAL and
+        interrupt arms): emit its elapsed under the given status (FAIL, or
+        "interrupted" on the Ctrl+C path), then clear it. Does not count as a
+        successful phase — the run is failing and a total line follows."""
+        if self._phase_name is None:
+            return
+        name = self._phase_name
+        now = self._now()
+        self._phase_name = None
+        self._emit(now, name, status,
                    int((now - self._phase_start).total_seconds()))
 
     def note(self, phase, text):

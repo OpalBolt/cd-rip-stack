@@ -909,11 +909,14 @@ def test_log_line_shape(env):
     assert first["phase"] == "-"
     assert first["status"] == "started"
     assert first["elapsed_s"] == 0
-    # skive's RipLog: a clean run with exactly one phase logs that phase and
-    # no total (the lone phase line IS the run record)
-    assert lines[-1]["phase"] == "encode" and lines[-1]["status"] == "ok"
+    # a clean item logs one line per part (copy, subs) plus the encode and
+    # the run total
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
+    assert re.match(r"^\d+ MB at \d+ MB/s$", lines[1]["status"])
+    assert lines[2]["status"] == "0 sidecar(s)"
+    assert re.match(r"^ok, \d+ MB$", lines[3]["status"])
+    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "ok"
     assert lines[-1]["run"] == first["run"]
-    assert not [l for l in lines if l["phase"] == "total"]
     # the raw log is deleted on a clean exit
     assert list((vid / "logs" / "raw").iterdir()) == []
 
@@ -980,7 +983,7 @@ exit 3
     # pairs of (check, set-after-print) ticks: line 1 prints (1000), lines
     # 2 and 3 are within the 60 s window and drop
     ticks = iter([1000.0, 1000.0, 1030.0, 1030.0, 1060.0, 1060.0])
-    monkeypatch.setattr(transcode.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(transcode.time, "monotonic", lambda: next(ticks, 1060.0))
     vid = env / "vid"
     mk(vid, "rip/movies/Slow (2004)/d0/Slow (2004)_t00.mkv", "SLOW")
 
@@ -1052,9 +1055,86 @@ def test_interrupt_drops_temp_partial_source_stays_log_130(env, capsys, monkeypa
     assert (vid / "rip" / "movies" / "Stop (2007)" / "d0" / "Stop (2007)_t00.mkv").exists()  # source untouched
     assert list(work.iterdir()) == []  # local copy + partial encode dropped
     log = run_log(env)
+    enc = [l for l in log if l["phase"] == "encode"]
+    assert enc[-1]["status"] == "interrupted" and enc[-1]["elapsed_s"] >= 0
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
     assert "interrupted -- partial temp output deleted, source left in staging" \
         in capsys.readouterr().err
+
+
+def test_fatal_logs_note_and_closes_open_phase(env, capsys, monkeypatch):
+    """An exception mid-encode: the FATAL lands in the run log as a note, the
+    open encode phase closes FAIL with its elapsed, and the run still fails
+    with rc 1 (exit behavior unchanged)."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Boom (1998)/d0/Boom (1998)_t00.mkv", "BOOM")
+
+    def boom(src, out, *a, **k):
+        raise RuntimeError("disc vanished")
+
+    monkeypatch.setattr(transcode, "_encode", boom)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 1
+    assert "FATAL: disc vanished" in capsys.readouterr().err
+    log = run_log(env)
+    assert any(l["phase"] == "run" and l["status"] == "FATAL: disc vanished" for l in log)
+    enc = [l for l in log if l["phase"] == "encode"]
+    assert enc[-1]["status"] == "FAIL" and enc[-1]["elapsed_s"] >= 0
+    assert log[-1]["phase"] == "total" and log[-1]["status"].startswith("FAIL")
+
+
+def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
+    """A clean item logs one timed phase per part with its numbers -- copy
+    throughput, the subs sidecar/barren tally, the encode size -- plus the
+    per-item console summary and the batch ok/failed counts."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Marked (2009)/d0/Marked (2009)_t00.mkv", "SUBS-EMPTY")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    lines = run_log(env)
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
+    by = {l["phase"]: l for l in lines[1:]}
+    assert re.match(r"^\d+ MB at \d+ MB/s$", by["copy"]["status"])
+    assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
+    assert re.match(r"^ok, \d+ MB$", by["encode"]["status"])
+    assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
+    out = capsys.readouterr().out
+    assert re.search(
+        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ encode \S+ -- ok", out)
+    assert "1 ok, 0 failed" in out
+
+
+def test_keep_banner_prints_only_when_something_parked(env, capsys):
+    """The --keep banner is honest: it prints after a real lossless park,
+    stays silent when keep=0 deleted the source, and silent when a failed run
+    parked nothing."""
+    vid = env / "vid"
+
+    # success + keep=1: parked, banner prints
+    mk(vid, "rip/movies/Park (2011)/d0/Park (2011)_t00.mkv", "PARK-MAIN")
+    rc = transcode.run_transcode(Args(keep=True))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "--keep: lossless sources moved to" in out
+    assert list((vid / "lossless" / "movies").rglob("Park (2011)_t00.mkv"))
+
+    # success + keep=0: deleted, no banner
+    mk(vid, "rip/movies/Wisp (2012)/d0/Wisp (2012)_t00.mkv", "WISP-MAIN")
+    rc = transcode.run_transcode(Args())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "--keep: lossless sources moved to" not in out
+
+    # failure: source stays in staging, nothing parked, no banner
+    mk(vid, "rip/movies/Failme (1999)/d1/Failme (1999)_t00.mkv", "FAILME")
+    rc = transcode.run_transcode(Args(keep=True))
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "--keep: lossless sources moved to" not in out
 
 
 # -- TV branch (slice 04): seasons/specials/doubles/junk, show doc, extras -----

@@ -725,6 +725,9 @@ def run_transcode(args) -> int:
             rec_missing[movie] = rec
 
     failed = 0
+    parked = 0  # sources actually parked in lossless/ (--keep banner honesty)
+    n_ok = 0
+    n_failed = 0
     handled: set[str] = set()
     missing_warned: set[str] = set()  # movies whose no-staged-main note already printed
     # The in-flight item's local temp files (CONTEXT.md: Interrupt): the
@@ -734,6 +737,16 @@ def run_transcode(args) -> int:
     # harmless (the files are already gone and _rmf tolerates that).
     inflight: list[str] = []
     inflight_side: str | None = None  # this item's sidecar temp dir, once the pass starts
+    def _item_done(label: str, parts: list[str], ok: bool) -> None:
+        """Per-item console summary line; keeps the batch ok/failed counts."""
+        nonlocal n_ok, n_failed
+        if ok:
+            n_ok += 1
+            print(f"{label}: {' + '.join(parts)} -- ok")
+        else:
+            n_failed += 1
+            print(f"{label}: {' + '.join(parts)} -- FAILED")
+
     log.start()
     try:
         for i in items:
@@ -760,16 +773,15 @@ def run_transcode(args) -> int:
                     ext = f".p{i.part}" if i.part >= 0 else ""
                     dest_dir = os.path.join(show_dir, "extras")
                     dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
-                log.phase("encode")
+                parts: list[str] = []
                 os.makedirs(dest_dir, exist_ok=True)
                 # the local copy is registered in `inflight` AS CREATED so an
                 # interrupt during the copy window drops the partial too
                 # (CONTEXT.md: Interrupt)
                 cleanup: list[str] = []
                 local_src = os.path.join(tmp_dir, i.name)
-                print(f"copying {i.name} to local temp...")
                 inflight.append(local_src)  # BEFORE the copy
-                _copy2(i.path, local_src)
+                _copy_in(i.path, local_src, log, parts)
                 cleanup.append(local_src)
                 side_dir = res = None  # extras: no pass, embedded subs stay
                 if episode:
@@ -780,13 +792,13 @@ def run_transcode(args) -> int:
                     # bare show name
                     side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                     inflight_side = side_dir
-                    side_dir, res = _sub_pass(local_src, side_dir,
-                                              f"{safe} - S{i.sn}E{i.en}{i.tail}",
-                                              seconv_exe, ffprobe_exe, log=log)
+                    side_dir, res = _subs_part(local_src, side_dir,
+                                               f"{safe} - S{i.sn}E{i.en}{i.tail}",
+                                               seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 inflight = cleanup + [local_out]
-                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                           no_subs=episode, log=log):
+                if _encode_part(local_src, local_out, args.encoder, hb_exe,
+                                ffprobe_exe, no_subs=episode, log=log, parts=parts):
                     shutil.move(local_out, dest)
                     if side_dir is not None:
                         _ship_sidecars(side_dir, dest_dir, res)
@@ -795,12 +807,13 @@ def run_transcode(args) -> int:
                     for p in cleanup:
                         _rmf(p)
                     if res is None or res.ok:
-                        _archive(i.path, i, lossless_root, keep)
+                        if _archive(i.path, i, lossless_root, keep):
+                            parked += 1
                     else:
                         _fail_quarantine(log, [i], issues_root, i.name, res.notes)
                         failed = 1
                     handled.add(i.path)
-                    log.phase_end()
+                    _item_done(i.name, parts, res is None or res.ok)
                 else:
                     if side_dir is not None:
                         shutil.rmtree(side_dir, ignore_errors=True)
@@ -809,7 +822,7 @@ def run_transcode(args) -> int:
                     log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                     handled.add(i.path)
                     failed = 1
-                    log.phase_end()
+                    _item_done(i.name, parts, False)
                 continue
 
             # -- recorded main with no staged title: loud skip, never a
@@ -836,7 +849,7 @@ def run_transcode(args) -> int:
                 )
                 dest_dir = os.path.join(lib_dir, "movies", safe)
                 dest = os.path.join(dest_dir, safe + ".mkv")
-                log.phase("encode")
+                parts: list[str] = []
                 # cleanup removes this item's temps AFTER the encode; every
                 # entry is also registered in `inflight` AS CREATED so an
                 # interrupt during the copy/merge window drops it too
@@ -852,20 +865,19 @@ def run_transcode(args) -> int:
                             _quarantine(s.path, s, issues_root, log)
                             handled.add(s.path)
                         failed = 1
-                        log.phase_end()
+                        _item_done(i.movie, parts, False)
                         continue
                     os.makedirs(dest_dir, exist_ok=True)
                     local_parts = []
                     for s in siblings:
                         lb = os.path.join(tmp_dir, s.name)
-                        print(f"copying {s.name} to local temp...")
                         inflight.append(lb)  # BEFORE the copy: mid-copy interrupt drops the partial
-                        _copy2(s.path, lb)
+                        _copy_in(s.path, lb, log, parts)
                         local_parts.append(lb)
                         cleanup.append(lb)
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
                     inflight.append(local_src)  # BEFORE the merge: mid-merge interrupt drops the partial
-                    mrc = _merge(local_src, local_parts, mkv_exe, log=log)
+                    mrc = _merge_part(local_src, local_parts, mkv_exe, log, parts)
                     if mrc <= 1:  # 0 ok, 1 warning (still usable)
                         cleanup.append(local_src)
                     else:  # 2+ failure: sources left in place, run continues
@@ -876,14 +888,13 @@ def run_transcode(args) -> int:
                         for s in siblings:
                             handled.add(s.path)
                         failed = 1
-                        log.phase_end()
+                        _item_done(i.movie, parts, False)
                         continue
                 else:
                     os.makedirs(dest_dir, exist_ok=True)
                     local_src = os.path.join(tmp_dir, i.name)
-                    print(f"copying {i.name} to local temp...")
                     inflight.append(local_src)  # BEFORE the copy
-                    _copy2(i.path, local_src)
+                    _copy_in(i.path, local_src, log, parts)
                     cleanup.append(local_src)
 
                 # the inline subtitle pass runs on the merged (or single) local
@@ -893,12 +904,12 @@ def run_transcode(args) -> int:
                 # Interrupt)
                 side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                 inflight_side = side_dir
-                side_dir, res = _sub_pass(local_src, side_dir, safe,
-                                          seconv_exe, ffprobe_exe, log=log)
+                side_dir, res = _subs_part(local_src, side_dir, safe,
+                                           seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
-                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                           no_subs=True, log=log):
+                if _encode_part(local_src, local_out, args.encoder, hb_exe,
+                                ffprobe_exe, no_subs=True, log=log, parts=parts):
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
                     # the doc that picked this main gets the encode appended
@@ -915,14 +926,15 @@ def run_transcode(args) -> int:
                     names = " ".join(s.name for s in siblings)
                     if res.ok:
                         for s in siblings:
-                            _archive(s.path, s, lossless_root, keep)
+                            if _archive(s.path, s, lossless_root, keep):
+                                parked += 1
                     else:
                         _fail_quarantine(log, siblings, issues_root, names, res.notes)
                     for s in siblings:
                         handled.add(s.path)
                     if not res.ok:
                         failed = 1
-                    log.phase_end()
+                    _item_done(names, parts, res.ok)
                 else:
                     shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
@@ -938,7 +950,7 @@ def run_transcode(args) -> int:
                     for s in siblings:
                         handled.add(s.path)
                     failed = 1
-                    log.phase_end()
+                    _item_done(names if len(siblings) > 1 else i.name, parts, False)
                 continue
 
             # -- extras (non-main _t title, or an extras-disc title): the
@@ -948,36 +960,37 @@ def run_transcode(args) -> int:
             ext = f".p{i.part}" if i.part >= 0 else ""
             dest_dir = os.path.join(lib_dir, "movies", safe, "extras")
             dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
-            log.phase("encode")
+            parts: list[str] = []
             os.makedirs(dest_dir, exist_ok=True)
             cleanup: list[str] = []
             local_src = os.path.join(tmp_dir, i.name)
-            print(f"copying {i.name} to local temp...")
             inflight.append(local_src)  # BEFORE the copy
-            _copy2(i.path, local_src)
+            _copy_in(i.path, local_src, log, parts)
             cleanup.append(local_src)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             inflight = cleanup + [local_out]
-            if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                       log=log):  # no no_subs: embedded subs stay in the file
+            if _encode_part(local_src, local_out, args.encoder, hb_exe,
+                            ffprobe_exe, no_subs=False, log=log, parts=parts):
                 shutil.move(local_out, dest)
                 for p in cleanup:
                     _rmf(p)
-                _archive(i.path, i, lossless_root, keep)
+                if _archive(i.path, i, lossless_root, keep):
+                    parked += 1
                 handled.add(i.path)
-                log.phase_end()
+                _item_done(i.name, parts, True)
             else:
                 for p in cleanup + [local_out]:
                     _rmf(p)
                 log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                 handled.add(i.path)
                 failed = 1
-                log.phase_end()
+                _item_done(i.name, parts, False)
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: drop this item's partial temp output (the local
         # copy, the unshipped sidecar dir, and .h265 encode live in the work
         # dir), leave the SOURCE in staging — sources only move on success —
         # record status=interrupted, exit 130.
+        log.fail_open_phase("interrupted")
         for p in inflight:
             _rmf(p)
         if inflight_side is not None:
@@ -989,9 +1002,13 @@ def run_transcode(args) -> int:
     except Exception as e:
         failed = 1
         print(f"FATAL: {e}", file=sys.stderr)
+        log.note("run", f"FATAL: {e}")
+        log.fail_open_phase("FAIL")
     finally:
         log.finish(failed)
 
-    if keep:
+    print(f"{n_ok} ok, {n_failed} failed")
+
+    if keep and parked:
         print(f"--keep: lossless sources moved to {lossless_root} -- verify, then clean by hand")
     return failed
