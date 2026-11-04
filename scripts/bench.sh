@@ -22,7 +22,7 @@ run() { # label, extra encoder args...
   local secs mb fps
   secs=$(echo "$t1 - $t0" | bc)
   mb=$(( $(stat -c%s "$out") / 1048576 ))
-  fps=$(tr '\r' '\n' < "$work/$label.log" | grep -o 'avg [0-9.]* fps' | tail -1 | grep -o '[0-9.]*' || echo "?")
+  fps=$(grep 'Encoding:' "$work/$label.log" | tr '\r' '\n' | grep -o 'avg [0-9.]* fps' | tail -1 | grep -o '[0-9.]*' || echo "?")
   printf '%-14s %7.1fs   avg %6s fps   %5d MB\n' "$label" "$secs" "$fps" "$mb"
 }
 
