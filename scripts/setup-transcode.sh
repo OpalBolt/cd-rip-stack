@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Transcode box setup — run ONCE inside the container (see docs/transcode.md).
 #
-#   distrobox create -n transcode --image fedora:41
+#   distrobox create -n transcode --image fedora:41 --volume /mnt/videos:/mnt/videos
+#     (the videos share: an NFS mount on the host, bind-mounted at the same
+#     path inside; adjust the host side if your mountpoint differs)
 #   distrobox enter transcode
 #   bash ~/git/cd-rip-stack/scripts/setup-transcode.sh
 #
@@ -43,4 +45,5 @@ fi
 echo "== verify =="
 command -v HandBrakeCLI mkvmerge ffprobe tesseract seconv skive
 tesseract --list-langs   # want eng + dan
+test -d /mnt/videos || { echo "ERROR: /mnt/videos missing — recreate the box with --volume /mnt/videos:/mnt/videos (see docs/transcode.md)"; exit 1; }
 echo "OK — the box is ready. All skive runs happen inside this container."

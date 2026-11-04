@@ -24,7 +24,7 @@ all skive runs happen inside the box.
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
-distrobox create -n transcode --image fedora:41
+distrobox create -n transcode --image fedora:41 --volume /mnt/videos:/mnt/videos
 distrobox enter transcode
 bash ~/git/cd-rip-stack/scripts/setup-transcode.sh   # once, inside the box
 ```
