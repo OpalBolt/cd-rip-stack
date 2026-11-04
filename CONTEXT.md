@@ -100,7 +100,7 @@ MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; tra
 _Avoid_: label, code
 
 **Transcode box**:
-The machine that runs `skive transcode` over the NAS mount — an AMD BC-250 (PS5-derived Zen 2, 8 cores unlocked, Bazzite) in a distrobox, replacing the retired Windows box. Encodes CPU-only x265 via HandBrake: the BC-250's video engine is factory-disabled (VCN eFused off, firmware blocked), so hardware encode does not exist on this machine — HandBrake, ffmpeg, or any other tool alike.
+The machine that runs `skive transcode` over the NAS mount — an AMD BC-250 (PS5-derived Zen 2, 8 cores unlocked, Bazzite) in a distrobox, replacing the retired Windows box. Encodes CPU-only x265 via HandBrake: the BC-250's video engine is factory-disabled (VCN eFused off, firmware blocked), so hardware encode does not exist on this machine — HandBrake, ffmpeg, or any other tool alike. The box is self-contained: every tool it needs — HandBrake, mkvmerge, tesseract, seconv, ffmpeg, and skive itself — lives in the container, built by the repo's `scripts/setup-transcode.sh`; mise stays a rip-box tool.
 _Avoid_: encoder box, GPU box, Windows box
 
 **Staging**:
@@ -165,6 +165,10 @@ One language's complete dialogue track. At most one per language per video; dupl
 A full track carrying sound-effect descriptions, unflagged on disc. Identified by OCR output, sidecar suffix `.sdh`.
 _Avoid_: HI track, captions
 
+**Barren track**:
+A kept bitmap track whose OCR yields zero cues — every image dropped as unreadable, seconv reporting no matching tracks. Drops from the pass with a loud note and the encode ships without that sidecar; only a tool failure (seconv/tesseract crash) quarantines. A deterministic re-failure must never sit in `issues/` forever.
+_Avoid_: empty track, blank track
+
 **Subtitle pass**:
 Extraction + OCR + naming that turns a main feature's or TV episode's tracks into sidecars. Runs inline at transcode for new rips; a one-off backfill covers the existing library.
 _Avoid_: subtitle extraction, sub rip
@@ -172,7 +176,7 @@ _Avoid_: subtitle extraction, sub rip
 ### Logging
 
 **Run log**:
-The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. Replaces the old 8-column text `rip.log`.
+The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. A transcode run logs one timed line per part — `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the part's numbers in `status` (`5744 MB at 64 MB/s`), so copy slippage and encode slippage are separable trends; a phase that dies mid-run closes with `FAIL` and its elapsed. Replaces the old 8-column text `rip.log`.
 _Avoid_: verification log, event log
 
 **Raw log**:
