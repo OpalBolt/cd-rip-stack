@@ -227,7 +227,7 @@ def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
             assert e.code == 0
 
     assert not mock_run.called
-    assert "skive: nothing to import" in capsys.readouterr().err
+    assert "info  nothing to import" in capsys.readouterr().err
 
 
 def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):

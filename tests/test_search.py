@@ -113,7 +113,9 @@ def test_search_mount_failure_is_one_note_and_successful_exit(monkeypatch, capsy
 
     run_search(SimpleNamespace(scope="music", query="album"))
 
-    assert capsys.readouterr().out.strip() == "skive: cannot mount music share; skipping"
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+    assert captured.err.strip() == "warn  cannot mount music share; skipping"
 
 
 def test_search_scope_is_required_and_limited():

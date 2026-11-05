@@ -13,6 +13,7 @@ from typing import NamedTuple
 from rich.console import Console
 
 from skive.common import ensure_mounted
+from skive import ui
 from skive.tag import SOURCES
 
 console = Console()
@@ -178,12 +179,12 @@ def _mount_or_note(mount: str, export: str, label: str) -> bool:
     """Mount a scoped share, converting mount failures into one note line."""
     # ensure_mounted prints its own diagnostics before raising SystemExit. Keep
     # the search contract to one note by capturing that implementation detail.
-    with redirect_stderr(io.StringIO()):
-        try:
+    try:
+        with redirect_stderr(io.StringIO()):
             ensure_mounted(mount, export)
-        except (SystemExit, OSError, RuntimeError):
-            console.print(f"skive: cannot mount {label} share; skipping")
-            return False
+    except (SystemExit, OSError, RuntimeError):
+        ui.warn(f"cannot mount {label} share; skipping")
+        return False
     return True
 
 

@@ -10,6 +10,7 @@ import pty
 from pathlib import Path
 
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
+from skive import ui
 
 SOURCES = ("cd", "other", "bandcamp")
 AUDIO_EXTENSIONS = frozenset({
@@ -182,7 +183,7 @@ def tag(args, run=None) -> None:
 
     config_path = Path(__file__).parent.parent / "config" / "beets-config.yaml"
     if not config_path.exists():
-        print(f"skive: beets config not found at {config_path}", file=sys.stderr)
+        ui.fail(f"beets config not found at {config_path}")
         sys.exit(1)
 
     sources = [args.source] if getattr(args, "source", None) else list(SOURCES)
@@ -191,7 +192,7 @@ def tag(args, run=None) -> None:
                       if not _is_empty_dir(rip_dir / source)]
 
     if not active_sources:
-        print("skive: nothing to import", file=sys.stderr)
+        ui.info("nothing to import")
         # An empty but mounted share is still a tag run and gets a run marker.
         # The is_dir guard keeps the command's empty-source behavior useful in
         # setup/tests where the configured mountpoint does not exist.
@@ -241,7 +242,7 @@ def tag(args, run=None) -> None:
     except KeyboardInterrupt:
         rc = 130
         log.interrupted()
-        print("skive: interrupted", file=sys.stderr)
+        ui.fail("interrupted")
     finally:
         if old_tag_run is None:
             os.environ.pop("SKIVE_TAG_RUN", None)

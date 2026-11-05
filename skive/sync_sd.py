@@ -18,6 +18,7 @@ from pathlib import Path
 from rich.prompt import Prompt
 
 from skive.common import RipLog, ensure_mounted
+from skive import ui
 
 
 def _lsblk(run, columns: str) -> list[dict]:
@@ -124,7 +125,7 @@ def mount_card(part: str, mnt: Path, run=subprocess.run) -> bool:
 def unmount_card(mnt: Path, run=subprocess.run) -> None:
     """Best-effort unmount of a card this run mounted; warn with the manual command."""
     if run(["sudo", "umount", str(mnt)], capture_output=True).returncode != 0:
-        print(f"sync-sd: could not unmount {mnt} — run: sudo umount {mnt}", file=sys.stderr)
+        ui.warn(f"could not unmount {mnt} — run: sudo umount {mnt}")
     try:
         mnt.rmdir()
     except OSError:
@@ -166,13 +167,13 @@ def sync_sd(args) -> None:
                 print(f"  {i}) {mp}", file=sys.stderr)
             idx = _pick(len(mounted))
             if idx is None:
-                print("sync-sd: no valid choice — aborting", file=sys.stderr)
+                ui.fail("no valid choice — aborting")
                 sys.exit(1)
             card = mounted[idx]
         else:
             disks = list_unmounted_disks()
             if not disks:
-                print("sync-sd: no SD card found (mounted or unmounted) — insert one and re-run", file=sys.stderr)
+                ui.fail("no SD card found (mounted or unmounted) — insert one and re-run")
                 sys.exit(1)
             print("sync-sd: no card mounted — pick a device to mount:", file=sys.stderr)
             for i, d in enumerate(disks, 1):
@@ -180,7 +181,7 @@ def sync_sd(args) -> None:
                 print(f"  {i}) {d}  {size}{'  ' + model if model else ''}", file=sys.stderr)
             idx = _pick(len(disks))
             if idx is None:
-                print("sync-sd: no valid choice — aborting", file=sys.stderr)
+                ui.fail("no valid choice — aborting")
                 sys.exit(1)
             pending_disk = disks[idx]
 
@@ -201,21 +202,21 @@ def sync_sd(args) -> None:
                     card_mnt.rmdir()
                 except OSError:
                     pass
-                print(f"sync-sd: mounting /dev/{part} failed (needs sudo? wrong fs / unreadable?)", file=sys.stderr)
+                ui.fail(f"mounting /dev/{part} failed (needs sudo? wrong fs / unreadable?)")
                 sys.exit(1)
             we_mounted = True
             card = str(card_mnt)
             log.name = part
         else:
             if not Path(card).is_dir():
-                print(f"sync-sd: {card} is not a mounted directory", file=sys.stderr)
+                ui.fail(f"{card} is not a mounted directory")
                 sys.exit(1)
             log.name = Path(card).name
 
         # Only pay the NFS mount cost once a card is in hand.
         ensure_mounted(mnt, os.environ.get("NFS_MUSIC", ""))
         if not src.is_dir():
-            print(f"sync-sd: no library at {src} (run tag first)", file=sys.stderr)
+            ui.fail(f"no library at {src} (run tag first)")
             sys.exit(1)
 
         log.phase("sync")

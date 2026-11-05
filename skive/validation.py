@@ -29,6 +29,7 @@ from rich.table import Table
 from rich.text import Text
 
 from skive.tmdb import fetch_by_id, fetch_season, search_first
+from skive import ui
 from skive.tv_match import RATIO_GREEN  # re-exported: one band, never a copy
 
 VALIDATION_FILENAME = "validation.json"
@@ -810,8 +811,7 @@ def _search_identity(kind: str, rel: str, folder_name: str, search,
     try:
         pick = search(kind, name)
     except (RuntimeError, ValueError) as e:
-        print(f"skive: validate: TMDB search failed for {folder_name} ({e})",
-              file=sys.stderr)
+        ui.warn(f"TMDB search failed for {folder_name} ({e})")
         findings.append(Finding(rel, "unidentified",
                                 f'TMDB search failed for "{name}"'))
         return None
@@ -887,8 +887,7 @@ def check_movie_folder(folder: Path, rel: str, *, run=subprocess.run,
     try:
         details = fetch_details("movie", id_)
     except (RuntimeError, ValueError) as e:
-        print(f"skive: validate: TMDB details fetch failed for {folder.name} ({e})",
-              file=sys.stderr)
+        ui.warn(f"TMDB details fetch failed for {folder.name} ({e})")
         findings.append(Finding(rel, "unidentified",
                                 f"TMDB details fetch failed for id {id_}"))
         return findings + staging, None
@@ -939,8 +938,8 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
     try:
         listed = season_list(show_id, season)
     except (RuntimeError, ValueError) as e:
-        print(f"skive: validate: TMDB season fetch failed for "
-              f"{folder.name} Season {season:02d} ({e})", file=sys.stderr)
+        ui.warn(f"TMDB season fetch failed for "
+                f"{folder.name} Season {season:02d} ({e})")
         listed = None
     runtimes: dict[int, int | None] = {}
     for ep, row in doc_rows.items():
@@ -1364,7 +1363,7 @@ def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
             print(json.dumps({"root": str(library), "error": message,
                               "findings": [], "recommendations": []}, indent=2))
         else:
-            print(f"skive: validate: {message}", file=sys.stderr)
+            ui.fail(message)
         return
     renames = fix_staging_names(library) if fix else []
     findings = validate_library(library, run=run)

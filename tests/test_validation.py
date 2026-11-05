@@ -700,7 +700,7 @@ def test_validate_movie_search_failure_warns_once_and_unidentifies(tmp_path, cap
 
     assert findings == [Finding("movies/" + MAMMA, "unidentified",
                                 'TMDB search failed for "Mamma Mia!"')]
-    assert "skive: validate: TMDB search failed" in capsys.readouterr().err
+    assert "warn  TMDB search failed" in capsys.readouterr().err
 
 
 def test_validate_movie_details_fetch_failure_unidentifies(tmp_path, capsys):
