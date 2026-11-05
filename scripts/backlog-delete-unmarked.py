@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill stage 3/3: delete unmarked extras from the rip staging.
+"""Backfill stage 3/3: delete unmarked extras from staging and library.
 
 For each movie folder under rip/movies whose validation.json carries
 extras.include=false, every staged non-main title is deleted (the marker
@@ -9,18 +9,30 @@ the doc's titles[] is the main (the same intent transcode's bytes fallback
 encodes); a folder with no readable doc is skipped loudly. Junk-labelled
 files (mid-rip/failed rename) are out of scope -- they are not extras.
 
+The library is swept with the same rule: a movie whose library doc
+carries extras.include=false (a retracted keep) loses its encoded extras/
+under library/movies/<Movie>/, the folder removed once empty. Encoded
+extras with no marker in the library doc are skipped loudly -- the
+unmarked default is safe for staged sources (re-rippable), not for
+library encodes.
+
 Run this AFTER backlog-mark.py and the manual keep-edits + sync-marks.py.
-Everything deleted here is recoverable only by re-ripping the disc.
+Staged deletions are recoverable only by re-ripping the disc; library
+deletions by re-transcoding the parked source, else re-ripping.
 
 Usage:  python scripts/backlog-delete-unmarked.py [--go]
         Dry-run by default: prints what would delete; --go deletes.
-        Roots: $VIDEOS (default /mnt/videos) -> <root>/rip/movies.
+        Roots: $VIDEOS (default /mnt/videos): <root>/rip/movies and
+        <root>/library/movies.
 """
 
 import argparse
 import os
 import sys
 from pathlib import Path
+
+_repo = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_repo))  # the skive package
 
 from skive.validation import (VALIDATION_FILENAME, load_validation,
                               read_extras_marker)
@@ -45,7 +57,8 @@ def main() -> int:
     ap.add_argument("--go", action="store_true", help="delete (default: dry-run)")
     args = ap.parse_args()
 
-    base = Path(os.environ.get("VIDEOS", "/mnt/videos")) / "rip" / "movies"
+    root = Path(os.environ.get("VIDEOS", "/mnt/videos"))
+    base = root / "rip" / "movies"
     if not base.is_dir():
         print(f"{base}: not a directory", file=sys.stderr)
         return 1
@@ -76,6 +89,37 @@ def main() -> int:
                 p.unlink()
                 deleted += 1
                 freed += mb
+
+    lib = root / "library" / "movies"
+    if not lib.is_dir():
+        print(f"{lib}: not a directory, library extras not swept", file=sys.stderr)
+    else:
+        for folder in sorted(p for p in lib.iterdir() if p.is_dir()):
+            extras = folder / "extras"
+            if not extras.is_dir():
+                continue  # nothing encoded: no decision to act on
+            doc = load_validation(folder / VALIDATION_FILENAME)
+            if doc is None:
+                print(f"extras but no validation.json, skipped: {folder}", file=sys.stderr)
+                continue
+            if "extras" not in doc:
+                print(f"extras but no marker, skipped: {folder}", file=sys.stderr)
+                continue
+            if read_extras_marker(doc)["include"]:
+                print(f"keep (include=true): {folder.name}/extras")
+                continue
+            for p in sorted(extras.iterdir()):
+                if not p.is_file():
+                    continue
+                mb = p.stat().st_size // 1048576
+                print(f"{folder.name}: {'delete' if args.go else 'would delete'} "
+                      f"extras/{p.name} ({mb} MB)")
+                if args.go:
+                    p.unlink()
+                    deleted += 1
+                    freed += mb
+            if args.go and not any(extras.iterdir()):
+                extras.rmdir()
     tail = f"{deleted} files, {freed} MB freed" if args.go else "dry-run, nothing deleted"
     print(f"-- {tail}")
     return 0

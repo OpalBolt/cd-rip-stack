@@ -18,6 +18,9 @@ import os
 import sys
 from pathlib import Path
 
+_repo = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_repo))  # the skive package
+
 from skive.validation import (VALIDATION_FILENAME, load_validation,
                               read_extras_marker, write_validation)
 
