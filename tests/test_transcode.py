@@ -108,6 +108,19 @@ for a in "$@"; do
   prev="$a"
 done
 if grep -q PROBEBAD "$in" 2>/dev/null; then echo boom >&2; exit 1; fi
+if [ "$sel" = "v:0" ] && [ "$fmt" = "json" ]; then
+  # frame geometry (json, the crop detector's probe): a LETTERBOX-WxH content
+  # marker names its own geometry
+  if grep -q PROBEFRAMEBAD "$in" 2>/dev/null; then echo boom >&2; exit 1; fi
+  if grep -q LETTERBOX-720x576 "$in" 2>/dev/null; then
+    printf '%s\n' '{"streams":[{"width":720,"height":576,"field_order":"progressive"}],"format":{"duration":"5580.0"}}'
+  elif grep -q LETTERBOX-720x480 "$in" 2>/dev/null; then
+    printf '%s\n' '{"streams":[{"width":720,"height":480,"field_order":"progressive"}],"format":{"duration":"5580.0"}}'
+  else
+    printf '%s\n' '{"streams":[{"width":1920,"height":1080,"field_order":"progressive"}],"format":{"duration":"5580.0"}}'
+  fi
+  exit 0
+fi
 case "$*" in
   *format=duration*)
     # whole seconds; a DUR-6251 content marker names its own duration
@@ -176,6 +189,21 @@ for a in "$@"; do
   out="$a"
   prev="$a"
 done
+case "$*" in
+  *cropdetect*)
+    # cropdetect probe window (stderr): a BARS-l/t/r/b content marker drives
+    # the settled read; BARS-UNSTABLE alternates reads so one side dissents
+    if grep -q BARS-UNSTABLE "$in" 2>/dev/null; then
+      n=$(cat "$in.cnt" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$in.cnt"
+      if [ $((n % 2)) -eq 0 ]; then echo 'crop=720:432:36:72' >&2
+      else echo 'crop=720:432:0:72' >&2; fi
+    elif grep -q BARS-0/72/0/72 "$in" 2>/dev/null; then
+      echo 'crop=720:432:0:72' >&2
+    elif grep -q BARS-0/36/0/36 "$in" 2>/dev/null; then
+      echo 'crop=720:504:0:36' >&2
+    fi
+    exit 0 ;;
+esac
 if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
 cat "$in" > "$out"
 """
@@ -328,7 +356,8 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     assert rc == 0
     L = vid / "library" / "movies" / "Mamma Mia! (2008)"
     assert (L / "Mamma Mia! (2008).mkv").read_text() == "MAMMA-DUR-6251"
-    entry = {"file": "Mamma Mia! (2008).mkv", "src": "t21", "dur_s": 6251}
+    entry = {"file": "Mamma Mia! (2008).mkv", "src": "t21", "dur_s": 6251,
+             "crop": None, "size": "1920x1080"}
     assert json.loads((L / "validation.json").read_text())["encodes"] == [entry]
     staged = vid / "rip" / "movies" / "Mamma Mia! (2008)" / "validation.json"
     assert json.loads(staged.read_text())["encodes"] == [entry]
@@ -357,7 +386,8 @@ def test_null_main_and_absent_doc_keep_bytes_fallback(env):
     assert (L / "Legacy (2002)" / "Legacy (2002).mkv").read_text() == "LEGACY-BIG-BYTES"
     # the existing (null-main) doc still records the fallback encode's result
     assert json.loads((L / "Shorts (2001)" / "validation.json").read_text())["encodes"] == [
-        {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580}]
+        {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580,
+         "crop": None, "size": "1920x1080"}]
     # no doc ever existed for the legacy folder -> no library copy
     assert not (L / "Legacy (2002)" / "validation.json").exists()
     # the unmarked non-main title rode the main's disposal (Extras marker)
@@ -454,8 +484,13 @@ def test_guard_quarantine_carries_run_evidence(env):
     assert any("FAIL tracks differ" in l["status"] for l in ev_lines)
     assert any(l["phase"] == "encode" for l in ev_lines)  # Next's shipped phase
     # both parts quarantine into the same folder — each evidence line exactly
-    # once, not once per part (and only the run's own raw-log copy beside them)
-    assert len(ev_lines) == len({json.dumps(l, sort_keys=True) for l in ev_lines})
+    # once, not once per part (and only the run's own raw-log copy beside them);
+    # detect may legitimately pair its timed phase line with the identical
+    # untimed note line, everything else is unique
+    n_detect = sum(1 for l in ev_lines if l["phase"] == "detect")
+    rest = [l for l in ev_lines if l["phase"] != "detect"]
+    assert n_detect == 2
+    assert len(rest) == len({json.dumps(l, sort_keys=True) for l in rest})
     assert {p.name for p in folder.glob("*.jsonl")} == {"rip.jsonl", f"{run}.jsonl"}
     # the run failed, so its raw log exists in logs/raw/ AND is copied in
     raw = vid / "logs" / "raw" / f"{run}.jsonl"
@@ -580,7 +615,8 @@ def test_recorded_main_parts_still_merge(env):
     L = vid / "library" / "movies" / "Parts (2007)"
     assert (L / "Parts (2007).mkv").read_text() == "P1-DUR-6251P2"
     assert json.loads((L / "validation.json").read_text())["encodes"] == [
-        {"file": "Parts (2007).mkv", "src": "t21", "dur_s": 6251}]
+        {"file": "Parts (2007).mkv", "src": "t21", "dur_s": 6251,
+         "crop": None, "size": "1920x1080"}]
 
 
 # -- inline subtitle pass on mains (slice 03) -------------------------------------
@@ -756,6 +792,123 @@ def test_vaapi_low_power_entrypoint(env, monkeypatch):
     assert "-low_power 1" in (env / "ffmpeg-calls.log").read_text()
 
 
+# -- black-bar crop detection (the crop gate, ported from the trial oracle) ------
+
+
+def test_gate_matches_trial_self_check():
+    """The ported gate returns the trial script's self-check verdicts exactly
+    (scripts/crop_detect_test.py --self-check is the oracle)."""
+    cases = [  # (readings, width, height, expected crop or None)
+        ([(0, 0, 0, 0)] * 6, 1024, 576, None),              # clean frame
+        ([(0, 70, 0, 70)] * 6, 1024, 576, (0, 70, 0, 70)),  # plain letterbox
+        ([(8, 0, 8, 0)] * 6, 1024, 576, None),              # under 16 px = noise
+        ([(0, 200, 0, 200)] * 6, 1024, 576, None),          # 69% of height = error
+        ([(70, 0, 70, 0), (70, 0, 70, 0), (0, 0, 0, 0),
+          (70, 0, 70, 0), (70, 0, 70, 0), (70, 0, 70, 0)],
+         1024, 576, (70, 0, 70, 0)),                      # lone dissent absorbed
+        ([(70, 0, 70, 0)] * 3 + [(0, 0, 0, 0)] * 3,
+         1024, 576, None),                                # half dissent = mixed AR
+        ([(20, 0, 40, 0)] * 6, 1024, 576, (20, 0, 40, 0)),  # asymmetric pillarbox
+    ]
+    for readings, w, h, want in cases:
+        crop, _reason, _detail = transcode._gate(readings, w, h)
+        assert crop == want
+
+
+def _mk_main(vid, movie, content):
+    mk(vid, f"rip/movies/{movie}/d0/{movie}_t00.mkv", content)
+    mk(vid, f"rip/movies/{movie}/validation.json", _movie_doc("t00"))
+
+
+def test_vaapi_letterboxed_main_encodes_cropped(env):
+    """A letterboxed main on the vaapi path: the detect phase runs between
+    copy and encode, the bar crop enters the vf chain before the 64-px
+    alignment crop, and the validation encodes entry carries crop + size."""
+    vid = env / "vid"
+    _mk_main(vid, "Bars (2001)", "LETTERBOX-720x576 BARS-0/72/0/72")
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 0
+    dest = vid / "library" / "movies" / "Bars (2001)" / "Bars (2001).mkv"
+    assert dest.read_text() == "LETTERBOX-720x576 BARS-0/72/0/72"
+    ff = (env / "ffmpeg-calls.log").read_text()
+    # the cropdetect probes also carry a -vf; the encode call is the last one
+    vf = re.findall(r"-vf (\S+)", ff)[-1]
+    bar = vf.index("crop=iw-0-0:ih-72-72:0:72")  # 720x576 minus 72+72 bottom/top
+    align = vf.index("crop=floor(iw/64)*64:ih")
+    assert bar < align  # the bar crop rides BEFORE the 64-px alignment crop
+    assert "bwdif=mode=send_frame:parity=auto:deint=interlaced," in vf
+    # run log: copy -> detect -> encode, and the detect line carries the crop
+    lines = run_log(env)
+    order = [l.get("phase") for l in lines]
+    # a run-start note reuses phase "encode", so compare the item's tail
+    assert order.index("copy") < order.index("subs") \
+        < order.index("detect") < len(order) - order[::-1].index("encode") - 1
+    det = [l for l in lines if l.get("phase") == "detect"]
+    assert "crop 0/72/0/72 -> 720x432" in det[0]["status"]
+    # the validation encodes entry carries the applied crop and the geometry
+    lib_doc = json.loads((vid / "library" / "movies" / "Bars (2001)" /
+                          "validation.json").read_text())
+    entry = lib_doc["encodes"][0]
+    assert entry["crop"] == "0/72/0/72"
+    assert entry["size"] == "720x576"
+    assert entry["src"] == "t0"  # f"t{num}", the pre-existing record shape
+
+
+def test_vaapi_unstable_bars_refuse_and_ship_uncropped(env):
+    """Too many dissenting probes (a mixed-AR read): no bar crop in the vf
+    chain, the loud refusal note lands in the run log, and the encode ships
+    uncropped with a clean exit."""
+    vid = env / "vid"
+    _mk_main(vid, "Wobbly (2002)", "LETTERBOX-720x576 BARS-UNSTABLE")
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Wobbly (2002)" /
+            "Wobbly (2002).mkv").exists()
+    ff = (env / "ffmpeg-calls.log").read_text()
+    assert "crop=iw-" not in ff
+    assert ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
+            "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload") in ff
+    lines = run_log(env)
+    det = [l for l in lines if l.get("phase") == "detect"]
+    assert "unstable left" in det[0]["status"]
+
+
+def test_vaapi_tight_main_detection_failed_ships_uncropped(env):
+    """No readable bars at all (a tight title): detection failed, loud note,
+    encode ships uncropped, exit clean."""
+    vid = env / "vid"
+    _mk_main(vid, "Tight (2003)", "TIGHT-MAIN")
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Tight (2003)" /
+            "Tight (2003).mkv").read_text() == "TIGHT-MAIN"
+    assert "crop=iw-" not in (env / "ffmpeg-calls.log").read_text()
+    lines = run_log(env)
+    det = [l for l in lines if l.get("phase") == "detect"]
+    assert "detection failed" in det[0]["status"]
+
+
+def test_detect_never_fails_the_item(env):
+    """A corrupt/failed probe (ffprobe errors) still ships the encode: the
+    refusal never fails the item."""
+    vid = env / "vid"
+    _mk_main(vid, "Badprobe (2004)", "PROBEFRAMEBAD BARS-0/72/0/72")
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Badprobe (2004)" /
+            "Badprobe (2004).mkv").exists()
+    det = [l for l in run_log(env) if l.get("phase") == "detect"]
+    assert "detection failed" in det[0]["status"]
+
+
 def test_auto_resolves_to_vaapi(env):
     """-e auto (the default) picks the VCN when vainfo shows the entrypoint."""
     vid = env / "vid"
@@ -778,7 +931,9 @@ def test_auto_falls_back_to_x265_fast(env, monkeypatch):
     rc = transcode.run_transcode(Args(encoder="auto"))
 
     assert rc == 0
-    assert not (env / "ffmpeg-calls.log").exists()
+    # detect now probes through ffmpeg (cropdetect) even on the x265 path;
+    # what must stay absent is the vaapi encode
+    assert "hevc_vaapi" not in (env / "ffmpeg-calls.log").read_text()
     line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
     assert "--encoder-preset fast" in line
 
@@ -1012,7 +1167,8 @@ def test_retry_obeys_traveled_doc(env):
     L = vid / "library" / "movies" / "Heal (2008)"
     assert (L / "Heal (2008).mkv").read_text() == "HEAL-REAL"
     assert json.loads((L / "validation.json").read_text())["encodes"] == [
-        {"file": "Heal (2008).mkv", "src": "t21", "dur_s": 5580}]
+        {"file": "Heal (2008).mkv", "src": "t21", "dur_s": 5580,
+         "crop": None, "size": "1920x1080"}]
 
 
 # -- run log / raw log shapes -----------------------------------------------------
@@ -1034,10 +1190,11 @@ def test_log_line_shape(env):
     assert first["elapsed_s"] == 0
     # a clean item logs one line per part (copy, subs) plus the encode and
     # the run total
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "detect", "encode", "total"]  # detect: the timed phase line + the loud note line
     assert re.match(r"^\d+ MB at \d+ MB/s$", lines[1]["status"])
     assert lines[2]["status"] == "0 sidecar(s)"
-    assert re.match(r"^ok, \d+ MB$", lines[3]["status"])
+    assert "no crop --" in lines[3]["status"]  # detect: the timed line + the note line
+    assert re.match(r"^ok, \d+ MB$", lines[5]["status"])
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "ok"
     assert lines[-1]["run"] == first["run"]
     # the raw log is deleted on a clean exit
@@ -1219,7 +1376,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
 
     assert rc == 0
     lines = run_log(env)
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "detect", "encode", "total"]  # detect: the timed phase line + the loud note line
     by = {l["phase"]: l for l in lines[1:]}
     assert re.match(r"^\d+ MB at \d+ MB/s$", by["copy"]["status"])
     assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
@@ -1227,7 +1384,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
     out = capsys.readouterr().out
     assert re.search(
-        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ encode \S+ -- ok", out)
+        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", out)
     assert "1 ok, 0 failed" in out
 
 

@@ -152,7 +152,8 @@ def movie_document(tmdb_id: str, title: str, runtime_s: int | None,
     the same shape with runtime_s/volume_label/run/main null — the
     reconstruction cannot know what the rip run knew.
     `encodes` starts empty and is appended by the transcoder as {"file",
-    "src", "dur_s"}.
+    "src", "dur_s", "crop", "size"} — crop as "l/t/r/b" (null when the
+    encode shipped uncropped), size as the final encode geometry "WxH".
 
     Args:
         tmdb_id: TMDB id as string
@@ -191,7 +192,7 @@ def tv_document(tmdb_id: str, title: str, season: int, volume_label: str,
     folder (staging has no season subfolders), so each disc's flow merges
     its season into the existing document (load, merge, write). `encodes`
     starts empty and is appended by the transcoder as {"file", "src",
-    "dur_s"}.
+    "dur_s", "crop", "size"} (crop "l/t/r/b" or null, size "WxH").
 
     Args:
         tmdb_id: TMDB show id as string

@@ -42,6 +42,7 @@ import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -266,6 +267,113 @@ def _probe_duration(src: str, ffprobe_exe: str) -> int | None:
         return None
 
 
+# Black-bar crop detection (ported verbatim from the committed trial,
+# scripts/crop_detect_test.py, which stays the acceptance oracle): ~6
+# cropdetect probes spread over 10-90% of the duration; per-side bar is the
+# median across probes; at most one probe per side may dissent beyond
+# +/-4 px (a lone dissent is a credits/dark-scene outlier); sides under
+# 16 px crop as nothing; per-axis totals capped at 30%; fewer than 3
+# readable probes = detection failed = no crop. A refusal never fails the
+# item: the encode ships uncropped.
+CROP_RE = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
+MIN_PX = 16        # one DVD macroblock; a bar under this is alignment noise
+MAX_AXIS_PCT = 30  # per-axis crop total above this smells like detection error
+TOLERANCE = 4      # a dissenting probe sits further than this from the median
+MIN_READINGS = 3   # fewer good probes than this = detection failed
+MAX_DISSENT = 1    # lone dissent per side absorbed (credits / dark scene)
+_PROBES = 6        # sample points over 10-90% of the duration
+_FRAMES = 30       # frames decoded per probe window
+
+
+def _probe_frame(src: str, ffprobe_exe: str) -> tuple[int, int, str, float | None]:
+    """(width, height, field_order, duration_s) of the first video stream, in
+    the trial oracle's one-JSON-probe shape (the float duration feeds the
+    probe stamps -- integer seconds shifts them onto different frames);
+    None duration if unreadable."""
+    r = subprocess.run(
+        [ffprobe_exe, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height,field_order:format=duration",
+         "-of", "json", src],
+        capture_output=True, text=True,
+    )
+    try:
+        doc = json.loads(r.stdout)
+        st = doc["streams"][0]
+        dur = doc.get("format", {}).get("duration")
+        return (int(st["width"]), int(st["height"]),
+                st.get("field_order") or "?",
+                float(dur) if dur is not None else None)
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def _probe_bars(ff: str, path: str, at_s: float, frames: int,
+                w: int, h: int) -> tuple[int, int, int, int] | None:
+    """(left, top, right, bottom) bar widths at one timestamp; None = no read.
+    cropdetect limit=24 round=2, last hit wins (the settled read)."""
+    p = subprocess.run(
+        [ff, "-hide_banner", "-nostats",
+         "-ss", f"{at_s:.1f}", "-i", path, "-an", "-sn",
+         "-frames:v", str(frames),
+         "-vf", "cropdetect=limit=24:round=2", "-f", "null", "-"],
+        capture_output=True, text=True)
+    hits = CROP_RE.findall(p.stderr)
+    if not hits:
+        return None
+    cw, ch, x, y = map(int, hits[-1])
+    return x, y, w - x - cw, h - y - ch
+
+
+def _gate(readings: list[tuple[int, int, int, int]], w: int, h: int):
+    """Apply the agreed gate. Returns (crop(l,t,r,b) or None, reason, detail)."""
+    med = [statistics.median(r[i] for r in readings) for i in range(4)]
+    detail = "median l/t/r/b = " + "/".join(str(int(m)) for m in med)
+    for name, i in zip(("left", "top", "right", "bottom"), range(4)):
+        n_off = sum(1 for r in readings if abs(r[i] - med[i]) > TOLERANCE)
+        if n_off > MAX_DISSENT:
+            return None, (f"unstable {name} ({n_off} of {len(readings)} "
+                          "probes dissent)"), detail
+    crop = [m if m >= MIN_PX else 0 for m in med]
+    if not any(crop):
+        return None, f"no bar >= {MIN_PX} px", detail
+    for axis, (ia, ib), size in (("width", (0, 2), w), ("height", (1, 3), h)):
+        total = crop[ia] + crop[ib]
+        if total > size * MAX_AXIS_PCT / 100:
+            return None, (f"{axis} crop {int(total)} px = "
+                          f"{100 * total / size:.0f}% (cap {MAX_AXIS_PCT}%)"), detail
+    crop = [int(c // 2 * 2) for c in crop]  # even, like cropdetect's round=2
+    return tuple(crop), None, detail  # type: ignore[return-value]
+
+
+def _detect_crop(src: str, ffprobe_exe: str) -> tuple[tuple[int, int, int, int] | None, str]:
+    """Detect baked-in black bars on the local copy. Returns (crop, note):
+    the applied crop (l,t,r,b) or None, plus the note for the run log — the
+    applied crop with its resulting geometry, or the refusal reason. NEVER
+    fails: any probe failure/exception reads as no crop + a detection-failed
+    note (the encode ships uncropped).
+    Tools resolve through _find_tool (the mise-shim trap), not bare names."""
+    try:
+        frame = _probe_frame(src, ffprobe_exe)
+        ff = _find_tool("ffmpeg")
+        if frame is None or frame[3] is None or ff is None:
+            return None, "no crop -- detection failed"
+        w, h, _field, dur = frame
+        stamps =[dur * (0.1 + 0.8 * i / (_PROBES - 1)) for i in range(_PROBES)]
+        readings = [r for r in (_probe_bars(ff, src, t, _FRAMES, w, h)
+                                for t in stamps) if r is not None]
+        if len(readings) < MIN_READINGS:
+            return None, (f"no crop -- detection failed "
+                          f"({_PROBES - len(readings)} probe(s) gave no reading)")
+        crop, reason, detail = _gate(readings, w, h)
+        if crop is None:
+            return None, f"no crop -- {reason} ({detail})"
+        l, t, r_, b = crop
+        return crop, (f"crop {l}/{t}/{r_}/{b} -> "
+                      f"{w - l - r_}x{h - t - b} ({detail})")
+    except Exception:
+        return None, "no crop -- detection failed"
+
+
 def _preset(height: int) -> str:
     """Largest standard preset that does NOT upscale the source."""
     if height <= 480:
@@ -280,7 +388,8 @@ def _preset(height: int) -> str:
 
 
 def _encode_vaapi(src: str, out: str, no_subs: bool = False,
-                  log: common.RipLog | None = None) -> bool:
+                  log: common.RipLog | None = None,
+                  crop: tuple[int, int, int, int] | None = None) -> bool:
     """Full-VCN re-encode via ffmpeg VAAPI (HandBrake has no VAAPI encoder on
     Linux): hevc_vaapi CQP 24, audio and subtitles stream-copied, bwdif
     deinterlaces only frames marked interlaced (progressive passes untouched
@@ -298,9 +407,11 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
               f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
               "(scripts/setup-transcode.sh installs both)", file=sys.stderr)
         return False
-    vf = ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
-          "crop=floor(iw/64)*64:ih,"
-          "format=nv12|p010,hwupload")
+    vf = "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
+    if crop:  # the detected bar crop rides BEFORE the 64-px alignment crop
+        l, t, r, b = crop
+        vf += f"crop=iw-{l}-{r}:ih-{t}-{b}:{l}:{t},"
+    vf += "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload"
     cmd = [ff, "-hide_banner", "-y",
            "-vaapi_device", "/dev/dri/renderD128",
            "-i", src,
@@ -358,7 +469,8 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
 
 def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
             no_subs: bool = False, log: common.RipLog | None = None,
-            speed: str | None = None) -> bool:
+            speed: str | None = None,
+            crop: tuple[int, int, int, int] | None = None) -> bool:
     """HandBrake pass-through re-encode at native resolution (the x265 paths;
     the vaapi path dispatches to _encode_vaapi before any of this). no_subs
     selects zero subtitle tracks (features and TV
@@ -374,7 +486,7 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     because a rejected job init (bad argv) exits 0 writing nothing (the
     Conan FATAL)."""
     if encoder == "vaapi":  # hardware path: ffmpeg, never HandBrakeCLI
-        return _encode_vaapi(src, out, no_subs=no_subs, log=log)
+        return _encode_vaapi(src, out, no_subs=no_subs, log=log, crop=crop)
     if encoder == "x265-fast":  # auto's CPU fallback; an item's own marker
         speed = speed or "fast"  # speed (extras superfast) still wins
     height = _probe_height(src, ffprobe_exe)
@@ -625,12 +737,21 @@ def _extra_name(dest_dir: str, safe: str, num: int, ext: str) -> str:
     return f"{safe} - Extra {n:02d}{ext}.mkv"
 
 
-def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> None:
+def _probe_size(src: str, ffprobe_exe: str) -> str | None:
+    """'WxH' of the first video stream, for the validation encode record's
+    size; None if unreadable."""
+    frame = _probe_frame(src, ffprobe_exe)
+    return f"{frame[0]}x{frame[1]}" if frame else None
+
+
+def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str,
+                   crop: tuple[int, int, int, int] | None = None) -> None:
     """Append the main encode's result to the title folder's validation.json
     and copy the doc into the library folder beside the encode. The encodes
-    entry is {"file", "src", "dur_s"} (skive/validation.py's schema): the
-    dest file's name, the source title number as "tNN", and the actual
-    duration probed from the encode output. Append-once: an entry already
+    entry is {"file", "src", "dur_s", "crop", "size"} (skive/validation.py's
+    schema): the dest file's name, the source title number as "tNN", the
+    actual duration probed from the encode output, the applied bar crop as
+    "l/t/r/b" (null when none), and the final encode geometry as "WxH". Append-once: an entry already
     naming this dest file — a re-run — is replaced by the fresh probe, never
     duplicated. A doc absent or unreadable here skips the append and the
     copy: the record never crashes the pipeline."""
@@ -638,7 +759,9 @@ def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> 
     if doc is None:
         return
     entry = {"file": os.path.basename(dest), "src": f"t{src_num}",
-             "dur_s": _probe_duration(dest, ffprobe_exe)}
+             "dur_s": _probe_duration(dest, ffprobe_exe),
+             "crop": "/".join(str(v) for v in crop) if crop else None,
+             "size": _probe_size(dest, ffprobe_exe)}
     encodes = doc.get("encodes")
     if not isinstance(encodes, list):
         encodes = []
@@ -709,14 +832,31 @@ def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
     return side_dir, res
 
 
+def _detect_part(local_src: str, ffprobe_exe: str, log: common.RipLog,
+                 parts: list[str]) -> tuple[tuple[int, int, int, int] | None, str]:
+    """Black-bar detection as the run's 'detect' phase, on the local copy,
+    right before the encode; the run log carries the applied crop or the
+    refusal reason, timed like the other phases. A refusal never fails the
+    item -- the encode ships uncropped."""
+    log.phase("detect")
+    t0 = time.monotonic()
+    crop, note = _detect_crop(local_src, ffprobe_exe)
+    secs = max(int(time.monotonic() - t0), 1)
+    log.phase_end(note)
+    log.note("detect", note)
+    parts.append(f"detect {_hms(secs)}")
+    return crop, note
+
+
 def _encode_part(local_src: str, local_out: str, encoder: str, hb_exe: str,
                  ffprobe_exe: str, no_subs: bool, log: common.RipLog,
-                 parts: list[str], speed: str | None = None) -> bool:
+                 parts: list[str], speed: str | None = None,
+                 crop: tuple[int, int, int, int] | None = None) -> bool:
     """The encode as the run's 'encode' phase; status carries the output size."""
     log.phase("encode")
     t0 = time.monotonic()
     ok = _encode(local_src, local_out, encoder, hb_exe, ffprobe_exe,
-                 no_subs=no_subs, log=log, speed=speed)
+                 no_subs=no_subs, log=log, speed=speed, crop=crop)
     secs = max(int(time.monotonic() - t0), 1)
     detail = (f"ok, {os.path.getsize(local_out) // (1024 * 1024)} MB"
               if ok else "FAIL")
@@ -960,8 +1100,10 @@ def run_transcode(args) -> int:
                                                seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 inflight = cleanup + [local_out]
+                crop, _ = _detect_part(local_src, ffprobe_exe, log, parts)
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
-                                ffprobe_exe, no_subs=episode, log=log, parts=parts):
+                                ffprobe_exe, no_subs=episode, log=log, parts=parts,
+                                crop=crop):
                     shutil.move(local_out, dest)
                     if side_dir is not None:
                         _ship_sidecars(side_dir, dest_dir, res)
@@ -1084,14 +1226,17 @@ def run_transcode(args) -> int:
                                            seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
+                crop, _ = _detect_part(local_src, ffprobe_exe, log, parts)
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
-                                ffprobe_exe, no_subs=True, log=log, parts=parts):
+                                ffprobe_exe, no_subs=True, log=log, parts=parts,
+                                crop=crop):
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
                     # the doc that picked this main gets the encode appended
                     # (append-once) and a library copy beside the encode
                     if i.movie in doc_path:
-                        _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe)
+                        _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe,
+                                       crop=crop)
                     for p in cleanup:
                         _rmf(p)
                     # nothing is deleted until its sidecars are verified: the
@@ -1174,9 +1319,10 @@ def run_transcode(args) -> int:
             cleanup.append(local_src)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             inflight = cleanup + [local_out]
+            crop, _ = _detect_part(local_src, ffprobe_exe, log, parts)
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
                             ffprobe_exe, no_subs=False, log=log, parts=parts,
-                            speed=speed):
+                            speed=speed, crop=crop):
                 shutil.move(local_out, dest)
                 for p in cleanup:
                     _rmf(p)
