@@ -22,10 +22,14 @@ if ! rpm -q rpmfusion-free-release >/dev/null 2>&1; then
 fi
 # package name changed case across releases; accept either
 sudo dnf install -y handbrake-cli 2>/dev/null || sudo dnf install -y HandBrake-cli
-# mesa-va-drivers + libva-utils: VCN hardware encode for scripts/bench.sh's
-# VAAPI runs (the laptop's Ryzen AI 7 350). Harmless on the BC-250.
-sudo dnf install -y mkvtoolnix ffmpeg mesa-va-drivers libva-utils tesseract \
+# VA-API for scripts/bench.sh's hardware runs: Fedora's mesa-va-drivers is
+# built with H.264/H.265 removed (patents) — vainfo then lists only JPEG/VP9/
+# AV1 — so swap in RPM Fusion's freeworld build (repo enabled above, needed
+# for HandBrake anyway). Harmless on the BC-250 (its VCN is eFused off).
+sudo dnf install -y mkvtoolnix ffmpeg libva-utils tesseract \
   tesseract-langpack-eng tesseract-langpack-dan libicu git
+sudo dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld \
+  || sudo dnf install -y mesa-va-drivers-freeworld
 
 echo "== uv =="
 if ! command -v uv >/dev/null 2>&1; then
@@ -51,14 +55,14 @@ fi
 echo "== verify =="
 command -v HandBrakeCLI mkvmerge ffprobe tesseract seconv skive
 tesseract --list-langs   # want eng + dan
-va=$(vainfo 2>&1 || true)
+va=$(vainfo --display drm 2>&1 || true)
 if grep -q 'VAEntrypointEncSlice' <<<"$va"; then
   echo "VA-API encode: available ($(grep -c 'VAEntrypointEncSlice' <<<"$va") entrypoints)"
 else
   echo "note: no VA-API encode entries — vainfo said:"
   sed -n '1,6p' <<<"$va" | sed 's/^/  | /'
-  echo "  | expected on the BC-250 (VCN eFused off); on the AI 350 it means the"
-  echo "  | container's Mesa predates gfx1152 — recreate the box with fedora:43+"
+  echo "  | expected on the BC-250 (VCN eFused off); if the AI 350 lists no"
+  echo "  | H264/HEVC at all, the freeworld swap above did not take effect"
 fi
 test -d /mnt/videos || { echo "ERROR: /mnt/videos missing — recreate the box with --volume /mnt/videos:/mnt/videos (see docs/transcode.md)"; exit 1; }
 echo "OK — the box is ready. All skive runs happen inside this container."
