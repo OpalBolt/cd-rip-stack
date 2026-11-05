@@ -7,10 +7,11 @@ on real library titles before the spec and tickets.
 
 The gate (settled in .scratch/transcode-overlap-crop/map.md):
   ~6 probes spread over 10%-90% of the file, cropdetect on a short window
-  each; per-side bar = median across probes; every probe within +/-4 px of
-  that median; sides under 16 px crop as 0 (alignment noise); left+right
-  and top+bottom each under 30% of the axis. Unstable or over-cap = no
-  crop, reason printed.
+  each; per-side bar = median across probes; at most one probe per side
+  may dissent beyond +/-4 px of that median (a lone dissent is a credits
+  or dark-scene outlier); sides under 16 px crop as 0 (alignment noise);
+  left+right and top+bottom each under 30% of the axis. More dissent or
+  over-cap = no crop, reason printed.
 
 Usage:
   mise exec -- python3 scripts/crop_detect_test.py 'Movie (Year).mkv' [more ...]
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import subprocess
@@ -32,8 +34,9 @@ CROP_RE = re.compile(r"crop=(\d+):(\d+):(\d+):(\d+)")
 
 MIN_PX = 16        # one DVD macroblock; a bar under this is alignment noise
 MAX_AXIS_PCT = 30  # per-axis crop total above this smells like detection error
-TOLERANCE = 4      # every probe must sit within this of the median, per side
+TOLERANCE = 4      # a dissenting probe sits further than this from the median
 MIN_READINGS = 3   # fewer good probes than this = detection failed
+MAX_DISSENT = 1    # lone dissent per side absorbed (credits / dark scene)
 
 
 def probe_stream(path: str) -> tuple[int, int, float, str]:
@@ -69,9 +72,10 @@ def gate(readings: list[tuple[int, int, int, int]], w: int, h: int):
     med = [statistics.median(r[i] for r in readings) for i in range(4)]
     detail = "median l/t/r/b = " + "/".join(str(int(m)) for m in med)
     for name, i in zip(("left", "top", "right", "bottom"), range(4)):
-        spread = max(abs(r[i] - med[i]) for r in readings)
-        if spread > TOLERANCE:
-            return None, f"unstable {name} (spread {spread:.0f} px)", detail
+        n_off = sum(1 for r in readings if abs(r[i] - med[i]) > TOLERANCE)
+        if n_off > MAX_DISSENT:
+            return None, (f"unstable {name} ({n_off} of {len(readings)} "
+                          "probes dissent)"), detail
     crop = [m if m >= MIN_PX else 0 for m in med]
     if not any(crop):
         return None, f"no bar >= {MIN_PX} px", detail
@@ -84,7 +88,22 @@ def gate(readings: list[tuple[int, int, int, int]], w: int, h: int):
     return tuple(crop), None, detail  # type: ignore[return-value]
 
 
+def _clean_path(raw: str) -> str:
+    # Forgive pasted shell quoting: one matched quote layer, then
+    # backslash escapes. shortcut: trial-only leniency, skive stays strict
+    p = raw
+    if len(p) > 1 and p[0] == p[-1] and p[0] in "'\"":
+        p = p[1:-1]
+    if not os.path.exists(p) and "\\" in p:
+        p = re.sub(r"\\(.)", r"\1", p)
+    return p
+
+
 def trial(path: str, probes: int, frames: int) -> int:
+    path = _clean_path(path)
+    if not os.path.isfile(path):
+        print(f"{path}\n  not found -- check the path (quote it, no backslashes)")
+        return 1
     try:
         w, h, dur, field = probe_stream(path)
     except (subprocess.CalledProcessError, KeyError, IndexError, ValueError) as e:
@@ -124,7 +143,9 @@ def self_check() -> int:
         ([(0, 200, 0, 200)] * 6, 1024, 576, None),          # 69% of height = error
         ([(70, 0, 70, 0), (70, 0, 70, 0), (0, 0, 0, 0),
           (70, 0, 70, 0), (70, 0, 70, 0), (70, 0, 70, 0)],
-         1024, 576, None),                                  # one outlier = unstable
+         1024, 576, (70, 0, 70, 0)),                      # lone dissent absorbed
+        ([(70, 0, 70, 0)] * 3 + [(0, 0, 0, 0)] * 3,
+         1024, 576, None),                                # half dissent = mixed AR
         ([(20, 0, 40, 0)] * 6, 1024, 576, (20, 0, 40, 0)),  # asymmetric pillarbox
     ]
     for readings, w, h, want in cases:
