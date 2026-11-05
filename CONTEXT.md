@@ -183,6 +183,22 @@ _Avoid_: subtitle extraction, sub rip
 
 ### Logging
 
+**Event line**:
+skive's own line about what a run is doing — three kinds: `info` (routine events, skips, deferrals), `warn` (the loud note: something off, run continues), `fail` (something failed). Always stderr; stdout carries only data answers (`search` hits, `--json`).
+_Avoid_: log message, print
+
+**Run view**:
+The rich-panel console UI the long-running commands draw while they work — `rip movie`, `rip tv`, `rip music`, `transcode`: a status panel (the situation: what is ripping/encoding, progress, ETA), a background panel (one line per concurrent activity, e.g. the prefetch copy), and a log panel (the tail of recent event lines, tool lines included per verbosity). Interactive moments — pick tables, fix-row prompts — suspend it; the run's end clears the panels and prints the run summary. Piped or non-TTY, the same event stream renders as plain tagged lines instead. Never gates the durable logs — run log and raw log are always written.
+_Avoid_: TUI, dashboard, progress screen
+
+**Run summary**:
+What prints when a run view clears: warn/fail event lines replayed as plain tagged lines, then one rich table of the run's items — transcode: item × copy/merge/subs/encode timings × total × result; rip: title × duration × size × result — with the ok/failed count and the `--keep` banner beneath. The one-glance outcome of a run; the full story stays in the run log.
+_Avoid_: final report, recap
+
+**Perf line**:
+The transcode run view's bottom status line: whole-system CPU % (a /proc/stat delta) plus the CPU and GPU package temperatures (hwmon), whichever sensors are readable — `CPU 62% · cpu 78°C · gpu 61°C` — red at ≥ 95 °C (thermal-throttle territory on the encode box). Transcode only. Never prints in the plain-line fallback; an unreadable sensor is omitted, never warned — a missing number is not a failure.
+_Avoid_: system monitor, sensor readout
+
 **Run log**:
 The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. A transcode run logs one timed line per part — `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the part's numbers in `status` (`5744 MB at 64 MB/s`), so copy slippage and encode slippage are separable trends; a phase that dies mid-run closes with `FAIL` and its elapsed. Replaces the old 8-column text `rip.log`.
 _Avoid_: verification log, event log
