@@ -7,6 +7,10 @@
 #   distrobox enter transcode
 #   bash ~/git/cd-rip-stack/scripts/setup-transcode.sh
 #
+#   On the AI 350 laptop, create the box with --image fedora:43 (or newer)
+#   instead: gfx1152 (Radeon 860M) needs Mesa 25.0+ for VCN encode, and
+#   fedora:41's Mesa 24.x cannot drive it. The BC-250 is fine on fedora:41.
+#
 # Idempotent: safe to re-run (a git pull + re-run also heals a broken box).
 # No mise on this machine — mise.toml belongs to the rip box only.
 set -euo pipefail
@@ -48,9 +52,13 @@ echo "== verify =="
 command -v HandBrakeCLI mkvmerge ffprobe tesseract seconv skive
 tesseract --list-langs   # want eng + dan
 va=$(vainfo 2>&1 || true)
-case "$va" in
-  *VAEntrypointEncSlice*) echo "VA-API encode: available ($(grep -c 'VAEntrypointEncSlice' <<<"$va") entrypoints)" ;;
-  *) echo "note: no VA-API encode — expected on the BC-250 (VCN eFused off); the laptop's VCN exposes them" ;;
-esac
+if grep -q 'VAEntrypointEncSlice' <<<"$va"; then
+  echo "VA-API encode: available ($(grep -c 'VAEntrypointEncSlice' <<<"$va") entrypoints)"
+else
+  echo "note: no VA-API encode entries — vainfo said:"
+  sed -n '1,6p' <<<"$va" | sed 's/^/  | /'
+  echo "  | expected on the BC-250 (VCN eFused off); on the AI 350 it means the"
+  echo "  | container's Mesa predates gfx1152 — recreate the box with fedora:43+"
+fi
 test -d /mnt/videos || { echo "ERROR: /mnt/videos missing — recreate the box with --volume /mnt/videos:/mnt/videos (see docs/transcode.md)"; exit 1; }
 echo "OK — the box is ready. All skive runs happen inside this container."

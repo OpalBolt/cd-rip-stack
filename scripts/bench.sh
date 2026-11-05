@@ -56,11 +56,19 @@ run x265-superfast --encoder-preset superfast
 # VCN is eFused off, so vainfo shows no encode entrypoint there and this skips.
 # CQP 24/28 bracket the x265 RF-22 output size — compare speed at matching size,
 # then eyeball quality in $work (ADR 0010's streaming-encoder caveat applies).
-if command -v vainfo >/dev/null 2>&1 && vainfo 2>/dev/null | grep -Eq 'HEVC(Main|Main10)[[:space:]]*: VAEntrypointEncSlice'; then
+if ! command -v vainfo >/dev/null 2>&1; then
+  echo "-- vainfo missing — re-run scripts/setup-transcode.sh inside the box"
+elif va=$(vainfo 2>&1); grep -Eq '^ *VAProfileHEVC[^:]*:[[:space:]]*VAEntrypointEncSlice' <<<"$va"; then
   run_ffmpeg hevc-vaapi-cqp24 24
   run_ffmpeg hevc-vaapi-cqp28 28
 else
-  echo "-- no VA-API HEVC encode entrypoint (vainfo) — skipping hardware runs (expected on the BC-250)"
+  echo "-- no VA-API HEVC encode entrypoint — skipping hardware runs. vainfo said:"
+  sed -n '1,10p' <<<"$va" | sed 's/^/   | /'
+  echo "   | on the BC-250 this skip is expected (VCN eFused off). On the AI 350 it"
+  echo "   | means this container's Mesa predates gfx1152 support (needs 25.0+;"
+  echo "   | fedora:41 ships 24.x). Recreate the box with a newer image:"
+  echo "   |   distrobox rm -f transcode"
+  echo "   |   distrobox create -n transcode --image fedora:43 --volume /mnt/videos:/mnt/videos"
 fi
 echo "--"
 echo "full logs and outputs in $work for eyeballing"
