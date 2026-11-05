@@ -491,7 +491,15 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         speed = speed or "fast"  # speed (extras superfast) still wins
     height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
-    cmd += ["--preset", _preset(height) if height else "H.265 MKV 1080p30"]
+    preset_h = height
+    if height and crop:
+        # preset judged on the CROPPED frame so the never-upscale rule holds
+        preset_h = height - crop[1] - crop[3]
+    cmd += ["--preset", _preset(preset_h) if height else "H.265 MKV 1080p30"]
+    if crop:
+        # gate returns (l,t,r,b); HandBrakeCLI wants t:b:l:r
+        l, t, r_, b = crop
+        cmd += ["--crop", f"{t}:{b}:{l}:{r_}"]
     if 0 < height <= 576:
         cmd += ["--detelecine", "--decomb"]  # DVD: kill telecine/interlace combing
     cmd += [
@@ -1103,8 +1111,7 @@ def run_transcode(args) -> int:
                 inflight = cleanup + [local_out]
                 # detection only feeds the vaapi filter chain; HandBrake (x265)
                 # ignores the crop, so no detect phase, no announce, record null
-                crop = _detect_part(local_src, ffprobe_exe, log, parts)[0] \
-                    if args.encoder == "vaapi" else None
+                crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=episode, log=log, parts=parts,
                                 crop=crop):
@@ -1230,8 +1237,7 @@ def run_transcode(args) -> int:
                                            seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
-                crop = _detect_part(local_src, ffprobe_exe, log, parts)[0] \
-                    if args.encoder == "vaapi" else None
+                crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=True, log=log, parts=parts,
                                 crop=crop):
@@ -1324,8 +1330,7 @@ def run_transcode(args) -> int:
             cleanup.append(local_src)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             inflight = cleanup + [local_out]
-            crop = _detect_part(local_src, ffprobe_exe, log, parts)[0] \
-                if args.encoder == "vaapi" else None
+            crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
                             ffprobe_exe, no_subs=False, log=log, parts=parts,
                             speed=speed, crop=crop):

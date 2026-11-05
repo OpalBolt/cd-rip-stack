@@ -753,6 +753,46 @@ def test_x265_default_arg_list(env):
     assert "--quality" not in line
 
 
+def test_x265_letterboxed_main_encodes_cropped(env):
+    """A letterboxed main on the x265 path: the detected crop reaches
+    HandBrakeCLI as custom --crop in HandBrake's t:b:l:r order, the preset is
+    picked from the CROPPED height (576 - 72 - 72 = 432 -> 480p30), and the
+    validation encodes entry carries the applied crop."""
+    vid = env / "vid"
+    _mk_main(vid, "Bars (2001)", "LETTERBOX-720x576 BARS-0/72/0/72")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    dest = vid / "library" / "movies" / "Bars (2001)" / "Bars (2001).mkv"
+    assert dest.read_text() == "LETTERBOX-720x576 BARS-0/72/0/72"
+    line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
+    assert "--crop 72:72:0:0" in line  # t:b:l:r from gate crop (l=0,t=72,r=0,b=72)
+    assert "--preset H.265 MKV 480p30" in line
+    det = [l for l in run_log(env) if l.get("phase") == "detect"]
+    assert "crop 0/72/0/72 -> 720x432" in det[0]["status"]
+    lib_doc = json.loads((vid / "library" / "movies" / "Bars (2001)" /
+                          "validation.json").read_text())
+    assert lib_doc["encodes"][0]["crop"] == "0/72/0/72"
+
+
+def test_x265_unstable_bars_refuse_and_ship_uncropped(env):
+    """A gate refusal on the x265 path: no --crop in the HandBrake argv, the
+    preset comes from the FULL probed height, the encode proceeds, and the
+    detect line carries the refusal note."""
+    vid = env / "vid"
+    _mk_main(vid, "Wobbly (2002)", "LETTERBOX-720x576 BARS-UNSTABLE")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
+    assert "--crop" not in line
+    assert "--preset H.265 MKV 576p25" in line  # full 576, not the cropped 432
+    det = [l for l in run_log(env) if l.get("phase") == "detect"]
+    assert "no crop --" in det[0]["status"]
+
+
 def test_vaapi_flags(env):
     """-e vaapi encodes through ffmpeg (HandBrake is never invoked): hevc_vaapi
     CQP 24, the bwdif/width-crop/hwupload chain, audio stream-copied, subs
@@ -926,11 +966,14 @@ def test_auto_falls_back_to_x265_fast(env, monkeypatch):
     rc = transcode.run_transcode(Args(encoder="auto"))
 
     assert rc == 0
-    # x265 ignores the crop, so no detect phase and no ffmpeg probes on the
-    # fallback path; what must stay absent is the vaapi encode
-    assert not (env / "ffmpeg-calls.log").exists()
+    # x265 now applies the crop gate too: detection runs (ffmpeg probes),
+    # but no crop is staged here (GPU-MAIN has no bars) and what must stay
+    # absent is the vaapi encode
+    ff = (env / "ffmpeg-calls.log").read_text()
+    assert "hevc_vaapi" not in ff  # fallback: never the vaapi encode
     line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
     assert "--encoder-preset fast" in line
+    assert "--crop" not in line
 
 
 def test_vaapi_required_but_absent(env, monkeypatch):
@@ -1183,12 +1226,12 @@ def test_log_line_shape(env):
     assert first["phase"] == "-"
     assert first["status"] == "started"
     assert first["elapsed_s"] == 0
-    # a clean item logs one line per part (copy, subs) plus the encode and
-    # the run total
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
+    # a clean item logs one line per part (copy, subs), the detect phase
+    # (the crop gate now runs on every encoder), and the run total
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "total"]
     assert re.match(r"^\d+ MB at \d+ MB/s$", lines[1]["status"])
     assert lines[2]["status"] == "0 sidecar(s)"
-    assert re.match(r"^ok, \d+ MB$", lines[3]["status"])
+    assert re.match(r"^ok, \d+ MB$", lines[4]["status"])
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "ok"
     assert lines[-1]["run"] == first["run"]
     # the raw log is deleted on a clean exit
@@ -1370,7 +1413,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
 
     assert rc == 0
     lines = run_log(env)
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "total"]
     by = {l["phase"]: l for l in lines[1:]}
     assert re.match(r"^\d+ MB at \d+ MB/s$", by["copy"]["status"])
     assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
@@ -1378,7 +1421,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
     out = capsys.readouterr().out
     assert re.search(
-        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ encode \S+ -- ok", out)
+        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", out)
     assert "1 ok, 0 failed" in out
 
 
