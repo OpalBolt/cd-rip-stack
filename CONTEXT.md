@@ -100,8 +100,16 @@ MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; tra
 _Avoid_: label, code
 
 **Transcode box**:
-The machine that runs `skive transcode` over the NAS mount — an AMD BC-250 (PS5-derived Zen 2, 8 cores unlocked, Bazzite) in a distrobox, replacing the retired Windows box. Encodes CPU-only x265 via HandBrake: the BC-250's video engine is factory-disabled (VCN eFused off, firmware blocked), so hardware encode does not exist on this machine — HandBrake, ffmpeg, or any other tool alike. The box is self-contained: every tool it needs — HandBrake, mkvmerge, tesseract, seconv, ffmpeg, and skive itself — lives in the container, built by the repo's `scripts/setup-transcode.sh`; mise stays a rip-box tool.
-_Avoid_: encoder box, GPU box, Windows box
+The machine that runs `skive transcode` over the NAS mount — the Ryzen AI 7 350 laptop in its distrobox, the only transcode box: the BC-250 no longer transcodes. Encodes via ffmpeg `hevc_vaapi` on the laptop's VCN hardware (`-e auto`'s resolution; ADR 0010 records the path and its 2026-11 hardware revision). The box is self-contained: every tool it needs — ffmpeg, mkvmerge, tesseract, seconv, and skive itself — lives in the container, built by the repo's `scripts/setup-transcode.sh`; mise stays a rip-box tool.
+_Avoid_: encoder box, GPU box, BC-250
+
+**Prefetch**:
+The transcode copy overlap: while one unit encodes, the next unit's source is already being pulled from the share into the workdir. One unit of lookahead only — the ship stays synchronous and one encode runs at a time. Without workdir headroom for the next source, that item falls back to the sequential copy with a loud note.
+_Avoid_: download, upload, double-buffering
+
+**Crop gate**:
+The rule that decides a title's black-bar crop at transcode: sampled detection (~6 probes spread over 10–90% of the file), per-side bar as the median across probes, at most one probe per side dissenting beyond ±4 px (a lone dissent is a credits or dark-scene outlier), sides under 16 px crop as nothing, per-axis totals capped at 30%. Unstable or over-cap detection means no crop plus a loud note; applied values are recorded in the run log and validation.json. Applies to everything encoded — mains, TV episodes, extras — on every encode path.
+_Avoid_: autocrop, letterbox removal
 
 **Staging**:
 Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/<music source>/<album>/` — one folder per album, the source level tells `tag` how to file it; `tag` moves it into the library, so an album still in `rip/` is not yet filed. A mid-rip file still wears its junk label.
