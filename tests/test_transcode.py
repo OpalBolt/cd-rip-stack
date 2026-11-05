@@ -484,13 +484,8 @@ def test_guard_quarantine_carries_run_evidence(env):
     assert any("FAIL tracks differ" in l["status"] for l in ev_lines)
     assert any(l["phase"] == "encode" for l in ev_lines)  # Next's shipped phase
     # both parts quarantine into the same folder — each evidence line exactly
-    # once, not once per part (and only the run's own raw-log copy beside them);
-    # detect may legitimately pair its timed phase line with the identical
-    # untimed note line, everything else is unique
-    n_detect = sum(1 for l in ev_lines if l["phase"] == "detect")
-    rest = [l for l in ev_lines if l["phase"] != "detect"]
-    assert n_detect == 2
-    assert len(rest) == len({json.dumps(l, sort_keys=True) for l in rest})
+    # once, not once per part (and only the run's own raw-log copy beside them)
+    assert len(ev_lines) == len({json.dumps(l, sort_keys=True) for l in ev_lines})
     assert {p.name for p in folder.glob("*.jsonl")} == {"rip.jsonl", f"{run}.jsonl"}
     # the run failed, so its raw log exists in logs/raw/ AND is copied in
     raw = vid / "logs" / "raw" / f"{run}.jsonl"
@@ -931,9 +926,9 @@ def test_auto_falls_back_to_x265_fast(env, monkeypatch):
     rc = transcode.run_transcode(Args(encoder="auto"))
 
     assert rc == 0
-    # detect now probes through ffmpeg (cropdetect) even on the x265 path;
-    # what must stay absent is the vaapi encode
-    assert "hevc_vaapi" not in (env / "ffmpeg-calls.log").read_text()
+    # x265 ignores the crop, so no detect phase and no ffmpeg probes on the
+    # fallback path; what must stay absent is the vaapi encode
+    assert not (env / "ffmpeg-calls.log").exists()
     line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
     assert "--encoder-preset fast" in line
 
@@ -1190,11 +1185,10 @@ def test_log_line_shape(env):
     assert first["elapsed_s"] == 0
     # a clean item logs one line per part (copy, subs) plus the encode and
     # the run total
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "detect", "encode", "total"]  # detect: the timed phase line + the loud note line
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
     assert re.match(r"^\d+ MB at \d+ MB/s$", lines[1]["status"])
     assert lines[2]["status"] == "0 sidecar(s)"
-    assert "no crop --" in lines[3]["status"]  # detect: the timed line + the note line
-    assert re.match(r"^ok, \d+ MB$", lines[5]["status"])
+    assert re.match(r"^ok, \d+ MB$", lines[3]["status"])
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "ok"
     assert lines[-1]["run"] == first["run"]
     # the raw log is deleted on a clean exit
@@ -1376,7 +1370,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
 
     assert rc == 0
     lines = run_log(env)
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "detect", "encode", "total"]  # detect: the timed phase line + the loud note line
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "encode", "total"]
     by = {l["phase"]: l for l in lines[1:]}
     assert re.match(r"^\d+ MB at \d+ MB/s$", by["copy"]["status"])
     assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
@@ -1384,7 +1378,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
     out = capsys.readouterr().out
     assert re.search(
-        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", out)
+        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ encode \S+ -- ok", out)
     assert "1 ok, 0 failed" in out
 
 

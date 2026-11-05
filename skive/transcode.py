@@ -843,7 +843,8 @@ def _detect_part(local_src: str, ffprobe_exe: str, log: common.RipLog,
     crop, note = _detect_crop(local_src, ffprobe_exe)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end(note)
-    log.note("detect", note)
+    if crop is None:
+        print(f"  {note}")  # loud refusals on console; the phase line is the record
     parts.append(f"detect {_hms(secs)}")
     return crop, note
 
@@ -1100,7 +1101,10 @@ def run_transcode(args) -> int:
                                                seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 inflight = cleanup + [local_out]
-                crop, _ = _detect_part(local_src, ffprobe_exe, log, parts)
+                # detection only feeds the vaapi filter chain; HandBrake (x265)
+                # ignores the crop, so no detect phase, no announce, record null
+                crop = _detect_part(local_src, ffprobe_exe, log, parts)[0] \
+                    if args.encoder == "vaapi" else None
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=episode, log=log, parts=parts,
                                 crop=crop):
@@ -1226,7 +1230,8 @@ def run_transcode(args) -> int:
                                            seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
-                crop, _ = _detect_part(local_src, ffprobe_exe, log, parts)
+                crop = _detect_part(local_src, ffprobe_exe, log, parts)[0] \
+                    if args.encoder == "vaapi" else None
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=True, log=log, parts=parts,
                                 crop=crop):
@@ -1319,7 +1324,8 @@ def run_transcode(args) -> int:
             cleanup.append(local_src)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             inflight = cleanup + [local_out]
-            crop, _ = _detect_part(local_src, ffprobe_exe, log, parts)
+            crop = _detect_part(local_src, ffprobe_exe, log, parts)[0] \
+                if args.encoder == "vaapi" else None
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
                             ffprobe_exe, no_subs=False, log=log, parts=parts,
                             speed=speed, crop=crop):
