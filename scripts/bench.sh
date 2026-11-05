@@ -7,6 +7,10 @@
 # Google TV cannot hardware-decode AV1 (jellyfin-androidtv#4838), so HEVC is
 # the only codec this library can commit to.
 set -euo pipefail
+# pin the container's tools: the host's mise shims (~/.local) bleed into the
+# box through the shared home and shadow /usr/bin — mise's ffmpeg does not
+# see the freeworld VA-API driver (no HEVC/H264 encode entrypoints)
+export PATH="/usr/bin:$PATH"
 src="$1"; work="$(mktemp -d /tmp/bench-XXXX)"
 sample="$work/sample.mkv"
 echo "cutting 5-min sample from the middle..."
@@ -70,6 +74,13 @@ else
   if grep -Eq '^ *VAProfileHEVC[^:]*:[[:space:]]*VAEntrypointEncSlice[[:space:]]*$' <<<"$va"; then
     run_ffmpeg hevc-vaapi-cqp24 24
     run_ffmpeg hevc-vaapi-cqp28 28
+    # VCN HEVC needs width%64/height%16 (AMD mesa patch: "width alignment for
+    # HEVC encoding should be 64 due to hardware requirement"); unaligned
+    # frames get hw-padded and the padding can bleed in as a stretched right
+    # edge (720-wide DVDs: 720->768 pad). Crop to alignment to compare clean —
+    # for 1080p this also drops 8 bottom lines, so eyeball both variants.
+    run_ffmpeg hevc-vaapi-cqp24-al64 24 \
+      -vf 'crop=floor(iw/64)*64:floor(ih/16)*16,format=nv12|p010,hwupload'
   elif grep -Eq '^ *VAProfileHEVC[^:]*:[[:space:]]*VAEntrypointEncSliceLP[[:space:]]*$' <<<"$va"; then
     # mobile APUs expose encode only as the low-power entrypoint; ffmpeg
     # needs -low_power 1 to reach it
