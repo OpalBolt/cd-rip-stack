@@ -673,8 +673,9 @@ def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
     parts.append(f"copy {_hms(secs)}")
 
 
-def _copy2(src: str, dst: str) -> None:
-    """copy2 (mode + mtime preserved) with a progress line every 10%."""
+def _copy2(src: str, dst: str, cancel: threading.Event | None = None) -> None:
+    """copy2 (mode + mtime preserved) with a progress line every 10%.
+    cancel, when set, aborts between chunks leaving a partial dst."""
     total = os.path.getsize(src)
     if total == 0:
         shutil.copy2(src, dst)
@@ -687,6 +688,8 @@ def _copy2(src: str, dst: str) -> None:
             buf = fin.read(mb)
             if not buf:
                 break
+            if cancel is not None and cancel.is_set():
+                return
             fout.write(buf)
             done += len(buf)
             pct = done * 100 // total
@@ -1114,6 +1117,7 @@ def run_transcode(args) -> int:
     pf_ready: dict[str, str] = {}  # staged src -> local dst, filled on completion
     pf_started: set[int] = set()
     pf_thread: threading.Thread | None = None
+    pf_cancel = threading.Event()  # set by the interrupt arm so _copy2 stops mid-file
 
     def _pf_join() -> None:
         nonlocal pf_thread
@@ -1149,9 +1153,10 @@ def run_transcode(args) -> int:
         pf_started.add(nxt)
         nxt_unit, cur = units[nxt], units[idx]
         names = " ".join(x.name for x in nxt_unit)
+        free = shutil.disk_usage(tmp_dir).free
         need = sum(x.size for x in nxt_unit) + sum(x.size for x in cur)
-        if shutil.disk_usage(tmp_dir).free < need:
-            msg = (f"workdir short {need} bytes of headroom -- no prefetch, "
+        if free < need:
+            msg = (f"workdir short {need - free} bytes of headroom -- no prefetch, "
                    f"{names} copies sequentially later")
             print(msg)
             log.note("prefetch", msg)
@@ -1162,8 +1167,10 @@ def run_transcode(args) -> int:
 
         def work():
             for x in nxt_unit:
+                if pf_cancel.is_set():
+                    return
                 dst = os.path.join(tmp_dir, x.name)
-                _copy2(x.path, dst)
+                _copy2(x.path, dst, pf_cancel)
                 pf_ready[x.path] = dst
 
         pf_thread = threading.Thread(target=work, daemon=True)
@@ -1491,6 +1498,7 @@ def run_transcode(args) -> int:
         log.fail_open_phase("interrupted")
         for p in inflight:
             _rmf(p)
+        pf_cancel.set()
         _pf_join()
         for p in pf_files:  # prefetch partials and unconsumed copies drop too
             _rmf(p)

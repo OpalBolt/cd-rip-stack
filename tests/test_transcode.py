@@ -1714,6 +1714,29 @@ def test_prefetch_overlaps_encode(env, tmp_path, capsys):
     assert "copying Two (2002)_t00.mkv to local temp" not in out
 
 
+def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
+    """--retry walks issues/ the same way: two encode units resting in
+    issues/ still overlap — unit 2's copy phase reports the prefetched
+    status, the run ships, and the sources leave issues/ only on success."""
+    _slow_hb(tmp_path)
+    vid = env / "vid"
+    mk(vid, "issues/movies/One (2001)/One (2001)_t00.mkv", "SLOWENCODE")
+    mk(vid, "issues/movies/Two (2002)/Two (2002)_t00.mkv", "TWO")
+
+    rc = transcode.run_transcode(Args(retry=True))
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "One (2001)" / "One (2001).mkv").read_text() == "SLOWENCODE"
+    assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
+    assert not list((vid / "issues" / "movies" / "One (2001)").glob("*.mkv"))
+    assert not list((vid / "issues" / "movies" / "Two (2002)").glob("*.mkv"))
+    copies = [l for l in run_log(env) if l["phase"] == "copy"]
+    assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
+    out = capsys.readouterr().out
+    assert "copying Two (2002)_t00.mkv to local temp" not in out
+
+
 def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch):
     """No workdir headroom: one loud note, no prefetch, both items still
     encode with plain sequential copies, rc 0 — nothing new can fail."""
