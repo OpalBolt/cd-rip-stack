@@ -1128,6 +1128,7 @@ def run_transcode(args) -> int:
     mains_started = 0  # session cap counter (CONTEXT.md: Session cap)
     n_ok = 0
     n_failed = 0
+    rows: list[tuple[str, list[str], bool]] = []  # summary-table accumulation
     handled: set[str] = set()
     missing_warned: set[str] = set()  # movies whose no-staged-main note already printed
     # The in-flight item's local temp files (CONTEXT.md: Interrupt): the
@@ -1138,7 +1139,10 @@ def run_transcode(args) -> int:
     inflight: list[str] = []
     inflight_side: str | None = None  # this item's sidecar temp dir, once the pass starts
     def _item_done(label: str, parts: list[str], ok: bool) -> None:
-        """Per-item console summary line; keeps the batch ok/failed counts."""
+        """Per-item console summary line; keeps the batch ok/failed counts
+        and one row for the end-of-run summary table."""
+        nonlocal n_ok, n_failed
+        rows.append((label, list(parts), ok))
         nonlocal n_ok, n_failed
         if ok:
             n_ok += 1
@@ -1567,8 +1571,8 @@ def run_transcode(args) -> int:
         ui.clear_view()
         log.finish(failed)
 
-    print(f"{n_ok} ok, {n_failed} failed")
-
-    if keep and parked:
-        print(f"--keep: lossless sources moved to {lossless_root} -- verify, then clean by hand")
+    ui.run_summary(rows, n_ok, n_failed,
+                   f"--keep: lossless sources moved to {lossless_root} -- verify, "
+                   f"then clean by hand" if keep and parked else None,
+                   replay=view.replay_lines())
     return failed

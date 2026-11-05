@@ -75,3 +75,58 @@ def test_close_is_idempotent():
     view = ui.RunView()
     view.close()
     view.close()  # safe from finally, no state left to stop twice
+
+
+def test_replay_buffer_keeps_warn_and_fail_tty_only():
+    """The view keeps every warn/fail line for the summary replay; a fallback
+    view (the lines are already in the scroll) keeps none."""
+    tty = ui.RunView()
+    tty.tty = True
+    tty._closed = True  # no Live underneath: skip the refresh
+    tty.event("warn", "w1")
+    tty.event("info", "i1")
+    tty.event("fail", "f1")
+    assert tty.replay_lines() == ["warn  w1", "fail  f1"]
+    fallback = ui.RunView()
+    fallback.event("warn", "w1")
+    assert fallback.replay_lines() == []
+
+
+def test_run_summary_table_cells_count_and_banner(capsys):
+    """ui.run_summary: one stderr table — per-phase cells from the parts
+    strings, '-' for phases never run, total over the recorded secs, result
+    ok/FAILED — then the count line, then the banner only when set."""
+    rows = [
+        ("A (2001)", ["copy 1s", "subs 5s", "encode 1m10s"], True),
+        ("B (2002)", ["copy prefetched", "encode 30s"], False),
+    ]
+    ui.run_summary(rows, 1, 1, None)
+    err = capsys.readouterr().err
+    for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
+        assert col in err
+    arow = next(l for l in err.splitlines() if l.strip().startswith("A (2001)"))
+    assert "1m16s" in arow and "ok" in arow  # 1 + 5 + 70 secs, merge/detect absent
+    brow = next(l for l in err.splitlines() if l.strip().startswith("B (2002)"))
+    assert "prefetched" in brow and "30s" in brow and "FAILED" in brow
+    assert "1 ok, 1 failed" in err
+    assert "--keep:" not in err  # keep_banner=None: the honesty rule
+
+    ui.run_summary([], 0, 0, "--keep: lossless sources moved to /x -- verify, then clean by hand")
+    err = capsys.readouterr().err
+    assert "--keep: lossless sources moved to /x -- verify, then clean by hand" in err
+
+
+def test_fallback_view_wired_to_transcode_progress(capsys):
+    """Transcode→view wiring (reviewer P2, slice 02): a fallback view set for
+    a run receives the surfaced throttled encoder line; render() carries the
+    parsed pct/ETA."""
+    from skive import transcode
+    view = ui.RunView()
+    ui.set_view(view)
+    try:
+        transcode._progress_line("ffmpeg", "frame= 100 fps=25 Encoding: 42.5% ETA 00:01:30")
+    finally:
+        ui.clear_view()
+    rendered = view.render()
+    assert "42.5%" in rendered
+    assert "ETA 00:01:30" in rendered

@@ -13,6 +13,7 @@ at all. Verbosity/gating logic stays at the call sites — this is the
 console layer only.
 """
 
+import re
 import sys
 import threading
 
@@ -54,6 +55,7 @@ class RunView:
         self._status: list[str] = []
         self._progress: str | None = None
         self._log: list[str] = []
+        self._replay: list[str] = []  # TTY-only warn/fail replay buffer
         if self.tty:
             from rich.console import Console
             from rich.live import Live
@@ -107,6 +109,8 @@ class RunView:
 
     def event(self, kind: str, text: str) -> None:
         """An info/warn/fail event line; ui._print routes here in TTY mode."""
+        if self.tty and kind in ("warn", "fail"):
+            self._replay.append(f"{kind}  {text}")  # the tail clear wipes these
         self._event(f"{kind}  {text}")
 
     def _event(self, line: str) -> None:
@@ -123,6 +127,11 @@ class RunView:
             self._closed = True
             self._live.stop()
 
+    def replay_lines(self) -> list[str]:
+        """Every warn/fail line rendered this run, in order (TTY only; the
+        fallback already has them in the scroll)."""
+        return list(self._replay)
+
     def render(self) -> str:
         """Current panel content as text, no terminal (deterministic)."""
         if self.tty:
@@ -136,6 +145,55 @@ class RunView:
         if self._progress:
             lines.append(self._progress)
         return "\n".join(lines + self._log)
+
+
+_HMS_RX = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s$")
+
+
+def _secs(value: str) -> int | None:
+    """Reverse of transcode._hms (kept here: ui must not import transcode)."""
+    m = _HMS_RX.match(value)
+    return sum(int(g) * mult for g, mult in zip(m.groups(), (3600, 60, 1)) if g) if m else None
+
+
+def _hms(secs: int) -> str:
+    if secs < 60:
+        return f"{secs}s"
+    m, s = divmod(secs, 60)
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+
+def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None,
+                replay=()) -> None:
+    """End-of-run summary on stderr (after the run view closed): warn/fail
+    lines replayed (TTY only), one table of per-item phase timings, the
+    ok/failed count, and the --keep banner only when keep_banner is set."""
+    with _print_lock:
+        for line in replay:
+            print(line, file=sys.stderr)
+        from rich.console import Console
+        from rich.table import Table
+        console = Console(file=sys.stderr)
+        table = Table(box=None)  # plain ASCII under pytest's non-TTY stderr
+        for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
+            table.add_column(col)
+        for label, parts, ok in rows:
+            cells: dict[str, str] = {}
+            total = 0
+            for part in parts:
+                phase, _, value = part.partition(" ")
+                cells[phase] = value
+                s = _secs(value)
+                if s is not None:
+                    total += s
+            table.add_row(label,
+                          *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
+                          _hms(total), "ok" if ok else "FAILED")
+        console.print(table)
+        console.print(f"{n_ok} ok, {n_failed} failed")
+        if keep_banner is not None:
+            console.print(keep_banner)
 
 
 def _print(kind: str, text: str) -> None:

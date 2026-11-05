@@ -591,8 +591,13 @@ def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monk
     assert list(work.iterdir()) == []  # part-1 local copy + partial part-2 dropped
     log = run_log(env)
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
+    err = capsys.readouterr().err
     assert "interrupted -- partial temp output deleted, source left in staging" \
-        in capsys.readouterr().err
+        in err
+    # no summary after an interrupt (today's contract): no table row, no
+    # count line, no --keep banner past the interrupt fail line
+    tail = err.split("interrupted -- partial temp output deleted, source left in staging", 1)[1]
+    assert "| copy" not in tail and "ok, " not in tail and "--keep:" not in tail
 
 
 def test_recorded_main_parts_still_merge(env):
@@ -1083,7 +1088,7 @@ def test_scenario2_keep_archive(env, capsys):
     mk(vid, "rip/movies/Keep (2005)/d2/Keep (2005) - Extra 01.p2.mkv", "KEEP-EXTRA-P2")
 
     rc = transcode.run_transcode(Args(keep=True))
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
 
     assert rc == 0
     assert not list((vid / "rip" / "movies" / "Keep (2005)" / "d1").iterdir())  # sources moved out
@@ -1092,7 +1097,7 @@ def test_scenario2_keep_archive(env, capsys):
     # the unmarked extra rode the main's disposal (Extras marker): parked,
     # never encoded
     assert not (vid / "library" / "movies" / "Keep (2005)" / "extras").exists()
-    assert "--keep: lossless sources moved to" in out
+    assert "--keep: lossless sources moved to" in err
 
 
 def test_keep_clobber_refusal(env, capsys):
@@ -1422,7 +1427,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     cap = capsys.readouterr()
     assert re.search(
         r"info  Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", cap.err)
-    assert "1 ok, 0 failed" in cap.out
+    assert "1 ok, 0 failed" in cap.err
 
 
 def test_keep_banner_prints_only_when_something_parked(env, capsys):
@@ -1434,24 +1439,24 @@ def test_keep_banner_prints_only_when_something_parked(env, capsys):
     # success + keep=1: parked, banner prints
     mk(vid, "rip/movies/Park (2011)/d0/Park (2011)_t00.mkv", "PARK-MAIN")
     rc = transcode.run_transcode(Args(keep=True))
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
-    assert "--keep: lossless sources moved to" in out
+    assert "--keep: lossless sources moved to" in err
     assert list((vid / "lossless" / "movies").rglob("Park (2011)_t00.mkv"))
 
     # success + keep=0: deleted, no banner
     mk(vid, "rip/movies/Wisp (2012)/d0/Wisp (2012)_t00.mkv", "WISP-MAIN")
     rc = transcode.run_transcode(Args())
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
-    assert "--keep: lossless sources moved to" not in out
+    assert "--keep: lossless sources moved to" not in err
 
     # failure: source stays in staging, nothing parked, no banner
     mk(vid, "rip/movies/Failme (1999)/d1/Failme (1999)_t00.mkv", "FAILME")
     rc = transcode.run_transcode(Args(keep=True))
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 1
-    assert "--keep: lossless sources moved to" not in out
+    assert "--keep: lossless sources moved to" not in err
 
 
 # -- TV branch (slice 04): seasons/specials/doubles/junk, show doc, extras -----
@@ -1819,3 +1824,43 @@ def test_prefetch_multi_part_main_siblings_all_consumed(env):
     assert len(copies) == 4
     assert [c["status"] == "prefetched — overlapped with the previous encode"
             for c in copies] == [False, True, True, True]
+
+
+def test_run_summary_table_count_and_keep_banner(env, capsys):
+    """Run end (CONTEXT.md Run summary): after the panels clear, stderr
+    carries one table row per item — phase timings and ok/FAILED — the
+    ok/failed count line, and the --keep banner only because a source
+    actually parked."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Park (2011)/d0/Park (2011)_t00.mkv", "PARK-MAIN")
+    mk(vid, "rip/movies/Failme (1999)/d1/Failme (1999)_t00.mkv", "FAILME")
+
+    rc = transcode.run_transcode(Args(keep=True))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    for label, result in (("Park (2011)_t00", "ok"), ("Failme (1999)_t00", "FAILED")):
+        row = [l for l in err.splitlines() if l.strip().startswith(label)]
+        assert len(row) == 1
+        assert result in row[0]
+        assert re.search(r"\d+s", row[0])  # total over recorded phase secs
+    assert "1 ok, 1 failed" in err
+    assert "--keep: lossless sources moved to" in err
+
+
+def test_fallback_warn_prints_once_no_summary_replay(env, capsys):
+    """Fallback (non-TTY) warn/fail lines already sit in the scroll; the
+    summary must not replay them."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Clob (2001)/d0/Clob (2001)_t00.mkv", "CLOB-MAIN")
+    d = vid / "lossless" / "movies" / "Clob (2001)"
+    d.mkdir(parents=True)
+    (d / "Clob (2001)_t00.mkv").write_text("EXISTING")
+
+    rc = transcode.run_transcode(Args(keep=True))
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    assert len([l for l in err.splitlines() if "already exists" in l]) == 1
+    # the park was refused, so nothing parked: no banner (honesty rule)
+    assert "--keep: lossless sources moved to" not in err
