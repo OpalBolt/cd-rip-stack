@@ -18,8 +18,10 @@ if ! rpm -q rpmfusion-free-release >/dev/null 2>&1; then
 fi
 # package name changed case across releases; accept either
 sudo dnf install -y handbrake-cli 2>/dev/null || sudo dnf install -y HandBrake-cli
-sudo dnf install -y mkvtoolnix ffmpeg tesseract tesseract-langpack-eng \
-  tesseract-langpack-dan libicu git
+# mesa-va-drivers + libva-utils: VCN hardware encode for scripts/bench.sh's
+# VAAPI runs (the laptop's Ryzen AI 7 350). Harmless on the BC-250.
+sudo dnf install -y mkvtoolnix ffmpeg mesa-va-drivers libva-utils tesseract \
+  tesseract-langpack-eng tesseract-langpack-dan libicu git
 
 echo "== uv =="
 if ! command -v uv >/dev/null 2>&1; then
@@ -45,5 +47,10 @@ fi
 echo "== verify =="
 command -v HandBrakeCLI mkvmerge ffprobe tesseract seconv skive
 tesseract --list-langs   # want eng + dan
+va=$(vainfo 2>&1 || true)
+case "$va" in
+  *VAEntrypointEncSlice*) echo "VA-API encode: available ($(grep -c 'VAEntrypointEncSlice' <<<"$va") entrypoints)" ;;
+  *) echo "note: no VA-API encode — expected on the BC-250 (VCN eFused off); the laptop's VCN exposes them" ;;
+esac
 test -d /mnt/videos || { echo "ERROR: /mnt/videos missing — recreate the box with --volume /mnt/videos:/mnt/videos (see docs/transcode.md)"; exit 1; }
 echo "OK — the box is ready. All skive runs happen inside this container."

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# One-off encoder benchmark: x265 medium (baseline) vs fast vs superfast.
+# One-off encoder benchmark: x265 medium (baseline) vs fast vs superfast,
+# plus VCN hardware HEVC via ffmpeg VAAPI (full hw pipeline: VCN decode+encode).
 # Usage: bash scripts/bench.sh /path/to/staged-title_t00.mkv   (run inside the transcode distrobox)
-# Cuts a 5-min 1080p sample from the middle of the title, encodes it three
-# Progress streams live; SVT-AV1 is absent because the 2020 Chromecast with
+# Cuts a 5-min 1080p sample from the middle of the title and encodes it with
+# each encoder; progress streams live. SVT-AV1 is absent because the 2020 Chromecast with
 # Google TV cannot hardware-decode AV1 (jellyfin-androidtv#4838), so HEVC is
 # the only codec this library can commit to.
 set -euo pipefail
@@ -25,7 +26,24 @@ run() { # label, extra encoder args...
   secs=$(echo "$t1 - $t0" | bc)
   mb=$(( $(stat -c%s "$out") / 1048576 ))
   fps=$(grep 'Encoding:' "$work/$label.log" | tr '\r' '\n' | grep -o 'avg [0-9.]* fps' | tail -1 | grep -o '[0-9.]*' || echo "?")
-  printf '%-14s %7.1fs   avg %6s fps   %5d MB\n' "$label" "$secs" "$fps" "$mb"
+  printf '%-18s %7.1fs   avg %6s fps   %5d MB\n' "$label" "$secs" "$fps" "$mb"
+}
+
+run_ffmpeg() { # label, global_quality — hevc_vaapi CQP (HandBrake has no VAAPI encoder)
+  local label="$1" qp="$2"
+  local out="$work/$label.mkv" t0 t1
+  t0=$(date +%s.%N)
+  ffmpeg -hide_banner -y \
+    -hwaccel vaapi -hwaccel_output_format vaapi -i "$sample" \
+    -map 0:v:0 -map '0:a?' -map '0:s?' -c:a copy -c:s copy \
+    -c:v hevc_vaapi -rc_mode CQP -global_quality "$qp" \
+    "$out" 2>&1 | tee "$work/$label.log" | tr '\r' '\n' | grep --line-buffered -E 'frame=|rror'
+  t1=$(date +%s.%N)
+  local secs mb fps
+  secs=$(echo "$t1 - $t0" | bc)
+  mb=$(( $(stat -c%s "$out") / 1048576 ))
+  fps=$(tr '\r' '\n' < "$work/$label.log" | grep -o 'fps=[[:space:]]*[0-9.]*' | tail -1 | grep -o '[0-9.]*' || echo "?")
+  printf '%-18s %7.1fs   avg %6s fps   %5d MB\n' "$label" "$secs" "$fps" "$mb"
 }
 
 srcmb=$(( $(stat -c%s "$sample") / 1048576 ))
@@ -34,5 +52,15 @@ echo "--"
 run x265-medium
 run x265-fast      --encoder-preset fast
 run x265-superfast --encoder-preset superfast
+# Hardware runs: meaningful on the laptop (Ryzen AI 7 350's VCN); the BC-250's
+# VCN is eFused off, so vainfo shows no encode entrypoint there and this skips.
+# CQP 24/28 bracket the x265 RF-22 output size — compare speed at matching size,
+# then eyeball quality in $work (ADR 0010's streaming-encoder caveat applies).
+if command -v vainfo >/dev/null 2>&1 && vainfo 2>/dev/null | grep -Eq 'HEVC(Main|Main10)[[:space:]]*: VAEntrypointEncSlice'; then
+  run_ffmpeg hevc-vaapi-cqp24 24
+  run_ffmpeg hevc-vaapi-cqp28 28
+else
+  echo "-- no VA-API HEVC encode entrypoint (vainfo) — skipping hardware runs (expected on the BC-250)"
+fi
 echo "--"
 echo "full logs and outputs in $work for eyeballing"
