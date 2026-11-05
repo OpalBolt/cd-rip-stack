@@ -219,6 +219,12 @@ def test_read_hwmon_fallback_fills_missing_slot(tmp_path):
     assert ui.read_hwmon(str(tmp_path)) == {"cpu": 77.0, "gpu": 40.0}
 
 
+def test_read_hwmon_named_wins_over_earlier_generic(tmp_path):
+    _hwmon_tree(tmp_path, [("nvme", 40000), ("k10temp", 78000)])
+    ui._hwmon_cache.clear()
+    assert ui.read_hwmon(str(tmp_path)) == {"cpu": 78.0, "gpu": 40.0}
+
+
 def test_read_hwmon_missing_root_is_empty():
     ui._hwmon_cache.clear()
     assert ui.read_hwmon("/nonexistent-hwmon") == {}
@@ -235,6 +241,9 @@ def test_read_proc_stat_and_delta(tmp_path):
     pct = 100.0 * (1 - (second[0] - first[0]) / (second[1] - first[1]))
     assert pct == 50.0  # idle +100 of total +200
     assert ui.read_proc_stat(str(tmp_path / "gone")) is None
+    truncated = tmp_path / "trunc"
+    truncated.write_text("cpu  100 0 100\n")
+    assert ui.read_proc_stat(str(truncated)) is None
 
 
 def test_seam_view_perf_line_renders_and_drops():

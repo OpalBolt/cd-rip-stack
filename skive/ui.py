@@ -296,6 +296,8 @@ def read_proc_stat(path="/proc/stat") -> tuple[int, int] | None:
             for line in f:
                 if line.startswith("cpu "):
                     fields = [int(x) for x in line.split()[1:]]
+                    if len(fields) < 4:  # truncated line: idle field missing
+                        return None
                     idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
                     return idle, sum(fields)
     except (OSError, ValueError):
@@ -324,11 +326,21 @@ def read_hwmon(root="/sys/class/hwmon") -> dict[str, float]:
                 continue
             for t in sorted(d.glob("temp*_input")):
                 key = _HWMON_KEYS.get(name)
-                if key is None:
-                    key = ("cpu" if "cpu" not in paths
-                           else "gpu" if "gpu" not in paths else None)
                 if key is None or key in paths:
                     continue
+                paths[key] = t
+        for d in dirs:  # generics fill only slots no named sensor took
+            try:
+                name = (d / "name").read_text().strip()
+            except OSError:
+                continue
+            if name in _HWMON_KEYS:
+                continue
+            for t in sorted(d.glob("temp*_input")):
+                key = ("cpu" if "cpu" not in paths
+                       else "gpu" if "gpu" not in paths else None)
+                if key is None:
+                    break
                 paths[key] = t
         _hwmon_cache[root] = paths
     for key, t in paths.items():
