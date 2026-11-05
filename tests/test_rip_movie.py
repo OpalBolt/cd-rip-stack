@@ -473,6 +473,41 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
     assert err.count("fail  interrupted") == 1
 
 
+def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, capsys):
+    """Regression (P1): with a seam TTY view set, view.close() runs before
+    interrupted_exit's ui.fail — the fail line must still reach stderr
+    (a closed view's refresh is a no-op), exit 130."""
+    from skive import ui
+
+    mock_pick = TMDBPick("Test Movie", "2020", "en", "movie", "1")
+    d0 = tmp_path / "rip" / "movies" / "Test Movie (2020)" / "d0"
+
+    def interrupt(*a, **k):
+        d0.mkdir(parents=True, exist_ok=True)
+        raise KeyboardInterrupt
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("builtins.input", return_value="y"), \
+                patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+                patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
+                patch("skive.rip_common.ensure_mounted"), \
+                patch("skive.rip_common.require_online"), \
+                patch("skive.rip_common.search_loop", return_value=mock_pick), \
+                patch("skive.rip_movie.inject_profile", return_value=tmp_path / "absent-profile.xml"), \
+                patch("skive.rip_movie.rip_titles", side_effect=interrupt):
+            with pytest.raises(SystemExit) as e:
+                rip_movie(FakeArgs())
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 130
+    err = capsys.readouterr().err
+    assert "fail  interrupted" in err
+    assert err.count("fail  interrupted") == 1
+
+
 def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
     """Ctrl+C at the TMDB prompt (inside rip_preamble): the preamble logged the
     interrupted status, main's fallback owns the one-line exit — no traceback."""

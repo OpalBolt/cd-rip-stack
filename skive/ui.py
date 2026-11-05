@@ -201,8 +201,8 @@ class RunView:
         sampler = getattr(self, "_sampler", None)
         if sampler is not None:
             sampler.stop()
-        if self._live is not None and not self._closed:
-            self._closed = True
+        self._closed = True  # unconditional: ui._print stops routing to a closed view
+        if self._live is not None:
             self._live.stop()
             self._live = None
 
@@ -289,7 +289,7 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
 def _print(kind: str, text: str) -> None:
     # the lock must not span the view dispatch: _event takes it too, and a
     # plain Lock re-acquiring on the same thread deadlocks
-    if _view is not None and _view.tty:
+    if _view is not None and _view.tty and not _view._closed:
         _view.event(kind, text)
         return
     with _print_lock:

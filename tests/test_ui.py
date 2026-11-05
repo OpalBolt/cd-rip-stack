@@ -183,6 +183,52 @@ def test_status_and_background_both_render():
     assert "Two (2002)_t00.mkv  40% (4/10 MB)" in text  # background section
 
 
+def test_suspend_stops_the_live_and_starts_a_fresh_one(monkeypatch):
+    """suspend() with a Live running: the original Live is stopped inside the
+    block (prompt prints to scrollback), and a NEW Live is started on exit
+    (the original was discarded, not reused)."""
+    view = _tty_seam_view()
+    stopped = []
+
+    class _OldLive:
+        def stop(self):
+            stopped.append(True)
+
+    started = []
+
+    class _NewLive:  # rich.live.Live stub; suspend() imports it lazily
+        def __init__(self, panels, console=None, **kw):
+            pass
+
+        def start(self):
+            started.append(self)
+
+    monkeypatch.setattr("rich.live.Live", _NewLive)
+    view._live = _OldLive()
+    view._console = None  # the seam view never built one; the stub ignores it
+    with view.suspend():
+        assert view._live is None  # stopped and detached for the prompt
+    assert stopped == [True]
+    assert len(started) == 1 and view._live is started[0]  # a fresh Live
+
+
+def test_closed_view_still_routes_fail_to_stderr_and_keeps_replay(capsys):
+    """Regression (P1): after close(), ui.fail falls back to stderr (the
+    view's refresh would be a no-op) while replay lines recorded before the
+    close survive — transcode's summary reads them after close."""
+    view = _tty_seam_view()
+    ui.set_view(view)
+    try:
+        ui.warn("earlier warning")
+        view.close()
+        ui.fail("interrupted — partial deleted")
+    finally:
+        ui.clear_view()
+    err = capsys.readouterr().err
+    assert "fail  interrupted — partial deleted" in err
+    assert view.replay_lines() == ["warn  earlier warning"]
+
+
 # -- perf line (slice 05) ------------------------------------------------------
 
 def test_perf_text_full_line():
