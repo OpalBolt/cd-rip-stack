@@ -38,14 +38,24 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
-def vcn_probe() -> dict | None:
+def find_tool(exe: str) -> str:
+    """/usr/bin first: the host's mise shims bleed into the box through the
+    shared home, and mise's ffmpeg/vainfo see a mismatched (non-freeworld)
+    VA-API driver -- device creation dies on an undefined symbol (skive's
+    _find_tool and bench.sh's PATH pin exist for exactly this)."""
+    if os.path.exists(f"/usr/bin/{exe}"):
+        return f"/usr/bin/{exe}"
+    found = shutil.which(exe)
+    if not found:
+        die(f"{exe} not found on PATH")
+    return found
+
+
+def vcn_probe(vainfo_exe: str) -> dict | None:
     """skive's _vcn_probe, verbatim contract: low_power only when the LP
     entrypoint exists and the classic one does not."""
-    exe = shutil.which("vainfo")
-    if not exe:
-        return None
     try:
-        out = subprocess.run([exe, "--display", "drm"], capture_output=True,
+        out = subprocess.run([vainfo_exe, "--display", "drm"], capture_output=True,
                              text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -58,9 +68,9 @@ def vcn_probe() -> dict | None:
     return {"low_power": bool(lp and not classic)}
 
 
-def probe(path: str) -> dict:
+def probe(ffprobe_exe: str, path: str) -> dict:
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries",
+        [ffprobe_exe, "-v", "error", "-show_entries",
          "stream=codec_type,codec_name,width,height:format=duration",
          "-of", "json", path], capture_output=True, text=True, check=True).stdout
     return json.loads(out)
@@ -73,6 +83,11 @@ def main() -> int:
     ap.add_argument("--preflight", action="store_true",
                     help="run the checks only, encode nothing")
     args = ap.parse_args()
+
+    ff = find_tool("ffmpeg")
+    ffp = find_tool("ffprobe")
+    vain = find_tool("vainfo")
+    print(f"tools: {ff}")
 
     src_audio = None
     # --- preflight ---------------------------------------------------
@@ -87,10 +102,10 @@ def main() -> int:
             die(f"sidecar missing (would be orphaned): {side}")
     if not os.path.exists("/dev/dri/renderD128"):
         die("no /dev/dri/renderD128 -- run inside the laptop transcode box")
-    vcn = vcn_probe()
+    vcn = vcn_probe(vain)
     if vcn is None:
         die("vainfo shows no HEVC encode -- run inside the laptop transcode box")
-    doc = probe(SRC)
+    doc = probe(ffp, SRC)
     src_audio = [s["codec_name"] for s in doc["streams"] if s["codec_type"] == "audio"]
     if len(src_audio) != 4:
         die(f"source audio tracks changed ({len(src_audio)}, expected 4)")
@@ -108,7 +123,7 @@ def main() -> int:
 
     vf = ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
           f"{CROP},format=nv12|p010,hwupload")
-    cmd = ["ffmpeg", "-hide_banner", "-y", "-loglevel", "warning", "-stats",
+    cmd = [ff, "-hide_banner", "-y", "-loglevel", "warning", "-stats",
            "-vaapi_device", "/dev/dri/renderD128", "-i", local_src,
            "-map", "0:v:0", "-map", "0:a?", "-c:a", "copy", "-vf", vf,
            "-c:v", "hevc_vaapi", "-rc_mode", "CQP", "-global_quality", "24"]
@@ -125,7 +140,7 @@ def main() -> int:
         die(f"ffmpeg failed (rc={rc}) -- library untouched, workdir kept")
 
     # --- verify --------------------------------------------------------
-    doc = probe(local_out)
+    doc = probe(ffp, local_out)
     v = next(s for s in doc["streams"] if s["codec_type"] == "video")
     out_audio = [s["codec_name"] for s in doc["streams"] if s["codec_type"] == "audio"]
     problems = []
