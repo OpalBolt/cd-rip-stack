@@ -36,7 +36,9 @@ class Args:
         self.prefixes = prefixes or []
         self.keep = keep
         self.encoder = encoder
-        self.workdir = workdir
+        # production ignores $VIDEO_WORK_DIR: the fixture's var stands in for
+        # the -w flag so every test shares one work dir
+        self.workdir = workdir if workdir is not None else os.environ.get("VIDEO_WORK_DIR")
         self.verbose = verbose
         self.retry = retry
         self.limit = limit
@@ -211,6 +213,27 @@ def test_junk_label_skipped_and_stays(env, capsys):
     assert (vid / "rip" / "movies" / "Baz Extras (2003)" / "d2" / "B1_t00.mkv").exists()
     assert "skip (junk label" in err
     assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 1
+
+
+# -- default workdir -------------------------------------------------------------
+
+def test_workdir_defaults_to_cache_skive(env, monkeypatch):
+    """No -w: work goes to ~/.cache/skive on disk, never $TMPDIR (tmpfs is
+    RAM; a staged source plus its encode output died on "Disk quota
+    exceeded"), and the dir is empty once the item ships."""
+    home = env / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("VIDEO_WORK_DIR", raising=False)
+    vid = env / "vid"
+    mk(vid, "rip/movies/Cache (2002)/d0/Cache (2002)_t00.mkv", "MAIN")
+
+    rc = transcode.run_transcode(Args())
+
+    cache = home / ".cache" / "skive"
+    assert rc == 0
+    assert cache.is_dir()
+    assert list(cache.iterdir()) == []  # cleaned after the ship
 
 
 # -- prefix filter ---------------------------------------------------------------

@@ -673,7 +673,9 @@ def run_transcode(args) -> int:
     lib_dir = os.path.join(vid, "library")
     lossless_root = os.path.join(vid, "lossless")
     issues_root = os.path.join(vid, "issues")  # sub-pass failures park sources here
-    tmp_dir = args.workdir or os.environ.get("VIDEO_WORK_DIR") or os.path.join(tempfile.gettempdir(), "video-work")
+    # disk, not $TMPDIR: /tmp is tmpfs (RAM) and cannot hold a staged source
+    # plus its encode output (the Conan run died at 27% on "Disk quota exceeded")
+    tmp_dir = args.workdir or os.path.expanduser("~/.cache/skive")
     os.makedirs(tmp_dir, exist_ok=True)
 
     hb_exe = _find_on_path("HandBrakeCLI")

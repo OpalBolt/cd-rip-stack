@@ -43,14 +43,16 @@ skive transcode                     # drain all of rip/
 skive transcode 'Film (2001)'       # only titles whose staged name starts with this prefix
 skive transcode -k                  # keep lossless sources in lossless/ instead of deleting
 skive transcode --retry             # re-run quarantined items from issues/
-skive transcode -w /var/tmp/video-work   # workdir override (default: $TMPDIR/video-work)
+skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/skive)
 ```
 
 - **Input** — `rip/` staging (`issues/` with `--retry`). The first path
   segment under the root decides movie vs TV; titles without a `(Year)`
   tail are skipped as junk (mid-rip or failed rename). A prefix that
   matches nothing is called out on stderr; if nothing matched at all, exit 1.
-- **Work dir** — `-w`, else `$VIDEO_WORK_DIR`, else `$TMPDIR/video-work`.
+- **Work dir** — `~/.cache/skive` (disk, not tmpfs: the staged source plus
+  the encode output need GBs); `-w` overrides. Every file is deleted after
+  each item ships, fails, or the run is interrupted.
   Files are pulled local and encoded off the share.
 - **Movies** — the biggest `_tNN` group (parts sum) is the main feature;
   a recorded main in the title's `validation.json` wins over bytes. Split

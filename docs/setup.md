@@ -53,7 +53,6 @@ three primary keys.
 | `NFS_MUSIC` | NFS export for the music share, e.g. `192.168.103.4:/export/music` |
 | `VIDEOS_MOUNT` / `MUSIC_MOUNT` | override the mountpoints (default `/mnt/videos` / `/mnt/music`) |
 | `RIP_MINLENGTH` | title-scan minimum length in seconds (default `120`) |
-| `VIDEO_WORK_DIR` | transcode workdir override — the transcode box, not this one (see [transcode](transcode.md)) |
 
 Three names the code reads that are never operator config: `MAKEMKV_INFO`
 overrides the makemkv info binary (test seam — also how scan dumps replay,

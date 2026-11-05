@@ -125,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     transcode_parser.add_argument("-e", "--encoder", choices=["x265", "nvenc", "qsv", "vce"], default="x265",
                                   help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
     transcode_parser.add_argument("-w", "--workdir", metavar="DIR",
-                                  help="local temp work dir (default: $VIDEO_WORK_DIR or tempdir/video-work)")
+                                  help="local temp work dir (default: ~/.cache/skive)")
     transcode_parser.add_argument("-n", "--limit", type=int, default=4, metavar="N",
                                   help="main features per session (default 4; 0 = unlimited) — a workday slice, "
                                        "the rest stays staged for the next run")
