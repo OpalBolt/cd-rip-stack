@@ -6,34 +6,32 @@ under `library/` (trees: [nas-layout](nas-layout.md)).
 
 ## The box
 
-There are two transcode boxes. The always-on one is an AMD BC-250 — the
-PS5-derived Cyan Skillfish board (Zen 2, 8 cores unlocked, 16 GB GDDR6)
-running Bazzite. Its video engine cannot encode: the VCN block is
-factory-unprovisioned and eFused off, and Sony blocks the firmware, so no
-tool ever gets hardware encode on this machine — **only `x265` exists
-there**, and `-e auto` falls back to x265 (fast preset) on it. The burst
-box is the Ryzen AI 7 350 laptop, whose VCN does encode: `-e auto` (the
-default) resolves to hardware there. Hardware encode goes through ffmpeg
-VAAPI, not HandBrake — HandBrake on Linux has no VAAPI encoder, and the
-community `bc250-vaapi` shim stays rejected (its H.264 is libx264 on the
-CPU in a costume, its HEVC a CBR streaming encoder shaped for game
-streaming, not quality-based archival — ADR 0010).
+There is one transcode box: the Ryzen AI 7 350 laptop's `transcode`
+distrobox — the BC-250 no longer transcodes (ADR 0010 records the path and
+its 2026-11 hardware revision). The BC-250's story is history that explains
+why the laptop's VCN matters: the PS5-derived Cyan Skillfish board's VCN
+block is factory-unprovisioned and eFused off, so no tool ever got hardware
+encode there — and the community `bc250-vaapi` shim stays rejected (its
+H.264 is libx264 on the CPU in a costume, its HEVC a CBR streaming encoder
+shaped for game streaming, not quality-based archival — ADR 0010). The
+laptop's VCN does encode: `-e auto` (the default) resolves to `hevc_vaapi`
+on it. Hardware encode goes through ffmpeg VAAPI, not HandBrake — HandBrake
+on Linux has no VAAPI encoder.
 
-The laptop's box needs two things the BC-250 does not: a `fedora:43`-era
-image (gfx1152 needs Mesa 25.0+) and the `mesa-va-drivers-freeworld` swap
-that `scripts/setup-transcode.sh` performs (Fedora strips H.264/H.265
-from its Mesa for patents; without the freeworld build vainfo lists only
-JPEG/VP9/AV1 and there is no HEVC encode entrypoint).
-
-Build it from the repo's setup script — the container carries every tool:
-RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg, tesseract with eng+dan
-language data, seconv (pinned at v5.3.0 in the script), and skive itself
-(editable install via uv). The videos share bind-mounts at `/mnt/videos`;
-all skive runs happen inside the box.
+Running it needs two things on the laptop: a `fedora:43`-era image
+(gfx1152/Radeon 860M needs Mesa 25.0+ for VCN encode) and the
+`mesa-va-drivers-freeworld` swap that `scripts/setup-transcode.sh`
+performs (Fedora strips H.264/H.265 from its Mesa for patents; without
+the freeworld build vainfo lists only JPEG/VP9/AV1 and there is no HEVC
+encode entrypoint).
+The box carries every tool: RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg,
+tesseract with eng+dan language data, seconv (pinned at v5.3.0 in the
+script), and skive itself (editable install via uv). The videos share
+bind-mounts at `/mnt/videos`; all skive runs happen inside the box.
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
-distrobox create -n transcode --image fedora:41 --volume /mnt/videos:/mnt/videos
+distrobox create -n transcode --image fedora:43 --volume /mnt/videos:/mnt/videos
 distrobox enter transcode
 bash ~/git/cd-rip-stack/scripts/setup-transcode.sh   # once, inside the box
 ```
@@ -63,6 +61,12 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
   the encode output need GBs); `-w` overrides. Every file is deleted after
   each item ships, fails, or the run is interrupted.
   Files are pulled local and encoded off the share.
+- **Prefetch** — while one unit encodes, the next unit's source already
+  pulls into the workdir (one unit of lookahead; the run stays synchronous,
+  one encode at a time). Without workdir headroom for the next source,
+  that item falls back to the sequential copy with a loud note — a starved
+  prefetch never fails a run. Ctrl+C drops prefetched partials like any
+  in-flight temp.
 - **Movies** — the biggest `_tNN` group (parts sum) is the main feature;
   a recorded main in the title's `validation.json` wins over bytes. Split
   mains merge with mkvmerge before encoding — but only when every part's
@@ -98,6 +102,20 @@ selects zero subtitle tracks via a language list no track can match.
 A failed pass still ships the (subless) encode, but the source quarantines
 below — rerun it with `--retry` to get the sidecars.
 
+### The crop gate
+
+Every encode (mains, TV episodes, extras) is checked for baked-in black
+bars: ~6 probes spread over 10–90% of the duration, each side's bar
+estimated by the median probe, at most one probe per side allowed to
+dissent beyond ±4 px. Sides under 16 px crop as nothing; a per-axis total
+crop is capped at 30%; fewer than 3 readable probes means no crop. Applied
+crop rides the encode; a refused detection (gate dissent) or unreadable
+probes ship the title uncropped with a loud note — the gate never fails
+an item. Recording: one timed `detect` line in the run log per item, and
+the `validation.json` encodes entry carries `"crop"` and `"size"`. See
+[ADR 0011](adr/0011-black-bar-crop-gate.md) for the policy and field
+evidence.
+
 ## Failure and recovery
 
 - **Quarantine** — a failed subtitle pass or a merge guard hit parks the
@@ -123,7 +141,7 @@ below — rerun it with `--retry` to get the sidecars.
 ### Reading the run
 
 The run log (`logs/rip.jsonl`) gets one timed line per item per part —
-`copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the
+`copy`, `detect`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the
 part's numbers in `status`: copy reports `N MB at M MB/s`, encode
 `ok, N MB`, merge `ok`, subs `K sidecar(s)[, B barren]`. A
 phase that dies closes with `FAIL` and its elapsed; an interrupted run
@@ -133,7 +151,9 @@ gates the console only). A `barren` note means a bitmap subtitle track's
 OCR yielded zero cues — the track is dropped with a loud note in the run
 log and the encode ships without that sidecar. It is not a failure: no
 quarantine, exit stays clean. Only a real seconv/tesseract failure
-quarantines (see below).
+quarantines (see below). Prefetch shows as a `prefetch` note during the
+previous encode; when the lookahead lands, the item's own copy phase
+reads `prefetched — overlapped with the previous encode`.
 
 ## Existing library: subtitle backfill
 
@@ -154,7 +174,7 @@ finished files and files with sidecars already present are skipped, so the
 run is resumable. Tools are probed up front (seconv, tesseract eng+dan,
 mkvmerge, ffprobe) and the run refuses to start without all of them.
 
-The BC-250 replaced the retired Windows transcode machine; ADR 0010 records
-the CPU-only decision and its 2026-11 revision the hardware `-e auto` path.
+The BC-250 is retired from the transcode path; ADR 0010 records the path
+and its 2026-11 hardware revision (the laptop-only amendment).
 
 Related: [setup](setup.md) · [nas-layout](nas-layout.md) · [video](video.md) · [tools](tools.md)

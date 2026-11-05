@@ -1074,13 +1074,14 @@ def run_transcode(args) -> int:
         else:
             rec_missing[movie] = rec
 
-    # the very vague session estimate (CONTEXT.md: Session cap): ~1 h per
-    # main is a DVD-to-Blu-ray blur, stated once, never per title
+    # the very vague session estimate (CONTEXT.md: Session cap): ~15–20
+    # min per main on the laptop's VCN is a DVD-to-Blu-ray blur, stated
+    # once, never per title
     if args.limit:
         n_staged = len(main_num)
         n_run = min(args.limit, n_staged)
         print(f"session: {n_run} main(s) of {n_staged} staged "
-              f"(cap {args.limit}) -- expect roughly {n_run} h")
+              f"(cap {args.limit}) -- expect roughly {n_run} × 15–20 min")
 
     failed = 0
     parked = 0  # sources actually parked in lossless/ (--keep banner honesty)

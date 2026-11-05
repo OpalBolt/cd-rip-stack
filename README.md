@@ -42,8 +42,8 @@ One page per job:
   mirrors, logs.
 - [video](docs/video.md) — `rip movie` / `rip tv` end to end: TMDB picks,
   episode ranges, play-all-only discs.
-- [transcode](docs/transcode.md) — the BC-250 box and `skive transcode`:
-  subtitle pass, quarantine, retry.
+- [transcode](docs/transcode.md) — the laptop-only transcode box and `skive transcode`:
+  subtitle pass, crop gate, quarantine, retry.
 - [music](docs/music.md) — `rip music`, `tag`, `sync-sd`: CD to library to
   SD card.
 - [tools](docs/tools.md) — `validate` and `search`: library findings, finding

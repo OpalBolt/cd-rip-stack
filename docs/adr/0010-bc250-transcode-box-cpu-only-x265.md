@@ -82,3 +82,11 @@ Decisions baked into the hardware path, each paid for on the bench:
 - the freeworld VA-API driver and `--display drm` probing are required;
   the host's mise shims must not shadow the box's ffmpeg (skive prefers
   /usr/bin, bench.sh pins PATH)
+
+## Amendment (2026-11): the BC-250 retires from the transcode path
+
+With the laptop's VCN carrying `-e auto`, the BC-250 no longer transcodes:
+the Ryzen AI 7 350 laptop's `transcode` distrobox is the only transcode box
+(`hevc_vaapi`, `-e auto`; the box story lives in docs/transcode.md). This
+ADR's original decision text above stays as history. The crop policy that
+now rides every encode is ADR 0011 (black-bar crop gate).
