@@ -1660,3 +1660,139 @@ def test_session_cap_defers_beyond_limit(env, capsys):
     assert not (L / "Bbb (2002)").exists()
     assert (vid / "rip" / "movies" / "Bbb (2002)" / "Bbb (2002)_t00.mkv").exists()
     assert "deferred (session cap 1): Bbb (2002)" in capsys.readouterr().out
+
+
+# -- prefetch lookahead: the next unit's copy overlaps the current encode ---------
+
+def _slow_hb(tmp_path):
+    """The standard HandBrakeCLI fake, plus a SLOWENCODE arm that sleeps so
+    the next unit's background prefetch has an encode window to land in."""
+    (tmp_path / "bin" / "HandBrakeCLI").write_text(f"""#!/bin/sh
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / 'hb-calls.log'}"
+in=""; out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -i) in="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
+if grep -q SLOWENCODE "$in" 2>/dev/null; then sleep 2; fi
+cat "$in" > "$out"
+"""
+    )
+
+
+def test_prefetch_overlaps_encode(env, tmp_path, capsys):
+    """Slice 03: with two staged mains, unit 2's source copy happens in the
+    background during unit 1's encode — the prefetch note's run-log timestamp
+    falls inside item 1's encode window, and item 2's copy phase says
+    prefetched (no second sequential copy)."""
+    _slow_hb(tmp_path)
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "SLOWENCODE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "One (2001)" / "One (2001).mkv").read_text() == "SLOWENCODE"
+    assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
+    log = run_log(env)
+    notes = [l for l in log if l["phase"] == "prefetch"]
+    assert len(notes) == 1 and "in the background" in notes[0]["status"]
+    # the run log only emits phase END lines: One's copy end and encode end
+    # bracket the encode window, and the sleep guarantees it is > 1 s wide
+    enc = [l for l in log if l["phase"] == "encode"]
+    copies = [l for l in log if l["phase"] == "copy"]
+    assert copies[0]["ts"] <= notes[0]["ts"] < enc[0]["ts"]
+    assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
+    assert "MB/s" in copies[0]["status"]
+    out = capsys.readouterr().out
+    assert "copying Two (2002)_t00.mkv to local temp" not in out
+
+
+def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch):
+    """No workdir headroom: one loud note, no prefetch, both items still
+    encode with plain sequential copies, rc 0 — nothing new can fail."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+
+    usage = type("U", (), {"free": 0})
+    monkeypatch.setattr(transcode.shutil, "disk_usage", lambda p: usage())
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "One (2001)" / "One (2001).mkv").read_text() == "ONE"
+    assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
+    notes = [l for l in run_log(env) if l["phase"] == "prefetch"]
+    assert len(notes) == 1 and "no prefetch" in notes[0]["status"]
+    assert "copies sequentially later" in capsys.readouterr().out
+    copies = [l for l in run_log(env) if l["phase"] == "copy"]
+    assert all("MB/s" in c["status"] for c in copies)
+
+
+def test_interrupt_mid_prefetch_drops_partials(env, capsys, monkeypatch):
+    """Ctrl+C (raised from the encode, the SIGINT-during-encode reality) while
+    a prefetch copy is in flight: exit 130, the prefetched partial is deleted
+    from the workdir, the staged sources stay put."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+
+    def fake_encode(src, out, *a, **k):
+        raise Interrupted()
+
+    monkeypatch.setattr(transcode, "_encode", fake_encode)
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 130
+    assert list(work.iterdir()) == []
+    assert (vid / "rip" / "movies" / "One (2001)" / "d0" / "One (2001)_t00.mkv").exists()
+    assert (vid / "rip" / "movies" / "Two (2002)" / "d0" / "Two (2002)_t00.mkv").exists()
+    log = run_log(env)
+    assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
+
+
+def test_prefetch_prefix_run(env, capsys):
+    """A prefix-filtered two-title run prefetched exactly like a full run."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+
+    rc = transcode.run_transcode(Args(prefixes=["One (2001)", "Two (2002)"]))
+
+    assert rc == 0
+    copies = [l for l in run_log(env) if l["phase"] == "copy"]
+    assert len(copies) == 2
+    assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
+    assert "MB/s" in copies[0]["status"]
+
+
+def test_prefetch_multi_part_main_siblings_all_consumed(env):
+    """A split main prefetched as ONE unit: both .pN siblings skip the
+    sequential copy (prefetched), the merge still runs on the local copies,
+    and the next movie behind it encodes too."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Parts (2007)/d0/Parts (2007)_t21.p1.mkv", "P1")
+    mk(vid, "rip/movies/Parts (2007)/d0/Parts (2007)_t21.p2.mkv", "P2")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    assert (L / "Parts (2007)" / "Parts (2007).mkv").read_text() == "P1P2"
+    assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
+    copies = [l for l in run_log(env) if l["phase"] == "copy"]
+    assert len(copies) == 4
+    assert [c["status"] == "prefetched — overlapped with the previous encode"
+            for c in copies] == [False, True, True, True]
