@@ -548,13 +548,13 @@ exit 2
     mk(vid, "rip/movies/Bad (2001)/d0/Bad (2001)_t00.p2.mkv", "BAD-P2")
 
     rc = transcode.run_transcode(Args())
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
 
     assert rc == 1
     # failure replay: hidden mkvmerge output reaches the console verbatim
-    assert "mkvmerge v99.0" in out
-    assert "Progress: 50%" in out
-    assert "Error: the source is broken" in out
+    assert "mkvmerge v99.0" in err
+    assert "Progress: 50%" in err
+    assert "Error: the source is broken" in err
     raws = list((vid / "logs" / "raw").glob("*.jsonl"))
     assert len(raws) == 1  # failure keeps the run's raw log
     lines = [json.loads(l) for l in raws[0].read_text(encoding="utf-8").splitlines()]
@@ -591,7 +591,7 @@ def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monk
     assert list(work.iterdir()) == []  # part-1 local copy + partial part-2 dropped
     log = run_log(env)
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
-    assert "transcode: interrupted -- partial temp output deleted, source left in staging" \
+    assert "interrupted -- partial temp output deleted, source left in staging" \
         in capsys.readouterr().err
 
 
@@ -710,7 +710,7 @@ def test_pass_empty_sidecar_drops_track_as_barren(env, capsys):
     assert not (vid / "issues" / "movies" / "Blank (2006)").exists()
     # the barren note prints to the console (movies run _sub_pass directly;
     # the rip.jsonl subs-phase barren wiring is slice 03)
-    assert "barren eng (track 2): OCR yielded 0 cues -- dropped" in capsys.readouterr().out
+    assert "barren eng (track 2): OCR yielded 0 cues -- dropped" in capsys.readouterr().err
 
 
 def test_pass_barren_seconv_failure_drops_track(env, capsys):
@@ -727,7 +727,7 @@ def test_pass_barren_seconv_failure_drops_track(env, capsys):
     assert (L / "Fallow (2007).mkv").read_text() == "SUBS-BARREN"
     assert not list(L.glob("*.srt"))
     assert not (vid / "issues" / "movies" / "Fallow (2007)").exists()
-    assert "barren eng (track 2): OCR yielded 0 cues -- dropped" in capsys.readouterr().out
+    assert "barren eng (track 2): OCR yielded 0 cues -- dropped" in capsys.readouterr().err
 
 
 # -- HandBrake argument mapping --------------------------------------------------
@@ -1276,7 +1276,7 @@ exit 0
     captured = capsys.readouterr()
 
     assert rc == 1
-    assert "hb: work initialization error" in captured.out  # hidden lines replayed
+    assert "hb: work initialization error" in captured.err  # hidden lines replayed
     assert "handbrake exited 0 but wrote no output" in captured.err
     assert "FATAL" not in captured.err
     assert (vid / "rip" / "movies" / "Noout (2003)" / "d0" / "Noout (2003)_t00.mkv").exists()
@@ -1308,8 +1308,8 @@ exit 3
     captured = capsys.readouterr()
 
     assert rc == 1
-    assert captured.out.count("Encoding:") == 1
-    assert "ERROR: boom" in captured.out  # replayed on failure
+    assert captured.err.count("handbrake  Encoding:") == 1
+    assert "ERROR: boom" in captured.err  # replayed on failure
     assert "FAILED handbrake" in captured.err
 
 
@@ -1339,7 +1339,7 @@ cat "$in" > "$out"
     captured = capsys.readouterr()
 
     assert rc == 0
-    assert captured.out.count("Encoding:") == 3
+    assert captured.err.count("handbrake  Encoding:") == 3
     assert (vid / "library" / "movies" / "Verbose (2005)" / "Verbose (2005).mkv").read_text() == "VERBOSE"
 
 
@@ -1419,10 +1419,10 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
     assert re.match(r"^ok, \d+ MB$", by["encode"]["status"])
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
-    out = capsys.readouterr().out
+    cap = capsys.readouterr()
     assert re.search(
-        r"Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", out)
-    assert "1 ok, 0 failed" in out
+        r"info  Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", cap.err)
+    assert "1 ok, 0 failed" in cap.out
 
 
 def test_keep_banner_prints_only_when_something_parked(env, capsys):
@@ -1641,8 +1641,8 @@ def test_marked_extra_encodes_unmarked_rides_disposal(env, capsys):
     assert (L / "Gate (2001)" / "extras" / "Gate (2001) - Extra 01.mkv").read_text() == "GATE-KEEPER"
     assert not (L / "Plain (2002)" / "extras").exists()
     assert not (vid / "rip" / "movies" / "Plain (2002)" / "d0" / "Plain (2002)_t01.mkv").exists()
-    out = capsys.readouterr().out
-    assert "disposed unmarked extra with main: Plain (2002)_t01.mkv" in out
+    err = capsys.readouterr().err
+    assert "disposed unmarked extra with main: Plain (2002)_t01.mkv" in err
 
 
 def test_session_cap_defers_beyond_limit(env, capsys):
@@ -1659,7 +1659,7 @@ def test_session_cap_defers_beyond_limit(env, capsys):
     assert (L / "Aaa (2001)" / "Aaa (2001).mkv").exists()
     assert not (L / "Bbb (2002)").exists()
     assert (vid / "rip" / "movies" / "Bbb (2002)" / "Bbb (2002)_t00.mkv").exists()
-    assert "deferred (session cap 1): Bbb (2002)" in capsys.readouterr().out
+    assert "info  deferred (session cap 1): Bbb (2002)" in capsys.readouterr().err
 
 
 # -- prefetch lookahead: the next unit's copy overlaps the current encode ---------
@@ -1711,7 +1711,7 @@ def test_prefetch_overlaps_encode(env, tmp_path, capsys):
     assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
     assert "MB/s" in copies[0]["status"]
     out = capsys.readouterr().out
-    assert "copying Two (2002)_t00.mkv to local temp" not in out
+    assert "copying Two (2002)_t00.mkv to local temp" not in capsys.readouterr().err
 
 
 def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
@@ -1734,7 +1734,7 @@ def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
     out = capsys.readouterr().out
-    assert "copying Two (2002)_t00.mkv to local temp" not in out
+    assert "copying Two (2002)_t00.mkv to local temp" not in capsys.readouterr().err
 
 
 def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch):
@@ -1755,7 +1755,7 @@ def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch
     assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
     notes = [l for l in run_log(env) if l["phase"] == "prefetch"]
     assert len(notes) == 1 and "no prefetch" in notes[0]["status"]
-    assert "copies sequentially later" in capsys.readouterr().out
+    assert "copies sequentially later" in capsys.readouterr().err
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert all("MB/s" in c["status"] for c in copies)
 

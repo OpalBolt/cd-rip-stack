@@ -44,7 +44,6 @@ import re
 import shutil
 import statistics
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -53,6 +52,7 @@ from pathlib import Path
 
 from skive import common
 from skive import subs
+from skive import ui
 from skive.validation import (
     VALIDATION_FILENAME,
     load_validation,
@@ -77,6 +77,39 @@ _TV_ROOTS = ("TV", "tv")  # rip/TV (legacy ps1 staging) and rip/tv (SPEC layout)
 # "Invalid audio codec in autopassthru copy mask (copy:pcm)" -- and still
 # exits 0 (the Conan failure). LPCM audio takes the ac3 fallback instead.
 _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac"
+# encode-progress parse for the run view's status panel (TTY only)
+_RX_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+_RX_ETA = re.compile(r"ETA\s+(\S+)")
+_POS = ""  # current "item n of m" status line while a run view is live
+
+
+def _tool(name: str, line: str) -> None:
+    """Destination of a gated tool line (the tier logic and hidden-replay
+    buffers stay at the call sites): the run view tool-prefixes it into the
+    log panel on a TTY, ``{name}  {line}`` on stderr otherwise."""
+    v = ui.view()
+    if v is None:
+        print(line, flush=True)
+    else:
+        v.tool(name, line)
+
+
+def _progress_line(name: str, stripped: str) -> None:
+    """A surfaced encode-progress line (throttled or -vv): into the log panel
+    plus, on a TTY, the status panel's progress/ETA; unparseable -> omitted."""
+    _tool(name, stripped)
+    v = ui.view()
+    if v is not None:
+        m, e = _RX_PCT.search(stripped), _RX_ETA.search(stripped)
+        v.progress(float(m.group(1)) if m else None,
+                   e.group(1) if e else None)
+
+
+def _phase_status(part: str, name: str) -> None:
+    """Run view status: session position + the current part."""
+    v = ui.view()
+    if v is not None and v.tty:
+        v.status(*(([_POS] if _POS else []) + [f"{part}: {name}"]))
 
 
 @dataclass
@@ -101,8 +134,7 @@ def _find_on_path(exe: str) -> str | None:
     .exe, no %ProgramFiles% fallback)."""
     found = shutil.which(exe)
     if not found:
-        print(f"{exe} not found on PATH -- see README (transcode box: Install)",
-              file=sys.stderr)
+        ui.fail(f"{exe} not found on PATH -- see README (transcode box: Install)")
     return found
 
 
@@ -220,11 +252,11 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             num = int(num_str)
             part = int(m.group("pn")) if m.group("part") else -1
         else:
-            print(f"skip (junk label -- mid-rip or failed rename): {f}", file=sys.stderr)
+            ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
             continue
         # junk guard: no "(YYYY)" tail = rip in progress or failed rename
         if not re.search(r"\(\d{4}\)$", movie):
-            print(f"skip (junk label -- mid-rip or failed rename): {f}", file=sys.stderr)
+            ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
             continue
         if want:
             want_s = {common.sanitize(w): w for w in want}
@@ -404,9 +436,9 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
     ff = _find_tool("ffmpeg")
     vcn = _vcn_probe()
     if not ff or not vcn:
-        print("skive transcode: hardware path needs ffmpeg and a VCN with HEVC "
-              f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
-              "(scripts/setup-transcode.sh installs both)", file=sys.stderr)
+        ui.fail("hardware path needs ffmpeg and a VCN with HEVC "
+                f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
+                "(scripts/setup-transcode.sh installs both)")
         return False
     vf = "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
     if crop:  # the detected bar crop rides BEFORE the 64-px alignment crop
@@ -435,17 +467,17 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
                 # progress \r updates: throttle, never hidden-replay, raw-log
                 # only what actually printed
                 if verbose >= 2:
-                    print(line, end="", flush=True)
+                    _progress_line("ffmpeg", stripped)
                     if log is not None:
                         log.raw("ffmpeg", stripped)
                 elif time.monotonic() - last_prog >= 60:
-                    print(f"  {stripped}", flush=True)
+                    _progress_line("ffmpeg", stripped)
                     last_prog = time.monotonic()
                     if log is not None:
                         log.raw("ffmpeg", stripped)
                 continue
             if verbose >= 2 or (verbose >= 1 and "rror" in stripped):
-                print(line, end="", flush=True)
+                _tool("ffmpeg", stripped)
             elif stripped:
                 hidden.append(stripped)
             if log is not None:
@@ -458,12 +490,12 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
         raise
     if rc != 0:
         for line in hidden:
-            print(line, flush=True)
+            _tool("ffmpeg", line)
         return False
     if not os.path.exists(out):
         for line in hidden:
-            print(line, flush=True)
-        print(f"ffmpeg exited 0 but wrote no output: {out}", file=sys.stderr)
+            _tool("ffmpeg", line)
+        ui.fail(f"ffmpeg exited 0 but wrote no output: {out}")
         return False
     return True
 
@@ -528,17 +560,17 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
                 # progress \\r updates: throttle, never hidden-replay, raw-log
                 # only what actually printed
                 if verbose >= 2:
-                    print(line, end="", flush=True)
+                    _progress_line("handbrake", stripped)
                     if log is not None:
                         log.raw("handbrake", stripped)
                 elif time.monotonic() - last_prog >= 60:
-                    print(f"  {stripped}", flush=True)
+                    _progress_line("handbrake", stripped)
                     last_prog = time.monotonic()
                     if log is not None:
                         log.raw("handbrake", stripped)
                 continue
             if verbose >= 2 or (verbose >= 1 and stripped.startswith("ERROR")):
-                print(line, end="", flush=True)
+                _tool("handbrake", stripped)
             elif stripped:
                 hidden.append(stripped)
             if log is not None:
@@ -552,15 +584,15 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         raise
     if rc != 0:
         for line in hidden:
-            print(line, flush=True)
+            _tool("handbrake", line)
         return False
     if not os.path.exists(out):
         # rc==0 but no output: a rejected job init (bad argv, e.g. an invalid
         # copy-mask codec) exits 0 writing nothing. Replay the hidden lines
         # so the reason reaches the console instead of a FATAL two steps later.
         for line in hidden:
-            print(line, flush=True)
-        print(f"handbrake exited 0 but wrote no output: {out}", file=sys.stderr)
+            _tool("handbrake", line)
+        ui.fail(f"handbrake exited 0 but wrote no output: {out}")
         return False
     return True
 
@@ -581,7 +613,7 @@ def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None =
         for line in proc.stdout:
             stripped = line.rstrip()
             if common.VERBOSITY >= 2 or (common.VERBOSITY >= 1 and stripped.startswith("Error")):
-                print(line, end="", flush=True)
+                _tool("mkvmerge", stripped)
             elif stripped:
                 hidden.append(stripped)
             if log is not None:
@@ -594,7 +626,7 @@ def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None =
         raise
     if rc >= 2:
         for line in hidden:
-            print(line, flush=True)
+            _tool("mkvmerge", line)
     return rc
 
 
@@ -661,14 +693,15 @@ def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
     line (MB/s) goes to the console and the run log's status -- the slippage
     watch reads it (CONTEXT.md: Run log). The caller registers dst in
     inflight BEFORE calling (CONTEXT.md: Interrupt)."""
-    print(f"copying {os.path.basename(src)} to local temp...")
+    ui.info(f"copying {os.path.basename(src)} to local temp...")
+    _phase_status("copy", os.path.basename(src))
     log.phase("copy")
     t0 = time.monotonic()
     _copy2(src, dst)
     secs = max(int(time.monotonic() - t0), 1)
     mb = os.path.getsize(dst) // (1024 * 1024)
     detail = f"{mb} MB at {mb // secs} MB/s"
-    print(f"copied in {_hms(secs)} ({detail})")
+    ui.info(f"copied in {_hms(secs)} ({detail})")
     log.phase_end(detail)
     parts.append(f"copy {_hms(secs)}")
 
@@ -694,7 +727,14 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None) -> None:
             done += len(buf)
             pct = done * 100 // total
             if pct >= last + 10 or pct == 100:
-                print(f"  {pct}%  ({done // mb}/{total // mb} MB)")
+                # a TTY view's log panel takes them (raw % lines garble the
+                # Live region); fallback prints byte-identical to today
+                v = ui.view()
+                line = f"{pct}%  ({done // mb}/{total // mb} MB)"
+                if v is not None and v.tty:
+                    v.tool("copy", line)
+                else:
+                    print(f"  {line}")
                 last = pct
     shutil.copystat(src, dst)
 
@@ -712,7 +752,7 @@ def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> bool:
     os.makedirs(d, exist_ok=True)
     dest = os.path.join(d, os.path.basename(src))
     if os.path.exists(dest):
-        print(f"--keep: {dest} already exists -- source left in {os.path.dirname(src)}", file=sys.stderr)
+        ui.warn(f"--keep: {dest} already exists -- source left in {os.path.dirname(src)}")
         return False
     shutil.move(src, dest)
     return True
@@ -727,7 +767,7 @@ def _quarantine(src: str, item: Item, issues_root: str,
     os.makedirs(d, exist_ok=True)
     dest = os.path.join(d, os.path.basename(src))
     if os.path.exists(dest):
-        print(f"quarantine: {dest} already exists -- source left in place", file=sys.stderr)
+        ui.warn(f"quarantine: {dest} already exists -- source left in place")
     else:
         shutil.move(src, dest)
     _copy_run_evidence(log, d)
@@ -868,7 +908,7 @@ def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
     res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe,
                         log=log, verbose=common.VERBOSITY)
     for n in res.notes:
-        print(n)
+        ui.info(n)
     return side_dir, res
 
 
@@ -878,6 +918,7 @@ def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
     sidecar count and any barren drops (CONTEXT.md: Barren track)."""
     log.phase("subs")
     t0 = time.monotonic()
+    _phase_status("subs", base)
     side_dir, res = _sub_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe, log=log)
     secs = max(int(time.monotonic() - t0), 1)
     barren = sum(1 for n in res.notes if n.startswith("barren"))
@@ -895,11 +936,12 @@ def _detect_part(local_src: str, ffprobe_exe: str, log: common.RipLog,
     item -- the encode ships uncropped."""
     log.phase("detect")
     t0 = time.monotonic()
+    _phase_status("detect", os.path.basename(local_src))
     crop, note = _detect_crop(local_src, ffprobe_exe)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end(note)
     if crop is None:
-        print(f"  {note}")  # loud refusals on console; the phase line is the record
+        ui.info(note)  # loud refusals on console; the phase line is the record
     parts.append(f"detect {_hms(secs)}")
     return crop, note
 
@@ -911,6 +953,7 @@ def _encode_part(local_src: str, local_out: str, encoder: str, hb_exe: str,
     """The encode as the run's 'encode' phase; status carries the output size."""
     log.phase("encode")
     t0 = time.monotonic()
+    _phase_status("encode", os.path.basename(local_out))
     ok = _encode(local_src, local_out, encoder, hb_exe, ffprobe_exe,
                  no_subs=no_subs, log=log, speed=speed, crop=crop)
     secs = max(int(time.monotonic() - t0), 1)
@@ -926,6 +969,7 @@ def _merge_part(dst: str, local_parts: list[str], mkv_exe: str,
     """mkvmerge as the run's 'merge' phase (0 ok, 1 warning, 2+ failure)."""
     log.phase("merge")
     t0 = time.monotonic()
+    _phase_status("merge", os.path.basename(dst))
     mrc = _merge(dst, local_parts, mkv_exe, log=log)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end("ok" if mrc <= 1 else f"FAIL({mrc})")
@@ -946,8 +990,8 @@ def _fail_quarantine(log: common.RipLog, items: list[Item], issues_root: str,
     fails = "; ".join(n for n in notes if n.startswith("FAIL"))
     log.note("subs", f"FAIL subtitle pass: {label} -- {fails}")
     folder = os.path.join(issues_root, "tv" if items[0].is_tv else "movies", items[0].movie)
-    print(f"FAILED (subtitle pass): {label} -- encode shipped subless, "
-          f"sources quarantined to {folder}", file=sys.stderr)
+    ui.fail(f"FAILED (subtitle pass): {label} -- encode shipped subless, "
+            f"sources quarantined to {folder}")
     for item in items:
         _quarantine(item.path, item, issues_root, log)
 
@@ -966,11 +1010,9 @@ def run_transcode(args) -> int:
     common.set_verbosity(getattr(args, "verbose", 0))
     vid = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
     if not os.path.isdir(vid):
-        print(
-            f"skive transcode: {vid} is not reachable. The videos share isn't "
-            f"mounted -- mount it at {vid} (see README: transcode box), or set VIDEOS_MOUNT.",
-            file=sys.stderr,
-        )
+        ui.fail(
+            f"{vid} is not reachable. The videos share isn't "
+            f"mounted -- mount it at {vid} (see README: transcode box), or set VIDEOS_MOUNT.")
         return 1
     keep = args.keep
     retry = args.retry
@@ -1005,10 +1047,9 @@ def run_transcode(args) -> int:
             log.note("encode", "encoder: VCN hardware hevc_vaapi CQP 24"
                      + (" (low-power entrypoint)" if vcn["low_power"] else ""))
         elif args.encoder == "vaapi":
-            print("skive transcode: -e vaapi but this box has no VA-API HEVC encode "
-                  "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
-                  "missing (scripts/setup-transcode.sh); use -e auto or -e x265",
-                  file=sys.stderr)
+            ui.fail("-e vaapi but this box has no VA-API HEVC encode "
+                    "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
+                    "missing (scripts/setup-transcode.sh); use -e auto or -e x265")
             return 1
         else:
             args.encoder = "x265-fast"
@@ -1016,12 +1057,12 @@ def run_transcode(args) -> int:
     items, want_hit = _scan(input_dir, args.prefixes)
     for w in args.prefixes:
         if w not in want_hit:
-            print(f"no staged MKVs match: {w}", file=sys.stderr)
+            ui.warn(f"no staged MKVs match: {w}")
     if not items:
         if args.prefixes:
-            print("no matching MKVs to transcode", file=sys.stderr)
+            ui.warn("no matching MKVs to transcode")
             return 1
-        print(f"no MKVs in {input_dir}")
+        ui.info(f"no MKVs in {input_dir}")
         return 0
 
     # main-feature fallback per movie = the _tNN group with the most bytes (a
@@ -1065,8 +1106,7 @@ def run_transcode(args) -> int:
         if rec is None:
             continue  # the record says no candidate main existed: bytes fallback
         if not isinstance(rec, str) or not _RX_MAIN.match(rec):
-            print(f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback",
-                  file=sys.stderr)
+            ui.warn(f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback")
             continue
         num = int(rec[1:])
         if any(i.num == num for i in items if i.movie == movie and i.sfx == "t"):
@@ -1080,8 +1120,8 @@ def run_transcode(args) -> int:
     if args.limit:
         n_staged = len(main_num)
         n_run = min(args.limit, n_staged)
-        print(f"session: {n_run} main(s) of {n_staged} staged "
-              f"(cap {args.limit}) -- expect roughly {n_run} × 15–20 min")
+        ui.info(f"session: {n_run} main(s) of {n_staged} staged "
+                f"(cap {args.limit}) -- expect roughly {n_run} × 15–20 min")
 
     failed = 0
     parked = 0  # sources actually parked in lossless/ (--keep banner honesty)
@@ -1102,10 +1142,10 @@ def run_transcode(args) -> int:
         nonlocal n_ok, n_failed
         if ok:
             n_ok += 1
-            print(f"{label}: {' + '.join(parts)} -- ok")
+            ui.info(f"{label}: {' + '.join(parts)} -- ok")
         else:
             n_failed += 1
-            print(f"{label}: {' + '.join(parts)} -- FAILED")
+            ui.fail(f"{label}: {' + '.join(parts)} -- FAILED")
 
     # Prefetch lookahead (slice 03): while one unit encodes, the next unit's
     # source files pull into the workdir in one background thread. The main
@@ -1159,7 +1199,7 @@ def run_transcode(args) -> int:
         if free < need:
             msg = (f"workdir short {need - free} bytes of headroom -- no prefetch, "
                    f"{names} copies sequentially later")
-            print(msg)
+            ui.warn(msg)
             log.note("prefetch", msg)
             return
         log.note("prefetch", f"copying {names} for {nxt_unit[0].movie} in the background")
@@ -1183,11 +1223,19 @@ def run_transcode(args) -> int:
         for p in paths:
             _rmf(p)
 
+    view = ui.RunView()
+    ui.set_view(view)
+    global _POS
     log.start()
     try:
         for i in items:
             if i.path in handled:
                 continue
+            u = unit_of.get(i.path)  # not every staged item is an encode unit
+            if u is not None:
+                _POS = f"item {u + 1} of {len(units)}"
+            if view.tty:
+                view.status(_POS, i.movie)
             inflight = []
             inflight_side = None
             log.name = i.movie
@@ -1289,8 +1337,8 @@ def run_transcode(args) -> int:
                                     if x.sfx == "t" and not x.is_tv and x.path not in handled
                                     and x.movie in main_num
                                     and main_num[x.movie][0] == x.num)
-                    print(f"deferred (session cap {args.limit}): {i.movie} -- "
-                          f"{remaining} main(s) left for the next run")
+                    ui.info(f"deferred (session cap {args.limit}): {i.movie} -- "
+                            f"{remaining} main(s) left for the next run")
                     continue
                 mains_started += 1
                 mark_main_include = extras_mark.get(
@@ -1405,7 +1453,7 @@ def run_transcode(args) -> int:
                                 if _archive(x.path, x, lossless_root, keep):
                                     parked += 1
                                 handled.add(x.path)
-                                print(f"disposed unmarked extra with main: {x.name}")
+                                ui.info(f"disposed unmarked extra with main: {x.name}")
                     else:
                         _fail_quarantine(log, siblings, issues_root, names, res.notes)
                     for s in siblings:
@@ -1444,11 +1492,11 @@ def run_transcode(args) -> int:
             if not mark["include"]:
                 handled.add(i.path)
                 if i.movie in main_num or i.movie in rec_missing:
-                    print(f"skip (unmarked extra -- rides the main's disposal): {i.name}")
+                    ui.info(f"skip (unmarked extra -- rides the main's disposal): {i.name}")
                 else:
                     if _archive(i.path, i, lossless_root, keep):
                         parked += 1
-                    print(f"skip (unmarked extra -- no staged main, disposed): {i.name}")
+                    ui.info(f"skip (unmarked extra -- no staged main, disposed): {i.name}")
                 continue
             speed = None if mark["quality"] == "full" else "superfast"
             ext = f".p{i.part}" if i.part >= 0 else ""
@@ -1497,6 +1545,7 @@ def run_transcode(args) -> int:
         # dir), leave the SOURCE in staging — sources only move on success —
         # record status=interrupted, exit 130.
         log.fail_open_phase("interrupted")
+        view.close()  # before any print, so the Live region never garbles them
         for p in inflight:
             _rmf(p)
         pf_cancel.set()
@@ -1506,15 +1555,16 @@ def run_transcode(args) -> int:
         if inflight_side is not None:
             shutil.rmtree(inflight_side, ignore_errors=True)
         log.interrupted()
-        print("skive transcode: interrupted -- partial temp output deleted, source left in staging",
-              file=sys.stderr)
+        ui.fail("interrupted -- partial temp output deleted, source left in staging")
         return 130
     except Exception as e:
         failed = 1
-        print(f"FATAL: {e}", file=sys.stderr)
+        ui.fail(f"FATAL: {e}")
         log.note("run", f"FATAL: {e}")
         log.fail_open_phase("FAIL")
     finally:
+        view.close()
+        ui.clear_view()
         log.finish(failed)
 
     print(f"{n_ok} ok, {n_failed} failed")
