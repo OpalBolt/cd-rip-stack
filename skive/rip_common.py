@@ -2,6 +2,8 @@
 
 import os
 import sys
+
+from skive import ui  # spill: slice-06 event convention (fail  interrupted ...)
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -337,7 +339,7 @@ def interrupted_exit(log, stage_dirs: list[Path]) -> None:
     purge_junk(stage_dirs, quiet=True)  # one summary line, no per-file chatter
     kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))
     log.interrupted()
-    print(f"skive: interrupted — partial deleted, kept {kept} titles", file=sys.stderr)
+    ui.fail(f"interrupted — partial deleted, kept {kept} titles")
     sys.exit(130)
 
 

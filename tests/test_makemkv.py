@@ -427,59 +427,80 @@ def test_run_with_progress_leaves_final_summary_line(verbosity, capsys):
 
 
 def test_run_with_progress_what_and_title_offset(verbosity, capsys):
-    """what/title_offset: line 1 names the rip, line 2 shows true x/y."""
+    """what/title_offset: the fallback transition event and the summary line
+    name the rip and show true x/y."""
     verbosity(0)
-    from skive.makemkv import status_block
-    seen = []
-    real = status_block
-
-    def spy(**kwargs):
-        seen.append(kwargs)
-        return real(**kwargs)
-
-    with patch("skive.makemkv.status_block", side_effect=spy), patch(
-            "skive.makemkv.subprocess.Popen", return_value=_mkvcon(
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
                 ['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:32768,65536,65536"])):
         rc = _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 12 (2/5)",
                                 total_titles=5, what="Movie (2020)", title_offset=1)
     assert rc == 0
-    assert seen and all(c["what"] == "Movie (2020)" for c in seen)
-    assert {c["title_x"] for c in seen} == {2}  # offset 1 + saved title 1
-    assert {c["title_y"] for c in seen} == {5}
     err = capsys.readouterr().err
+    assert "info  title 12 (2/5): Saving to MKV file 1 of 1 · title 2/5" in err
     assert "title 12 (2/5): done · title 2/5" in err  # summary shows true x/y too
 
 
 def test_rip_titles_per_title_threads_header_and_position(verbosity, capsys):
-    """Per-title rips: every block keeps the display title and true x/y,
-    while the static header still prints exactly once."""
+    """Per-title rips: every fallback transition names the display title and
+    true x/y, while the static header still prints exactly once."""
     verbosity(0)
-    from skive.makemkv import status_block
-    seen = []
-    real = status_block
-
-    def spy(**kwargs):
-        seen.append(kwargs)
-        return real(**kwargs)
-
     header = "Movie (2020)\n  titles: 2  est total: 31.0 GiB\n  audio: eng\n  subs:  none"
-    with patch("skive.makemkv.status_block", side_effect=spy), patch(
-            "skive.makemkv.subprocess.Popen", side_effect=lambda cmd, **kw: _mkvcon(
+    with patch("skive.makemkv.subprocess.Popen", side_effect=lambda cmd, **kw: _mkvcon(
                 ['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:32768,65536,65536"])):
         rc = rip_titles([12, 14], Path("/tmp/p.xml"), 120, Path("/tmp/stage"),
                         disc=0, header=header)
     assert rc == 0
-    # Both calls redraw the block: line 1 is the header's first line both times.
-    assert [c["what"] for c in seen] == ["Movie (2020)", "Movie (2020)",
-                                         "Movie (2020)", "Movie (2020)"]
-    # True position across the selection: title 1 then title 2, of 2 total.
-    assert [c["title_x"] for c in seen] == [1, 1, 2, 2]
-    assert {c["title_y"] for c in seen} == {2}
-    assert {c["drive"] for c in seen} == {"disc:0"}
     err = capsys.readouterr().err
-    assert err.count("titles: 2") == 1  # header printed once, above the first Live
+    assert err.count("titles: 2") == 1  # header printed once
+    # True position across the selection: title 1 then title 2, of 2 total.
+    assert "info  title 12 (1/2): Saving to MKV file 1 of 1 · title 1/2" in err
+    assert "info  title 14 (2/2): Saving to MKV file 1 of 1 · title 2/2" in err
     assert "title 12 (1/2): done · title 1/2" in err
     assert "title 14 (2/2): done · title 2/2" in err
+
+
+def test_run_with_progress_seam_view_carries_status_block(verbosity):
+    """Absorption (ADR 0012): with a seam view set the status panel carries
+    status_block's lines and the progress line the pct; the summary lands in
+    the log panel as an event."""
+    from skive import ui
+    verbosity(0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+                'PRGC:50,"Saving to MKV file 1 of 1"',
+                "PRGV:32768,65536,65536", "PRGV:65535,65536,65536"])):
+            rc = _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 12 (2/5)",
+                                    total_titles=5, what="Movie (2020)",
+                                    title_offset=1)  # no sizes: line 2 fits the 80-col render
+    finally:
+        ui.clear_view()
+    assert rc == 0
+    out = view.render()
+    assert "Movie (2020) — disc:0" in out  # status_block line 1
+    assert "Saving to MKV file 1 of 1 · title 2/5" in out  # line 2
+    assert "100.0%" in out  # the last PRGV drove the percent (clamped near-total)
+    assert "title 12 (2/5): done · title 2/5" in out  # summary event in the log panel
+
+
+def test_run_with_progress_fallback_progress_line_cadence(verbosity, capsys):
+    """Fallback: a plain makemkv progress line every PRGV at -vv, none quiet
+    inside the 60 s throttle window."""
+    verbosity(0)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
+            ["PRGV:32768,65536,65536", "PRGV:65535,65536,65536"])):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test")
+    assert rc == 0
+    assert "%" not in capsys.readouterr().err
+
+    verbosity(2)
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
+            ["PRGV:32768,65536,65536"])):
+        rc = _run_with_progress(["makemkvcon", "mkv"], "test")
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "makemkv  100%" in err
 
 
 # -- Interrupt (Ctrl+C) mid-rip (CONTEXT.md: Interrupt) ------------------------

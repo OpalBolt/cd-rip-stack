@@ -130,6 +130,16 @@ def test_fallback_view_wired_to_transcode_progress(capsys):
     assert "ETA 00:01:30" in rendered
 
 
+def test_suspend_is_a_no_op_context_without_a_live():
+    """suspend() is a valid `with` on both the seam and fallback views (no
+    Live to stop); the view keeps working inside and after."""
+    for v in (ui.RunView(tty=True, live=False), ui.RunView()):
+        with v.suspend():
+            v.status("inside")
+        v.status("after")
+        assert "after" in v.render()
+
+
 # -- background panel (slice 04): concurrent activity, one keyed line each ----
 
 def _tty_seam_view():

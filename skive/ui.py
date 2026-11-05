@@ -13,6 +13,7 @@ at all. Verbosity/gating logic stays at the call sites — this is the
 console layer only.
 """
 
+import contextlib
 import re
 import sys
 import threading
@@ -83,9 +84,9 @@ class RunView:
         from rich.text import Text
 
         status_lines = list(self._status)
-        n_status = len(status_lines)
         if self._progress:
             status_lines.append(self._progress)
+        n_status = len(status_lines)
         status = Text("\n".join(status_lines))
         if self._perf:
             text, hot = self._perf
@@ -176,6 +177,25 @@ class RunView:
             else:
                 print(line, file=sys.stderr)
 
+    def suspend(self):
+        """Pause the Live region while a prompt prints normally (scrollback);
+        redraw after. A no-op `with` when no Live runs (fallback, seam)."""
+        @contextlib.contextmanager
+        def _ctx():
+            if self._live is None or self._closed:
+                yield
+                return
+            self._live.stop()
+            self._live = None
+            try:
+                yield
+            finally:
+                from rich.live import Live
+                self._live = Live(self._panels(), console=self._console,
+                                  refresh_per_second=4, transient=True)
+                self._live.start()
+        return _ctx()
+
     def close(self) -> None:
         """Stop the Live region; idempotent, safe from finally."""
         sampler = getattr(self, "_sampler", None)
@@ -226,11 +246,13 @@ def _hms(secs: int) -> str:
     return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
 
 
-def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None,
-                replay=()) -> None:
+def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
+                replay=(), columns=None) -> None:
     """End-of-run summary on stderr (after the run view closed): warn/fail
-    lines replayed (TTY only), one table of per-item phase timings, the
-    ok/failed count, and the --keep banner only when keep_banner is set."""
+    lines replayed (TTY only), one table of rows, the ok/failed count, and
+    the --keep banner only when keep_banner is set. columns=None keeps the
+    transcode shape (per-phase cells summed into a total); a columns tuple
+    renders each row as ready cells (the rip shape)."""
     with _print_lock:
         for line in replay:
             print(line, file=sys.stderr)
@@ -238,20 +260,26 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None,
         from rich.table import Table
         console = Console(file=sys.stderr)
         table = Table(box=None)  # plain ASCII under pytest's non-TTY stderr
-        for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
-            table.add_column(col)
-        for label, parts, ok in rows:
-            cells: dict[str, str] = {}
-            total = 0
-            for part in parts:
-                phase, _, value = part.partition(" ")
-                cells[phase] = value
-                s = _secs(value)
-                if s is not None:
-                    total += s
-            table.add_row(label,
-                          *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
-                          _hms(total), "ok" if ok else "FAILED")
+        if columns is not None:
+            for col in columns:
+                table.add_column(col)
+            for row in rows:
+                table.add_row(*(str(c) for c in row))
+        else:
+            for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
+                table.add_column(col)
+            for label, parts, ok in rows:
+                cells: dict[str, str] = {}
+                total = 0
+                for part in parts:
+                    phase, _, value = part.partition(" ")
+                    cells[phase] = value
+                    s = _secs(value)
+                    if s is not None:
+                        total += s
+                table.add_row(label,
+                              *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
+                              _hms(total), "ok" if ok else "FAILED")
         console.print(table)
         console.print(f"{n_ok} ok, {n_failed} failed")
         if keep_banner is not None:

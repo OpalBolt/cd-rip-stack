@@ -11,6 +11,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+from skive import ui
 from skive.makemkv import (
     build_selection, hsize, inject_profile, promote_staged, rename_staged,
     rip_header, subtitle_note, rip_titles,
@@ -74,8 +75,7 @@ def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
         try:
             dur = int(float(result.stdout.strip()))
         except ValueError:
-            print(f"skive: cannot read duration of {mkv.name} — recorded without one",
-                  file=sys.stderr)
+            ui.warn(f"cannot read duration of {mkv.name} — recorded without one")
             dur = None
         rows.append(movie_row(mkv.name, int(m.group(1)), dur, runtime_s))
     rows.sort(key=lambda r: r["t"])
@@ -84,7 +84,7 @@ def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
 
 def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | None,
                         graded_rows: list[dict], run=subprocess.run,
-                        include_extras: bool = False) -> None:
+                        include_extras: bool = False) -> list[dict]:
     """The post-rip record (map.md decision 5), run beside the subtitle note:
     probe what actually staged, grade it, resolve the main to a real file
     number, report one line per file, and write validation.json at the
@@ -119,12 +119,12 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
             parts.append(r["band"])
         if main == f"t{r['t']}":
             parts.append("MAIN")
-        print("  ".join(parts), file=sys.stderr)
+        ui.info("  ".join(parts))
     main_row = next((r for r in rows if f"t{r['t']}" == main), None)
     green_mains = 1 if main_row is not None and main_row["band"] == "green" else 0
     yellow = sum(1 for r in rows if r["band"] == "yellow")
     summary = f"{len(rows)} files, {green_mains} green main, {yellow} yellow"
-    print(f"validation: {summary}", file=sys.stderr)
+    ui.info(f"validation: {summary}")
     log.note("validation", summary)
 
     doc = movie_document(pick.id, preamble.display, pick.runtime_secs,
@@ -135,16 +135,16 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
         old_tmdb = old.get("tmdb")
         old_id = old_tmdb.get("id") if isinstance(old_tmdb, dict) else None
         if old_id is None or str(old_id) != str(pick.id):
-            print(f"skive: {path} records a different film — validation left untouched",
-                  file=sys.stderr)
+            ui.warn(f"{path} records a different film — validation left untouched")
             log.note("validation", "existing validation.json names a different film — kept")
-            return
+            return rows
         doc = merge_movie_document(old, doc)
     if include_extras:
         # -i/--include-extras (CONTEXT.md: Extras marker): the extras this
         # run staged are keepers — transcode encodes them (superfast)
         doc["extras"] = {"include": True, "quality": "superfast"}
     write_validation(path, doc)
+    return rows
 
 
 def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
@@ -190,7 +190,7 @@ def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
 
 def _quit_nothing_ripped() -> None:
     """TV's quit: one line on stderr, exit 1 — nothing has been ripped."""
-    print("skive: quit — nothing ripped.", file=sys.stderr)
+    ui.info("quit — nothing ripped.")
     sys.exit(1)
 
 
@@ -312,6 +312,8 @@ def rip_movie(args) -> None:
         SystemExit: On any error, user abort, or interrupt (exit 130)
     """
     preamble = None
+    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
+    ui.set_view(view)
     try:
         preamble = rip_preamble("movie", "skive rip movie", args)
         log = preamble.log
@@ -331,9 +333,12 @@ def rip_movie(args) -> None:
         # Pre-rip gate (map.md decision 3): table, main pick, confirm — every
         # run confirms before the drive spins. The chosen main and the graded
         # rows travel on to the validation record (map.md decision 5), written
-        # beside the subtitle note after the rip.
-        chosen_main, graded_rows = pre_rip_confirm(
-            log, display, titles_full, pick.runtime_secs, extras=args.extras)
+        # beside the subtitle note after the rip. The view suspends for the
+        # gate: table and prompt print normally (scrollback), the view redraws
+        # after the answer.
+        with view.suspend():
+            chosen_main, graded_rows = pre_rip_confirm(
+                log, display, titles_full, pick.runtime_secs, extras=args.extras)
 
         # Build selection string
         keep = preamble.keep
@@ -343,6 +348,7 @@ def rip_movie(args) -> None:
         # Inject profile
         profile_path = inject_profile(sel)
         rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
+        summary_rows: list[tuple] = []
         try:
             # Rip phase
             preexisting = set(title_dir.glob("*.mkv"))
@@ -381,30 +387,46 @@ def rip_movie(args) -> None:
 
             # Subtitle note
             note = subtitle_note(title_dir)
-            print(f"{note}", file=sys.stderr)
+            ui.info(note)
             log.note("subtitle", note)
 
             # Post-rip validation (map.md decision 5): the record beside the
             # subtitle note — actuals probed from what staged, the main
             # resolved to a real final file number, validation.json at the
             # title-folder root. Interrupts exit above and never reach this.
-            post_rip_validation(preamble, preexisting, chosen_main, graded_rows,
-                                include_extras=args.include_extras)
+            probed = post_rip_validation(preamble, preexisting, chosen_main, graded_rows,
+                                         include_extras=args.include_extras)
 
             log.phase_end()
             rc = worst_rc
-            sys.exit(worst_rc)
         except KeyboardInterrupt:
             # CONTEXT.md Interrupt: delete the in-flight partial (junk-labeled
             # staged files), keep completed renames, log status=interrupted,
             # exit 130. interrupted_exit never returns; the finally below still
             # unlinks the temp profile, and finish() stays silent because
-            # interrupted() already wrote this run's total line.
+            # interrupted() already wrote this run's total line. The view
+            # closes first so its Live never garbles the summary prints.
+            view.close()
             interrupted_exit(log, [title_dir, stage_movie])
         finally:
             # Clean up temp profile
             profile_path.unlink(missing_ok=True)
             log.finish(rc)
+        # The run summary (after the view closed; no summary on interrupt —
+        # transcode precedent): per-title rows × duration × size × result.
+        for r in probed:
+            f = title_dir / r["file"]
+            try:
+                size = hsize(f.stat().st_size)
+            except OSError:
+                size = "?"
+            summary_rows.append((f.stem, _hms(r["dur_s"]) if r["dur_s"] is not None else "?",
+                                 size, "ok" if worst_rc == 0 else "FAILED"))
+        n_ok = sum(1 for r in summary_rows if r[3] == "ok")
+        ui.run_summary(summary_rows, n_ok, len(summary_rows) - n_ok,
+                       columns=("Title", "duration", "size", "result"),
+                       replay=view.replay_lines())
+        sys.exit(worst_rc)
     except KeyboardInterrupt:
         # Interrupt outside the rip try (TMDB prompt via rip_preamble, scan,
         # the note/profile window): rip_preamble logs the interrupted status
@@ -412,5 +434,9 @@ def rip_movie(args) -> None:
         # the full interrupt exit still apply. main's fallback prints the
         # one line for the not-yet-started window.
         if preamble is not None:
+            view.close()
             interrupted_exit(preamble.log, [preamble.title_dir, preamble.stage])
         raise
+    finally:
+        view.close()
+        ui.clear_view()

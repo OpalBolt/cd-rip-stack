@@ -469,8 +469,8 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
-    assert "skive: interrupted — partial deleted, kept 1 titles" in err
-    assert err.count("skive: interrupted") == 1
+    assert "fail  interrupted — partial deleted, kept 1 titles" in err
+    assert err.count("fail  interrupted") == 1
 
 
 def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
@@ -571,7 +571,7 @@ def test_pre_rip_several_candidates_q_quits_before_any_rip(monkeypatch, capsys):
 
     assert e.value.code == 1
     rip.assert_not_called()
-    assert "skive: quit — nothing ripped." in capsys.readouterr().err
+    assert "info  quit — nothing ripped." in capsys.readouterr().err
 
 
 def test_pre_rip_sole_near_candidate_automatic_without_prompt(monkeypatch, capsys):
@@ -620,7 +620,7 @@ def test_pre_rip_yellow_escalation_default_no_aborts(monkeypatch, capsys):
     assert e.value.code == 1
     rip.assert_not_called()
     assert ("main", "main=t1 near the runtime — automatic") in _main_notes(log)
-    assert "skive: quit — nothing ripped." in capsys.readouterr().err
+    assert "info  quit — nothing ripped." in capsys.readouterr().err
 
 
 def test_pre_rip_yellow_escalation_explicit_yes_proceeds(monkeypatch, capsys):
@@ -646,7 +646,7 @@ def test_pre_rip_plain_confirm_q_aborts(monkeypatch, capsys):
 
     assert e.value.code == 1
     rip.assert_not_called()
-    assert "skive: quit — nothing ripped." in capsys.readouterr().err
+    assert "info  quit — nothing ripped." in capsys.readouterr().err
 
 
 def test_pre_rip_extras_no_ratio_column_and_no_main(monkeypatch, capsys):
@@ -809,6 +809,62 @@ def _preamble_for(tmp_path, pick=MAMMA, fast_scan=False):
                    minlength=120, keep="", disc=0, label="MAMMA_MIA",
                    fast_scan=fast_scan)
     return pre, log
+
+
+# --- Run view wiring (slice 06: absorption + suspend + run summary) ---------
+
+
+def test_movie_pick_prints_normally_under_a_seam_view(monkeypatch, capsys):
+    """The pick runs inside view.suspend(): the candidate table and prompt
+    still reach stdout (scrollback) while a seam view is set, and the run
+    completes after the redraw."""
+    from skive import ui
+    log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with pytest.raises(SystemExit) as e:
+            rip_movie(FakeArgs())
+    finally:
+        ui.clear_view()
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    assert "pick the main feature" in out  # the loud pick prompt
+    assert "ok? (Enter=rip, q=quit)" in out  # the confirm
+    rip.assert_called_once()
+
+
+def test_rip_movie_prints_run_summary_rows_and_count(monkeypatch, tmp_path, capsys):
+    """The rip run summary: per-title rows (title × duration × size × result)
+    and the ok/failed count, printed after the view closed."""
+    from skive import rip_movie as rm
+
+    title_dir = tmp_path / "rip" / "movies" / "Mamma Mia! (2008)"
+    durs = {"Mamma Mia! (2008)_t21.mkv": 6249, "Mamma Mia! (2008)_t12.mkv": 6600}
+
+    def stage_files(_display, _dir, **k):
+        for name in durs:
+            (title_dir / name).write_bytes(b"x")
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.5\n")
+
+    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""))
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
+    real = rm.post_rip_validation
+    monkeypatch.setattr(rm, "post_rip_validation",
+                        lambda pre, pex, main, rows, **k: real(pre, pex, main, rows, run=fake_run))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+    assert e.value.code == 0
+
+    err = capsys.readouterr().err
+    for col in ("Title", "duration", "size", "result"):
+        assert col in err
+    rows21 = [l for l in err.splitlines() if "1:44:09" in l]
+    assert any("_t21" in l and "1.0 B" in l and "ok" in l for l in rows21)
+    assert "2 ok, 0 failed" in err
 
 
 def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_path, capsys):

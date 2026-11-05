@@ -12,7 +12,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from skive import common
+from skive import common, ui  # ui: event lines only — no view logic here
 
 
 # Port of bash constants
@@ -114,48 +114,45 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                        sizes: list[int] | None = None, header: str | None = None,
                        log=None, what: str | None = None,
                        title_offset: int = 0) -> int:
-    """Run makemkvcon with --progress=-same and drive the status block.
+    """Run makemkvcon with --progress=-same and drive the run view (ADR 0012:
+    absorption — the parsing stays, only the rendering moved into the view).
 
-    The block is a rich Live region of three lines under the static disc
-    summary header: line 1 what is being ripped (display title + drive),
-    line 2 the detail (phase · title x/y · current/total size · disc total ·
-    ETA), line 3 the progress bar. The Live region clears on exit and one
-    static summary line records the outcome, so no stale bar is left on
-    screen.
+    With a TTY run view live: no rich objects here at all — the view's
+    status panel carries line 1 (what + drive) and line 2 (status_block:
+    phase · title x/y · current/total size · disc total · ETA) and its
+    progress line the bar's percent/ETA. Without one (piped, or tests):
+    tagged/plain forms — PRGC/PRGT transitions and per-title "Saving to MKV
+    file" become one info event each, plus a plain ``makemkv  NN% · ETA``
+    progress line at the transcode cadence (60 s quiet, every line at -vv);
+    tool lines are ``makemkv  {text}`` on stderr. The static header prints
+    only in the fallback (under a view the status line 1 carries the what).
 
     Parses robot output: PRGV (values), PRGT (phase name), PRGC (sub-task),
-    MSG (messages). sizes (estimated bytes per title, in rip order) drives
-    the live GiB figures: ripped ≈ estimated size × progress fraction; the
-    ETA is a simple elapsed-rate projection from bytes done/bytes total.
-    Every output line lands verbatim in the run's raw log (log.raw). Console
+    MSG (messages). sizes (estimated bytes per title, in rip order) drive
+    the size figures: ripped ≈ estimated size × progress fraction; the ETA
+    is a simple elapsed-rate projection from bytes done/bytes total. Every
+    output line lands verbatim in the run's raw log (log.raw). Console
     verbosity (common.VERBOSITY) gates only the printing: MSG lines show at
     -v, raw/unknown lines at -vv, and anything the level hid is replayed
-    verbatim to stderr when makemkvcon fails (story 7). At level 0 the block
-    is the only thing moving on screen; at level ≥1 tool lines print through
-    the same console inside the live context, landing above the block.
+    (makemkv-prefixed) when makemkvcon fails (story 7). One info summary
+    line records the outcome.
 
     Args:
-        what: Display title for line 1; None falls back to the header's first
-            line, then to desc. Per-title rips seed it once in rip_titles so
-            every Live region names the rip without reprinting the header.
+        what: Display title for status line 1; None falls back to the
+            header's first line, then to desc.
         title_offset: Titles already saved in this session before this call,
-            so per-title calls show the true title x/y. The bar's sizes stay
-            indexed within the call (cur_title still counts from 0).
+            so per-title calls show the true title x/y.
     """
-    from rich.console import Group
-    from rich.live import Live
-    from rich.progress import (
-        BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn,
-    )
-    from rich.text import Text
     cmd = cmd[:1] + ["--progress=-same"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     est_total = sum(sizes) if sizes else 0
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
+    view = ui.view()
+    live_view = view is not None and view.tty
     console = Console(file=sys.stderr)
-    if header:
-        console.print(header, highlight=False)  # static, above the Live region
+    if header and not live_view:
+        console.print(header, highlight=False)
     what = what or (header.split("\n", 1)[0] if header else desc)
     drive = next((a for a in cmd if a.startswith("disc:")), "?")
     phase = ""
@@ -163,103 +160,102 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     cur_size = sizes[0] if sizes else 0
     cur_done = tot_done = 0
     started = time.monotonic()
+    last_prog = started  # fallback progress-line throttle (transcode cadence)
 
-    l1, l2 = Text(style="bold"), Text()
-    progress = Progress(
-        # desc stays static on the bar line: line 1/2 now carry what + phase.
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.percentage:>5.1f}%"),
-        TimeElapsedColumn(),
-        TextColumn("ETA"),
-        TimeRemainingColumn(),
-        console=console,
-    )
-    task = progress.add_task(desc, total=65536)
+    def tool_out(text: str) -> None:
+        """A tool line: view log panel when one is set, ``makemkv  {text}``
+        on stderr otherwise."""
+        if view is not None:
+            view.tool("makemkv", text)
+        else:
+            print(f"makemkv  {text}", file=sys.stderr)
 
-    def redraw(eta: str = "") -> None:
-        """Refresh the two text lines of the status block."""
-        l1.plain, l2.plain = status_block(
+    def push_status(eta: str = "") -> None:
+        """Feed the status panel: line 1 what + drive, line 2 status_block."""
+        l1, l2 = status_block(
             what=what, drive=drive, phase=phase, title_x=cur_title + title_offset,
             title_y=total_titles,
             cur=hsize(cur_done) if est_total else "",
             total=hsize(cur_size) if est_total else "",
             disc=f"{hsize(tot_done)}/{hsize(est_total)}" if est_total else "",
             eta=eta)
-
-    live = Live(Group(l1, l2, progress), console=console, transient=True)
-
-    def live_refresh() -> None:
-        """Re-render the block after a phase-only change (no bar update)."""
-        live.refresh()
+        view.status(l1, l2)
 
     try:
-        with live:
-            for line in proc.stdout:
-                line = line.rstrip()
-                if log is not None:
-                    log.raw("makemkvcon", line)
-                if line.startswith("PRGV:"):
-                    parts = line[5:].split(",")
-                    if len(parts) == 3 and all(p.isdigit() for p in parts):
-                        tot = int(parts[2]) or 65536
-                        eta = ""
-                        if est_total:
-                            # ponytail: byte counts are est size × PRGV fraction, not real
-                            # file sizes; stat the staged .mkv if precision ever matters.
-                            cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
-                            cur_done = int(cur_size * int(parts[0]) / tot)
-                            tot_done = int(est_total * int(parts[1]) / tot)
-                            if tot_done:
-                                elapsed = time.monotonic() - started
-                                eta = _fmt_eta(elapsed * (est_total - tot_done) / tot_done)
-                        redraw(eta)
-                        # Clamp below total: rich freezes elapsed/ETA once a task
-                        # finishes, and makemkvcon hits 100% on quick sub-phases.
-                        progress.update(task, completed=min(int(parts[1]), tot - 1), total=tot)
-                elif line.startswith("PRGC:"):
-                    # New sub-task; "Saving to MKV file" marks the start of each title
-                    val = _qval(line)
-                    if "Saving to MKV file" in val:
-                        cur_title += 1
-                    phase = val.strip()
-                    redraw()
-                    live_refresh()
-                elif line.startswith("PRGT:"):
-                    phase = _qval(line).strip()
-                    redraw()
-                    live_refresh()
-                elif line.startswith("MSG:"):
-                    if verbose >= 1:
-                        console.print(_qval(line), highlight=False)
+        for line in proc.stdout:
+            line = line.rstrip()
+            if log is not None:
+                log.raw("makemkvcon", line)
+            if line.startswith("PRGV:"):
+                parts = line[5:].split(",")
+                if len(parts) == 3 and all(p.isdigit() for p in parts):
+                    tot = int(parts[2]) or 65536
+                    # Clamp below total: makemkvcon hits 100% on quick sub-phases.
+                    done = min(int(parts[1]), tot - 1)
+                    pct = 100.0 * done / tot
+                    eta = ""
+                    if est_total:
+                        # ponytail: byte counts are est size × PRGV fraction, not real
+                        # file sizes; stat the staged .mkv if precision ever matters.
+                        cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
+                        cur_done = int(cur_size * int(parts[0]) / tot)
+                        tot_done = int(est_total * int(parts[1]) / tot)
+                        if tot_done:
+                            elapsed = time.monotonic() - started
+                            eta = _fmt_eta(elapsed * (est_total - tot_done) / tot_done)
+                    if live_view:
+                        push_status(eta)
+                        view.progress(round(pct, 1), eta or None)
                     else:
-                        hidden.append(line)
-                elif line:
-                    # Pass through anything else makemkvcon prints (drive/errors/etc.)
-                    if verbose >= 2:
-                        console.print(line, highlight=False)
-                    else:
-                        hidden.append(line)
-            rc = proc.wait()
+                        now = time.monotonic()
+                        if verbose >= 2 or now - last_prog >= 60:
+                            tool_out(f"{pct:.0f}%" + (f" · {eta}" if eta else ""))
+                            last_prog = now
+            elif line.startswith("PRGC:"):
+                # New sub-task; "Saving to MKV file" marks the start of each title
+                val = _qval(line)
+                if "Saving to MKV file" in val:
+                    cur_title += 1
+                phase = val.strip()
+                if live_view:
+                    push_status()
+                else:
+                    ui.info(f"{desc}: {phase} · title {cur_title + title_offset}/{total_titles}")
+            elif line.startswith("PRGT:"):
+                phase = _qval(line).strip()
+                if live_view:
+                    push_status()
+                else:
+                    ui.info(f"{desc}: {phase} · title {cur_title + title_offset}/{total_titles}")
+            elif line.startswith("MSG:"):
+                if verbose >= 1:
+                    tool_out(_qval(line))
+                else:
+                    hidden.append(line)
+            elif line:
+                # Pass through anything else makemkvcon prints (drive/errors/etc.)
+                if verbose >= 2:
+                    tool_out(line)
+                else:
+                    hidden.append(line)
+        rc = proc.wait()
     except KeyboardInterrupt:
-        # CONTEXT.md Interrupt: the Live region just closed (its context
-        # exited on the exception); stop the child — SIGINT, grace window,
-        # then kill — and pass the interrupt up for the partial purge and
-        # the 130 exit.
+        # CONTEXT.md Interrupt: stop the child — SIGINT, grace window, then
+        # kill — and pass the interrupt up for the partial purge and the 130
+        # exit. No summary line: the interrupt summary owns the console.
         common.kill_child_after_grace(proc)
         raise
     if rc != 0:
-        # Story 7: the captured lines the console never saw are replayed
-        # verbatim so a crash still tells the operator what the tool said.
+        # Story 7: the captured lines the console never saw are replayed so
+        # a crash still tells the operator what the tool said.
         for line in hidden:
-            print(line, file=sys.stderr)
+            tool_out(line)
     outcome = "done" if rc == 0 else f"failed (rc={rc})"
     summary = f"{desc}: {outcome} · title {cur_title + title_offset}/{total_titles}"
     if est_total:
         summary += f" · disc {hsize(tot_done)}/{hsize(est_total)}"
-    console.print(summary, highlight=False)
+    ui.info(summary)
     return rc
-
 
 def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
@@ -313,7 +309,7 @@ def promote_staged(stage_dir: Path) -> None:
     for mkv in stage_dir.glob("*.mkv"):
         target = parent / mkv.name
         if target.exists():
-            print(f"skive: {target.name} already exists — left in {stage_dir.name}/", file=sys.stderr)
+            ui.warn(f"{target.name} already exists — left in {stage_dir.name}/")
             continue
         mkv.rename(target)
 
@@ -406,7 +402,7 @@ def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | 
 
         target = stage_dir / f"{stem}{sep}{m_val:02d}{part_suffix}.mkv"
         mkv.rename(target)
-        print(f"skive: {cur} → {target.stem}", file=sys.stderr)
+        ui.info(f"{cur} → {target.stem}")
 
 
 def subtitle_note(stage_dir: Path, run=subprocess.run) -> str:

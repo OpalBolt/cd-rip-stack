@@ -1688,8 +1688,8 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
-    assert "skive: interrupted — partial deleted, kept 1 titles" in err
-    assert err.count("skive: interrupted") == 1
+    assert "fail  interrupted — partial deleted, kept 1 titles" in err  # spill: slice-06 ui.fail convention
+    assert err.count("fail  interrupted") == 1
 
 
 def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
@@ -2147,5 +2147,5 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
-    assert "skive: interrupted — partial deleted, kept 0 titles" in err
-    assert err.count("skive: interrupted") == 1
+    assert "fail  interrupted — partial deleted, kept 0 titles" in err  # spill: slice-06 ui.fail convention
+    assert err.count("fail  interrupted") == 1
