@@ -171,3 +171,102 @@ def test_status_and_background_both_render():
     text = view.render()
     assert "encode: One (2001).mkv" in text  # status section
     assert "Two (2002)_t00.mkv  40% (4/10 MB)" in text  # background section
+
+
+# -- perf line (slice 05) ------------------------------------------------------
+
+def test_perf_text_full_line():
+    text, hot = ui.perf_text(62.4, {"cpu": 78.2, "gpu": 61.0})
+    assert text == "CPU 62% \u00b7 cpu 78\u00b0C \u00b7 gpu 61\u00b0C"
+    assert hot == set()
+
+
+def test_perf_text_cpu_temp_only_and_no_temps():
+    assert ui.perf_text(50, {"cpu": 78})[0] == "CPU 50% \u00b7 cpu 78\u00b0C"
+    assert ui.perf_text(50, {})[0] == "CPU 50%"
+
+
+def test_perf_text_none_pct_and_empty():
+    assert ui.perf_text(None, {"gpu": 61})[0] == "gpu 61\u00b0C"
+    text, hot = ui.perf_text(None, {})
+    assert text == "" and hot == set()
+
+
+def test_perf_text_hot_at_95_not_at_94_9():
+    assert "cpu 95\u00b0C" in ui.perf_text(None, {"cpu": 95.0})[1]
+    assert "cpu 95\u00b0C" in ui.perf_text(None, {"cpu": 95.4})[1]  # rounds to 95 display
+    assert ui.perf_text(None, {"cpu": 94.9})[1] == set()
+
+
+def _hwmon_tree(base, sensors):
+    for i, (name, temp) in enumerate(sensors, 1):
+        d = base / f"hwmon{i}"
+        d.mkdir(parents=True)
+        (d / "name").write_text(name)
+        (d / "temp1_input").write_text(str(temp))
+
+
+def test_read_hwmon_prefers_names(tmp_path):
+    _hwmon_tree(tmp_path, [("k10temp", 78000), ("amdgpu", 61000)])
+    ui._hwmon_cache.clear()
+    assert ui.read_hwmon(str(tmp_path)) == {"cpu": 78.0, "gpu": 61.0}
+
+
+def test_read_hwmon_fallback_fills_missing_slot(tmp_path):
+    _hwmon_tree(tmp_path, [("zenpower", 77000), ("nvme", 40000)])
+    ui._hwmon_cache.clear()
+    # sorted walk: zenpower fills cpu, nvme fills gpu
+    assert ui.read_hwmon(str(tmp_path)) == {"cpu": 77.0, "gpu": 40.0}
+
+
+def test_read_hwmon_missing_root_is_empty():
+    ui._hwmon_cache.clear()
+    assert ui.read_hwmon("/nonexistent-hwmon") == {}
+
+
+def test_read_proc_stat_and_delta(tmp_path):
+    a = tmp_path / "a"
+    a.write_text("cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 1 2\n")
+    b = tmp_path / "b"
+    b.write_text("cpu  200 0 100 900 0 0 0 0 0 0\n")
+    first = ui.read_proc_stat(str(a))
+    second = ui.read_proc_stat(str(b))
+    assert first == (800, 1000) and second == (900, 1200)
+    pct = 100.0 * (1 - (second[0] - first[0]) / (second[1] - first[1]))
+    assert pct == 50.0  # idle +100 of total +200
+    assert ui.read_proc_stat(str(tmp_path / "gone")) is None
+
+
+def test_seam_view_perf_line_renders_and_drops():
+    view = ui.RunView(tty=True, live=False)
+    view.status("encoding")
+    view.perf("CPU 62% \u00b7 cpu 78\u00b0C", {"cpu 78\u00b0C"})
+    text = view.render()
+    assert "CPU 62%" in text and "cpu 78\u00b0C" in text
+    view.perf("")
+    assert "CPU 62%" not in view.render()
+    assert view._live is None and not hasattr(view, "_sampler")
+
+
+def test_fallback_view_has_no_perf(capsys):
+    view = ui.RunView()
+    view.perf("CPU 62% \u00b7 cpu 78\u00b0C")
+    assert "CPU 62%" not in view.render()
+    assert capsys.readouterr().err == ""
+
+
+def test_sampler_tick_drives_view_and_clears(tmp_path):
+    stat = tmp_path / "stat"
+    stat.write_text("cpu  100 0 100 800 0 0 0 0 0 0\n")
+    view = ui.RunView(tty=True, live=False)
+    view.status("encoding")
+    sampler = ui.PerfSampler(view, stat_path=str(stat),
+                             hwmon_root=str(tmp_path / "hw"))
+    sampler.tick()  # first tick: no delta yet → line dropped
+    assert view._perf is None
+    stat.write_text("cpu  200 0 100 900 0 0 0 0 0 0\n")
+    ui._hwmon_cache.clear()
+    _hwmon_tree(tmp_path / "hw", [("k10temp", 78000)])
+    sampler.tick()
+    assert view._perf[0] == "CPU 50% \u00b7 cpu 78\u00b0C"
+    assert "CPU 50%" in view.render()

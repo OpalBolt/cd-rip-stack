@@ -16,6 +16,7 @@ console layer only.
 import re
 import sys
 import threading
+from pathlib import Path
 
 _print_lock = threading.Lock()
 _view = None  # the run's RunView while one is live (common.VERBOSITY precedent)
@@ -60,6 +61,7 @@ class RunView:
         self._closed = False
         self._status: list[str] = []
         self._progress: str | None = None
+        self._perf = None  # (text, hot segment strings)
         self._bg: dict[str, str] = {}  # concurrent-activity lines, keyed
         self._log: list[str] = []
         self._replay: list[str] = []  # TTY-only warn/fail replay buffer
@@ -72,6 +74,8 @@ class RunView:
             self._live = Live(self._panels(), console=self._console,
                               refresh_per_second=4, transient=True)
             self._live.start()
+            self._sampler = PerfSampler(self)
+            self._sampler.start()
 
     def _panels(self):
         from rich.layout import Layout
@@ -79,12 +83,23 @@ class RunView:
         from rich.text import Text
 
         status_lines = list(self._status)
+        n_status = len(status_lines)
         if self._progress:
             status_lines.append(self._progress)
         status = Text("\n".join(status_lines))
+        if self._perf:
+            text, hot = self._perf
+            perf = Text()
+            for i, seg in enumerate(text.split(" \u00b7 ")):
+                if i:
+                    perf.append(" \u00b7 ")
+                perf.append(seg, style="bold red" if seg in hot else None)
+            status.append("\n")
+            status.append(perf)
+            n_status += 1
         log = Text("\n".join(self._log))
         rows = [Layout(Panel(status, title="status"),
-                       size=max(len(status_lines), 1) + 2)]
+                       size=max(n_status, 1) + 2)]
         if self._bg:  # the background panel exists only while something runs concurrently
             bg = Text("\n".join(f"{k}  {self._bg[k]}" for k in sorted(self._bg)))
             rows.append(Layout(Panel(bg, title="background"),
@@ -113,6 +128,15 @@ class RunView:
             parts.append(f"ETA {eta}")
         with _print_lock:
             self._progress = "  ".join(parts) if parts else None
+            self._refresh()
+
+    def perf(self, text: str, hot=set()) -> None:
+        """Status panel bottom line (transcode only). No-op in fallback;
+        an empty text drops the line."""
+        if not self.tty:
+            return
+        with _print_lock:
+            self._perf = (text, set(hot)) if text else None
             self._refresh()
 
     def bg(self, key: str, text: str) -> None:
@@ -154,6 +178,9 @@ class RunView:
 
     def close(self) -> None:
         """Stop the Live region; idempotent, safe from finally."""
+        sampler = getattr(self, "_sampler", None)
+        if sampler is not None:
+            sampler.stop()
         if self._live is not None and not self._closed:
             self._closed = True
             self._live.stop()
@@ -172,6 +199,7 @@ class RunView:
             from rich.console import Console
             console = Console(record=True, file=io.StringIO(), width=80,
                                height=max(len(self._status) + (1 if self._progress else 0)
+                                          + (1 if self._perf else 0)
                                           + len(self._bg) + len(self._log), 1) + 8)
             console.print(self._panels())
             return console.export_text()
@@ -253,3 +281,119 @@ def warn(text: str) -> None:
 def fail(text: str) -> None:
     """Terminal failure."""
     _print("fail", text)
+
+
+# -- perf line (slice 05): CPU % via /proc/stat delta + hwmon temps ------------
+
+_HWMON_KEYS = {"k10temp": "cpu", "amdgpu": "gpu"}
+_hwmon_cache: dict = {}  # root -> {key: temp*_input path}; sensors do not move
+
+
+def read_proc_stat(path="/proc/stat") -> tuple[int, int] | None:
+    """The first cpu line as (idle, total) jiffies; None when unreadable."""
+    try:
+        with open(path) as f:
+            for line in f:
+                if line.startswith("cpu "):
+                    fields = [int(x) for x in line.split()[1:]]
+                    idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+                    return idle, sum(fields)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def read_hwmon(root="/sys/class/hwmon") -> dict[str, float]:
+    """Readable package temps in °C: k10temp -> cpu, amdgpu -> gpu by name,
+    any other readable temp fills a missing key (deterministic walk order).
+    Unreadable sensors are simply absent — never warned."""
+    out: dict[str, float] = {}
+    if root in _hwmon_cache:
+        paths = _hwmon_cache[root]
+    else:
+        paths = {}
+        try:
+            dirs = sorted(d for d in Path(root).iterdir()
+                          if d.name.startswith("hwmon"))
+        except OSError:
+            return {}
+        for d in dirs:
+            try:
+                name = (d / "name").read_text().strip()
+            except OSError:
+                continue
+            for t in sorted(d.glob("temp*_input")):
+                key = _HWMON_KEYS.get(name)
+                if key is None:
+                    key = ("cpu" if "cpu" not in paths
+                           else "gpu" if "gpu" not in paths else None)
+                if key is None or key in paths:
+                    continue
+                paths[key] = t
+        _hwmon_cache[root] = paths
+    for key, t in paths.items():
+        try:
+            out[key] = int(t.read_text()) / 1000
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def perf_text(cpu_pct: float | None, temps: dict[str, float]) -> tuple[str, set]:
+    """`CPU 62% · cpu 78°C · gpu 61°C` from whatever is readable; the second
+    value is the set of hot (>= 95 °C) segment strings to render red."""
+    parts: list[str] = []
+    hot: set[str] = set()
+    if cpu_pct is not None:
+        parts.append(f"CPU {cpu_pct:.0f}%")
+    for key in ("cpu", "gpu"):
+        temp = temps.get(key)
+        if temp is not None:
+            seg = f"{key} {temp:.0f}\N{DEGREE SIGN}C"
+            parts.append(seg)
+            if temp >= 95:
+                hot.add(seg)
+    return " \N{MIDDLE DOT} ".join(parts), hot
+
+
+class PerfSampler:
+    """Daemon thread feeding view.perf every ~2 s. Never touches the Live —
+    only view state under _print_lock; the refresher redraws."""
+
+    TICK = 2.0
+
+    def __init__(self, view: "RunView", stat_path="/proc/stat",
+                 hwmon_root="/sys/class/hwmon"):
+        self._view = view
+        self._stat_path = stat_path
+        self._hwmon_root = hwmon_root
+        self._prev = None  # (idle, total) of the previous tick
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.TICK):
+            self.tick()
+
+    def tick(self) -> None:
+        stat = read_proc_stat(self._stat_path)
+        pct = None
+        if stat is not None and self._prev is not None:
+            idle, total = stat
+            pidle, ptotal = self._prev
+            if total != ptotal:  # no delta on the first tick → temps only
+                pct = max(0.0, 100.0 * (1 - (idle - pidle) / (total - ptotal)))
+        if stat is not None:
+            self._prev = stat
+        text, hot = perf_text(pct, read_hwmon(self._hwmon_root))
+        self._view.perf(text, hot)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.TICK + 1)
+            self._thread = None
