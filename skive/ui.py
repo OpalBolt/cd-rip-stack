@@ -37,26 +37,34 @@ def view():
 
 
 class RunView:
-    """One instance per run. TTY mode: rich Live with two stacked panels
-    (status top, log tail bottom) on stderr. Fallback mode (stderr not a
+    """One instance per run. TTY mode: rich Live with stacked panels
+    (status top, then a background panel only while concurrent activity
+    runs, log tail bottom) on stderr. Fallback mode (stderr not a
     TTY, including pytest): no rich objects; every method prints plain
     tagged lines. render() returns the current panel content as text
     without a terminal — the test seam."""
 
     LOG_TAIL = 8
 
-    def __init__(self):
-        stream = sys.stderr
-        try:
-            self.tty = bool(stream is not None and stream.isatty())
-        except ValueError:  # closed stream
-            self.tty = False
+    def __init__(self, tty: bool | None = None, live: bool = True):
+        """tty=None detects stderr; live=False forces the TTY render path
+        without ever constructing a Live (the test seam — a real Live must
+        never exist under pytest)."""
+        if tty is None:
+            stream = sys.stderr
+            try:
+                tty = bool(stream is not None and stream.isatty())
+            except ValueError:  # closed stream
+                tty = False
+        self.tty = tty
         self._closed = False
         self._status: list[str] = []
         self._progress: str | None = None
+        self._bg: dict[str, str] = {}  # concurrent-activity lines, keyed
         self._log: list[str] = []
         self._replay: list[str] = []  # TTY-only warn/fail replay buffer
-        if self.tty:
+        self._live = None
+        if self.tty and live:
             from rich.console import Console
             from rich.live import Live
 
@@ -75,22 +83,26 @@ class RunView:
             status_lines.append(self._progress)
         status = Text("\n".join(status_lines))
         log = Text("\n".join(self._log))
+        rows = [Layout(Panel(status, title="status"),
+                       size=max(len(status_lines), 1) + 2)]
+        if self._bg:  # the background panel exists only while something runs concurrently
+            bg = Text("\n".join(f"{k}  {self._bg[k]}" for k in sorted(self._bg)))
+            rows.append(Layout(Panel(bg, title="background"),
+                               size=len(self._bg) + 2))
+        rows.append(Layout(Panel(log, title="log")))
         layout = Layout()
-        layout.split_column(
-            Layout(Panel(status, title="status"),
-                   size=max(len(status_lines), 1) + 2),
-            Layout(Panel(log, title="log")),
-        )
+        layout.split_column(*rows)
         return layout
 
     def _refresh(self) -> None:
-        if self.tty and not self._closed:
+        if self._live is not None and not self._closed:
             self._live.update(self._panels())
 
     def status(self, *lines: str) -> None:
         """Set the status panel's lines; refresh."""
-        self._status = [str(x) for x in lines]
-        self._refresh()
+        with _print_lock:
+            self._status = [str(x) for x in lines]
+            self._refresh()
 
     def progress(self, pct, eta) -> None:
         """Encode progress; a None arg omits that field."""
@@ -99,8 +111,26 @@ class RunView:
             parts.append(f"{pct}%")
         if eta is not None:
             parts.append(f"ETA {eta}")
-        self._progress = "  ".join(parts) if parts else None
-        self._refresh()
+        with _print_lock:
+            self._progress = "  ".join(parts) if parts else None
+            self._refresh()
+
+    def bg(self, key: str, text: str) -> None:
+        """One background-panel line per concurrent activity, keyed; the
+        line updates in place. No-op in fallback mode (plain prints remain)."""
+        if not self.tty:
+            return
+        with _print_lock:
+            self._bg[key] = str(text)
+            self._refresh()
+
+    def bg_clear(self, key: str) -> None:
+        """Remove a background line; no panel when no keys remain."""
+        if not self.tty:
+            return
+        with _print_lock:
+            self._bg.pop(key, None)
+            self._refresh()
 
     def tool(self, name: str, line: str) -> None:
         """A tool line (makemkv/handbrake/ffmpeg/mkvmerge style); the panel
@@ -114,18 +144,20 @@ class RunView:
         self._event(f"{kind}  {text}")
 
     def _event(self, line: str) -> None:
-        self._log.append(line)
-        del self._log[:-self.LOG_TAIL]
-        if self.tty:
-            self._refresh()
-        else:
-            print(line, file=sys.stderr)
+        with _print_lock:
+            self._log.append(line)
+            del self._log[:-self.LOG_TAIL]
+            if self.tty:
+                self._refresh()
+            else:
+                print(line, file=sys.stderr)
 
     def close(self) -> None:
         """Stop the Live region; idempotent, safe from finally."""
-        if self.tty and not self._closed:
+        if self._live is not None and not self._closed:
             self._closed = True
             self._live.stop()
+            self._live = None
 
     def replay_lines(self) -> list[str]:
         """Every warn/fail line rendered this run, in order (TTY only; the
@@ -138,7 +170,9 @@ class RunView:
             import io
 
             from rich.console import Console
-            console = Console(record=True, file=io.StringIO(), width=80)
+            console = Console(record=True, file=io.StringIO(), width=80,
+                               height=max(len(self._status) + (1 if self._progress else 0)
+                                          + len(self._bg) + len(self._log), 1) + 8)
             console.print(self._panels())
             return console.export_text()
         lines = list(self._status)
@@ -197,11 +231,13 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None,
 
 
 def _print(kind: str, text: str) -> None:
+    # the lock must not span the view dispatch: _event takes it too, and a
+    # plain Lock re-acquiring on the same thread deadlocks
+    if _view is not None and _view.tty:
+        _view.event(kind, text)
+        return
     with _print_lock:
-        if _view is not None and _view.tty:
-            _view.event(kind, text)
-        else:
-            print(f"{kind}  {text}", file=sys.stderr)
+        print(f"{kind}  {text}", file=sys.stderr)
 
 
 def info(text: str) -> None:

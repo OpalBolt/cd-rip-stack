@@ -706,9 +706,12 @@ def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
     parts.append(f"copy {_hms(secs)}")
 
 
-def _copy2(src: str, dst: str, cancel: threading.Event | None = None) -> None:
+def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
+           bg: str | None = None) -> None:
     """copy2 (mode + mtime preserved) with a progress line every 10%.
-    cancel, when set, aborts between chunks leaving a partial dst."""
+    cancel, when set, aborts between chunks leaving a partial dst. bg, when
+    set, routes the lines to the run view's background panel (prefetch);
+    sequential copies keep the log-panel/fallback routing."""
     total = os.path.getsize(src)
     if total == 0:
         shutil.copy2(src, dst)
@@ -727,11 +730,17 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None) -> None:
             done += len(buf)
             pct = done * 100 // total
             if pct >= last + 10 or pct == 100:
-                # a TTY view's log panel takes them (raw % lines garble the
-                # Live region); fallback prints byte-identical to today
+                # a TTY view's log panel takes sequential copy lines (raw %
+                # lines garble the Live region); prefetch lines go to the
+                # background panel instead; fallback prints byte-identical
                 v = ui.view()
                 line = f"{pct}%  ({done // mb}/{total // mb} MB)"
-                if v is not None and v.tty:
+                if bg is not None:
+                    if v is not None and v.tty:
+                        v.bg(bg, f"{os.path.basename(src)}  {line}")
+                    else:
+                        print(f"  {line}")
+                elif v is not None and v.tty:
                     v.tool("copy", line)
                 else:
                     print(f"  {line}")
@@ -1143,7 +1152,6 @@ def run_transcode(args) -> int:
         and one row for the end-of-run summary table."""
         nonlocal n_ok, n_failed
         rows.append((label, list(parts), ok))
-        nonlocal n_ok, n_failed
         if ok:
             n_ok += 1
             ui.info(f"{label}: {' + '.join(parts)} -- ok")
@@ -1211,12 +1219,17 @@ def run_transcode(args) -> int:
             pf_files.append(os.path.join(tmp_dir, x.name))  # at thread START, before any bytes
 
         def work():
-            for x in nxt_unit:
-                if pf_cancel.is_set():
-                    return
-                dst = os.path.join(tmp_dir, x.name)
-                _copy2(x.path, dst, pf_cancel)
-                pf_ready[x.path] = dst
+            try:
+                for x in nxt_unit:
+                    if pf_cancel.is_set():
+                        return
+                    dst = os.path.join(tmp_dir, x.name)
+                    _copy2(x.path, dst, pf_cancel, bg="copy")
+                    pf_ready[x.path] = dst
+            finally:
+                v = ui.view()
+                if v is not None:
+                    v.bg_clear("copy")
 
         pf_thread = threading.Thread(target=work, daemon=True)
         pf_thread.start()
@@ -1227,7 +1240,7 @@ def run_transcode(args) -> int:
         for p in paths:
             _rmf(p)
 
-    view = ui.RunView()
+    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
     global _POS
     log.start()

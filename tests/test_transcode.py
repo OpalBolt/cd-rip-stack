@@ -27,7 +27,7 @@ import shutil
 
 import pytest
 
-from skive import transcode
+from skive import transcode, ui
 from skive.common import Interrupted
 
 
@@ -1864,3 +1864,33 @@ def test_fallback_warn_prints_once_no_summary_replay(env, capsys):
     assert len([l for l in err.splitlines() if "already exists" in l]) == 1
     # the park was refused, so nothing parked: no banner (honesty rule)
     assert "--keep: lossless sources moved to" not in err
+
+
+def test_prefetch_copy_line_in_background_panel(env, tmp_path):
+    """Slice 04: during unit 1's encode the prefetch renders as one live
+    background line (name + pct + MB), updated in place per 10% step, and
+    the key is cleared when the prefetch thread ends."""
+    _slow_hb(tmp_path)
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "SLOWENCODE")
+    body = "TWO" * (1024 * 1024)  # >1 MB so _copy2 emits >=2 pct steps
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", body)
+
+    view = ui.RunView(tty=True, live=False)  # TTY render path, never a Live
+    ui.set_view(view)
+    history: list[str] = []
+    real_bg = view.bg
+    view.bg = lambda k, t: (history.append(t), real_bg(k, t))
+    try:
+        rc = transcode.run_transcode(Args())
+    finally:
+        ui.clear_view()
+
+    assert rc == 0
+    assert history, "no background copy lines rendered"
+    assert all(h.startswith("Two (2002)_t00.mkv  ") for h in history)
+    pcts = [int(h.split("  ")[1].split("%")[0]) for h in history]
+    assert pcts == sorted(pcts) and history[-1].startswith(
+        "Two (2002)_t00.mkv  100%")
+    assert view._bg == {}  # the key is cleared on completion
+    assert "background" not in view.render()

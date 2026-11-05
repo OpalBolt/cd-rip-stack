@@ -30,7 +30,7 @@ def test_fallback_view_renders_tagged_lines_no_panels(capsys):
     import sys
 
     view = ui.RunView()
-    assert not view.tty and not hasattr(view, "_live")
+    assert not view.tty and view._live is None
     ui.set_view(view)
     try:
         ui.info("nothing to import")
@@ -80,9 +80,7 @@ def test_close_is_idempotent():
 def test_replay_buffer_keeps_warn_and_fail_tty_only():
     """The view keeps every warn/fail line for the summary replay; a fallback
     view (the lines are already in the scroll) keeps none."""
-    tty = ui.RunView()
-    tty.tty = True
-    tty._closed = True  # no Live underneath: skip the refresh
+    tty = ui.RunView(tty=True, live=False)
     tty.event("warn", "w1")
     tty.event("info", "i1")
     tty.event("fail", "f1")
@@ -130,3 +128,46 @@ def test_fallback_view_wired_to_transcode_progress(capsys):
     rendered = view.render()
     assert "42.5%" in rendered
     assert "ETA 00:01:30" in rendered
+
+
+# -- background panel (slice 04): concurrent activity, one keyed line each ----
+
+def _tty_seam_view():
+    """A RunView forced onto the TTY render path without a Live region:
+    render() is deterministic but bg()/bg_clear() behave as in TTY mode."""
+    return ui.RunView(tty=True, live=False)
+
+
+def test_bg_panel_present_updates_and_clears():
+    view = _tty_seam_view()
+    assert "background" not in view.render()  # no panel when no keys
+    view.bg("copy", "Two (2002)_t00.mkv  40% (4/10 MB)")
+    text = view.render()
+    assert "background" in text
+    assert "copy  Two (2002)_t00.mkv  40% (4/10 MB)" in text
+    # in-place update: set twice, one line, latest text only
+    view.bg("copy", "Two (2002)_t00.mkv  80% (8/10 MB)")
+    text = view.render()
+    assert "80% (8/10 MB)" in text
+    assert "40% (4/10 MB)" not in text
+    assert text.count("Two (2002)_t00.mkv") == 1
+    view.bg_clear("copy")
+    assert "background" not in view.render()
+
+
+def test_bg_is_noop_in_fallback_mode(capsys):
+    view = ui.RunView()
+    assert not view.tty
+    view.bg("copy", "x  40%")
+    view.bg_clear("copy")
+    assert capsys.readouterr().err == ""  # no output, no state
+    assert "background" not in view.render()
+
+
+def test_status_and_background_both_render():
+    view = _tty_seam_view()
+    view.status("item 1 of 2", "encode: One (2001).mkv")
+    view.bg("copy", "Two (2002)_t00.mkv  40% (4/10 MB)")
+    text = view.render()
+    assert "encode: One (2001).mkv" in text  # status section
+    assert "Two (2002)_t00.mkv  40% (4/10 MB)" in text  # background section
