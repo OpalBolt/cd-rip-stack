@@ -52,3 +52,33 @@ HandBrake, mkvtoolnix, ffmpeg, tesseract, seconv (pinned v5.3.0) and skive
 itself, inside the container. Mise stays a rip-box tool; nothing on the
 transcode box comes from mise. Updating skive on the box is `git pull` in
 `~/git/cd-rip-stack`.
+
+## Revision (2026-11-05): hardware encode joins as `-e auto`
+
+The Ryzen AI 7 350 laptop benchmarked its live VCN against the BC-250's
+CPU x265 (scripts/bench.sh): ~1618 fps on a DVD sample, ~181 fps at
+1080p — a feature-length Blu-ray encodes in roughly 16 minutes — and the
+operator's eyeball passed CQP 24 on both a DVD and a Blu-ray title. So
+the ADR's own escape hatch fires — "a future hardware-encode requirement
+means different hardware" — and the laptop is that hardware.
+
+`skive transcode` gains `-e auto` (the new default): a vainfo-probed VCN
+resolves to ffmpeg `hevc_vaapi` CQP 24 (HandBrake still cannot VAAPI on
+Linux), else the run falls back to x265 at the fast preset — the BC-250's
+behavior is unchanged by construction. `-e x265` keeps the archival
+baseline untouched. The dead `nvenc/qsv/vce` choices are gone.
+
+Decisions baked into the hardware path, each paid for on the bench:
+
+- width is cropped to VCN's 64-pixel alignment before upload (720→704 on
+  DVDs, inside the ITU overscan); the hardware's own padding bleeds a
+  stretched right edge, while height padding rides the conformance window
+  and is left alone
+- bwdif with deint=interlaced replaces detelecine+decomb — progressive
+  frames pass untouched; NTSC telecine loses inverse-telecine (PAL
+  library)
+- audio and subtitles stream-copy through ffmpeg — no HandBrake copy-mask
+  or ac3 fallback; MKV muxes every codec the rips carry
+- the freeworld VA-API driver and `--display drm` probing are required;
+  the host's mise shims must not shadow the box's ffmpeg (skive prefers
+  /usr/bin, bench.sh pins PATH)

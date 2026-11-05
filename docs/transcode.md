@@ -6,15 +6,24 @@ under `library/` (trees: [nas-layout](nas-layout.md)).
 
 ## The box
 
-The transcode box is an AMD BC-250 — the PS5-derived Cyan Skillfish board
-(Zen 2, 8 cores unlocked, 16 GB GDDR6) running Bazzite. Its video engine
-cannot encode: the VCN block is factory-unprovisioned and eFused off, and
-Sony blocks the firmware, so no tool ever gets hardware encode on this
-machine. HandBrake on Linux has no VAAPI encoder at all, and the community
-`bc250-vaapi` shim was evaluated and rejected — its H.264 is libx264 on the
-CPU in a costume, its HEVC a CBR streaming encoder shaped for game streaming,
-not quality-based archival. The conclusion is one sentence: **only `x265`
-exists on this box** — `-e nvenc/qsv/vce` are dead weight here, the GPU idles.
+There are two transcode boxes. The always-on one is an AMD BC-250 — the
+PS5-derived Cyan Skillfish board (Zen 2, 8 cores unlocked, 16 GB GDDR6)
+running Bazzite. Its video engine cannot encode: the VCN block is
+factory-unprovisioned and eFused off, and Sony blocks the firmware, so no
+tool ever gets hardware encode on this machine — **only `x265` exists
+there**, and `-e auto` falls back to x265 (fast preset) on it. The burst
+box is the Ryzen AI 7 350 laptop, whose VCN does encode: `-e auto` (the
+default) resolves to hardware there. Hardware encode goes through ffmpeg
+VAAPI, not HandBrake — HandBrake on Linux has no VAAPI encoder, and the
+community `bc250-vaapi` shim stays rejected (its H.264 is libx264 on the
+CPU in a costume, its HEVC a CBR streaming encoder shaped for game
+streaming, not quality-based archival — ADR 0010).
+
+The laptop's box needs two things the BC-250 does not: a `fedora:43`-era
+image (gfx1152 needs Mesa 25.0+) and the `mesa-va-drivers-freeworld` swap
+that `scripts/setup-transcode.sh` performs (Fedora strips H.264/H.265
+from its Mesa for patents; without the freeworld build vainfo lists only
+JPEG/VP9/AV1 and there is no HEVC encode entrypoint).
 
 Build it from the repo's setup script — the container carries every tool:
 RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg, tesseract with eng+dan
@@ -65,11 +74,16 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
 - **TV** — every episode encodes: `library/tv/<Show (Year)>/Season NN/
   <Show (Year)> - S01E02.mkv` (season 00 → `Specials/`), plus the subtitle
   pass. TV extras file under the show's `extras/` with tracks embedded.
-- **Encode** — HandBrake re-encodes video to H.265 at native resolution,
-  never upscaled (the probed height picks the preset: 480p/576p DVD —
-  those also get detelecine+decomb — 720p, 1080p, 4K). Audio passes
-  through (`--aencoder copy`, ac3 fallback). The `-e` GPU choices only
-  change which HandBrake flags go in; on this box they fail at run time.
+- **Encode** — `-e auto` (default) picks per box: VCN hardware on the
+  laptop (`ffmpeg hevc_vaapi` CQP 24, audio and subtitles stream-copied,
+  bwdif deinterlaces interlaced frames only, width cropped to VCN's
+  64-pixel alignment — the hardware's own padding bleeds a stretched
+  right edge on 720-wide DVDs; ~181 fps at 1080p, a feature encodes in
+  ~16 minutes), x265 fast otherwise. `-e x265` keeps the software
+  baseline: HandBrake at native resolution, never upscaled (the probed
+  height picks the preset: 480p/576p DVD — those also get
+  detelecine+decomb — 720p, 1080p, 4K; audio `--aencoder copy` with ac3
+  fallback). `-e vaapi` demands hardware and fails fast without it.
 
 ### The inline subtitle pass
 
@@ -140,7 +154,7 @@ finished files and files with sidecars already present are skipped, so the
 run is resumable. Tools are probed up front (seconv, tesseract eng+dan,
 mkvmerge, ffprobe) and the run refuses to start without all of them.
 
-This box replaced the retired Windows transcode machine — ADR 0010 has why it
-can only ever be CPU-only x265.
+The BC-250 replaced the retired Windows transcode machine; ADR 0010 records
+the CPU-only decision and its 2026-11 revision the hardware `-e auto` path.
 
 Related: [setup](setup.md) · [nas-layout](nas-layout.md) · [video](video.md) · [tools](tools.md)

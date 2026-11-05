@@ -23,6 +23,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 
 import pytest
 
@@ -165,6 +166,31 @@ fi
 """
     )
     (bin_dir / "tesseract").write_text("#!/bin/sh\nexit 0\n")
+    ffmpeg_log = tmp_path / "ffmpeg-calls.log"
+    (bin_dir / "ffmpeg").write_text(
+        f"""#!/bin/sh
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{ffmpeg_log}"
+in=""; out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-i" ] && in="$a"
+  out="$a"
+  prev="$a"
+done
+if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
+cat "$in" > "$out"
+"""
+    )
+    (bin_dir / "vainfo").write_text(
+        """#!/bin/sh
+# classic entrypoint by default; $VAINFO_LP flips to low-power-only (mobile
+# APUs expose encode only as VAEntrypointEncSliceLP)
+if [ "$VAINFO_LP" = "1" ]; then
+  printf '%s\\n' '      VAProfileHEVCMain               :      VAEntrypointEncSliceLP'
+else
+  printf '%s\\n' '      VAProfileHEVCMain               :      VAEntrypointEncSlice'
+fi
+"""
+    )
     for f in bin_dir.iterdir():
         f.chmod(0o755)
 
@@ -172,6 +198,9 @@ fi
     monkeypatch.setenv("VIDEO_WORK_DIR", str(work))
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.chdir(tmp_path)
+    # _find_tool prefers /usr/bin on the real box (the mise shim bleed); the
+    # tests must resolve the fixture's fakes on PATH instead
+    monkeypatch.setattr(transcode, "_find_tool", lambda exe: shutil.which(exe))
     return tmp_path
 
 
@@ -693,17 +722,77 @@ def test_x265_default_arg_list(env):
     assert "--quality" not in line
 
 
-def test_nvenc_flags(env):
+def test_vaapi_flags(env):
+    """-e vaapi encodes through ffmpeg (HandBrake is never invoked): hevc_vaapi
+    CQP 24, the bwdif/width-crop/hwupload chain, audio stream-copied, subs
+    dropped for features (the no-subtitle trick: no 0:s mapping)."""
     vid = env / "vid"
     mk(vid, "rip/movies/Gpu (2009)/d0/Gpu (2009)_t00.mkv", "GPU-MAIN")
 
-    rc = transcode.run_transcode(Args(encoder="nvenc"))
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
 
     assert rc == 0
     assert (vid / "library" / "movies" / "Gpu (2009)" / "Gpu (2009).mkv").read_text() == "GPU-MAIN"
-    hb = (env / "hb-calls.log").read_text()
-    assert "--encoder nvenc_h265" in hb
-    assert "--quality 28" in hb
+    assert not (env / "hb-calls.log").exists()
+    ff = (env / "ffmpeg-calls.log").read_text()
+    assert "-c:v hevc_vaapi -rc_mode CQP -global_quality 24" in ff
+    assert ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
+            "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload") in ff
+    assert "-map 0:a? -c:a copy" in ff
+    assert "-map 0:s?" not in ff   # features encode subless (sidecars carry subs)
+    assert "-low_power" not in ff  # classic entrypoint needs no low_power
+
+
+def test_vaapi_low_power_entrypoint(env, monkeypatch):
+    """A VCN that exposes encode only as VAEntrypointEncSliceLP (mobile APUs)
+    gets -low_power 1 -- ffmpeg cannot reach the LP encoder without it."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Gpu (2009)/d0/Gpu (2009)_t00.mkv", "GPU-MAIN")
+    monkeypatch.setenv("VAINFO_LP", "1")
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 0
+    assert "-low_power 1" in (env / "ffmpeg-calls.log").read_text()
+
+
+def test_auto_resolves_to_vaapi(env):
+    """-e auto (the default) picks the VCN when vainfo shows the entrypoint."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Gpu (2009)/d0/Gpu (2009)_t00.mkv", "GPU-MAIN")
+
+    rc = transcode.run_transcode(Args(encoder="auto"))
+
+    assert rc == 0
+    assert "hevc_vaapi" in (env / "ffmpeg-calls.log").read_text()
+    assert not (env / "hb-calls.log").exists()
+
+
+def test_auto_falls_back_to_x265_fast(env, monkeypatch):
+    """No VCN (the BC-250, or a box without the freeworld driver): auto falls
+    back to x265 at the fast preset."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Gpu (2009)/d0/Gpu (2009)_t00.mkv", "GPU-MAIN")
+    monkeypatch.setattr(transcode, "_vcn_probe", lambda: None)
+
+    rc = transcode.run_transcode(Args(encoder="auto"))
+
+    assert rc == 0
+    assert not (env / "ffmpeg-calls.log").exists()
+    line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
+    assert "--encoder-preset fast" in line
+
+
+def test_vaapi_required_but_absent(env, monkeypatch):
+    """Explicit -e vaapi on a box without VCN fails fast with a pointer to the
+    fix instead of encoding anything at a different shape."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Gpu (2009)/d0/Gpu (2009)_t00.mkv", "GPU-MAIN")
+    monkeypatch.setattr(transcode, "_vcn_probe", lambda: None)
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 1
 
 
 def test_dvd_not_upscaled(env):

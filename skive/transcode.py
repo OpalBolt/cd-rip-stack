@@ -104,6 +104,38 @@ def _find_on_path(exe: str) -> str | None:
     return found
 
 
+def _find_tool(exe: str) -> str | None:
+    """/usr/bin first for the hardware path's tools: the host's mise shims
+    bleed into the box through the shared home, and mise's ffmpeg/vainfo see
+    a different (patent-stripped) VA-API driver than the container's RPM
+    Fusion builds (bench.sh hit this as "no usable encoding entrypoint")."""
+    if os.path.exists(os.path.join("/usr/bin", exe)):
+        return os.path.join("/usr/bin", exe)
+    return shutil.which(exe)
+
+
+def _vcn_probe() -> dict | None:
+    """The box's VCN HEVC encode capability: {"low_power": bool} when live,
+    None otherwise. --display drm skips wayland/x11 probing, which can die
+    inside containers after the driver loads; the entrypoints are matched
+    end-anchored so classic EncSlice does not read as LP."""
+    exe = _find_tool("vainfo")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--display", "drm"], capture_output=True,
+                             text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if "VAEntrypointEncSlice" not in out.stdout:
+        return None
+    classic = re.search(r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSlice[ \t]*$",
+                        out.stdout, re.M)
+    lp = re.search(r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSliceLP[ \t]*$",
+                   out.stdout, re.M)
+    return {"low_power": bool(lp and not classic)}
+
+
 def _stream_sig(src: str, ffprobe_exe: str) -> list[tuple[str, str, str]] | None:
     """(codec_type, codec_name, language-or-'und') per stream, in order; None if unreadable."""
     r = subprocess.run(
@@ -247,11 +279,89 @@ def _preset(height: int) -> str:
     return "H.265 MKV 2160p60 4K"
 
 
+def _encode_vaapi(src: str, out: str, no_subs: bool = False,
+                  log: common.RipLog | None = None) -> bool:
+    """Full-VCN re-encode via ffmpeg VAAPI (HandBrake has no VAAPI encoder on
+    Linux): hevc_vaapi CQP 24, audio and subtitles stream-copied, bwdif
+    deinterlaces only frames marked interlaced (progressive passes untouched
+    -- the DVD detelecine/decomb equivalent), and the width is cropped to
+    VCN's 64-pixel alignment because the hardware's own padding bleeds a
+    stretched right edge (720-wide DVDs pad to 768); height padding rides
+    the conformance window and is left alone. Process/log discipline mirrors
+    _encode: every line raw-logged as "ffmpeg", frame= progress throttled to
+    one a minute, hidden lines replayed on failure, rc==0 alone is not
+    success (the output must exist)."""
+    ff = _find_tool("ffmpeg")
+    vcn = _vcn_probe()
+    if not ff or not vcn:
+        print("skive transcode: hardware path needs ffmpeg and a VCN with HEVC "
+              f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
+              "(scripts/setup-transcode.sh installs both)", file=sys.stderr)
+        return False
+    vf = ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
+          "crop=floor(iw/64)*64:ih,"
+          "format=nv12|p010,hwupload")
+    cmd = [ff, "-hide_banner", "-y",
+           "-vaapi_device", "/dev/dri/renderD128",
+           "-i", src,
+           "-map", "0:v:0", "-map", "0:a?"]
+    if not no_subs:
+        cmd += ["-map", "0:s?"]
+    cmd += ["-c:a", "copy", "-c:s", "copy", "-vf", vf,
+            "-c:v", "hevc_vaapi", "-rc_mode", "CQP", "-global_quality", "24"]
+    if vcn["low_power"]:
+        cmd += ["-low_power", "1"]
+    cmd.append(out)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    verbose = common.VERBOSITY
+    hidden: list[str] = []  # console-suppressed lines, replayed on failure
+    last_prog = 0.0  # monotonic ts of the last console progress line
+    try:
+        for line in proc.stdout:
+            stripped = line.rstrip()
+            if stripped.startswith("frame=") and "fps=" in stripped:
+                # progress \r updates: throttle, never hidden-replay, raw-log
+                # only what actually printed
+                if verbose >= 2:
+                    print(line, end="", flush=True)
+                    if log is not None:
+                        log.raw("ffmpeg", stripped)
+                elif time.monotonic() - last_prog >= 60:
+                    print(f"  {stripped}", flush=True)
+                    last_prog = time.monotonic()
+                    if log is not None:
+                        log.raw("ffmpeg", stripped)
+                continue
+            if verbose >= 2 or (verbose >= 1 and "rror" in stripped):
+                print(line, end="", flush=True)
+            elif stripped:
+                hidden.append(stripped)
+            if log is not None:
+                log.raw("ffmpeg", stripped)
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        # CONTEXT.md Interrupt: stop the encode child; the partial temp
+        # output is dropped by run_transcode (sources only move on success).
+        common.kill_child_after_grace(proc)
+        raise
+    if rc != 0:
+        for line in hidden:
+            print(line, flush=True)
+        return False
+    if not os.path.exists(out):
+        for line in hidden:
+            print(line, flush=True)
+        print(f"ffmpeg exited 0 but wrote no output: {out}", file=sys.stderr)
+        return False
+    return True
+
+
 def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
             no_subs: bool = False, log: common.RipLog | None = None,
             speed: str | None = None) -> bool:
-    """HandBrake pass-through re-encode at native resolution. GPU encoders override
-    the encoder. no_subs selects zero subtitle tracks (features and TV
+    """HandBrake pass-through re-encode at native resolution (the x265 paths;
+    the vaapi path dispatches to _encode_vaapi before any of this). no_subs
+    selects zero subtitle tracks (features and TV
     episodes, the language-list trick); extras keep pass-through (embedded
     subs stay). Every HandBrake output line is
     written verbatim to the run's raw log (log.raw), the same tee discipline as
@@ -263,10 +373,12 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     or the raw log. rc==0 alone is not success -- the output file must exist,
     because a rejected job init (bad argv) exits 0 writing nothing (the
     Conan FATAL)."""
+    if encoder == "vaapi":  # hardware path: ffmpeg, never HandBrakeCLI
+        return _encode_vaapi(src, out, no_subs=no_subs, log=log)
+    if encoder == "x265-fast":  # auto's CPU fallback; an item's own marker
+        speed = speed or "fast"  # speed (extras superfast) still wins
     height = _probe_height(src, ffprobe_exe)
     cmd = [hb_exe, "-i", src, "-o", out]
-    if encoder != "x265":
-        cmd += ["--encoder", f"{encoder}_h265", "--quality", "28"]
     cmd += ["--preset", _preset(height) if height else "H.265 MKV 1080p30"]
     if 0 < height <= 576:
         cmd += ["--detelecine", "--decomb"]  # DVD: kill telecine/interlace combing
@@ -687,6 +799,24 @@ def run_transcode(args) -> int:
         return 1
 
     log = common.RipLog("skive transcode", "handbrake", "-", root=vid)
+    # encoder resolution happens once here (vainfo probing per file would be
+    # noise); the three _encode_part call sites read args.encoder, so the
+    # resolved value is written back onto args
+    if args.encoder in ("auto", "vaapi"):
+        vcn = _vcn_probe()
+        if vcn:
+            args.encoder = "vaapi"
+            log.note("encode", "encoder: VCN hardware hevc_vaapi CQP 24"
+                     + (" (low-power entrypoint)" if vcn["low_power"] else ""))
+        elif args.encoder == "vaapi":
+            print("skive transcode: -e vaapi but this box has no VA-API HEVC encode "
+                  "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
+                  "missing (scripts/setup-transcode.sh); use -e auto or -e x265",
+                  file=sys.stderr)
+            return 1
+        else:
+            args.encoder = "x265-fast"
+            log.note("encode", "no VCN (vainfo) -- auto fell back to x265 (fast preset)")
     items, want_hit = _scan(input_dir, args.prefixes)
     for w in args.prefixes:
         if w not in want_hit:

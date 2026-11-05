@@ -122,8 +122,10 @@ def build_parser() -> argparse.ArgumentParser:
     transcode_parser.add_argument("--retry", action="store_true",
                                   help="re-run items from the issues folder instead of rip staging: success ships/archives "
                                        "normally and moves the source out, failure stays quarantined")
-    transcode_parser.add_argument("-e", "--encoder", choices=["x265", "nvenc", "qsv", "vce"], default="x265",
-                                  help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
+    transcode_parser.add_argument("-e", "--encoder", choices=["auto", "x265", "vaapi"], default="auto",
+                                  help="video encoder: auto (default) uses the box's VCN hardware (hevc_vaapi CQP 24) "
+                                       "and falls back to x265 fast without it; x265 is the software baseline; "
+                                       "vaapi requires VCN and fails fast without it")
     transcode_parser.add_argument("-w", "--workdir", metavar="DIR",
                                   help="local temp work dir (default: ~/.cache/skive)")
     transcode_parser.add_argument("-n", "--limit", type=int, default=4, metavar="N",
