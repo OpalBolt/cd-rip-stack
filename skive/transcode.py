@@ -1109,8 +1109,6 @@ def run_transcode(args) -> int:
                                                seconv_exe, ffprobe_exe, log, parts)
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 inflight = cleanup + [local_out]
-                # detection only feeds the vaapi filter chain; HandBrake (x265)
-                # ignores the crop, so no detect phase, no announce, record null
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=episode, log=log, parts=parts,
