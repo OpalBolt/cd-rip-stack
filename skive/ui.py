@@ -479,7 +479,10 @@ def _read(question: Text) -> str:
     with suspend():
         with _print_lock:
             console.print(question, soft_wrap=True)
-        return console.input("\u203a ").strip()
+        answer = console.input("\u203a ").strip()
+        if not sys.stdin.isatty():
+            console.print()  # piped input is not echoed: end the marker line
+        return answer
 
 
 def ask(question: str, choices: str = "", default: str = "") -> str:

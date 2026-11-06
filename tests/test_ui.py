@@ -589,6 +589,7 @@ def test_module_suspend_delegates_to_registered_view():
 
 
 def test_ask_prints_question_default_and_dim_choices_then_reads_on_marker(monkeypatch):
+    monkeypatch.setattr(ui.sys.stdin, "isatty", lambda: True, raising=False)
     buf = _terminal_console(monkeypatch, color_system=None)
     prompts = []
     monkeypatch.setattr(ui.console, "input", lambda p="": prompts.append(p) or "  3  ")
@@ -625,6 +626,7 @@ def test_confirm_defaults_to_no_on_an_empty_answer(monkeypatch):
 
 
 def test_confirm_default_yes_is_explicit(monkeypatch):
+    monkeypatch.setattr(ui.sys.stdin, "isatty", lambda: True, raising=False)
     buf = _terminal_console(monkeypatch, color_system=None)
     monkeypatch.setattr(ui.console, "input", lambda p="": "")
     assert ui.confirm("go?", default=True) is True
@@ -655,3 +657,11 @@ def test_table_is_simple_head_with_dim_header_and_no_column_styles():
     assert t.box is SIMPLE_HEAD and t.header_style == "dim" and t.title == "T"
     assert [c.header for c in t.columns] == ["#", "Title"]
     assert all(not c.style for c in t.columns)
+
+
+def test_ask_ends_the_marker_line_on_piped_input(monkeypatch, capsys):
+    monkeypatch.setattr(ui.sys, "stdin", __import__("io").StringIO("3\n"))
+    monkeypatch.setattr(ui.console, "input", lambda p: (ui.console.print(p, end=""), "3")[1])
+    assert ui.ask("Pick") == "3"
+    ui.info("next")
+    assert "› \n" in capsys.readouterr().err
