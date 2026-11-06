@@ -115,7 +115,8 @@ Logs live on the share each command works on: video commands (`rip movie`,
   the disc may already be out of the drive. Replay a dump through the
   scanner with `MAKEMKV_INFO="cat <dump>"`.
 
-Verbosity (`-v`, `-vv`) gates the console only — both logs are always
-written.
+Verbosity (`-v`, `-vv`) gates the console's tool lines only — both logs are
+always written. Long commands draw a run view on a terminal and print plain
+tagged lines when piped.
 
 Related: [nas-layout](nas-layout.md) · [video](video.md) · [music](music.md)

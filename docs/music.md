@@ -24,9 +24,10 @@ The share mounts on demand and cyanrip runs inside `/mnt/music/rip/cd/`,
 writing each album as final-named FLACs into its own `<album>/` subfolder.
 Several MusicBrainz releases match the disc → skive lists them, asks for a
 number, re-runs cyanrip with `-R <n>` (blank answer aborts); no release at
-all → the submit-this-disc URL goes into the run log. Console is quiet by
-default, `-v` adds progress lines, `-vv` passes cyanrip raw, and a failed run
-replays what was hidden. A clean rip just finishes — eject and swap discs by
+all → the submit-this-disc URL goes into the run log. On a terminal the
+console draws the run view: album name, track counter, and recent events. Piped,
+it prints plain tagged lines. `-v` adds cyanrip tool lines and `-vv` passes
+cyanrip raw. The run ends with a per-track summary (track, duration, result). A clean rip just finishes — eject and swap discs by
 hand. Ctrl-C stops the child cleanly, logs `interrupted`, exits 130.
 
 ### The album record

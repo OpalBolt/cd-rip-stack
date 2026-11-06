@@ -192,7 +192,7 @@ The rich-panel console UI the long-running commands draw while they work — `ri
 _Avoid_: TUI, dashboard, progress screen
 
 **Run summary**:
-What prints when a run view clears: warn/fail event lines replayed as plain tagged lines, then one rich table of the run's items — transcode: item × copy/merge/subs/encode timings × total × result; rip: title × duration × size × result — with the ok/failed count and the `--keep` banner beneath. The one-glance outcome of a run; the full story stays in the run log.
+What prints when a run view clears: warn/fail event lines replayed as plain tagged lines, then one rich table of the run's items — transcode: item × copy/merge/subs/encode timings × total × result; rip movie/tv: title × duration × size × result; rip music: track × duration × result — with the ok/failed count and the `--keep` banner beneath. The one-glance outcome of a run; the full story stays in the run log.
 _Avoid_: final report, recap
 
 **Perf line**:

@@ -145,9 +145,13 @@ The run log (`logs/rip.jsonl`) gets one timed line per item per part —
 part's numbers in `status`: copy reports `N MB at M MB/s`, encode
 `ok, N MB`, merge `ok`, subs `K sidecar(s)[, B barren]`. A
 phase that dies closes with `FAIL` and its elapsed; an interrupted run
-closes with `interrupted`. The console prints per-item summaries and ok/
-failed counts at the end; detailed tool output is throttled (verbosity
-gates the console only). A `barren` note means a bitmap subtitle track's
+closes with `interrupted`. On a terminal the console
+draws the run view: a status panel, a background panel for the prefetch copy,
+a log panel, and a perf line (CPU, load, temperatures). Piped, the same events
+print as plain tagged lines (`info`/`warn`/`fail`). At the end the panels clear
+and a run summary prints: warnings and failures again, a per-item table of
+timings and results, and the ok/failed count. Tool lines show at `-v`/`-vv`
+(verbosity gates the console only). A `barren` note means a bitmap subtitle track's
 OCR yielded zero cues — the track is dropped with a loud note in the run
 log and the encode ships without that sidecar. It is not a failure: no
 quarantine, exit stays clean. Only a real seconv/tesseract failure
