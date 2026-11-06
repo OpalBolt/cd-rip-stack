@@ -25,6 +25,7 @@ import io
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 from rich.box import ROUNDED, SIMPLE_HEAD, Box
@@ -58,6 +59,7 @@ _view = None  # the run's RunView while one is live (common.VERBOSITY precedent)
 # TTY: an item frame is open, so lines print behind its `│` gutter; closed by
 # clear_view and run_summary so a crashed run never leaks a gutter onward
 _frame_open = False
+_frame_t0 = 0.0  # monotonic start of the open frame: item_end's default elapsed
 _scope = ""  # the opener's scope line: the live box's text when it has no lane
 
 
@@ -481,9 +483,10 @@ def item(pos: int, total: int, name: str) -> None:
     """The item frame's header rule `╭─ 2/4  Name ───`; on a TTY later lines
     print behind its `│` gutter until item_end (or the next item, which
     closes the old frame neutrally first)."""
-    global _frame_open
+    global _frame_open, _frame_t0
     if _styled():
         _neutral_close()
+        _frame_t0 = time.monotonic()
         head = Text("\u256d\u2500 ", style="frame")
         head.append(f"{pos}/{total}", style="dim")
         head.append("  ")
@@ -496,9 +499,11 @@ def item(pos: int, total: int, name: str) -> None:
 
 def item_end(kind: str, text: str, elapsed: str | None = None) -> None:
     """The item frame's closing rule `╰─ ✓ done 7m56s ───`, coloured by kind,
-    the elapsed bold. Plain mode has no frames: nothing prints."""
+    the elapsed bold (the frame's own age when elapsed is None). Only an open
+    frame closes: plain mode, or no frame, prints nothing."""
     global _frame_open
-    if _styled():
+    if _frame_open and _styled():
+        elapsed = elapsed or _hms(int(time.monotonic() - _frame_t0))
         line = Text(f"\u2570\u2500 {SYMBOLS[kind]} {text}", style=_SYMBOL_STYLE[kind])
         if elapsed:
             line.append(f" {elapsed}", style="item")
@@ -817,10 +822,25 @@ def confirm(question: str, default: bool = False) -> bool:
     return answer in ("y", "yes")
 
 
+class _CappedTable(Table):
+    """A table no wider than the shared box width (rich has no max width)."""
+
+    def __rich_console__(self, console, options):
+        return super().__rich_console__(console, options.update(
+            max_width=min(options.max_width, WIDTH_CAP)))
+
+    def __rich_measure__(self, console, options):
+        return super().__rich_measure__(console, options.update(
+            max_width=min(options.max_width, WIDTH_CAP)))
+
+
 def table(*columns: str, title: str | None = None) -> Table:
-    """The one table look: SIMPLE_HEAD, dim header, no column colours
-    (callers style only cells that mean something, e.g. a bold pick number)."""
-    t = Table(box=SIMPLE_HEAD, header_style="dim", title=title)
+    """The one table look: on a TTY the rounded box with a bold blue header at
+    most min(console, 100) wide; plain (pipe, NO_COLOR, TERM=dumb) the ASCII
+    PLAIN_HEAD. No column colours (callers style only cells that mean
+    something, e.g. a bold pick number)."""
+    t = (_CappedTable(box=ROUNDED, header_style="bold blue", title=title) if _styled()
+         else Table(box=PLAIN_HEAD, header_style="", title=title))
     for col in columns:
         t.add_column(col)
     return t

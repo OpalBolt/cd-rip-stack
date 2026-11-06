@@ -1110,10 +1110,13 @@ def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
 
     assert exc.value.code == 0
     err = capsys.readouterr().err
-    opener = "skive rip music · Test Artist - Test Album · offset +6"
-    assert opener in err
-    # spill: the item heading is the frame header rule (console-frames slice 01)
-    assert err.index(opener) < err.index("╭─ 1/2  First song")
+    # the opener box: title in the border, album and offset inside
+    assert err.index("╭─ skive rip music ─") < err.index("│ Test Artist - Test Album ")
+    assert err.index("│ offset +6 ") < err.index("╭─ 1/2  First song")
+    # each track's frame closes with its result and time
+    first = err[err.index("╭─ 1/2  First song"):err.index("╭─ 2/2  Second song")]
+    assert "╰─ ✓ done 0s ─" in first
+    assert "╰─ ✓ done 0s ─" in err[err.index("╭─ 2/2  Second song"):]
     footer = view.render()
     assert "track 2/2" in footer
     assert "Second song" in footer
@@ -1272,6 +1275,7 @@ def test_progress_stream_drives_heading_and_footer_at_default_verbosity(monkeypa
         ui.clear_view()
 
     assert "╭─ 2/4  track 2" in err  # spill: frame header rule (console-frames slice 01)
+    assert "╰─ ✗ failed: rip (rc=1) " in err  # the failed run closes the track's frame
     assert "progress - 50.00%" not in err  # not in scrollback, nor in the failure replay
     assert "track 2/4" in footer
     assert "offset +6" in footer
@@ -1340,6 +1344,9 @@ def test_interrupt_summary_keeps_track_outcomes_and_truthful_note(monkeypatch, c
     assert ["1", "?", "ok"] in rows
     assert ["2", "?", "interrupted"] in rows
     assert "fail  interrupted · 1 ok" in err
+    # track 1's frame closed done; the open track 2 frame closes before the summary
+    assert err.index("╰─ ✓ done ") < err.index("╭─ 2/3  track 2")
+    assert err.index("╰─ ✗ interrupted ") < err.index("fail  interrupted · 1 ok")
     assert "partial deleted" not in err
     assert "nothing deleted" in err
 

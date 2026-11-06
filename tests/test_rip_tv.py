@@ -2298,6 +2298,7 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
 
     def interrupt(*a, **k):
         show_dir.mkdir(parents=True, exist_ok=True)
+        k["on_title_start"](0)  # a title's frame is open when Ctrl+C lands
         raise KeyboardInterrupt
 
     prompt = MagicMock()
@@ -2338,6 +2339,11 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
     err = capsys.readouterr().err
     assert "fail  interrupted" in err
     assert err.count("fail  interrupted") == 2  # event plus interrupted result line
+    # the opener box: title in the border, scope lines inside, before the frame
+    assert (err.index("\u256d\u2500 skive rip tv \u2500") < err.index("\u2502 Show (2000) \u00b7 season 1 ")
+            < err.index("\u2502 disc 0 \u00b7 ") < err.index("\u256d\u2500 1/"))
+    # the open frame closes as interrupted before the summary
+    assert err.index("\u2570\u2500 \u2717 interrupted ") < err.index("fail  interrupted")
 
 
 def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):

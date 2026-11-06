@@ -36,17 +36,23 @@ transcode box is a separate build — [transcode](docs/transcode.md).
 
 Every command prints ordinary lines that stay in scrollback. Each line starts
 with a symbol: `✓` done, `·` routine, `!` warning, `✗` failure. Long commands
-open with one line that states their scope, give each item a `▸` heading,
-and redraw a footer of at most two lines (progress bar, ETA) under the scroll.
-They end on a summary table and one result line.
+(`transcode`, `rip movie`, `rip tv`, `rip music`) draw rounded boxes that flow
+together at the same width: an opener box with the run's scope, one frame per
+item (a `╭─ 1/4  Name` rule, its lines behind a `│` gutter, a `╰─ ✓ done 7m56s`
+or `╰─ ✗ interrupted` rule), a `now` box under the scroll that redraws the
+current step (bar, ETA), and a closing `summary` box with the result line in
+its bottom border. Pick tables and short commands use the same rounded tables.
 
 ```text
-✗ 1 failed · 1 ok · 1h36m — see /mnt/videos/logs/rip.jsonl (run 93721d6e)
+╭─ 1/2  Rogue One (2016) ──────────────────────────────
+│ ✓ copy      5744 MB at 63 MB/s                  1m30s
+│ ✓ encode    hevc_vaapi                         41m12s
+╰─ ✓ done 43m02s ──────────────────────────────────────
 ```
 
-On a terminal `NO_COLOR` and `TERM=dumb` only affect the colour: the symbols
-and the footer stay. Piped or redirected output gives plain lines with no escape
-codes and no footer. Each line starts with a padded word instead of a symbol:
+Piped or redirected output, `NO_COLOR` and `TERM=dumb` give plain lines with no
+escape codes, no boxes and no live box. Each line starts with a padded word
+instead of a symbol:
 
 ```text
 info  1/2  Rogue One (2016)

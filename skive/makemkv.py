@@ -226,6 +226,8 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                 # New sub-task; "Saving to MKV file" marks the start of each title
                 val = _qval(line)
                 if "Saving to MKV file" in val:
+                    if cur_title and on_title_start is not None:
+                        ui.item_end("ok", "done")  # the next title started: this one finished
                     cur_title += 1
                     if names and cur_title + title_offset <= len(names):
                         what = names[cur_title + title_offset - 1]
@@ -265,6 +267,11 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         # a crash still tells the operator what the tool said.
         for line in hidden:
             tool_out(line)
+    if on_title_start is not None:  # close the last title's item frame
+        if rc == 0:
+            ui.item_end("ok", "done")
+        else:
+            ui.item_end("fail", f"failed: rip (rc={rc})")
     outcome = "done" if rc == 0 else f"failed (rc={rc})"
     summary = f"{desc}: {outcome} · title {cur_title + title_offset}/{total_titles}"
     if whole_total:

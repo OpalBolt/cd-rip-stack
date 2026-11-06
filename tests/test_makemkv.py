@@ -568,6 +568,31 @@ def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
     assert "title 3/6" in out
 
 
+@pytest.mark.parametrize("rc, last", [(0, "\u2570\u2500 \u2713 done "),
+                                      (2, "\u2570\u2500 \u2717 failed: rip (rc=2) ")])
+def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosity, capsys, rc, last):
+    """Each title the caller framed (on_title_start opens ui.item) closes when
+    the next title starts (done) and at the end with the call's outcome, the
+    frame's time in the rule."""
+    from skive import ui
+    verbosity(0)
+    ui.set_view(ui.RunView(tty=True, live=False))
+    try:
+        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+                'PRGC:50,"Saving to MKV file 1 of 2"', 'PRGC:50,"Saving to MKV file 2 of 2"'],
+                rc=rc)):
+            _run_with_progress(["makemkvcon", "mkv", "disc:0"], "all titles", total_titles=2,
+                               on_title_start=lambda n: ui.item(n, 2, f"title {n}"))
+    finally:
+        ui.clear_view()
+    lines = capsys.readouterr().err.splitlines()
+    frames = [line for line in lines if line[:1] in "\u256d\u2570"]
+    assert frames[0].startswith("\u256d\u2500 1/2  title 1")
+    assert frames[1].startswith("\u2570\u2500 \u2713 done 0s \u2500")
+    assert frames[2].startswith("\u256d\u2500 2/2  title 2")
+    assert frames[3].startswith(last) and len(frames) == 4
+
+
 def test_rip_titles_records_each_selected_titles_rc(tmp_path):
     """outcomes: a selected-title rip records every title's own rc beside
     the worst rc it returns."""

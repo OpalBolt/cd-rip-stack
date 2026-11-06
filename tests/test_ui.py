@@ -863,13 +863,39 @@ def test_prompt_suspends_the_registered_view(monkeypatch):
     assert calls == [1, 1]
 
 
-def test_table_is_simple_head_with_dim_header_and_no_column_styles():
-    from rich.box import SIMPLE_HEAD
-
+def test_table_plain_is_ascii_with_no_box_characters(capsys):
+    """Piped (pytest's stderr): the PLAIN_HEAD table, no box characters, no
+    column colours."""
     t = ui.table("#", "Title", title="T")
-    assert t.box is SIMPLE_HEAD and t.header_style == "dim" and t.title == "T"
+    assert t.box is ui.PLAIN_HEAD and t.title == "T"
     assert [c.header for c in t.columns] == ["#", "Title"]
     assert all(not c.style for c in t.columns)
+    t.add_row("1", "Andor")
+    ui.console.print(t)
+    out = capsys.readouterr().err
+    assert "Andor" in out and not any(c in out for c in "\u256d\u2502\u2570\u2500\x1b")
+
+
+@pytest.mark.parametrize("width", [80, 120])
+def test_table_tty_is_rounded_bold_blue_header_capped_keeps_cell_styles(monkeypatch, width):
+    """On a TTY: the rounded box from column 0, a bold blue header, at most
+    min(console, 100) wide; a bold pick number and a meaningful cell colour
+    survive."""
+    from rich.box import ROUNDED
+    from rich.text import Text
+
+    buf = _terminal_console(monkeypatch, color_system="standard")
+    monkeypatch.setattr(ui.console, "_width", width)
+    t = ui.table("#", "Title", "audit")
+    assert t.box is ROUNDED and t.header_style == "bold blue"
+    t.add_row(Text("1", style="bold"), "x" * 150, Text("ok", style="green"))
+    ui.console.print(t)
+    out = buf.getvalue()
+    assert "\x1b[1;34m#" in out  # bold blue header
+    assert "\x1b[1m1\x1b[0m" in out and "\x1b[32mok" in out
+    import re
+    lines = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in out.splitlines()]
+    assert lines[0].startswith("\u256d") and max(map(len, lines)) == min(width, 100)
 
 
 def test_ask_ends_the_marker_line_on_piped_input(monkeypatch, capsys):

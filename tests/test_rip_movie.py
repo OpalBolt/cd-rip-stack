@@ -482,6 +482,7 @@ def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, caps
 
     def interrupt(*a, **k):
         d0.mkdir(parents=True, exist_ok=True)
+        k["on_title_start"](3)  # a title's frame is open when Ctrl+C lands
         raise KeyboardInterrupt
 
     view = ui.RunView(tty=True, live=False)
@@ -504,6 +505,11 @@ def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, caps
     err = capsys.readouterr().err
     assert "fail  interrupted" in err
     assert err.count("fail  interrupted") == 2  # event plus interrupted result line
+    # the opener box: title in the border, scope lines inside, before the frame
+    assert (err.index("\u256d\u2500 skive rip movie \u2500") < err.index("\u2502 Test Movie (2020) ")
+            < err.index("\u2502 disc 0 \u00b7 ") < err.index("\u256d\u2500 1/0  title 3"))
+    # the open frame closes as interrupted before the summary
+    assert err.index("\u2570\u2500 \u2717 interrupted ") < err.index("fail  interrupted")
 
 
 def test_rip_movie_summary_prints_after_view_closed(monkeypatch):

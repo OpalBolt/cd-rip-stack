@@ -540,6 +540,7 @@ def _interrupted(log, stage_dirs: list[Path], view, preexisting: set[Path],
     completed renames, record status=interrupted, list this run's kept files
     as ok and the title being ripped as interrupted, exit 130. Never returns.
     """
+    ui.item_end("fail", "interrupted")  # the open title's frame closes before the summary
     purge_junk(stage_dirs, quiet=True)
     kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))
     rows = [(f.stem, "?", _size(f), "ok") for d in stage_dirs
@@ -606,7 +607,7 @@ def rip_tv(args) -> None:
         if args.extras:
             log.note("type", "type=tv extras")
             titles = resolve_titles(args.titles, titles_full, preamble.media)
-            ui.opener(f"skive rip tv · {display} · extras · disc {preamble.disc} · {preamble.device}")
+            ui.opener("skive rip tv", f"{display} · extras", f"disc {preamble.disc} · {preamble.device}")
             log.phase("rip")
             infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
             order = titles if titles is not None else sorted(t.number for t in infos)
@@ -824,7 +825,7 @@ def rip_tv(args) -> None:
                     # A fix row is the user speaking; the automated note does not repeat.
                     note = None
 
-        ui.opener(f"skive rip tv · {display} · season {season} · disc {preamble.disc} · {preamble.device}")
+        ui.opener("skive rip tv", f"{display} · season {season}", f"disc {preamble.disc} · {preamble.device}")
 
         # Selection string + profile injection
         keep = preamble.keep

@@ -37,6 +37,7 @@ def _interrupted(log, stage_dirs: list[Path], view,
     Junk-labelled in-flight files are purged before the rows are collected.
     """
     preexisting = preexisting or set()
+    ui.item_end("fail", "interrupted")  # the open title's frame closes before the summary
     purge_junk(stage_dirs, quiet=True)
     kept = sum(1 for directory in stage_dirs for path in directory.glob("*.mkv"))
     rows = []
@@ -374,7 +375,7 @@ def rip_movie(args) -> None:
                 titles = resolve_titles(args.titles, titles_full, preamble.media)
             infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
 
-        ui.opener(f"skive rip movie · {display} · disc {preamble.disc} · {preamble.device}")
+        ui.opener("skive rip movie", display, f"disc {preamble.disc} · {preamble.device}")
         started_titles = 0
 
         def title_started(number: int) -> None:

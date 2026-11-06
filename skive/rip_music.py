@@ -121,8 +121,9 @@ def rip_music(args) -> None:
             # grace window, kill). Music staging has no junk labels — cyanrip writes
             # its final-named FLACs straight into rip/ — so there is no partial of
             # ours to purge; record status=interrupted (finish() below stays
-            # silent), one line, exit 130. The view closes first so its Live
-            # never garbles the fail line.
+            # silent), one line, exit 130. The open track's frame closes, then
+            # the view, so its Live never garbles the fail line.
+            ui.item_end("fail", "interrupted")
             view.close()
             rc = 130
             log.interrupted()
@@ -325,7 +326,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
             return
         header_name = album_header_name(header)
         if header_name:
-            ui.opener(f"skive rip music \u00b7 {header_name} \u00b7 offset {offset}")
+            ui.opener("skive rip music", header_name, f"offset {offset}")
             header["_opener_emitted"] = True
 
     def set_footer(number: int, title: str, pct: float) -> None:
@@ -339,6 +340,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         ui.item(number, track_total or number, title)
         headed_tracks.add(number)
         set_footer(number, title, pct)
+        if outcomes.get(number) == "ok":  # headed only once it finished
+            ui.item_end("ok", "done")
 
     try:
         if process.stdout is not None:
@@ -417,6 +420,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         show_track(pending_track, f"track {pending_track}", 100.0)
                     pending_track = int(done.group(1))
                     outcomes[pending_track] = "ok"
+                    if pending_track in headed_tracks:
+                        ui.item_end("ok", "done")
                     if on_tty:
                         view.progress(100.0, eta)
                 captured.append(line)
@@ -437,6 +442,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     if rc != 0 and parse_musicbrainz_miss("".join(captured)) is None:
         for line in hidden:
             ui.tool("cyanrip", line)
+    if rc != 0:  # the track in flight (if any) failed with the run
+        ui.item_end("fail", f"failed: rip (rc={rc})")
     return rc, "".join(captured)
 
 
