@@ -204,6 +204,7 @@ def tag(args, run=None) -> None:
 
     log = RipLog("skive tag", "beets", root=music_mnt)
     log.start()
+    ui.set_log(log)
     rc = 0
     any_left = False
     old_tag_run = os.environ.get("SKIVE_TAG_RUN")
@@ -254,6 +255,7 @@ def tag(args, run=None) -> None:
             os.environ["SKIVE_TAG_MODE"] = old_tag_mode
         if any_left:
             log.keep_raw()
+        ui.clear_log()
         log.finish(rc)
 
     if rc != 0:

@@ -48,6 +48,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
 
     log = RipLog(script, "makemkvcon", "-")
     log.start()
+    ui.set_log(log)
 
     try:
         return _preamble_body(kind, args, log, disc, Path(videos_mnt))
@@ -338,6 +339,7 @@ def interrupted_exit(log, stage_dirs: list[Path]) -> None:
     purge_junk(stage_dirs, quiet=True)  # one summary line, no per-file chatter
     kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))
     log.interrupted()
+    ui.clear_log()  # the structured total already records this interrupt
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
     sys.exit(130)
 

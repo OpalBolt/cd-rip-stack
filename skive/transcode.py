@@ -1096,6 +1096,7 @@ def run_transcode(args) -> int:
         return 1
 
     log = common.RipLog("skive transcode", "handbrake", "-", root=vid)
+    ui.set_log(log)
     # encoder resolution happens once here (vainfo probing per file would be
     # noise); the three _encode_part call sites read args.encoder, so the
     # resolved value is written back onto args
@@ -1267,7 +1268,6 @@ def run_transcode(args) -> int:
             msg = (f"workdir short {need - free} bytes of headroom -- no prefetch, "
                    f"{names} copies sequentially later")
             ui.warn(msg)
-            log.note("prefetch", msg)
             return
         log.note("prefetch", f"copying {names} for {nxt_unit[0].movie} in the background")
         for x in nxt_unit:
@@ -1647,11 +1647,11 @@ def run_transcode(args) -> int:
             rows.append((current, list(parts), "failed"))
             n_failed += 1
         ui.fail(f"FATAL: {e}")
-        log.note("run", f"FATAL: {e}")
         log.fail_open_phase("FAIL")
     finally:
         view.close()
         ui.clear_view()
+        ui.clear_log()
         log.finish(failed)
 
     ui.run_summary(rows, n_ok, n_failed,

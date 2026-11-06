@@ -1264,9 +1264,9 @@ def test_log_line_shape(env):
     assert first["phase"] == "-"
     assert first["status"] == "started"
     assert first["elapsed_s"] == 0
-    # a clean item logs one line per part (copy, subs), the detect phase
-    # (the crop gate now runs on every encoder), and the run total
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "total"]
+    # a clean item logs one line per part (copy, subs), the detect phase,
+    # the durable item-success event, and the run total
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "ok", "total"]
     assert re.match(r"^\d+ MB at \d+ MB/s$", lines[1]["status"])
     assert lines[2]["status"] == "0 sidecar(s)"
     assert re.match(r"^ok, \d+ MB$", lines[4]["status"])
@@ -1436,7 +1436,7 @@ def test_fatal_logs_note_and_closes_open_phase(env, capsys, monkeypatch):
     assert rc == 1
     assert "FATAL: disc vanished" in capsys.readouterr().err
     log = run_log(env)
-    assert any(l["phase"] == "run" and l["status"] == "FATAL: disc vanished" for l in log)
+    assert any(l["phase"] == "fail" and l["status"] == "FATAL: disc vanished" for l in log)
     enc = [l for l in log if l["phase"] == "encode"]
     assert enc[-1]["status"] == "FAIL" and enc[-1]["elapsed_s"] >= 0
     assert log[-1]["phase"] == "total" and log[-1]["status"].startswith("FAIL")
@@ -1453,7 +1453,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
 
     assert rc == 0
     lines = run_log(env)
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "total"]
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "ok", "total"]
     by = {l["phase"]: l for l in lines[1:]}
     assert re.match(r"^\d+ MB at \d+ MB/s$", by["copy"]["status"])
     assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
@@ -1793,7 +1793,7 @@ def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch
     L = vid / "library" / "movies"
     assert (L / "One (2001)" / "One (2001).mkv").read_text() == "ONE"
     assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
-    notes = [l for l in run_log(env) if l["phase"] == "prefetch"]
+    notes = [l for l in run_log(env) if l["phase"] == "warn"]
     assert len(notes) == 1 and "no prefetch" in notes[0]["status"]
     assert "copies sequentially later" in capsys.readouterr().err
     copies = [l for l in run_log(env) if l["phase"] == "copy"]

@@ -982,7 +982,9 @@ def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_pat
     assert "Mamma Mia! (2008)_t21.mkv  1:44:09  green  MAIN" in err
     assert "Mamma Mia! (2008)_t12.mkv  1:50:00  green" in err
     assert "validation: 2 files, 1 green main, 0 yellow" in err
-    log.note.assert_any_call("validation", "2 files, 1 green main, 0 yellow")
+    # `info` is screen-only; it must not create a duplicate run-log note.
+    assert not any(call.args == ("validation", "2 files, 1 green main, 0 yellow")
+                   for call in log.note.call_args_list)
 
 
 def test_post_rip_fast_scan_main_is_duration_joined_not_the_index(monkeypatch, tmp_path, capsys):

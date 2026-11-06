@@ -1,6 +1,33 @@
+import json
 import threading
+from datetime import datetime
 
 from skive import ui
+
+
+def test_status_events_feed_registered_run_log_but_info_does_not(tmp_path, capsys):
+    from skive.common import RipLog
+
+    log = RipLog("skive test", "test", root=tmp_path,
+                 now=lambda: datetime(2026, 11, 12, 21, 4))
+    log.start()
+    ui.set_log(log)
+    try:
+        ui.ok("encoded")
+        ui.info("copying")
+        ui.warn("subtitle dropped")
+        ui.fail("encode failed")
+    finally:
+        ui.clear_log()
+
+    lines = [json.loads(line) for line in
+             (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert [line["status"] for line in lines] == [
+        "started", "encoded", "subtitle dropped", "encode failed"]
+    assert [line["phase"] for line in lines[1:]] == ["ok", "warn", "fail"]
+    assert capsys.readouterr().err == (
+        "ok    encoded\ninfo  copying\nwarn  subtitle dropped\n"
+        "fail  encode failed\n")
 
 
 def test_info_renders_tagged_line_on_stderr(capsys):

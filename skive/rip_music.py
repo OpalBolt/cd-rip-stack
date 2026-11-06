@@ -55,6 +55,7 @@ def rip_music(args) -> None:
     # RipLog
     log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-", root=music_mnt)
     log.start()
+    ui.set_log(log)
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
     summary_tracks: list[dict] = []
@@ -100,7 +101,6 @@ def rip_music(args) -> None:
                 if attach:
                     note = f"no MusicBrainz release: submit this disc — {attach.group(0)}"
                     ui.warn(note)
-                    log.note("rip", note)
 
             # Name before phase_end so the rip ok line already carries it. The
             # album-artist header pair wins over the staging scan (a Various
@@ -132,6 +132,7 @@ def rip_music(args) -> None:
             view.close()
             rc = 130
             log.interrupted()
+            ui.clear_log()  # the structured total already records this interrupt
             ui.fail("interrupted")
         except SystemExit as e:
             rc = e.code if isinstance(e.code, int) else 1
@@ -156,6 +157,7 @@ def rip_music(args) -> None:
     finally:
         view.close()
         ui.clear_view()
+        ui.clear_log()
 
     sys.exit(rc)
 

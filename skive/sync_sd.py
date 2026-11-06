@@ -187,6 +187,7 @@ def sync_sd(args) -> None:
 
     log = RipLog("skive sync-sd", "rsync", "-")
     log.start()
+    ui.set_log(log)
 
     # Everything after the card is in hand: log the total and unmount a card
     # THIS run mounted on every exit — success, Ctrl-C, or failure.
@@ -228,6 +229,7 @@ def sync_sd(args) -> None:
     except SystemExit as e:
         rc = e.code if isinstance(e.code, int) else 1
     finally:
+        ui.clear_log()
         log.finish(rc)
         if we_mounted and card_mnt is not None:
             unmount_card(card_mnt)
