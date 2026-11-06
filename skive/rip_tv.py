@@ -488,9 +488,10 @@ def _summary_rows(show_dir: Path, display: str, season: int, probed: list[dict],
     """This run's run-summary rows: each episode file it staged, labeled
     with its full range (failed when its own title's rc is known and
     non-zero, else by the run's worst rc), then the extras it staged (by
-    their own title's rc when the rename recorded it), then one failed row
-    per attempted title whose output is missing. Files that predate the run
-    are not its items.
+    their own title's rc when the rename recorded it), then each unmapped
+    title's (sub-TV-floor: no assignment, never renamed) junk-labeled file
+    by its own rc, then one failed row per attempted title whose output is
+    missing. Files that predate the run are not its items.
     """
     outcomes = outcomes or {}
     assignment = assignment or {}
@@ -511,8 +512,18 @@ def _summary_rows(show_dir: Path, display: str, season: int, probed: list[dict],
     for f in extras:
         rc = outcomes.get(renamed[f], worst_rc) if f in renamed else worst_rc
         rows.append((f.stem, "?", _size(f), "ok" if rc == 0 else "failed"))
+    unrenamed: dict[int, Path] = {}
+    for f in sorted(show_dir.glob("*.mkv")):
+        m = re.search(r"_t(\d+)$", f.stem)
+        if m and f not in preexisting:
+            unrenamed[int(m.group(1))] = f
     missing_extras = 0
     for t in attempted or []:
+        if t not in assignment and t in unrenamed:
+            f = unrenamed[t]
+            rc = outcomes.get(t, worst_rc)
+            rows.append((f.stem, "?", _size(f), "ok" if rc == 0 else "failed"))
+            continue
         lohi = assignment.get(t, (0, 0))
         if lohi[0] == 0:
             missing_extras += 1

@@ -2477,6 +2477,34 @@ def test_rip_tv_summary_includes_this_runs_extras_not_old_files(tmp_path, monkey
     assert "ok    4 ok · " in err
 
 
+def test_rip_tv_summary_counts_a_ripped_sub_floor_title_ok(tmp_path, monkeypatch, capsys):
+    """Full scan: a sub-TV-floor making-of (t3, 300s) rips but has no
+    assignment, so the real rename leaves it junk-labeled. It is a
+    successful item, not a failed extra: the result line matches exit 0."""
+    from skive.rip_tv import rename_tv as real_rename_tv
+    titles = [TitleInfo(0, 3932, 1, "dan", "", False),
+              TitleInfo(1, 3897, 1, "dan", "", False),
+              TitleInfo(2, 3653, 1, "dan", "", False),
+              TitleInfo(3, 300, 1, "dan", "", False)]
+    ripped = []
+
+    def rip(selection, _profile, _minlength, stage, **k):
+        ripped.append(selection)
+        stage.mkdir(parents=True, exist_ok=True)
+        for t in range(4):
+            (stage / f"B1_t{t:02d}.mkv").write_bytes(b"x" * 1024)
+        return 0
+
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=titles,
+                      rip=rip, rename=real_rename_tv)
+    assert code == 0
+    assert ripped == [None]  # all titles, the sub-floor one included
+    err = capsys.readouterr().err
+    assert any("B1_t03" in l and l.rstrip().endswith("ok") for l in err.splitlines())
+    assert "failed" not in err
+    assert err.splitlines()[-1].startswith("ok    4 ok · ")
+
+
 def test_rip_tv_heading_follows_the_started_title_not_the_count(tmp_path, monkeypatch, capsys):
     """A selected-title rip: title 1 fails before saving starts, so only
     titles 0 and 2 call back — title 2's heading carries its own episode
