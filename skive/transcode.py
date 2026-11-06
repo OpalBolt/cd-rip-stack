@@ -47,6 +47,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from datetime import timedelta
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -799,6 +800,7 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
     mb = 1024 * 1024
     done = 0
     last = -1
+    started = time.monotonic()
     with open(src, "rb") as fin, open(dst, "wb") as fout:
         while True:
             buf = fin.read(mb)
@@ -817,7 +819,12 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
                 line = f"{pct}%  ({done // mb}/{total // mb} MB)"
                 if bg is not None:
                     if v is not None and v.tty:
-                        v.bg(bg, f"{os.path.basename(src)}  {pct}%")  # name + pct: fits line 2 beside perf
+                        elapsed = max(time.monotonic() - started, 0.001)
+                        rate = f"{done / mb / elapsed:.0f} MB/s"
+                        try:
+                            v.bg(bg, os.path.basename(src), pct=pct, rate=rate)
+                        except TypeError:  # compatibility with the old two-arg seam
+                            v.bg(bg, f"{os.path.basename(src)}  {pct}%")
                     else:
                         ui.info(line)
                 elif v is not None and v.tty:
@@ -1310,7 +1317,8 @@ def run_transcode(args) -> int:
     _open(scope, f"{len(units)} to encode{session}")
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
-    pf_ready: dict[str, str] = {}  # staged src -> local dst, filled on completion
+    pf_ready: dict[str, tuple[str, int, int]] = {}
+    # staged src -> (local dst, elapsed seconds, lookahead unit index)
     pf_started: set[int] = set()
     pf_thread: threading.Thread | None = None
     pf_cancel = threading.Event()  # set by the interrupt arm so _copy2 stops mid-file
@@ -1326,23 +1334,32 @@ def run_transcode(args) -> int:
         (the encode finished early — the natural sequential degradation).
         Returns the dst, or None to copy sequentially as today."""
         _pf_join()
-        dst = pf_ready.pop(src, None)
-        if dst is None:
+        ready = pf_ready.pop(src, None)
+        if ready is None:
             return None
+        dst, elapsed, unit_idx = ready
         log.phase("copy")
+        # RipLog measures from its phase clock; rewind that clock to preserve
+        # the elapsed time spent in the background thread.
+        if getattr(log, "_phase_start", None) is not None:
+            log._phase_start -= timedelta(seconds=elapsed)
         log.phase_end("prefetched — overlapped with the previous encode")
-        _phase_line(ui.ok, f"{os.path.basename(dst)} prefetched (overlapped)", "copy", None)
-        parts.append("copy prefetched")
+        _phase_line(ui.ok, f"{os.path.basename(dst)} prefetched ({_hms(elapsed)}, overlapped)",
+                    "copy", None)
+        parts.append(f"copy {_hms(elapsed)} ⇢")
+        if not any(value[2] == unit_idx for value in pf_ready.values()):
+            v = ui.view()
+            if v is not None:
+                v.bg_clear("prefetch")
         return dst
 
     def _pf_start(idx, log):
         """Start copying unit idx+1's sources into the workdir in ONE daemon
-        thread, right before unit idx's encode — the note's timestamp inside
-        the encode window is the overlap evidence. Space guard: no headroom
-        for the next unit's bytes plus this unit's remaining needs (its own
-        source bytes; encodes land smaller, so this overestimates safely)
-        skips THIS prefetch with one loud note — the unit copies sequentially
-        later."""
+        thread as soon as unit idx's copy finishes, before its subs, crop or
+        encode. Space guard: no headroom for the next unit's bytes plus this
+        unit's remaining needs (its own source bytes; encodes land smaller, so
+        this overestimates safely) skips THIS prefetch with one loud note —
+        the unit copies sequentially later."""
         nonlocal pf_thread
         nxt = idx + 1
         if nxt >= len(units) or nxt in pf_started:
@@ -1365,17 +1382,38 @@ def run_transcode(args) -> int:
             pf_files.append(os.path.join(tmp_dir, x.name))  # at thread START, before any bytes
 
         def work():
+            complete = False
+            started = time.monotonic()
             try:
                 for x in nxt_unit:
                     if pf_cancel.is_set():
                         return
                     dst = os.path.join(tmp_dir, x.name)
                     _copy2(x.path, dst, pf_cancel, bg="prefetch")
-                    pf_ready[x.path] = dst
-            finally:
+                    if pf_cancel.is_set():
+                        return
+                elapsed = max(int(time.monotonic() - started), 1)
+                size = sum(os.path.getsize(os.path.join(tmp_dir, x.name))
+                           for x in nxt_unit) // (1024 * 1024)
+                rate = size // elapsed
+                for x in nxt_unit:
+                    pf_ready[x.path] = (os.path.join(tmp_dir, x.name), elapsed, nxt)
                 v = ui.view()
                 if v is not None:
-                    v.bg_clear("prefetch")
+                    v.bg("prefetch", f"{nxt_unit[0].movie} \u2713 ready")
+                ui.ok(f"{nxt_unit[0].movie} ready \u00b7 {size} MB at {rate} MB/s",
+                      phase="prefetch", elapsed=_hms(elapsed))
+                complete = True
+            except Exception:
+                # _pf_take falls back to the sequential copy; no ready event.
+                return
+            finally:
+                if not complete:
+                    for x in nxt_unit:
+                        pf_ready.pop(x.path, None)
+                    v = ui.view()
+                    if v is not None:
+                        v.bg_clear("prefetch")
 
         pf_thread = threading.Thread(target=work, daemon=True)
         pf_thread.start()
@@ -1440,6 +1478,7 @@ def run_transcode(args) -> int:
                 inflight.append(local_src)  # BEFORE the copy (or the prefetched file's ownership move)
                 if pf is None:
                     _copy_in(i.path, local_src, log, parts)
+                _pf_start(unit_of[i.path], log)
                 cleanup.append(local_src)
                 side_dir = res = None  # extras: no pass, embedded subs stay
                 if episode:
@@ -1456,7 +1495,6 @@ def run_transcode(args) -> int:
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 inflight = cleanup + [local_out]
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
-                _pf_start(unit_of[i.path], log)
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=episode, log=log, parts=parts,
                                 crop=crop):
@@ -1558,6 +1596,7 @@ def run_transcode(args) -> int:
                             _copy_in(s.path, lb, log, parts)
                         local_parts.append(lb)
                         cleanup.append(lb)
+                    _pf_start(unit_of[i.path], log)
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
                     inflight.append(local_src)  # BEFORE the merge: mid-merge interrupt drops the partial
                     mrc = _merge_part(local_src, local_parts, mkv_exe, log, parts)
@@ -1581,6 +1620,7 @@ def run_transcode(args) -> int:
                     if pf is None:
                         _copy_in(i.path, local_src, log, parts)
                     cleanup.append(local_src)
+                    _pf_start(unit_of[i.path], log)
 
                 # the inline subtitle pass runs on the merged (or single) local
                 # copy BEFORE the encode (the main encodes zero-track
@@ -1594,7 +1634,6 @@ def run_transcode(args) -> int:
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
-                _pf_start(unit_of[i.path], log)
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=True, log=log, parts=parts,
                                 crop=crop):
@@ -1687,11 +1726,11 @@ def run_transcode(args) -> int:
             inflight.append(local_src)  # BEFORE the copy (or the prefetched file's ownership move)
             if pf is None:
                 _copy_in(i.path, local_src, log, parts)
+            _pf_start(unit_of[i.path], log)
             cleanup.append(local_src)
             local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
             inflight = cleanup + [local_out]
             crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
-            _pf_start(unit_of[i.path], log)
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
                             ffprobe_exe, no_subs=False, log=log, parts=parts,
                             speed=speed, crop=crop):

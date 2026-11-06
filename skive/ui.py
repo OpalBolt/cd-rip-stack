@@ -216,7 +216,7 @@ class RunView:
         self._perf = None  # (text, hot segment strings)
         # concurrent-activity lines, keyed; replaced whole (never mutated) so
         # the Live refresher thread can read it without the print lock
-        self._bg: dict[str, str] = {}
+        self._bg: dict[str, str | tuple[str, float, str | None]] = {}
         self._replay: list[str] = []  # TTY-only warn/fail replay buffer
         self._live = None
         if self.tty and live:
@@ -252,8 +252,27 @@ class RunView:
             lanes.append(lane1)
         bg, perf = self._bg, self._perf
         if bg and width >= 50:
-            lanes += [Text(f"{k} {bg[k]}", style="dim", no_wrap=True, overflow="ellipsis")
-                      for k in sorted(bg)]
+            for k in sorted(bg):
+                entry = bg[k]
+                if isinstance(entry, tuple):
+                    name, pct, rate = entry
+                    bar = self.BAR_WIDTH if width >= 70 else 10
+                    row = Table.grid(padding=(0, 2, 0, 0))
+                    row.add_column(no_wrap=True, overflow="ellipsis")
+                    row.add_column(no_wrap=True, width=bar)
+                    row.add_column(no_wrap=True, width=5)
+                    if rate:
+                        row.add_column(no_wrap=True, width=len(rate))
+                    cells: list = [Text(f"{k} {name}", style="dim"),
+                                   ProgressBar(total=100, completed=pct, width=bar),
+                                   Text(f"{pct:.0f}%", style="dim")]
+                    if rate:
+                        cells.append(Text(rate, style="dim"))
+                    row.add_row(*cells)
+                    lanes.append(row)
+                else:
+                    lanes.append(Text(f"{k} {entry}", style="dim", no_wrap=True,
+                                      overflow="ellipsis"))
         if perf and width >= 60:
             text, hot = perf
             line = Text(no_wrap=True, overflow="ellipsis")
@@ -341,12 +360,16 @@ class RunView:
             return
         self._perf = (text, set(hot)) if text else None
 
-    def bg(self, key: str, text: str) -> None:
+    def bg(self, key: str, text: str, pct: float | None = None,
+           rate: str | None = None) -> None:
         """One background-activity entry per concurrent activity, keyed; it
-        updates in place. No-op in fallback mode (plain prints remain)."""
+        updates in place. A percentage adds its own bar and optional rate.
+        No-op in fallback mode (plain prints remain)."""
         if not self.tty:
             return
-        self._bg = {**self._bg, key: str(text)}
+        value: str | tuple[str, float, str | None] = (
+            str(text) if pct is None else (str(text), float(pct), rate))
+        self._bg = {**self._bg, key: value}
 
     def bg_clear(self, key: str) -> None:
         """Remove a background entry and its lane."""
@@ -478,7 +501,7 @@ _HMS_RX = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s$")
 
 def _secs(value: str) -> int | None:
     """Reverse of transcode._hms (kept here: ui must not import transcode)."""
-    m = _HMS_RX.match(value)
+    m = _HMS_RX.match(value.removesuffix(" ⇢"))
     return sum(int(g) * mult for g, mult in zip(m.groups(), (3600, 60, 1)) if g) if m else None
 
 

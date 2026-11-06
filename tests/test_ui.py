@@ -509,6 +509,19 @@ def test_bg_line_present_updates_and_clears():
     assert "Two (2002)" not in view.render()
 
 
+def test_bg_progress_renders_bar_rate_then_ready_lane():
+    view = _tty_seam_view()
+    view.bg("prefetch", "Brave (2012)", pct=21, rate="12 MB/s")
+    text = view.render()
+    assert "prefetch Brave (2012)" in text
+    assert "21%" in text and "12 MB/s" in text
+    assert "━" in text
+    view.bg("prefetch", "Brave (2012) \u2713 ready")
+    text = view.render()
+    assert "Brave (2012) \u2713 ready" in text
+    assert "12 MB/s" not in text
+
+
 def test_bg_is_noop_in_fallback_mode(capsys):
     view = ui.RunView()
     assert not view.tty

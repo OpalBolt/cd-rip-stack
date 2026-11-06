@@ -1965,10 +1965,16 @@ def test_prefetch_overlaps_encode(env, tmp_path, capsys):
     enc = [l for l in log if l["phase"] == "encode"]
     copies = [l for l in log if l["phase"] == "copy"]
     assert copies[0]["ts"] <= notes[0]["ts"] < enc[0]["ts"]
+    subs = [l for l in log if l["phase"] == "subs"]
+    assert notes[0]["ts"] <= subs[0]["ts"]
     assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
+    assert copies[1]["elapsed_s"] > 0
     assert "MB/s" in copies[0]["status"]
-    out = capsys.readouterr().out
-    assert "copying Two (2002)_t00.mkv to local temp" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.count("Two (2002) ready") == 1
+    assert err.index("Two (2002) ready") < err.index("subtitle pass:")
+    assert "⇢" in err
+    assert "copying Two (2002)_t00.mkv to local temp" not in err
 
 
 def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
@@ -2167,9 +2173,11 @@ def test_prefetch_copy_line_in_background_panel(env, tmp_path):
 
     assert rc == 0
     assert history, "no background copy lines rendered"
-    assert all(h.startswith("Two (2002)_t00.mkv  ") for h in history)
-    pcts = [int(h.split("  ")[1].split("%")[0]) for h in history]
-    assert pcts == sorted(pcts) and history[-1].startswith(
+    progress = [h for h in history if "%" in h]
+    assert all(h.startswith("Two (2002)_t00.mkv  ") for h in progress)
+    pcts = [int(h.split("  ")[1].split("%")[0]) for h in progress]
+    assert pcts == sorted(pcts) and progress[-1].startswith(
         "Two (2002)_t00.mkv  100%")
-    assert view._bg == {}  # the key is cleared on completion
+    assert history[-1] == "Two (2002) \u2713 ready"
+    assert view._bg == {}  # the key is cleared on consumption
     assert "Two (2002)_t00.mkv" not in view.render()  # footer line 2 gone with the key
