@@ -219,7 +219,9 @@ def tag(args, run=None) -> None:
     try:
         for source in active_sources:
             source_dir = rip_dir / source
-            before = _album_folders(source_dir)
+            # Only folders holding audio before beets ran can be filed or left.
+            before = [folder for folder in _album_folders(source_dir)
+                      if _has_audio(folder)]
             log.phase(source)
             os.environ["SKIVE_TAG_MODE"] = "as-is" if source == "bandcamp" else "autotag"
             cmd = [sys.executable, "-m", "beets", "-c", str(config_path), "import"]

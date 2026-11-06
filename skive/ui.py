@@ -133,10 +133,12 @@ class RunView:
 
     BAR_WIDTH = 20
 
-    def __init__(self, tty: bool | None = None, live: bool = True):
+    def __init__(self, tty: bool | None = None, live: bool = True,
+                 perf: bool = True):
         """tty=None detects stderr; live=False forces the TTY render path
         without ever constructing a Live (the test seam — a real Live must
-        never exist under pytest)."""
+        never exist under pytest). perf=False skips the perf sampler, so the
+        footer never grows a perf line."""
         if tty is None:
             stream = sys.stderr
             try:
@@ -156,8 +158,9 @@ class RunView:
         self._live = None
         if self.tty and live:
             self._start_live()
-            self._sampler = PerfSampler(self)
-            self._sampler.start()
+            if perf:
+                self._sampler = PerfSampler(self)
+                self._sampler.start()
 
     def _start_live(self) -> None:
         from rich.live import Live

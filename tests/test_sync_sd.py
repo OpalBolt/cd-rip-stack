@@ -4,7 +4,7 @@ import io
 import shutil
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 
@@ -281,6 +281,62 @@ def test_rsync_library_tty_feeds_the_footer_not_the_scroll(capsys):
     assert "61%" in footer and "ETA 3:21" in footer
 
 
+def test_rsync_library_records_warnings_in_the_raw_log(tmp_path, monkeypatch):
+    from skive.common import RipLog
+    import json
+    log = RipLog("skive sync-sd", "rsync", "CARD", root=tmp_path)
+    log.start()
+    out = (b"  500  61%  1.20GB/s  0:03:21\r"
+           b"rsync: send_files failed to open /lib/x: Permission denied (13)\n")
+    rsync_library(Path("/lib"), "/media/CARD", popen=FakePopen(out, returncode=23), log=log)
+    raw = [json.loads(line) for line in
+           (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").read_text().splitlines()]
+    assert [(r["tool"], r["line"]) for r in raw] == [
+        ("rsync", "rsync: send_files failed to open /lib/x: Permission denied (13)")]
+
+
+def test_sync_sd_failed_run_keeps_rsync_diagnostics_in_raw_log(tmp_path, capsys):
+    import json
+    card = tmp_path / "card"
+    card.mkdir()
+    (tmp_path / "library").mkdir()
+    out = b"rsync: send_files failed to open /lib/x: Permission denied (13)\n"
+    with stub(find_mounted_cards=Mock(return_value=[str(card)]), ensure_mounted=Mock(),
+              rsync_library=lambda src, card, log=None: rsync_library(
+                  src, card, popen=FakePopen(out, returncode=23), log=log)):
+        with pytest.raises(SystemExit) as e:
+            sync_sd(FakeArgs())
+    assert e.value.code == 23
+    (raw_file,) = (tmp_path / "logs" / "raw").glob("*.jsonl")
+    lines = [json.loads(line)["line"] for line in raw_file.read_text().splitlines()]
+    assert lines == ["rsync: send_files failed to open /lib/x: Permission denied (13)"]
+
+
+def test_sync_sd_live_tty_view_has_no_perf_sampler(tmp_path, monkeypatch):
+    """The sync footer is one line: the TTY view must not start a perf sampler."""
+    sampler = Mock()
+    monkeypatch.setattr(ui, "PerfSampler", sampler)
+    monkeypatch.setattr(ui.RunView, "_start_live", lambda self: None)
+    real_init = ui.RunView.__init__
+    monkeypatch.setattr(ui.RunView, "__init__",
+                        lambda self, tty=None, **kw: real_init(self, tty=True, **kw))
+    seen = {}
+
+    def fake_rsync(src, card, log=None):
+        seen["view"] = ui.view()
+        return 0, 0
+
+    card = tmp_path / "card"
+    card.mkdir()
+    (tmp_path / "library").mkdir()
+    with stub(find_mounted_cards=Mock(return_value=[str(card)]), ensure_mounted=Mock(),
+              rsync_library=fake_rsync):
+        with pytest.raises(SystemExit):
+            sync_sd(FakeArgs())
+    assert seen["view"].tty
+    sampler.assert_not_called()
+
+
 # --- sync_sd orchestration ---------------------------------------------------
 
 def test_sync_sd_mountpoint_argument_bypasses_detection(tmp_path):
@@ -316,7 +372,7 @@ def test_sync_sd_mounted_card_used(tmp_path):
             sync_sd(FakeArgs())
         except SystemExit as e:
             assert e.code == 0
-    rsync.assert_called_once_with(tmp_path / "library", str(card))
+    rsync.assert_called_once_with(tmp_path / "library", str(card), log=ANY)
 
 
 def test_sync_sd_several_mounted_prompt_list_and_pick(capsys, tmp_path, ask):
@@ -339,7 +395,7 @@ def test_sync_sd_several_mounted_prompt_list_and_pick(capsys, tmp_path, ask):
     err = capsys.readouterr().err
     assert "Several removable devices mounted — pick one" in err
     assert str(a) in err and str(b) in err
-    rsync.assert_called_once_with(tmp_path / "library", str(b))
+    rsync.assert_called_once_with(tmp_path / "library", str(b), log=ANY)
 
 
 def test_sync_sd_several_mounted_blank_aborts(tmp_path, ask):
@@ -490,7 +546,7 @@ def test_sync_sd_end_to_end_copies_files(tmp_path):
     card = tmp_path / "card"
     card.mkdir()
 
-    def fake_rsync(src, card):
+    def fake_rsync(src, card, log=None):
         shutil.copytree(src, card, dirs_exist_ok=True)
         return 0, 8
 

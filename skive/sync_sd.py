@@ -168,13 +168,14 @@ def format_bytes(n: int) -> str:
         size /= 1000
 
 
-def rsync_library(src: Path, card: str, popen=subprocess.Popen) -> tuple[int, int]:
+def rsync_library(src: Path, card: str, popen=subprocess.Popen,
+                  log: RipLog | None = None) -> tuple[int, int]:
     """Copy the library onto the card (source kept). Trailing slashes matter.
 
     rsync's overall progress drives the run view's footer (bar, percent, rate,
     ETA) on a TTY; off a TTY a plain `info` line prints every 10%. Any other
-    rsync output is a problem report and shows as a warning. Returns
-    (exit code, bytes copied so far).
+    rsync output is a problem report: it shows as a warning and, given a
+    `log`, goes to the run's raw log. Returns (exit code, bytes copied so far).
     """
     proc = popen([
         "rsync", "-r", "--size-only", "--info=progress2",
@@ -194,6 +195,8 @@ def rsync_library(src: Path, card: str, popen=subprocess.Popen) -> tuple[int, in
         progress = parse_rsync_progress(line)
         if progress is None:
             ui.warn(f"rsync: {line}")
+            if log is not None:
+                log.raw("rsync", line)
             return
         done, pct, rate, eta = progress
         if on_tty:
@@ -314,10 +317,10 @@ def sync_sd(args) -> None:
         log.phase("sync")
         started = time.monotonic()
         sync_started = True
-        view = ui.view() or ui.RunView()
+        view = ui.view() or ui.RunView(perf=False)  # sync footer is one line
         ui.set_view(view)
         try:
-            rc, synced = rsync_library(src, card)
+            rc, synced = rsync_library(src, card, log=log)
         finally:
             view.close()
             ui.clear_view()

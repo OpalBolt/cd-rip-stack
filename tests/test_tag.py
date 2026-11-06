@@ -288,9 +288,11 @@ def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
     left = tmp_path / "rip" / "cd" / "Left"
     filed.mkdir(parents=True)
     left.mkdir()
+    (filed / "track.flac").write_bytes(b"audio")
     (left / "track.flac").write_bytes(b"audio")
 
     def fake_run(cmd):
+        (filed / "track.flac").unlink()
         filed.rmdir()
         return Mock(returncode=0, stdout="beets imported\n")
 
@@ -372,8 +374,10 @@ def _tag_stderr(tmp_path, monkeypatch, capsys, fake_run):
 def test_tag_prints_one_symbol_line_per_album_and_a_clean_result(tmp_path, monkeypatch, capsys):
     album = tmp_path / "rip" / "cd" / "Artist - Album"
     album.mkdir(parents=True)
+    (album / "track.flac").write_bytes(b"audio")
 
     def fake_run(cmd):
+        (album / "track.flac").unlink()
         album.rmdir()
         return Mock(returncode=0)
 
@@ -397,18 +401,40 @@ def test_tag_left_album_warns_and_result_line_is_a_warning(tmp_path, monkeypatch
     assert "see " in err[-1] and "rip.jsonl (run " in err[-1]
 
 
+def test_tag_folder_without_audio_is_neither_filed_nor_left(tmp_path, monkeypatch, capsys):
+    """An album folder with no audio before beets ran is untouched, not filed."""
+    album = tmp_path / "rip" / "cd" / "Empty Album"
+    album.mkdir(parents=True)
+    (album / "cover.jpg").write_bytes(b"art")
+
+    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, lambda cmd: Mock(returncode=0))
+    assert code == 0
+    assert not any("Empty Album" in line for line in err)
+    assert err[-1].startswith("ok    0 filed \u00b7 ")
+
+
 def test_tag_beets_failure_result_line_carries_exit_code(tmp_path, monkeypatch, capsys):
-    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
-    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, lambda cmd: Mock(returncode=42))
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "track.flac").write_bytes(b"audio")
+
+    def fake_run(cmd):
+        (album / "track.flac").unlink()
+        return Mock(returncode=42)
+
+    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, fake_run)
     assert code == 42
     assert err[-1].startswith("fail  beets failed (exit 42) \u00b7 1 filed \u00b7 ")
     assert "rip.jsonl (run " in err[-1]
 
 
 def test_tag_interrupt_result_line_counts_albums(tmp_path, monkeypatch, capsys):
-    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
+    album = tmp_path / "rip" / "cd" / "Album"
+    album.mkdir(parents=True)
+    (album / "track.flac").write_bytes(b"audio")
 
     def fake_run(cmd):
+        (album / "track.flac").unlink()
         raise KeyboardInterrupt
 
     code, err = _tag_stderr(tmp_path, monkeypatch, capsys, fake_run)
