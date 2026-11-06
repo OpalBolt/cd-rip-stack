@@ -104,7 +104,7 @@ The machine that runs `skive transcode` over the NAS mount — the Ryzen AI 7 35
 _Avoid_: encoder box, GPU box, BC-250
 
 **Prefetch**:
-The transcode copy overlap: while one unit encodes, the next unit's source is already being pulled from the share into the workdir. One unit of lookahead only — the ship stays synchronous and one encode runs at a time. Without workdir headroom for the next source, that item falls back to the sequential copy with a loud note.
+The transcode copy overlap: as soon as one unit's own copy finishes, the next unit's source starts pulling from the share into the workdir, overlapping the current unit's subs, crop and encode. One unit of lookahead only — the ship stays synchronous and one encode runs at a time. Its start and its finish (`ready`, with size, rate and time) are event lines in the current item frame. Without workdir headroom for the next source, that item falls back to the sequential copy with a loud note.
 _Avoid_: download, upload, double-buffering
 
 **Crop gate**:
@@ -184,20 +184,32 @@ _Avoid_: subtitle extraction, sub rip
 ### Logging
 
 **Event line**:
-skive's own line about what a run is doing — three kinds: `info` (routine events, skips, deferrals), `warn` (the loud note: something off, run continues), `fail` (something failed). Always stderr; stdout carries only data answers (`search` hits, `--json`).
+skive's own line about what a run is doing — four kinds, each a symbol on a TTY and a word when plain: `ok` (`✓`, an item finished), `info` (`·`, routine events, skips, deferrals), `warn` (`!`, the loud note: something off, run continues), `fail` (`✗`, something failed). Always stderr and always kept in scrollback; `ok`, `warn` and `fail` also land in the run log, so screen and record never disagree. stdout carries only data answers (`search` hits, `--json`). skive has no bare `print` — every line is an event line, a console table or prompt, or a data answer.
 _Avoid_: log message, print
 
 **Run view**:
-The rich-panel console UI the long-running commands draw while they work — `rip movie`, `rip tv`, `rip music`, `transcode`: a status panel (the situation: what is ripping/encoding, progress, ETA), a background panel (one line per concurrent activity, e.g. the prefetch copy), and a log panel (the tail of recent event lines, tool lines included per verbosity). Interactive moments — pick tables, fix-row prompts — suspend it; the run's end clears the panels and prints the run summary. Piped or non-TTY, the same event stream renders as plain tagged lines instead. Never gates the durable logs — run log and raw log are always written.
+The console the long-running commands draw while they work — `rip movie`, `rip tv`, `rip music`, `transcode` — as framed scrollback: a run opener box, then one item frame per item streaming its event and tool lines into ordinary scrollback, and a closed live box redrawing beneath them (the situation: current item, progress bar, ETA, background activity such as the prefetch copy, the perf line). Interactive moments — pick tables, fix-row prompts — suspend the live box; the run's end removes it and prints the run summary. Piped, `NO_COLOR` or `TERM=dumb`, the same event stream renders as plain tagged lines with no box characters. Never gates the durable logs — run log and raw log are always written.
 _Avoid_: TUI, dashboard, progress screen
 
+**Run opener**:
+The closed box a run view prints when its work is settled, stating the run's scope — for transcode the session count against the queue (`4 of 63 this session (cap 4, ~60–80 min) · 59 deferred`), the encoder choice and the scan-skip count, with each skipped path as a `!` line right under the box; for rips `Andor (2022) S01 · disc 2 · /dev/sr0`. Nothing of the run prints above it. Rips print it after their interactive phase (search, picks, map), since the scope is unknown before.
+_Avoid_: banner, header
+
+**Item frame**:
+The frame a run view draws in scrollback around one item: a header rule `╭─ 1/4  Bad Boys (1995) ───╮` when the item starts (position counts this session's items, not the whole queue — a rip's disc title, a music track), its event lines between `│ … │` sides, and a closing rule `╰─ ✓ done 7m56s ───╯` carrying the item's result. Every line is drawn whole at the shared width, so it streams line by line.
+_Avoid_: item heading, section, separator
+
 **Run summary**:
-What prints when a run view clears: warn/fail event lines replayed as plain tagged lines, then one rich table of the run's items — transcode: item × copy/merge/subs/encode timings × total × result; rip movie/tv: title × duration × size × result; rip music: track × duration × result — with the ok/failed count and the `--keep` banner beneath. The one-glance outcome of a run; the full story stays in the run log.
+What prints when a run view's live box clears: warn/fail event lines replayed, then one rounded box titled `summary` holding a table of the run's items — transcode: item × copy/merge/subs/encode timings × total × result (a prefetched copy shows its real time marked `⇢`); rip movie/tv: title × duration × size × result; rip music: track × duration × result — columns empty for every item dropped, the result column a symbol plus word. The box's bottom title is the closing result line: counts, total time, and after a failure where to look next (`✗ 1 failed · 3 ok · 2h41m — see logs/run/….log`). The `--keep` banner prints under the box. The one-glance outcome of a run; the full story stays in the run log.
 _Avoid_: final report, recap
 
 **Perf line**:
-The transcode run view's bottom status line: whole-system CPU % (a /proc/stat delta) plus the CPU and GPU package temperatures (hwmon), whichever sensors are readable — `CPU 62% · cpu 78°C · gpu 61°C` — red at ≥ 95 °C (thermal-throttle territory on the encode box). Transcode only. Never prints in the plain-line fallback; an unreadable sensor is omitted, never warned — a missing number is not a failure.
+The transcode run view's live-box lane: whole-system CPU % (a /proc/stat delta) plus the CPU and GPU package temperatures (hwmon), whichever sensors are readable — `CPU 62% · cpu 78°C · gpu 61°C` — red at ≥ 95 °C (thermal-throttle territory on the encode box). Transcode only. Never prints in the plain-line fallback; an unreadable sensor is omitted, never warned — a missing number is not a failure.
 _Avoid_: system monitor, sensor readout
+
+**MusicBrainz miss**:
+A `rip music` run that stops before ripping because cyanrip can't resolve the disc's DiscID to one release. There are three cases. **Not found**: the DiscID is on no release. **Stub**: it matches only a CD stub. **Multiple releases**: it is attached to several releases. skive never prompts. It fails the run with a yellow box naming the case, the DiscID, and the way forward: the attach URL (attach the disc to its release on MusicBrainz, then re-run), or for multiple releases, the candidates, the disc's MusicBrainz page to detach wrong releases, and the `-R <n>` re-run command. Once MusicBrainz is fixed, later rips of that disc resolve on their own.
+_Avoid_: lookup error, metadata failure
 
 **Run log**:
 The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. A transcode run logs one timed line per part — `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the part's numbers in `status` (`5744 MB at 64 MB/s`), so copy slippage and encode slippage are separable trends; a phase that dies mid-run closes with `FAIL` and its elapsed. Replaces the old 8-column text `rip.log`.

@@ -1,3 +1,7 @@
+---
+status: layout superseded by ADR 0013 (scrollback + footer); the rest stands
+---
+
 # Run view: rich panels for the long-running commands
 
 The console layer was never standardized: ~186 print calls across 17 modules
