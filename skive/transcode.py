@@ -1286,21 +1286,23 @@ def run_transcode(args) -> int:
         `✗ failed: <why>`), the summary line plain; keeps the batch ok/failed
         counts and one row for the end-of-run summary table."""
         nonlocal n_ok, n_failed, current
-        current = None
-        rows.append((label, list(parts), "ok" if ok else "failed"))
-        n_ok += ok
-        n_failed += not ok
-        v = ui.view()
-        if v is not None and v.tty:
-            took = _hms(int(time.monotonic() - item_t0))
-            if ok:
-                ui.item_end("ok", "done", took)
+        _pf_join()
+        with pf_lock:
+            current = None
+            rows.append((label, list(parts), "ok" if ok else "failed"))
+            n_ok += ok
+            n_failed += not ok
+            v = ui.view()
+            if v is not None and v.tty:
+                took = _hms(int(time.monotonic() - item_t0))
+                if ok:
+                    ui.item_end("ok", "done", took)
+                else:
+                    ui.item_end("fail", f"failed: {why}", took)
+            elif ok:
+                ui.ok(f"{label}: {' + '.join(parts)}")
             else:
-                ui.item_end("fail", f"failed: {why}", took)
-        elif ok:
-            ui.ok(f"{label}: {' + '.join(parts)}")
-        else:
-            ui.fail(f"{label}: {' + '.join(parts)} -- FAILED")
+                ui.fail(f"{label}: {' + '.join(parts)} -- FAILED")
 
     # Prefetch lookahead (slice 03): while one unit encodes, the next unit's
     # source files pull into the workdir in one background thread. The main
@@ -1322,6 +1324,11 @@ def run_transcode(args) -> int:
     pf_started: set[int] = set()
     pf_thread: threading.Thread | None = None
     pf_cancel = threading.Event()  # set by the interrupt arm so _copy2 stops mid-file
+    pf_lock = threading.Lock()  # ready publication, cancellation and frame close
+
+    def _pf_cancel() -> None:
+        with pf_lock:
+            pf_cancel.set()
 
     def _pf_join() -> None:
         nonlocal pf_thread
@@ -1368,7 +1375,10 @@ def run_transcode(args) -> int:
         nxt_unit, cur = units[nxt], units[idx]
         names = " ".join(x.name for x in nxt_unit)
         free = shutil.disk_usage(tmp_dir).free
-        need = sum(x.size for x in nxt_unit) + sum(x.size for x in cur)
+        next_bytes = sum(x.size for x in nxt_unit)
+        current_bytes = sum(x.size for x in cur)
+        merge_bytes = current_bytes if len(cur) > 1 else 0
+        need = next_bytes + current_bytes + merge_bytes
         if free < need:
             msg = (f"workdir short {need - free} bytes of headroom -- no prefetch, "
                    f"{names} copies sequentially later")
@@ -1377,6 +1387,9 @@ def run_transcode(args) -> int:
             return
         note = f"copying {names} for {nxt_unit[0].movie} in the background"
         log.note("prefetch", note, echo=False)
+        v = ui.view()
+        if v is not None and v.tty:
+            ui.info(f"prefetch  {nxt_unit[0].movie} started", phase="prefetch")
         ui.step(f"prefetch: {note}", verbose=common.VERBOSITY > 0)
         for x in nxt_unit:
             pf_files.append(os.path.join(tmp_dir, x.name))  # at thread START, before any bytes
@@ -1396,24 +1409,28 @@ def run_transcode(args) -> int:
                 size = sum(os.path.getsize(os.path.join(tmp_dir, x.name))
                            for x in nxt_unit) // (1024 * 1024)
                 rate = size // elapsed
-                for x in nxt_unit:
-                    pf_ready[x.path] = (os.path.join(tmp_dir, x.name), elapsed, nxt)
-                v = ui.view()
-                if v is not None:
-                    v.bg("prefetch", f"{nxt_unit[0].movie} \u2713 ready")
-                ui.ok(f"{nxt_unit[0].movie} ready \u00b7 {size} MB at {rate} MB/s",
-                      phase="prefetch", elapsed=_hms(elapsed))
-                complete = True
+                with pf_lock:
+                    if pf_cancel.is_set():
+                        return
+                    for x in nxt_unit:
+                        pf_ready[x.path] = (os.path.join(tmp_dir, x.name), elapsed, nxt)
+                    v = ui.view()
+                    if v is not None:
+                        v.bg("prefetch", f"{nxt_unit[0].movie} \u2713 ready")
+                    ui.ok(f"{nxt_unit[0].movie} ready \u00b7 {size} MB at {rate} MB/s",
+                          phase="prefetch", elapsed=_hms(elapsed))
+                    complete = True
             except Exception:
                 # _pf_take falls back to the sequential copy; no ready event.
                 return
             finally:
                 if not complete:
-                    for x in nxt_unit:
-                        pf_ready.pop(x.path, None)
-                    v = ui.view()
-                    if v is not None:
-                        v.bg_clear("prefetch")
+                    with pf_lock:
+                        for x in nxt_unit:
+                            pf_ready.pop(x.path, None)
+                        v = ui.view()
+                        if v is not None:
+                            v.bg_clear("prefetch")
 
         pf_thread = threading.Thread(target=work, daemon=True)
         pf_thread.start()
@@ -1421,7 +1438,27 @@ def run_transcode(args) -> int:
     def _pf_drop(paths) -> None:
         """Drop prefetched-but-unconsumed copies (guard quarantine etc.)."""
         _pf_join()
+        paths = list(paths)
+        with pf_lock:
+            dropped = set(paths)
+            for src, ready in list(pf_ready.items()):
+                if ready[0] in dropped:
+                    pf_ready.pop(src, None)
+            v = ui.view()
+            if v is not None:
+                v.bg_clear("prefetch")
         for p in paths:
+            _rmf(p)
+
+    def _pf_cancel_and_drop() -> None:
+        _pf_cancel()
+        _pf_join()
+        with pf_lock:
+            pf_ready.clear()
+            v = ui.view()
+            if v is not None:
+                v.bg_clear("prefetch")
+        for p in pf_files:
             _rmf(p)
 
     global _POS, _ITEM
@@ -1763,11 +1800,8 @@ def run_transcode(args) -> int:
         # item interrupted, then exit 130.
         log.fail_open_phase("interrupted")
         view.close()  # before any print, so the Live region never garbles them
+        _pf_cancel_and_drop()
         for p in inflight:
-            _rmf(p)
-        pf_cancel.set()
-        _pf_join()
-        for p in pf_files:  # prefetch partials and unconsumed copies drop too
             _rmf(p)
         if inflight_side is not None:
             shutil.rmtree(inflight_side, ignore_errors=True)
@@ -1778,6 +1812,11 @@ def run_transcode(args) -> int:
         interrupted = True
     except Exception as e:
         failed = 1
+        _pf_cancel_and_drop()
+        for p in inflight:
+            _rmf(p)
+        if inflight_side is not None:
+            shutil.rmtree(inflight_side, ignore_errors=True)
         if current is not None:
             rows.append((current, list(parts), "failed"))
             n_failed += 1

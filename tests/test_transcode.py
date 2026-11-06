@@ -24,6 +24,7 @@ import os
 import pathlib
 import re
 import shutil
+import threading
 
 import pytest
 
@@ -1972,9 +1973,45 @@ def test_prefetch_overlaps_encode(env, tmp_path, capsys):
     assert "MB/s" in copies[0]["status"]
     err = capsys.readouterr().err
     assert err.count("Two (2002) ready") == 1
-    assert err.index("Two (2002) ready") < err.index("subtitle pass:")
+    assert err.index("prefetch: copying Two (2002)_t00.mkv") < err.index("subtitle pass:")
     assert "⇢" in err
     assert "copying Two (2002)_t00.mkv to local temp" not in err
+
+
+def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkeypatch):
+    """TTY prefetch lifecycle events are visible between the current item's
+    opening and closing rules, including the normal non-verbose start."""
+    _slow_hb(tmp_path)
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "SLOWENCODE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    started = threading.Event()
+    release = threading.Event()
+    real_copy2 = transcode._copy2
+    real_subs = transcode._subs_part
+
+    def slow_prefetch(src, dst, cancel=None, bg=None):
+        if bg:
+            started.set()
+            release.wait()
+        return real_copy2(src, dst, cancel, bg)
+
+    def subs_after_prefetch(*args, **kwargs):
+        assert started.wait()
+        release.set()
+        return real_subs(*args, **kwargs)
+
+    monkeypatch.setattr(transcode, "_copy2", slow_prefetch)
+    monkeypatch.setattr(transcode, "_subs_part", subs_after_prefetch)
+
+    rc, lines, _ = _tty_run(monkeypatch, Args())
+
+    assert rc == 0
+    head = next(n for n, line in enumerate(lines) if line.startswith("╭─ 1/2  One (2001)"))
+    close = next(n for n, line in enumerate(lines) if line.startswith("╰─ ✓ done") and n > head)
+    start = next(n for n, line in enumerate(lines) if "prefetch  Two (2002) started" in line)
+    ready = next(n for n, line in enumerate(lines) if "Two (2002) ready" in line)
+    assert head < start < ready < close
 
 
 def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
@@ -2000,6 +2037,22 @@ def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
     assert "copying Two (2002)_t00.mkv to local temp" not in capsys.readouterr().err
 
 
+def test_prefetch_multipart_headroom_includes_merge_peak(env, monkeypatch):
+    """The lookahead guard reserves the merged file in addition to the
+    current parts and the next source, so a marginal workdir falls back."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Parts (2007)/d0/Parts (2007)_t21.p1.mkv", "P1")
+    mk(vid, "rip/movies/Parts (2007)/d0/Parts (2007)_t21.p2.mkv", "P2")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+
+    usage = type("U", (), {"free": 8})
+    monkeypatch.setattr(transcode.shutil, "disk_usage", lambda p: usage())
+
+    assert transcode.run_transcode(Args()) == 0
+    notes = [l for l in run_log(env) if l["phase"] == "prefetch"]
+    assert len(notes) == 1 and "no prefetch" in notes[0]["status"]
+
+
 def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch):
     """No workdir headroom: one loud note, no prefetch, both items still
     encode with plain sequential copies, rc 0 — nothing new can fail."""
@@ -2021,6 +2074,70 @@ def test_prefetch_starved_workdir_falls_back_sequential(env, capsys, monkeypatch
     assert "copies sequentially later" in capsys.readouterr().err
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert all("MB/s" in c["status"] for c in copies)
+
+
+def test_fatal_during_prefetch_cleans_worker_artifacts(env, monkeypatch):
+    """A fatal subtitle error cancels and joins a blocked lookahead before
+    returning, leaving neither its partial nor the current item's temp."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    started = threading.Event()
+
+    real_copy2 = transcode._copy2
+    def blocked_copy(src, dst, cancel=None, bg=None):
+        if bg:
+            real_copy2(src, dst, cancel, bg)
+            started.set()
+            cancel.wait()
+            return
+        return real_copy2(src, dst, cancel, bg)
+
+    def fatal_subs(*args, **kwargs):
+        assert started.wait()
+        raise RuntimeError("subtitle worker vanished")
+
+    monkeypatch.setattr(transcode, "_copy2", blocked_copy)
+    monkeypatch.setattr(transcode, "_subs_part", fatal_subs)
+
+    assert transcode.run_transcode(Args()) == 1
+    assert list(pathlib.Path(os.environ["VIDEO_WORK_DIR"]).iterdir()) == []
+
+
+def test_prefetch_cancelled_before_ready_publishes_nothing(env, monkeypatch, capsys):
+    """Cancellation while the worker is between copying and publication is
+    serialized with publication, so it emits no ready event or lane."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    work = pathlib.Path(os.environ["VIDEO_WORK_DIR"])
+    reached_size = threading.Event()
+    real_size = os.path.getsize
+    real_copy2 = transcode._copy2
+    cancel_ref = {}
+
+    def copy2(src, dst, cancel=None, bg=None):
+        if bg:
+            cancel_ref["event"] = cancel
+        return real_copy2(src, dst, cancel, bg)
+
+    def gated_size(path):
+        if pathlib.Path(path).parent == work and pathlib.Path(path).name.startswith("Two"):
+            reached_size.set()
+            cancel_ref["event"].wait()
+        return real_size(path)
+
+    def fatal_subs(*args, **kwargs):
+        assert reached_size.wait()
+        raise RuntimeError("subtitle worker vanished")
+
+    monkeypatch.setattr(transcode, "_copy2", copy2)
+    monkeypatch.setattr(transcode.os.path, "getsize", gated_size)
+    monkeypatch.setattr(transcode, "_subs_part", fatal_subs)
+
+    assert transcode.run_transcode(Args()) == 1
+    assert "Two (2002) ready" not in capsys.readouterr().err
+    assert list(work.iterdir()) == []
 
 
 def test_interrupt_mid_prefetch_drops_partials(env, capsys, monkeypatch):
