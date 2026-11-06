@@ -459,10 +459,9 @@ def test_rip_titles_per_title_threads_header_and_position(verbosity, capsys):
     assert "title 14 (2/2): done · title 2/2" in err
 
 
-def test_run_with_progress_seam_view_carries_status_block(verbosity):
-    """Absorption (ADR 0012): with a seam view set the status panel carries
-    status_block's lines and the progress line the pct; the summary lands in
-    the log panel as an event."""
+def test_run_with_progress_seam_view_carries_status_block(verbosity, capsys):
+    """With a seam view set the footer carries status_block's lines and the
+    bar's pct; the summary lands in scrollback as an event (ADR 0013)."""
     from skive import ui
     verbosity(0)
     view = ui.RunView(tty=True, live=False)
@@ -477,11 +476,13 @@ def test_run_with_progress_seam_view_carries_status_block(verbosity):
     finally:
         ui.clear_view()
     assert rc == 0
-    out = view.render()
+    out = view.render(width=160)  # both status_block parts on footer line 1
     assert "Movie (2020) — disc:0" in out  # status_block line 1
     assert "Saving to MKV file 1 of 1 · title 2/5" in out  # line 2
-    assert "100.0%" in out  # the last PRGV drove the percent (clamped near-total)
-    assert "title 12 (2/5): done · title 2/5" in out  # summary event in the log panel
+    assert "100%" in out  # the last PRGV drove the percent (clamped near-total)
+    # the summary event prints to scrollback, not the footer
+    assert "title 12 (2/5): done · title 2/5" in capsys.readouterr().err
+    assert "done" not in out
 
 
 def test_run_with_progress_fallback_progress_line_cadence(verbosity, capsys):

@@ -18,6 +18,94 @@ def test_fail_renders_tagged_line_on_stderr(capsys):
     assert capsys.readouterr().err == "fail  interrupted\n"
 
 
+def test_ok_renders_tagged_line_on_stderr(capsys):
+    ui.ok("encoded  41m12s")
+    assert capsys.readouterr().err == "ok    encoded  41m12s\n"
+
+
+def test_opener_and_item_heading_render_as_plain_info_lines(capsys):
+    """Plain mode: the opener and the item heading are info lines; nothing
+    indents beneath the heading and no escape byte reaches the stream."""
+    ui.opener("skive transcode \u00b7 4 to encode")
+    ui.item(1, 4, "Rogue One (2016)")
+    ui.info("copy 5744 MB at 64 MB/s  1m30s")
+    ui.ok("encoded  41m12s")
+    ui.warn("subtitle track 3 barren, dropped")
+    err = capsys.readouterr().err
+    assert err == ("info  skive transcode \u00b7 4 to encode\n"
+                   "info  1/4  Rogue One (2016)\n"
+                   "info  copy 5744 MB at 64 MB/s  1m30s\n"
+                   "ok    encoded  41m12s\n"
+                   "warn  subtitle track 3 barren, dropped\n")
+    assert "\x1b" not in err
+
+
+def _terminal_console(monkeypatch, **kw):
+    """The shared console swapped for one that believes it is a terminal,
+    writing into a buffer; returns the buffer."""
+    import io
+
+    from rich.console import Console
+    buf = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(
+        file=buf, force_terminal=True, width=80, theme=ui.THEME,
+        highlight=False, emoji=False, **kw))
+    return buf
+
+
+def test_tty_lines_carry_symbols_heading_and_indent(monkeypatch):
+    """On a terminal: `✓ · ! ✗` replace the words, the heading is `▸ n/m
+    Name`, events and tool lines indent beneath it, the opener resets."""
+    buf = _terminal_console(monkeypatch, color_system=None)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        ui.opener("skive transcode \u00b7 2 to encode")
+        ui.item(2, 2, "Arrival (2016)")
+        ui.ok("done")
+        ui.info("copy 4m12s")
+        ui.warn("subtitle track 3 barren, dropped")
+        ui.fail("encode failed")
+        view.tool("handbrake", "ERROR x")
+    finally:
+        ui.clear_view()
+    assert buf.getvalue() == ("skive transcode \u00b7 2 to encode\n"
+                              "\u25b8 2/2  Arrival (2016)\n"
+                              "  \u2713 done\n"
+                              "  \u00b7 copy 4m12s\n"
+                              "  ! subtitle track 3 barren, dropped\n"
+                              "  \u2717 encode failed\n"
+                              "  handbrake  ERROR x\n")
+    assert view.replay_lines() == ["warn  subtitle track 3 barren, dropped",
+                                   "fail  encode failed"]
+
+
+def test_tty_lines_use_theme_colours(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    buf = _terminal_console(monkeypatch, color_system="standard")
+    ui.ok("a")
+    ui.warn("b")
+    ui.fail("c")
+    out = buf.getvalue()
+    assert "\x1b[32m\u2713" in out and "\x1b[33m!" in out and "\x1b[31m\u2717" in out
+
+
+def test_no_color_render_has_no_colour_codes(monkeypatch):
+    """rich's own NO_COLOR detection: symbols stay, colour codes go."""
+    import re
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    buf = _terminal_console(monkeypatch, color_system="standard")
+    ui.ok("a")
+    ui.warn("b")
+    ui.fail("c")
+    ui.item(1, 1, "X")
+    ui.clear_view()  # drop the heading's indent state
+    out = buf.getvalue()
+    assert "\u2713 a" in out and "! b" in out and "\u2717 c" in out
+    assert not re.search(r"\x1b\[[0-9;]*(3[0-9]|4[0-9]|9[0-7])[;m]", out)
+
+
 def test_print_lock_exists_for_whole_line_writes():
     assert isinstance(ui._print_lock, type(threading.Lock()))
 
@@ -41,34 +129,52 @@ def test_fallback_view_renders_tagged_lines_no_panels(capsys):
         ui.clear_view()
 
 
-def test_render_carries_status_progress_and_log_tail():
-    """render() (the test seam) returns the panel content as one string:
-    status lines, the progress line (None fields omitted), and the tool-
-    prefixed log tail, newest last."""
-    view = ui.RunView()
+def test_render_is_the_footer_line_events_go_to_scrollback(capsys):
+    """render() (the test seam) returns the footer: position, item, phase,
+    a bar, the percent and ETA on one line (ADR 0013). Tool lines print to
+    scrollback (stderr), never into the footer."""
+    view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        view.status("item 2 of 3", "encode: Foo (2001).mkv")
+        view.footer("2/3", "Foo (2001)", "encode")
         view.progress(42.5, "00:03:11")
         view.tool("handbrake", "Encoding: title 42.50 %")
-        view.tool("copy", "40%  (4/10 MB)")
         text = view.render()
-        assert "item 2 of 3" in text
-        assert "encode: Foo (2001).mkv" in text
-        assert "42.5%  ETA 00:03:11" in text
-        assert "handbrake  Encoding: title 42.50 %" in text
-        assert "copy  40%  (4/10 MB)" in text
+        assert text.count("\n") == 1  # one footer line, no panels
+        line = text.rstrip("\n")
+        assert line.startswith(" 2/3  Foo (2001) \u00b7 encode  \u2501")
+        assert line.endswith("42%  ETA 00:03:11")
+        assert "handbrake" not in text
+        assert "handbrake  Encoding: title 42.50 %" in capsys.readouterr().err
     finally:
         ui.clear_view()
+
+
+def test_footer_resets_progress_on_a_new_phase():
+    view = ui.RunView(tty=True, live=False)
+    view.footer("1/2", "Foo (2001)", "copy")
+    view.progress(100, None)
+    view.footer("1/2", "Foo (2001)", "subs")
+    assert view.render() == " 1/2  Foo (2001) \u00b7 subs\n"
+
+
+def test_footer_truncates_the_name_so_percent_and_eta_fit():
+    view = ui.RunView(tty=True, live=False)
+    view.footer("2/4", "A Very Long Movie Title That Will Not Fit (2016)", "encode")
+    view.progress(42, "31m")
+    line = view.render(width=60).rstrip("\n")
+    assert line.startswith(" 2/4  A Very")
+    assert "\u2026" in line and line.endswith("42%  ETA 31m")
+    assert len(line) <= 60
 
 
 def test_progress_omits_none_fields():
     view = ui.RunView()
     view.progress(42.5, None)
-    assert "42.5%" in view.render() and "ETA" not in view.render()
+    assert "42%" in view.render() and "ETA" not in view.render()
     view.progress(None, "00:01:00")
     text = view.render()
-    assert "42.5%" not in text and "ETA 00:01:00" in text
+    assert "%" not in text and "ETA 00:01:00" in text
 
 
 def test_close_is_idempotent():
@@ -114,20 +220,30 @@ def test_run_summary_table_cells_count_and_banner(capsys):
     assert "--keep: lossless sources moved to /x -- verify, then clean by hand" in err
 
 
-def test_fallback_view_wired_to_transcode_progress(capsys):
-    """Transcode→view wiring (reviewer P2, slice 02): a fallback view set for
-    a run receives the surfaced throttled encoder line; render() carries the
-    parsed pct/ETA."""
+def test_transcode_progress_plain_line_vs_tty_footer(capsys):
+    """Transcode→view wiring: off a TTY the surfaced encoder line prints as
+    a plain tool line; on a TTY only the footer bar moves (nothing scrolls)."""
     from skive import transcode
-    view = ui.RunView()
-    ui.set_view(view)
+    line = "Encoding: task 1 of 1, 42.50 % (30 fps, avg 31 fps, ETA 00h01m30s)"
+    plain = ui.RunView()
+    ui.set_view(plain)
     try:
-        transcode._progress_line("ffmpeg", "frame= 100 fps=25 Encoding: 42.5% ETA 00:01:30")
+        transcode._footer_progress(line)
+        transcode._progress_line("handbrake", line)
     finally:
         ui.clear_view()
-    rendered = view.render()
-    assert "42.5%" in rendered
-    assert "ETA 00:01:30" in rendered
+    assert capsys.readouterr().err == f"handbrake  {line}\n"
+
+    tty = ui.RunView(tty=True, live=False)
+    ui.set_view(tty)
+    try:
+        transcode._footer_progress(line)
+        transcode._progress_line("handbrake", line)
+    finally:
+        ui.clear_view()
+    assert capsys.readouterr().err == ""
+    rendered = tty.render()
+    assert "42%" in rendered and "ETA 00h01m30s" in rendered
 
 
 def test_suspend_is_a_no_op_context_without_a_live():
@@ -148,13 +264,12 @@ def _tty_seam_view():
     return ui.RunView(tty=True, live=False)
 
 
-def test_bg_panel_present_updates_and_clears():
+def test_bg_line_present_updates_and_clears():
     view = _tty_seam_view()
-    assert "background" not in view.render()  # no panel when no keys
+    assert view.render() == ""  # no footer at all yet
     view.bg("copy", "Two (2002)_t00.mkv  40% (4/10 MB)")
     text = view.render()
-    assert "background" in text
-    assert "copy  Two (2002)_t00.mkv  40% (4/10 MB)" in text
+    assert "copy Two (2002)_t00.mkv  40% (4/10 MB)" in text
     # in-place update: set twice, one line, latest text only
     view.bg("copy", "Two (2002)_t00.mkv  80% (8/10 MB)")
     text = view.render()
@@ -162,7 +277,7 @@ def test_bg_panel_present_updates_and_clears():
     assert "40% (4/10 MB)" not in text
     assert text.count("Two (2002)_t00.mkv") == 1
     view.bg_clear("copy")
-    assert "background" not in view.render()
+    assert view.render() == ""
 
 
 def test_bg_is_noop_in_fallback_mode(capsys):
@@ -171,7 +286,7 @@ def test_bg_is_noop_in_fallback_mode(capsys):
     view.bg("copy", "x  40%")
     view.bg_clear("copy")
     assert capsys.readouterr().err == ""  # no output, no state
-    assert "background" not in view.render()
+    assert view.render() == ""
 
 
 def test_status_and_background_both_render():

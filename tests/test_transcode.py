@@ -1426,7 +1426,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
     cap = capsys.readouterr()
     assert re.search(
-        r"info  Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ -- ok", cap.err)
+        r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+\n", cap.err)
     assert "1 ok, 0 failed" in cap.err
 
 
@@ -1893,4 +1893,4 @@ def test_prefetch_copy_line_in_background_panel(env, tmp_path):
     assert pcts == sorted(pcts) and history[-1].startswith(
         "Two (2002)_t00.mkv  100%")
     assert view._bg == {}  # the key is cleared on completion
-    assert "background" not in view.render()
+    assert "Two (2002)_t00.mkv" not in view.render()  # footer line 2 gone with the key

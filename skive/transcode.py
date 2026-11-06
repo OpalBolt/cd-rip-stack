@@ -77,16 +77,18 @@ _TV_ROOTS = ("TV", "tv")  # rip/TV (legacy ps1 staging) and rip/tv (SPEC layout)
 # "Invalid audio codec in autopassthru copy mask (copy:pcm)" -- and still
 # exits 0 (the Conan failure). LPCM audio takes the ac3 fallback instead.
 _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac"
-# encode-progress parse for the run view's status panel (TTY only)
+# encode-progress parse for the run view's footer bar (TTY only)
 _RX_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _RX_ETA = re.compile(r"ETA\s+(\S+)")
-_POS = ""  # current "item n of m" status line while a run view is live
+_POS = ""  # the current item's position (`2/4`) while a run view is live
+_ITEM = ""  # the current item's name, beside the position in the footer
 
 
 def _tool(name: str, line: str) -> None:
     """Destination of a gated tool line (the tier logic and hidden-replay
-    buffers stay at the call sites): the run view tool-prefixes it into the
-    log panel on a TTY, ``{name}  {line}`` on stderr otherwise."""
+    buffers stay at the call sites): the run view prints it dimmed and
+    tool-prefixed in scrollback on a TTY, ``{name}  {line}`` on stderr
+    otherwise."""
     v = ui.view()
     if v is None:
         print(line, flush=True)
@@ -94,22 +96,30 @@ def _tool(name: str, line: str) -> None:
         v.tool(name, line)
 
 
-def _progress_line(name: str, stripped: str) -> None:
-    """A surfaced encode-progress line (throttled or -vv): into the log panel
-    plus, on a TTY, the status panel's progress/ETA; unparseable -> omitted."""
-    _tool(name, stripped)
+def _footer_progress(stripped: str) -> None:
+    """Every encode-progress update moves the TTY footer bar (pct/ETA parsed;
+    unparseable fields omitted). No-op off a TTY."""
     v = ui.view()
-    if v is not None:
+    if v is not None and v.tty:
         m, e = _RX_PCT.search(stripped), _RX_ETA.search(stripped)
         v.progress(float(m.group(1)) if m else None,
                    e.group(1) if e else None)
 
 
-def _phase_status(part: str, name: str) -> None:
-    """Run view status: session position + the current part."""
+def _progress_line(name: str, stripped: str) -> None:
+    """A surfaced encode-progress line (throttled or -vv): plain mode prints
+    it as a tool line; on a TTY the footer bar alone carries progress."""
     v = ui.view()
     if v is not None and v.tty:
-        v.status(*(([_POS] if _POS else []) + [f"{part}: {name}"]))
+        return
+    _tool(name, stripped)
+
+
+def _phase_status(part: str, name: str) -> None:
+    """Run view footer: session position, the item, the current part."""
+    v = ui.view()
+    if v is not None and v.tty:
+        v.footer(_POS, _ITEM or name, part)
 
 
 @dataclass
@@ -466,7 +476,8 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
             stripped = line.rstrip()
             if stripped.startswith("frame=") and "fps=" in stripped:
                 # progress \r updates: throttle, never hidden-replay, raw-log
-                # only what actually printed
+                # only what actually printed; the TTY footer takes every one
+                _footer_progress(stripped)
                 if verbose >= 2:
                     _progress_line("ffmpeg", stripped)
                     if log is not None:
@@ -559,7 +570,8 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
             stripped = line.rstrip()
             if "Encoding:" in stripped and "%" in stripped:
                 # progress \\r updates: throttle, never hidden-replay, raw-log
-                # only what actually printed
+                # only what actually printed; the TTY footer takes every one
+                _footer_progress(stripped)
                 if verbose >= 2:
                     _progress_line("handbrake", stripped)
                     if log is not None:
@@ -711,8 +723,8 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
            bg: str | None = None) -> None:
     """copy2 (mode + mtime preserved) with a progress line every 10%.
     cancel, when set, aborts between chunks leaving a partial dst. bg, when
-    set, routes the lines to the run view's background panel (prefetch);
-    sequential copies keep the log-panel/fallback routing."""
+    set, routes the lines to the run view's background entry (prefetch); a
+    sequential copy moves the TTY footer bar. Plain mode prints the lines."""
     total = os.path.getsize(src)
     if total == 0:
         shutil.copy2(src, dst)
@@ -731,9 +743,9 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
             done += len(buf)
             pct = done * 100 // total
             if pct >= last + 10 or pct == 100:
-                # a TTY view's log panel takes sequential copy lines (raw %
-                # lines garble the Live region); prefetch lines go to the
-                # background panel instead; fallback prints byte-identical
+                # on a TTY progress never enters the scroll: a sequential
+                # copy moves the footer bar, a prefetch its background
+                # entry; fallback prints byte-identical
                 v = ui.view()
                 line = f"{pct}%  ({done // mb}/{total // mb} MB)"
                 if bg is not None:
@@ -742,7 +754,7 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
                     else:
                         print(f"  {line}")
                 elif v is not None and v.tty:
-                    v.tool("copy", line)
+                    v.progress(pct, None)
                 else:
                     print(f"  {line}")
                 last = pct
@@ -1127,11 +1139,12 @@ def run_transcode(args) -> int:
     # the very vague session estimate (CONTEXT.md: Session cap): ~15–20
     # min per main on the laptop's VCN is a DVD-to-Blu-ray blur, stated
     # once, never per title
+    session = ""
     if args.limit:
         n_staged = len(main_num)
         n_run = min(args.limit, n_staged)
-        ui.info(f"session: {n_run} main(s) of {n_staged} staged "
-                f"(cap {args.limit}) -- expect roughly {n_run} × 15–20 min")
+        session = (f" \u00b7 {n_run} main(s) this session (cap {args.limit}, "
+                   f"~{n_run * 15}–{n_run * 20} min) \u00b7 {n_staged - n_run} deferred")
 
     failed = 0
     parked = 0  # sources actually parked in lossless/ (--keep banner honesty)
@@ -1155,7 +1168,7 @@ def run_transcode(args) -> int:
         rows.append((label, list(parts), ok))
         if ok:
             n_ok += 1
-            ui.info(f"{label}: {' + '.join(parts)} -- ok")
+            ui.ok(f"{label}: {' + '.join(parts)}")
         else:
             n_failed += 1
             ui.fail(f"{label}: {' + '.join(parts)} -- FAILED")
@@ -1166,6 +1179,7 @@ def run_transcode(args) -> int:
     # prefetch artifact at thread START so the interrupt path drops partial
     # and complete-but-unconsumed copies alike (CONTEXT.md: Interrupt).
     units = _units(items, main_num, rec_missing, extras_mark, args.limit)
+    ui.opener(f"skive transcode \u00b7 {len(units)} to encode{session}")
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
     pf_ready: dict[str, str] = {}  # staged src -> local dst, filled on completion
@@ -1243,7 +1257,8 @@ def run_transcode(args) -> int:
 
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
-    global _POS
+    global _POS, _ITEM
+    _POS = _ITEM = ""
     log.start()
     try:
         for i in items:
@@ -1251,9 +1266,12 @@ def run_transcode(args) -> int:
                 continue
             u = unit_of.get(i.path)  # not every staged item is an encode unit
             if u is not None:
-                _POS = f"item {u + 1} of {len(units)}"
-            if view.tty:
-                view.status(_POS, i.movie)
+                # a main (its .pN siblings are one unit) goes by the movie
+                main = (not i.is_tv and i.sfx == "t" and i.movie in main_num
+                        and main_num[i.movie][0] == i.num)
+                _POS, _ITEM = f"{u + 1}/{len(units)}", i.movie if main else i.base
+                ui.item(u + 1, len(units), _ITEM)
+                view.footer(_POS, _ITEM)
             inflight = []
             inflight_side = None
             log.name = i.movie

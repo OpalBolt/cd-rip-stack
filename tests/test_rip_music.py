@@ -924,9 +924,9 @@ def test_rerip_record_rebuilds_from_newest_log(tmp_path):
 # --- Run view wiring (slice 08: status panel, tool lines, summary) ------------
 
 
-def test_cyanrip_run_tool_lines_and_panel_at_v1(monkeypatch):
-    """With a seam view set at -v: surfaced lines land tool-prefixed in the
-    log panel, a % line feeds progress, the track counter parses, and the
+def test_cyanrip_run_tool_lines_and_panel_at_v1(monkeypatch, capsys):
+    """With a seam view set at -v: surfaced lines land tool-prefixed in
+    scrollback, a % line feeds the footer's progress, the track counter parses, and the
     album name stays '-' before the header pair names the run."""
     from skive import ui
 
@@ -945,8 +945,9 @@ def test_cyanrip_run_tool_lines_and_panel_at_v1(monkeypatch):
 
     assert rc == 0
     rendered = view.render()
-    assert "cyanrip  Ripping... 45%" in rendered
-    assert "cyanrip  Track 1 ripped and encoded successfully!" not in rendered  # tier unchanged
+    err = capsys.readouterr().err
+    assert "cyanrip  Ripping... 45%" in err
+    assert "cyanrip  Track 1 ripped and encoded successfully!" not in err  # tier unchanged
     assert "ripping -" in rendered
     assert "offset 100" in rendered
     assert "track 1" in rendered
@@ -995,8 +996,9 @@ def test_hidden_replay_lands_tool_prefixed_under_a_view(monkeypatch, capsys):
         ui.clear_view()
 
     assert rc == 1
-    assert "cyanrip  Ripping track 1" in view.render()
-    assert "cyanrip  Read error" in view.render()
+    err = capsys.readouterr().err  # tool lines print to scrollback
+    assert "cyanrip  Ripping track 1" in err
+    assert "cyanrip  Read error" in err
 
 
 def test_multiple_releases_prompt_prints_under_a_seam_view(tmp_path, capsys):
