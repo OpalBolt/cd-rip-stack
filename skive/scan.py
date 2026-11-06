@@ -486,8 +486,12 @@ def _fmt_dur(seconds: int) -> str:
     return f"{h}:{m:02d}:{s:02d}"
 
 
-def _render(titles: list[TitleInfo], selected: list[bool], cursor: int) -> list[str]:
-    """Render the menu (header + title table + hint) to lines (ANSI-styled on a TTY)."""
+def _render(titles: list[TitleInfo], selected: list[bool], cursor: int,
+            height: int | None = None) -> list[str]:
+    """Render the menu (header + title table + hint) to lines (ANSI-styled on a TTY).
+
+    On a TTY only the title rows that fit the terminal height show, in a
+    window around the cursor row."""
     buf = io.StringIO()
     styled = ui._styled()  # TTY: the shared rounded table; plain: the bare grid as before
     console = Console(file=buf, force_terminal=styled, width=ui._width() if styled else 110,
@@ -502,7 +506,14 @@ def _render(titles: list[TitleInfo], selected: list[bool], cursor: int) -> list[
             table.add_column(name)
     for col in table.columns[2:5]:
         col.justify = "right"
-    for i, t in enumerate(titles):
+    shown = range(len(titles))
+    if styled:
+        # 7 = "Rip all" + 3 table rules + header row + hint + the trailing newline
+        rows = max(1, (height or ui.console.height) - 7)
+        start = min(max(0, cursor - 1 - rows // 2), max(0, len(titles) - rows))
+        shown = range(start, min(len(titles), start + rows))
+    for i in shown:
+        t = titles[i]
         table.add_row(
             ">" if cursor == i + 1 else " ",
             Text("[x]" if selected[i] else "[ ]"),

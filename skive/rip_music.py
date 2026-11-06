@@ -317,6 +317,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     raw_held = None  # (track, line): the newest progress line not raw-logged yet
     pending_track = None  # completed, its title line not seen yet
     headed_tracks: set[int] = set()
+    finished_open = None  # completed, frame left open for its trailing metadata lines
     track_t0: dict[int, float] = {}  # first progress line per track
     track_took: dict[int, str] = {}  # rip time per completed track; absent with no progress seen
     outcomes = header.setdefault("_tracks", {}) if header is not None else {}
@@ -345,13 +346,21 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
             ui.ok(f"track {number}", phase="rip", elapsed=took)
         ui.item_end("ok", "done", took or "")
 
+    def close_finished() -> None:
+        nonlocal finished_open
+        if finished_open is not None:
+            close_track(finished_open)
+            finished_open = None
+
     def show_track(number: int, title: str, pct: float) -> None:
+        nonlocal finished_open
+        close_finished()  # the previous track's frame closes only as this one opens
         emit_opener()
         ui.item(number, track_total or number, title)
         headed_tracks.add(number)
         set_footer(number, title, pct)
         if outcomes.get(number) == "ok":  # headed only once it finished
-            close_track(number)
+            finished_open = number
 
     try:
         if process.stdout is not None:
@@ -439,7 +448,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         track_took[pending_track] = ui._hms(
                             int(time.monotonic() - track_t0[pending_track]))
                     if pending_track in headed_tracks:
-                        close_track(pending_track)
+                        finished_open = pending_track
                     if on_tty:
                         view.progress(100.0, eta)
                 captured.append(line)
@@ -448,7 +457,9 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         emit_opener()
         if pending_track is not None and pending_track not in headed_tracks:
             show_track(pending_track, f"track {pending_track}", 100.0)
+        close_finished()
     except KeyboardInterrupt:
+        close_finished()  # a completed track closes done, not interrupted
         # CONTEXT.md Interrupt: forward to the child, grace window, then kill,
         # and let the interrupt rip_music's handler log status=interrupted.
         kill_child_after_grace(process)

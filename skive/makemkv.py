@@ -231,7 +231,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                         # the next title started; this one's outcome is not reported
                         now = time.monotonic()
                         if on_title_start is not None and live_view:
-                            ui.info(f"title {cur_title + title_offset}/{total_titles}: saved",
+                            ui.info(f"title {cur_title + title_offset}/{total_titles}",
                                     phase="rip", elapsed=ui._hms(int(now - title_t0)))
                         ui.unindent()
                         title_t0 = now

@@ -251,6 +251,29 @@ def test_render_menu_tty_uses_shared_rounded_table():
     assert any("space=toggle" in line for line in lines)
 
 
+def test_render_menu_tty_fits_small_terminal_around_cursor():
+    """On a 24-line TTY a 19-title menu fits the screen: the "Rip all titles"
+    row, the selected row and the key hint stay visible."""
+    import re
+    from skive import ui
+    from skive.scan import _render, TitleInfo
+
+    titles = [TitleInfo(n, 1000 - n, 1_000_000, "", "", False) for n in range(1, 20)]
+    ui.set_view(ui.RunView(tty=True, live=False))
+    try:
+        for cursor in (0, 10, 19):
+            lines = [re.sub(r"\x1b\[[0-9;]*m", "", line)
+                     for line in _render(titles, [True] * 19, cursor, height=24)]
+            assert len(lines) <= 23
+            assert "Rip all titles" in lines[0]
+            assert "space=toggle" in lines[-1]
+            if cursor:
+                row = next(line for line in lines if line.startswith("\u2502 >"))
+                assert f"title {cursor} " in row
+    finally:
+        ui.clear_view()
+
+
 def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
     """A disc with media but zero parseable titles aborts instead of ripping blind."""
     import pytest

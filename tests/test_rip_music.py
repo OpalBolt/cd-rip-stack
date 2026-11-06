@@ -1319,6 +1319,39 @@ def test_untitled_pending_track_closes_before_next_tracks_frame(monkeypatch, cap
     assert lines.index(frames[2]) < phase == lines.index(frames[3]) - 1
 
 
+def test_track_frame_closes_after_its_trailing_metadata(monkeypatch, capsys):
+    """At -vv the metadata cyanrip prints after a track's success message
+    stays inside that track's frame; the frame closes as the next one opens."""
+    from skive import ui
+
+    monkeypatch.setattr("skive.rip_music.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr(common, "VERBOSITY", 2)
+    ui.set_view(ui.RunView(tty=True, live=False))
+    process = Mock(stdout=iter([
+        "Disc tracks: 2\n",
+        "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
+        "Track 1 ripped and encoded successfully!\n",
+        "    title:                         The Healer\n",
+        "    artist:                        B.B. King\n",
+        "Ripping and encoding track 2, progress - 10.00%, ETA - 30s\n",
+    ]))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    lines = capsys.readouterr().err.splitlines()
+    success = next(n for n, line in enumerate(lines) if "Track 1 ripped and encoded" in line)
+    artist = next(n for n, line in enumerate(lines) if "B.B. King" in line)
+    close = next(n for n, line in enumerate(lines) if line.startswith("╰─ ✓ done"))
+    second = next(n for n, line in enumerate(lines) if line.startswith("╭─ 2/2  track 2"))
+    assert success < artist < close < second
+    assert all(line.startswith("│") for line in lines[success:close])
+
+
 def test_track_frame_plain_has_no_rip_phase_line(capsys):
     """Plain mode keeps today's track output: the heading, no phase line."""
     process = Mock(stdout=iter([
