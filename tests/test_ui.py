@@ -233,7 +233,7 @@ def test_run_summary_table_cells_result_line_and_banner(capsys):
     ok/failed — then the banner only when set, then the result line."""
     rows = [
         ("A (2001)", ["copy 1s", "subs 5s", "encode 1m10s"], "ok"),
-        ("B (2002)", ["copy prefetched", "encode 30s"], "failed"),
+        ("B (2002)", ["copy 2m55s ⇢", "encode 1m12s"], "failed"),
     ]
     ui.run_summary(rows, 1, 1, None)
     err = capsys.readouterr().err
@@ -242,7 +242,7 @@ def test_run_summary_table_cells_result_line_and_banner(capsys):
     arow = next(l for l in err.splitlines() if l.strip().startswith("A (2001)"))
     assert "1m16s" in arow and arow.rstrip().endswith("ok")  # 1 + 5 + 70 secs, merge/detect absent
     brow = next(l for l in err.splitlines() if l.strip().startswith("B (2002)"))
-    assert "prefetched" in brow and "30s" in brow and brow.rstrip().endswith("failed")
+    assert "2m55s ⇢" in brow and brow.split()[-3:] == ["1m12s", "1m12s", "failed"]  # ⇢ overlapped before B
     assert err.endswith("fail  1 failed · 1 ok\n")  # no log: no time, no pointer
     assert "--keep:" not in err  # keep_banner=None: the honesty rule
 

@@ -2033,6 +2033,40 @@ def test_prefetch_multipart_logs_each_file_and_counts_unit_once(env, monkeypatch
     assert "7s ⇢" in row
 
 
+@pytest.mark.parametrize("failure", ["interrupt", "fatal"])
+def test_ready_prefetch_is_logged_when_cleanup_drops_it(env, monkeypatch, failure):
+    """A ready lookahead that is never consumed remains in the run log when
+    interrupt or fatal cleanup drops its local copy."""
+    vid = env / "vid"
+    for title, content in (("One (2001)", "ONE"), ("Two (2002)", "TWO"),
+                           ("Three (2003)", "THREE")):
+        mk(vid, f"rip/movies/{title}/d0/{title}_t00.mkv", content)
+    ready = threading.Event()
+    real_ok = transcode.ui.ok
+    real_encode = transcode._encode
+
+    def notice(text, *args, **kwargs):
+        if kwargs.get("phase") == "prefetch" and "Three (2003) ready" in text:
+            ready.set()
+        return real_ok(text, *args, **kwargs)
+
+    def fail_encode(src, out, *args, **kwargs):
+        if pathlib.Path(src).name.startswith("Two (2002)"):
+            assert ready.wait(2)
+            if failure == "interrupt":
+                raise Interrupted()
+            raise RuntimeError("encode boom")
+        return real_encode(src, out, *args, **kwargs)
+
+    monkeypatch.setattr(transcode.ui, "ok", notice)
+    monkeypatch.setattr(transcode, "_encode", fail_encode)
+
+    assert transcode.run_transcode(Args()) == (130 if failure == "interrupt" else 1)
+    ready_notes = [line for line in run_log(env) if line["phase"] == "prefetch"
+                  and "Three (2003) ready" in line["status"]]
+    assert len(ready_notes) == 1
+
+
 def test_interrupt_while_prefetch_finish_wait_leaves_source_unshipped(env, monkeypatch):
     """Ctrl+C during the item-close prefetch join happens before shipping or
     archiving the just-encoded item."""

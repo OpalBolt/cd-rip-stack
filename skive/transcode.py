@@ -1481,10 +1481,12 @@ def run_transcode(args) -> int:
         for p in paths:
             _rmf(p)
 
-    def _pf_cancel_and_drop() -> None:
+    def _pf_cancel_and_drop(log) -> None:
         _pf_cancel()
         _pf_join()
         with pf_lock:
+            for ready in list(pf_ready.values()):
+                _pf_log_ready(ready[2], ready, log)
             pf_ready.clear()
             v = ui.view()
             if v is not None:
@@ -1836,7 +1838,7 @@ def run_transcode(args) -> int:
         # item interrupted, then exit 130.
         log.fail_open_phase("interrupted")
         view.close()  # before any print, so the Live region never garbles them
-        _pf_cancel_and_drop()
+        _pf_cancel_and_drop(log)
         for p in inflight:
             _rmf(p)
         if inflight_side is not None:
@@ -1848,7 +1850,7 @@ def run_transcode(args) -> int:
         interrupted = True
     except Exception as e:
         failed = 1
-        _pf_cancel_and_drop()
+        _pf_cancel_and_drop(log)
         for p in inflight:
             _rmf(p)
         if inflight_side is not None:

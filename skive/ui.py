@@ -609,7 +609,7 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                 phase, _, value = part.partition(" ")
                 cells[phase] = value
                 s = _secs(value)
-                if s is not None:
+                if s is not None and not value.endswith(" ⇢"):
                     total += s
             body.append([label, *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
                          _hms(total), word])
