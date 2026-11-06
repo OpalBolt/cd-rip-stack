@@ -8,11 +8,9 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-from rich.console import Console
-from rich.prompt import Prompt
-from rich.table import Table
+from rich.text import Text
 
-console = Console()
+from skive import ui
 
 
 @dataclass
@@ -202,21 +200,20 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
     try:
         api_key = _api_key()
     except ValueError:
-        print("skive: no $TMDB_API_KEY in env — set it and re-run.", file=sys.stderr)
+        ui.fail("no $TMDB_API_KEY in env — set it and re-run")
         sys.exit(1)
 
     query: str | None = prefill or None
     while True:
         if query is None:
-            console.print("\nTMDB search (blank=skip, q=quit): ", end="")
-            query = Prompt.ask("") or ""
+            query = ui.ask("TMDB search", choices="Enter skip · q quit")
 
             if query.lower() == "q":
-                print("skive: quit — re-run later", file=sys.stderr)
+                ui.info("quit — re-run later")
                 sys.exit(1)
 
             if not query:
-                print("skive: skipped — re-run to search again", file=sys.stderr)
+                ui.info("skipped — re-run to search again")
                 continue
 
         # URL-encode the query
@@ -226,40 +223,35 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
         try:
             data = _http_get_json(url)
         except RuntimeError as e:
-            print(f"skive: TMDB request failed ({e})", file=sys.stderr)
-            print("skive: re-run when network is available", file=sys.stderr)
+            ui.fail(f"TMDB request failed ({e}) — re-run when network is available")
             sys.exit(1)
 
         results = data.get("results", [])
         if not results:
-            print(f"skive: no TMDB matches for '{query}'", file=sys.stderr)
+            ui.info(f"no TMDB matches for '{query}'")
             query = None
             continue
 
-        # Show top 5 in a rich table
-        table = Table(title=f'TMDB "{query}" — top {len(results[:5])} {kind} results')
-        table.add_column("#", style="cyan", width=4)
-        table.add_column("Title", style="white")
-        table.add_column("Year", style="yellow", width=6)
-        table.add_column("Lang", style="magenta", width=4)
-        table.add_column("ID", style="dim", width=6)
-
-        for i, r in enumerate(results[:5], 1):
+        # Show top 5 in the shared table look; only the pick number is styled
+        top = results[:5]
+        table = ui.table("#", "Title", "Year", "Lang", "ID",
+                         title=f'TMDB "{query}" — top {len(top)} {kind} results')
+        for i, r in enumerate(top, 1):
             title = r.get("title") or r.get("name", "-")
             date_str = r.get("release_date") or r.get("first_air_date", "-")
             year = date_str[:4] if date_str and date_str != "-" else "-"
             lang = r.get("original_language", "-")
             rid = str(r.get("id", "-"))
-            table.add_row(str(i), title, year, lang, rid)
+            table.add_row(Text(str(i), style="bold"), title, year, lang, rid)
 
-        console.print(table)
+        with ui.suspend():
+            ui.console.print(table)
 
         while True:
-            console.print(f"pick 1-{len(results[:5])} (Enter=1, s=new search, q=quit): ", end="")
-            pick_str = Prompt.ask("") or "1"
+            pick_str = ui.ask(f"Pick 1-{len(top)}", choices="s new search · q quit", default="1")
 
             if pick_str.lower() == "q":
-                print("skive: quit — re-run later", file=sys.stderr)
+                ui.info("quit — re-run later")
                 sys.exit(1)
 
             if pick_str.lower() == "s":
@@ -268,7 +260,7 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
 
             try:
                 pick_idx = int(pick_str)
-                if 1 <= pick_idx <= len(results[:5]):
+                if 1 <= pick_idx <= len(top):
                     r = results[pick_idx - 1]
                     title = r.get("title") or r.get("name", "-")
                     date_str = r.get("release_date") or r.get("first_air_date", "-")
@@ -281,9 +273,9 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
                     return TMDBPick(title=title, year=year, original_language=orig_lang, type=kind, id=tmdb_id,
                                     runtime_secs=runtime_secs)
                 else:
-                    print(f"skive: pick 1-{len(results[:5])}", file=sys.stderr)
+                    ui.warn(f"pick 1-{len(top)}")
             except ValueError:
-                print(f"skive: invalid choice '{pick_str}'", file=sys.stderr)
+                ui.warn(f"invalid choice '{pick_str}'")
 
 
 def search_first(kind: str, query: str) -> TMDBPick | None:

@@ -470,6 +470,48 @@ def fail(text: str) -> None:
     _print("fail", text)
 
 
+# -- prompts and tables: one shape everywhere ----------------------------------
+
+def _read(question: Text) -> str:
+    """Print the question line, read one answer on a `›` line. The footer is
+    suspended while asking; stdin is read exactly as before (a piped stdin
+    answers or raises EOFError, never a new wait)."""
+    with suspend():
+        with _print_lock:
+            console.print(question, soft_wrap=True)
+        return console.input("\u203a ").strip()
+
+
+def ask(question: str, choices: str = "", default: str = "") -> str:
+    """One prompt: `question [default] choices` with the choices dimmed, the
+    answer read on a `›` line. Returns the stripped answer, or `default` on
+    an empty one."""
+    line = Text(question)
+    if default:
+        line.append(f" [{default}]")
+    if choices:
+        line.append(f" {choices}", style="dim")
+    return _read(line) or default
+
+
+def confirm(question: str, default: bool = False) -> bool:
+    """A y/n prompt; an empty answer takes `default` (No unless the caller
+    says otherwise, so a stray Enter never confirms a destructive step)."""
+    answer = _read(Text(f"{question} {'[Y/n]' if default else '[y/N]'}")).lower()
+    if not answer:
+        return default
+    return answer in ("y", "yes")
+
+
+def table(*columns: str, title: str | None = None) -> Table:
+    """The one table look: SIMPLE_HEAD, dim header, no column colours
+    (callers style only cells that mean something, e.g. a bold pick number)."""
+    t = Table(box=SIMPLE_HEAD, header_style="dim", title=title)
+    for col in columns:
+        t.add_column(col)
+    return t
+
+
 # -- perf line (slice 05): CPU % via /proc/stat delta + hwmon temps ------------
 
 _HWMON_KEYS = {"k10temp": "cpu", "amdgpu": "gpu"}

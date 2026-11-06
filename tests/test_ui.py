@@ -586,3 +586,72 @@ def test_module_suspend_delegates_to_registered_view():
     assert calls == [1]
     with ui.suspend():  # no view: still a valid context
         pass
+
+
+def test_ask_prints_question_default_and_dim_choices_then_reads_on_marker(monkeypatch):
+    buf = _terminal_console(monkeypatch, color_system=None)
+    prompts = []
+    monkeypatch.setattr(ui.console, "input", lambda p="": prompts.append(p) or "  3  ")
+    assert ui.ask("Pick 1-5", choices="s new search \u00b7 q quit", default="1") == "3"
+    assert buf.getvalue() == "Pick 1-5 [1] s new search \u00b7 q quit\n"
+    assert prompts == ["\u203a "]
+
+
+def test_ask_returns_the_default_on_an_empty_answer(monkeypatch):
+    _terminal_console(monkeypatch, color_system=None)
+    monkeypatch.setattr(ui.console, "input", lambda p="": "   ")
+    assert ui.ask("Pick 1-5", default="1") == "1"
+    assert ui.ask("TMDB search") == ""
+
+
+def test_ask_dims_the_choices(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    buf = _terminal_console(monkeypatch, color_system="standard")
+    monkeypatch.setattr(ui.console, "input", lambda p="": "")
+    ui.ask("Q", choices="q quit")
+    assert "\x1b[2m q quit" in buf.getvalue()
+
+
+def test_confirm_defaults_to_no_on_an_empty_answer(monkeypatch):
+    buf = _terminal_console(monkeypatch, color_system=None)
+    answers = iter(["", "y", "YES", "n", "x"])
+    monkeypatch.setattr(ui.console, "input", lambda p="": next(answers))
+    assert ui.confirm("delete 4 staged files?") is False
+    assert ui.confirm("delete 4 staged files?") is True
+    assert ui.confirm("delete 4 staged files?") is True
+    assert ui.confirm("delete 4 staged files?") is False
+    assert ui.confirm("delete 4 staged files?") is False
+    assert buf.getvalue().splitlines()[0] == "delete 4 staged files? [y/N]"
+
+
+def test_confirm_default_yes_is_explicit(monkeypatch):
+    buf = _terminal_console(monkeypatch, color_system=None)
+    monkeypatch.setattr(ui.console, "input", lambda p="": "")
+    assert ui.confirm("go?", default=True) is True
+    assert buf.getvalue() == "go? [Y/n]\n"
+
+
+def test_prompt_suspends_the_registered_view(monkeypatch):
+    import contextlib
+
+    _terminal_console(monkeypatch, color_system=None)
+    monkeypatch.setattr(ui.console, "input", lambda p="": "")
+    v = ui.RunView(tty=True, live=False)
+    calls = []
+    v.suspend = lambda: calls.append(1) or contextlib.nullcontext()
+    ui.set_view(v)
+    try:
+        ui.ask("Q")
+        ui.confirm("Q?")
+    finally:
+        ui.clear_view()
+    assert calls == [1, 1]
+
+
+def test_table_is_simple_head_with_dim_header_and_no_column_styles():
+    from rich.box import SIMPLE_HEAD
+
+    t = ui.table("#", "Title", title="T")
+    assert t.box is SIMPLE_HEAD and t.header_style == "dim" and t.title == "T"
+    assert [c.header for c in t.columns] == ["#", "Title"]
+    assert all(not c.style for c in t.columns)

@@ -12,12 +12,10 @@ from skive.tmdb import (
     search_first, search_loop,
 )
 
-# Create mocks that won't fail with rich
-mock_console = MagicMock()
-mock_prompt = MagicMock()
+# The answer line every ui.ask reads (prompt chrome still prints to stderr)
+mock_input = MagicMock()
 
-patch_console = patch("skive.tmdb.console", mock_console)
-patch_prompt = patch("skive.tmdb.Prompt", mock_prompt)
+patch_input = patch("skive.ui.console.input", mock_input)
 
 
 def test_http_get_json_success():
@@ -162,14 +160,13 @@ def test_fetch_by_id_tv_has_no_runtime():
     assert pick.runtime_secs is None
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_reprompts_empty():
     """Test search_loop re-prompts on zero results."""
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", return_value={"results": []}):
             # side_effect: empty -> re-prompt, then q to quit
-            mock_prompt.ask.side_effect = ["test", "q"]
+            mock_input.side_effect = ["test", "q"]
             try:
                 search_loop("movie")
                 assert False, "Should have exited"
@@ -177,8 +174,7 @@ def test_search_loop_reprompts_empty():
                 pass
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_pick():
     """Test search_loop picks result 1 on Enter."""
     mock_data = {
@@ -194,7 +190,7 @@ def test_search_loop_pick():
 
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", return_value=mock_data):
-            mock_prompt.ask.side_effect = ["First Result", ""]
+            mock_input.side_effect = ["First Result", ""]
             pick = search_loop("movie")
             assert pick.title == "First Result"
             assert pick.year == "2019"
@@ -203,8 +199,7 @@ def test_search_loop_pick():
             assert pick.runtime_secs is None
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_movie_resolves_runtime_from_details():
     """Search results lack runtime; a movie pick fetches the details endpoint
     after selection and carries the runtime in seconds."""
@@ -213,15 +208,14 @@ def test_search_loop_movie_resolves_runtime_from_details():
     details = {"runtime": 108, "id": 471}
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", side_effect=[search, details]) as mock_http:
-            mock_prompt.ask.side_effect = ["Mamma Mia!", ""]
+            mock_input.side_effect = ["Mamma Mia!", ""]
             pick = search_loop("movie")
     assert pick.title == "Mamma Mia!"
     assert pick.runtime_secs == 108 * 60
     assert "movie/471?" in mock_http.call_args_list[1].args[0]
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_movie_runtime_fetch_failure_still_picks():
     """A failed details fetch never kills the pick — runtime degrades to None
     (the pick already succeeded; runtime is an enhancement)."""
@@ -230,14 +224,13 @@ def test_search_loop_movie_runtime_fetch_failure_still_picks():
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json",
                    side_effect=[search, RuntimeError("TMDB request failed: HTTP 500")]):
-            mock_prompt.ask.side_effect = ["Mamma Mia!", ""]
+            mock_input.side_effect = ["Mamma Mia!", ""]
             pick = search_loop("movie")
     assert pick.title == "Mamma Mia!"
     assert pick.runtime_secs is None
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_movie_missing_runtime_is_none():
     """A movie whose details carry no runtime degrades to unknown (None),
     never a fake 0 that downstream would read as a real duration."""
@@ -246,13 +239,12 @@ def test_search_loop_movie_missing_runtime_is_none():
     details = {"runtime": None, "id": 99}
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", side_effect=[search, details]):
-            mock_prompt.ask.side_effect = ["Mystery Film", ""]
+            mock_input.side_effect = ["Mystery Film", ""]
             pick = search_loop("movie")
     assert pick.runtime_secs is None
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_tv_makes_no_runtime_fetch():
     """TV picks are untouched: no runtime resolution, no follow-up fetch
     (episode runtimes already arrive at season level via fetch_season)."""
@@ -260,49 +252,47 @@ def test_search_loop_tv_makes_no_runtime_fetch():
                            "original_language": "en", "id": 7}]}
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", side_effect=[search]) as mock_http:
-            mock_prompt.ask.side_effect = ["Some Show", ""]
+            mock_input.side_effect = ["Some Show", ""]
             pick = search_loop("tv")
     assert pick.type == "tv"
     assert pick.runtime_secs is None
     assert mock_http.call_count == 1
 
 
-@patch_prompt
+@patch_input
 def test_search_loop_q_quits():
     """Test search_loop exits on 'q'."""
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
-        mock_prompt.ask.side_effect = ["q"]
+        mock_input.side_effect = ["q"]
         try:
             search_loop("movie")
             assert False, "Should have exited"
         except SystemExit as e:
             assert e.code == 1
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_prefill_skips_query_prompt():
     """Prefill runs the search directly; only the pick prompt is asked."""
     mock_data = {"results": [{"title": "Rogue One", "release_date": "2016-12-14",
                               "original_language": "en", "id": 330459}]}
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", return_value=mock_data) as mock_http:
-            mock_prompt.ask.reset_mock()
-            mock_prompt.ask.side_effect = [""]  # Enter = pick 1
+            mock_input.reset_mock()
+            mock_input.side_effect = [""]  # Enter = pick 1
             pick = search_loop("movie", prefill="ROGUE ONE")
             assert pick.title == "Rogue One"
-            assert mock_prompt.ask.call_count == 1
+            assert mock_input.call_count == 1
             assert "query=ROGUE%20ONE" in mock_http.call_args_list[0].args[0]
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_s_drops_to_typed_query():
     """'s' at the table returns to a typed search."""
     mock_data = {"results": [{"title": "Alien", "release_date": "1979-05-25",
                               "original_language": "en", "id": 348}]}
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", return_value=mock_data) as mock_http:
-            mock_prompt.ask.side_effect = ["s", "typed query", ""]
+            mock_input.side_effect = ["s", "typed query", ""]
             pick = search_loop("movie", prefill="ALIEN")
             assert pick.title == "Alien"
             assert "query=typed%20query" in mock_http.call_args_list[1].args[0]
@@ -310,8 +300,7 @@ def test_search_loop_s_drops_to_typed_query():
             assert mock_http.call_count == 3
 
 
-@patch_console
-@patch_prompt
+@patch_input
 def test_search_loop_prefill_zero_results_prompts_typed():
     """A prefilled query with no matches falls back to the typed prompt."""
     empty = {"results": []}
@@ -320,7 +309,7 @@ def test_search_loop_prefill_zero_results_prompts_typed():
     # third payload: the picked movie's runtime details fetch
     with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
         with patch("skive.tmdb._http_get_json", side_effect=[empty, hit, {"id": 348}]):
-            mock_prompt.ask.side_effect = ["typed", ""]
+            mock_input.side_effect = ["typed", ""]
             pick = search_loop("movie", prefill="GARBAGE_LABEL")
             assert pick.title == "Alien"
 
@@ -389,3 +378,31 @@ def test_search_first_network_failure_raises_runtime_error():
                    side_effect=RuntimeError("TMDB request failed: HTTP 500")):
             with pytest.raises(RuntimeError):
                 search_first("movie", "Mamma Mia!")
+
+
+def test_search_loop_table_has_no_decorative_colours_and_a_bold_pick(monkeypatch):
+    """The TMDB pick uses the shared table look: no cyan/yellow/magenta
+    columns, the pick number bold; Enter picks the bracketed default 1."""
+    import io
+
+    from rich.console import Console
+
+    from skive import ui
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=True, color_system="standard",
+                      width=80, theme=ui.THEME, highlight=False, emoji=False)
+    monkeypatch.setattr(ui, "console", console)
+    monkeypatch.setattr(console, "input", lambda p="": "")
+    data = {"results": [{"name": "Andor", "first_air_date": "2022-09-21",
+                         "original_language": "en", "id": 83867}]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=data):
+            pick = search_loop("tv", prefill="ANDOR")
+    out = buf.getvalue()
+    assert pick.title == "Andor"
+    assert "\x1b[1m1\x1b[0m" in out
+    for code in ("36", "33", "35"):  # cyan, yellow, magenta
+        assert f"\x1b[{code}m" not in out
+    assert "Pick 1-1 [1]" in out
