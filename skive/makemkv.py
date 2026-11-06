@@ -175,10 +175,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     def tool_out(text: str) -> None:
         """A tool line: view log panel when one is set, ``makemkv  {text}``
         on stderr otherwise."""
-        if view is not None:
-            view.tool("makemkv", text)
-        else:
-            print(f"makemkv  {text}", file=sys.stderr)
+        ui.tool("makemkv", text)
 
     def push_status(eta: str = "") -> None:
         """Feed the status panel: line 1 what + drive, line 2 status_block."""
@@ -369,7 +366,7 @@ def purge_junk(stage_dirs: list[Path], quiet: bool = False) -> None:
             base = mkv.stem
             if junk_pat.match(base):
                 if not quiet:
-                    print(f"skive: removing stale staged file from an earlier session: {base}.mkv", file=sys.stderr)
+                    ui.info(f"removing stale staged file from an earlier session: {base}.mkv")
                 mkv.unlink()
 
 

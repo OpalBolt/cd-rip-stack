@@ -1239,7 +1239,7 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert not any(line["status"] == "interrupted" for line in lines)
-    assert "skive: split: interrupted" in capsys.readouterr().err
+    assert "info  split: interrupted" in capsys.readouterr().err
 
 
 # --- Fast scan: duration join + rename (ADR 0002, DVD half) ---

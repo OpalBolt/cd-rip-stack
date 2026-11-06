@@ -43,7 +43,7 @@ def test_main_interrupt_fallback_one_line_exit_130(monkeypatch, capsys):
         skive_main.main()
 
     assert e.value.code == 130
-    assert capsys.readouterr().err == "skive: interrupted\n"
+    assert capsys.readouterr().err == "fail  interrupted\n"
     cmd.assert_called_once()
 
 

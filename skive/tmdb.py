@@ -56,14 +56,14 @@ def require_online() -> None:
     try:
         api_key = _api_key()
     except ValueError:
-        print("skive: no $TMDB_API_KEY in env — set it and re-run.", file=sys.stderr)
+        ui.fail("no $TMDB_API_KEY in env — set it and re-run.")
         sys.exit(1)
 
     url = f"https://api.themoviedb.org/3/configuration?api_key={api_key}"
     try:
         _http_get_json(url, timeout=5)
     except RuntimeError as e:
-        print(f"skive: TMDB is unreachable ({e})", file=sys.stderr)
+        ui.fail(f"TMDB is unreachable ({e})")
         sys.exit(1)
 
 

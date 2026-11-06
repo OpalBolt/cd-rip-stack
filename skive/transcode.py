@@ -94,11 +94,7 @@ def _tool(name: str, line: str) -> None:
     buffers stay at the call sites): the run view prints it dimmed and
     tool-prefixed in scrollback on a TTY, ``{name}  {line}`` on stderr
     otherwise."""
-    v = ui.view()
-    if v is None:
-        print(line, flush=True)
-    else:
-        v.tool(name, line)
+    ui.tool(name, line)
 
 
 def _hms_match(m: re.Match) -> float:
@@ -789,11 +785,11 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
                     if v is not None and v.tty:
                         v.bg(bg, f"{os.path.basename(src)}  {pct}%")  # name + pct: fits line 2 beside perf
                     else:
-                        print(f"  {line}")
+                        ui.info(line)
                 elif v is not None and v.tty:
                     v.progress(pct, None)
                 else:
-                    print(f"  {line}")
+                    ui.info(line)
                 last = pct
     shutil.copystat(src, dst)
 

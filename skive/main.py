@@ -4,6 +4,7 @@ tag, sync-sd, validate."""
 import argparse
 import sys
 
+from skive import ui
 from skive.common import MENU, install_interrupt_handler, set_verbosity
 
 
@@ -170,7 +171,7 @@ def main() -> None:
         # interactive prompts (TMDB search, menus) and commands without staging
         # of their own. One line, no traceback, exit 130; runs that already
         # started logged their interrupted status where the RipLog was at hand.
-        print("skive: interrupted", file=sys.stderr)
+        ui.fail("interrupted")
         sys.exit(130)
 
 

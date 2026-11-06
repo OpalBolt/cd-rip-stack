@@ -77,7 +77,7 @@ def test_cyanrip_run_progress_streams_at_v1(capsys, monkeypatch):
             rc, captured = _cyanrip_run("100", [], Path(tmpdir))
 
         assert rc == 0
-        assert capsys.readouterr().out == "Ripping... 45%\n"
+        assert capsys.readouterr().err == "cyanrip  Ripping... 45%\n"
         assert captured == "".join(lines)  # capture is complete either way
 
 
@@ -92,7 +92,7 @@ def test_cyanrip_run_raw_passthrough_at_v2(capsys, monkeypatch):
             rc, captured = _cyanrip_run("100", [], Path(tmpdir))
 
         assert rc == 0
-        assert capsys.readouterr().out == captured
+        assert capsys.readouterr().err == "cyanrip  Ripping track 1\ncyanrip  Rip complete\n"
 
 
 def test_cyanrip_run_failure_replays_captured(capsys, monkeypatch):
@@ -106,7 +106,7 @@ def test_cyanrip_run_failure_replays_captured(capsys, monkeypatch):
             rc, captured = _cyanrip_run("100", [], Path(tmpdir))
 
         assert rc == 1
-        assert capsys.readouterr().out == captured
+        assert capsys.readouterr().err == "cyanrip  Ripping track 1\ncyanrip  Read error\n"
 
 
 def test_multiple_releases_prompts(tmp_path):

@@ -14,9 +14,10 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass
+
+from skive import ui
 
 _LANGS = ("eng", "dan")
 # second's events * 10 >= winner's * 3  <=>  >= 30% (integer math, no float traps)
@@ -101,7 +102,7 @@ def _raw(log, tool: str, text: str, verbose: int = 0) -> None:
     console -- the pass's own notes print unconditionally at every level."""
     for line in text.splitlines():
         if verbose >= 2:
-            print(line)
+            ui.tool(tool, line)
         if log is not None:
             log.raw(tool, line)
 
@@ -117,7 +118,7 @@ def inventory(mkv: str, ffprobe_exe: str, log=None, verbose: int = 0) -> list[Tr
     )
     _raw(log, "ffprobe", r.stdout + r.stderr, verbose)
     if r.returncode != 0:
-        print(f"ffprobe failed on {mkv}: {r.stderr.strip()}", file=sys.stderr)
+        ui.warn(f"ffprobe failed on {mkv}: {r.stderr.strip()}")
         return []
     return [
         Track(
@@ -159,8 +160,8 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
     if r.returncode != 0 or not produced:
         # full replay, not just the stderr tail -- the Conan diagnosis lived in
         # seconv's stdout ("N image(s) produced no OCR text and were dropped")
-        print(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
-              f"rc={r.returncode}\n{(r.stdout + r.stderr).strip()}", file=sys.stderr)
+        ui.warn(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
+                f"rc={r.returncode}\n{(r.stdout + r.stderr).strip()}")
         if "No subtitle tracks matched" in r.stdout + r.stderr:
             return BARREN
         return None
@@ -179,8 +180,8 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
     tracks = inventory(mkv, ffprobe_exe, log=log, verbose=verbose)
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
-    print(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
-          f"{os.path.basename(mkv)}")
+    ui.info(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
+            f"{os.path.basename(mkv)}")
     if not keeps:
         return PassResult(True, [], notes)
 
@@ -191,8 +192,8 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         os.makedirs(out_dir, exist_ok=True)
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
         for k in keeps:
-            print(f"  OCR {k.track.lang} track {k.track.index}"
-                  f"{' (forced)' if k.track.forced else ''}...")
+            ui.info(f"OCR {k.track.lang} track {k.track.index}"
+                    f"{' (forced)' if k.track.forced else ''}...")
             srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
             if srt == BARREN:
                 # CONTEXT.md: Barren track -- zero cues is a property of the
@@ -231,7 +232,7 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
             shutil.move(srt, dest)
             sidecars.append(os.path.basename(dest))
         for name in sidecars:
-            print(f"  wrote {name}")
+            ui.info(f"wrote {name}")
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
     return PassResult(ok, sidecars, notes)

@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from skive import ui
+
 # Sentinel for bare -T/--titles (flag with no value) -> open the interactive
 # title menu. Lives here so main.py and makemkv.py can both import it without
 # a cycle.
@@ -235,7 +237,7 @@ class RipLog:
         caller prints its own screen line (echo=False)."""
         self._emit(self._now(), phase, text, 0)
         if echo:
-            print(f"skive: {phase}: {text}", file=sys.stderr)
+            ui.info(f"{phase}: {text}")
 
     def interrupted(self):
         """Log the run's closing line with status=interrupted (elapsed_s from
@@ -298,12 +300,12 @@ def ensure_mounted(mnt: str, export: str) -> None:
             return  # Already mounted
 
     if not export:
-        print(f"ensure_mounted: {mnt} not mounted and no export given (set NFS_MUSIC/NFS_VIDEOS?)", file=sys.stderr)
+        ui.fail(f"{mnt} not mounted and no export given (set NFS_MUSIC/NFS_VIDEOS?)")
         sys.exit(1)
 
     Path(mnt).mkdir(parents=True, exist_ok=True)
     if subprocess.run(["sudo", "mount", "-t", "nfs", export, mnt]).returncode != 0:
-        print(f"ensure_mounted: mount {export} -> {mnt} failed (export unreachable, or no sudo / nfs client on the host?)", file=sys.stderr)
+        ui.fail(f"mount {export} -> {mnt} failed (export unreachable, or no sudo / nfs client on the host?)")
         sys.exit(1)
 
 

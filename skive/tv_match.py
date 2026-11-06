@@ -3,7 +3,8 @@ position assignment, fix-row parsing and application, the episode map string,
 the play-all-only trigger, and the ratio audit."""
 
 import re
-import sys
+
+from skive import ui
 
 
 def tv_floor(minlength: int) -> int:
@@ -349,7 +350,7 @@ def apply_fixes(assignment: dict[int, tuple[int, int]], titles: list[int], stage
     ok = True
     for t, kind, lo, hi in rows:
         if t not in titles:
-            print(f"skive: no title {t} on this disc", file=sys.stderr)
+            ui.warn(f"no title {t} on this disc")
             ok = False
             continue  # Skip but continue other rows
 
@@ -367,11 +368,11 @@ def apply_fixes(assignment: dict[int, tuple[int, int]], titles: list[int], stage
 
         # Check episode numbers
         if lo < 1:
-            print(f"skive: episode {lo} must be >= 1", file=sys.stderr)
+            ui.warn(f"episode {lo} must be >= 1")
             ok = False
             continue
         if max_ep > 0 and hi > max_ep:
-            print(f"skive: episode {hi} is past the season's last episode ({max_ep})", file=sys.stderr)
+            ui.warn(f"episode {hi} is past the season's last episode ({max_ep})")
             ok = False
             continue
 
@@ -379,7 +380,7 @@ def apply_fixes(assignment: dict[int, tuple[int, int]], titles: list[int], stage
         bad = False
         for e in range(lo, hi + 1):
             if e in staged:
-                print(f"skive: episode {e} is already staged", file=sys.stderr)
+                ui.warn(f"episode {e} is already staged")
                 bad = True
 
         # Check already claimed by another title
@@ -387,7 +388,7 @@ def apply_fixes(assignment: dict[int, tuple[int, int]], titles: list[int], stage
             for e in range(lo, hi + 1):
                 if e in title_to_eps and title_to_eps[e] != t:
                     other_t = title_to_eps[e]
-                    print(f"skive: episode {e} is already claimed by title {other_t}", file=sys.stderr)
+                    ui.warn(f"episode {e} is already claimed by title {other_t}")
                     bad = True
 
         if bad:

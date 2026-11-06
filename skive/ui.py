@@ -493,6 +493,15 @@ def _print(kind: str, text: str) -> None:
         _plain(_plain_event(kind, text))
 
 
+def tool(name: str, text: str) -> None:
+    """A passed-through tool line: the run view's dimmed tool line when a view
+    is registered, ``{name}  {text}`` on stderr otherwise."""
+    if _view is not None:
+        _view.tool(name, text)
+    else:
+        _plain(f"{name}  {text}")
+
+
 def ok(text: str) -> None:
     """An item or step finished."""
     _print("ok", text)

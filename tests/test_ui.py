@@ -692,3 +692,24 @@ def test_result_line_on_a_terminal_leads_with_the_symbol(monkeypatch):
     buf = _terminal_console(monkeypatch, color_system=None)
     ui.result_line("ok", "synced 4.1 GB", elapsed=130)
     assert buf.getvalue() == "\u2713 synced 4.1 GB \u00b7 2m10s\n"
+
+
+def test_tool_line_without_a_view_is_name_prefixed_on_stderr(capsys):
+    ui.tool("cyanrip", "Ripping track 1")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "cyanrip  Ripping track 1\n"
+
+
+def test_no_bare_print_in_skive_outside_ui():
+    """Every line goes through ui: a bare `print(` (not `console.print(`) is
+    only allowed inside the console module itself."""
+    import re
+    from pathlib import Path
+    bare = re.compile(r"(?<![\w.])print\(")
+    hits = [f"{path.name}:{n}: {line.strip()}"
+            for path in sorted(Path(ui.__file__).parent.glob("*.py"))
+            if path.name != "ui.py"
+            for n, line in enumerate(path.read_text().splitlines(), 1)
+            if bare.search(line)]
+    assert hits == []

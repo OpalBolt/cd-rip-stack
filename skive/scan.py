@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from skive import ui
 from skive.common import MENU, RipLog, parse_titles
 from skive.makemkv import _qval, hsize
 
@@ -272,8 +273,8 @@ def scan_disc(minlength: int, run=subprocess.run, disc: int = 0,
         # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.
         dump = Path(tempfile.gettempdir()) / "skive-scan-failed.txt"
         dump.write_text(out)
-        print(f"skive: disc scan returned no titles ({media}) — raw output saved to {dump}", file=sys.stderr)
-        print("  refusing to rip blind (this is how scrambled duplicates get ripped).", file=sys.stderr)
+        ui.fail(f"disc scan returned no titles ({media}) — raw output saved to {dump}")
+        ui.info("refusing to rip blind (this is how scrambled duplicates get ripped).")
         sys.exit(1)
     return media, label, titles
 
@@ -530,11 +531,11 @@ def title_menu(titles: list[TitleInfo], getch=_getch, out=sys.stderr) -> list[in
     while True:
         out.write("\x1b[2J\x1b[H")  # clear + home
         for line in _render(disp, selected, cursor):
-            print(line, file=out)
+            out.write(line + "\n")
         key = getch()
         selected, cursor, done, abort = _menu_state(n, selected, cursor, key)
         if abort:
-            print("skive: quit — nothing ripped.", file=out)
+            ui.info("quit — nothing ripped.")
             sys.exit(1)
         if done:
             break

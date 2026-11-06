@@ -346,10 +346,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                 if on_tty and _progress_line(stripped):
                     pass
                 elif verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
-                    if view is not None:
-                        view.tool("cyanrip", stripped)
-                    else:
-                        print(line, end="", flush=True)
+                    ui.tool("cyanrip", stripped)
                 elif stripped:
                     hidden.append(stripped)
                 if log is not None:
@@ -415,10 +412,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         raise
     if rc != 0:
         for line in hidden:
-            if view is not None:
-                view.tool("cyanrip", line)
-            else:
-                print(line, flush=True)
+            ui.tool("cyanrip", line)
     return rc, "".join(captured)
 
 
