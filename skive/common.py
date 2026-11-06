@@ -230,11 +230,10 @@ class RipLog:
         self._emit(now, name, status,
                    int((now - self._phase_start).total_seconds()))
 
-    def note(self, phase, text, *, echo=True):
-        """Log an untimed note line (elapsed_s 0); optionally tee to stderr."""
+    def note(self, phase, text):
+        """Log an untimed note line (elapsed_s 0); tees to stderr."""
         self._emit(self._now(), phase, text, 0)
-        if echo:
-            print(f"skive: {phase}: {text}", file=sys.stderr)
+        print(f"skive: {phase}: {text}", file=sys.stderr)
 
     def interrupted(self):
         """Log the run's closing line with status=interrupted (elapsed_s from

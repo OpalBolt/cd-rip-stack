@@ -43,7 +43,6 @@ _SYMBOL_STYLE = {"ok": "ok", "info": "dim", "warn": "warn", "fail": "fail"}
 
 _print_lock = threading.Lock()
 _view = None  # the run's RunView while one is live (common.VERBOSITY precedent)
-_log = None  # the active RipLog receiving durable ok/warn/fail events
 _indent = False  # TTY: lines indent two spaces beneath the last item heading
 
 
@@ -56,18 +55,6 @@ def clear_view() -> None:
     global _view, _indent
     _view = None
     _indent = False
-
-
-def set_log(log) -> None:
-    """Register the active RipLog for durable status events."""
-    global _log
-    _log = log
-
-
-def clear_log() -> None:
-    """Stop sending screen events to the completed run log."""
-    global _log
-    _log = None
 
 
 def view():
@@ -453,10 +440,6 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
 
 
 def _print(kind: str, text: str) -> None:
-    # Durable notes are deliberately separate from rendering: RipLog.note's
-    # normal stderr tee would duplicate the event line already emitted below.
-    if kind != "info" and _log is not None:
-        _log.note(kind, text, echo=False)
     # the lock must not span the view dispatch: _emit takes it too, and a
     # plain Lock re-acquiring on the same thread deadlocks
     if _view is not None and _view.tty and not _view._closed:

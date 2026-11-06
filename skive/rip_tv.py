@@ -507,6 +507,7 @@ def rip_tv(args) -> None:
             # Subtitle note
             note = subtitle_note(show_dir)
             ui.info(note)
+            log.note("subtitle", note)
 
             log.phase_end()
             log.finish(worst_rc)
@@ -767,6 +768,7 @@ def rip_tv(args) -> None:
             # Subtitle note
             note = subtitle_note(show_dir)
             ui.info(note)
+            log.note("subtitle", note)
 
             # Post-rip validation (map.md decision 6): the record beside the
             # subtitle note — this season's staged episodes probed and graded,
@@ -820,4 +822,3 @@ def rip_tv(args) -> None:
     finally:
         view.close()
         ui.clear_view()
-        ui.clear_log()

@@ -125,6 +125,7 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
     yellow = sum(1 for r in rows if r["band"] == "yellow")
     summary = f"{len(rows)} files, {green_mains} green main, {yellow} yellow"
     ui.info(f"validation: {summary}")
+    log.note("validation", summary)
 
     doc = movie_document(pick.id, preamble.display, pick.runtime_secs,
                          preamble.label, log.run, main, rows)
@@ -387,6 +388,7 @@ def rip_movie(args) -> None:
             # Subtitle note
             note = subtitle_note(title_dir)
             ui.info(note)
+            log.note("subtitle", note)
 
             # Post-rip validation (map.md decision 5): the record beside the
             # subtitle note — actuals probed from what staged, the main
@@ -441,4 +443,3 @@ def rip_movie(args) -> None:
     finally:
         view.close()
         ui.clear_view()
-        ui.clear_log()
