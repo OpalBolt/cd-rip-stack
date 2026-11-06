@@ -1663,8 +1663,9 @@ def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path, ca
     log.finish.assert_called_once_with(1)  # ... with a final total line
     mock_subs.assert_not_called()
     assert sorted(p.name for p in show_dir.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
-    # the run still ends on its summary's failure line
-    assert "fail  failed · 0 ok" in capsys.readouterr().err.splitlines()[-1]
+    # the run still ends on its summary's failure line: each attempted
+    # title's missing output counts failed
+    assert "fail  3 failed · 0 ok" in capsys.readouterr().err.splitlines()[-1]
 
 
 # -- Interrupt (Ctrl+C) at the prompts (CONTEXT.md: Interrupt) -----------------
@@ -2174,15 +2175,18 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
 
 
 def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
-               rename=None, rip_rc=0, rip=None):
+               rename=None, rip_rc=0, rip=None, staged=()):
     """Drive rip_tv over a full-scan disc with the REAL console (capsys
     captures what a user sees) and a seam run view set by the caller.
+    staged names files already in the show folder before the run.
     Returns the SystemExit code."""
     from skive.tmdb import TMDBPick
 
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
     show_dir.mkdir(parents=True)
+    for name in staged:
+        (show_dir / name).write_bytes(b"old")
     episodes = episodes or [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]
     durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 3890,
             "Show (2000)_S01E03.mkv": 3650}
@@ -2273,13 +2277,14 @@ def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, ca
 
 
 def test_rip_tv_failed_rip_with_no_rows_ends_on_a_failure_line(tmp_path, monkeypatch, capsys):
-    """makemkvcon fails and no episode staged: no summary rows, but the
-    result line still reports the failure the exit code carries."""
+    """makemkvcon fails and no episode staged: each attempted title's
+    missing output is a failed row, and the result line reports the failure
+    the exit code carries."""
     code = _view_flow(tmp_path, monkeypatch, ["", "", ""],
                       rename=lambda *a: None, rip_rc=2)
     assert code == 2
     last = capsys.readouterr().err.splitlines()[-1]
-    assert last.startswith("fail  failed · 0 ok · ") and "see " in last
+    assert last.startswith("fail  3 failed · 0 ok · ") and "see " in last
 
 
 def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeypatch, capsys):
@@ -2461,14 +2466,82 @@ def test_rip_tv_summary_includes_this_runs_extras_not_old_files(tmp_path, monkey
     show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
 
     def rename(_display, _dir, _season, _assignment):
-        for name in ("Show (2000)_S01E01.mkv", "Show (2000) - Extra 01.mkv"):
+        for name in ("Show (2000)_S01E01.mkv", "Show (2000)_S01E02.mkv",
+                     "Show (2000)_S01E03.mkv", "Show (2000) - Extra 01.mkv"):
             (show_dir / name).write_bytes(b"x" * 1024)
 
     code = _view_flow(tmp_path, monkeypatch, ["", "", ""], rename=rename)
     assert code == 0
     err = capsys.readouterr().err
     assert any("Show (2000) - Extra 01" in l and "ok" in l for l in err.splitlines())
-    assert "ok    2 ok · " in err
+    assert "ok    4 ok · " in err
+
+
+def test_rip_tv_heading_follows_the_started_title_not_the_count(tmp_path, monkeypatch, capsys):
+    """A selected-title rip: title 1 fails before saving starts, so only
+    titles 0 and 2 call back — title 2's heading carries its own episode
+    and position, never the failed title's label."""
+    def rip(*a, **k):
+        k["on_title_start"](0)
+        k["on_title_start"](2)
+        k["outcomes"].update({0: 0, 1: 2, 2: 0})
+        return 2
+
+    monkeypatch.setattr("skive.rip_tv.resolve_titles", lambda *a: [0, 1, 2])
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=_gk_titles()[:3], rip=rip)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "info  1/3  Show (2000) S01E01" in err
+    assert "info  3/3  Show (2000) S01E03" in err
+    assert "2/3  Show (2000) S01E02" not in err
+
+
+def test_rip_tv_summary_keeps_a_cleared_path_restaged_by_the_run(tmp_path, monkeypatch, capsys):
+    """c + y clears a staged episode; this run re-stages the same path, so
+    the summary lists it — a cleared file no longer predates the run."""
+    code = _view_flow(tmp_path, monkeypatch, ["", "1-3", "c", "y", ""],
+                      staged=["Show (2000)_S01E01.mkv"])
+    assert code == 0
+    err = capsys.readouterr().err
+    assert any(l.strip().startswith("S01E01") and l.rstrip().endswith("ok")
+               for l in err.splitlines())
+    assert "ok    3 ok · " in err
+
+
+def test_summary_rows_lists_attempted_titles_with_missing_output_failed(tmp_path):
+    """An attempted title that left no file still gets a failed row — an
+    episode by its code, an extra as `extra`."""
+    from skive.rip_tv import _summary_rows
+    (tmp_path / "Show_S01E01.mkv").write_bytes(b"x")
+    probed = [{"ep": 1, "file": "Show_S01E01.mkv", "t": 0, "dur_s": 60}]
+    rows = _summary_rows(tmp_path, "Show", 1, probed, set(), 2, {0: 0, 1: 2, 2: 2},
+                         [0, 1, 2], {0: (1, 1), 1: (2, 3), 2: (0, 0)}, {})
+    assert [(r[0], r[3]) for r in rows] == [("S01E01", "ok"), ("S01E02-E03", "failed"),
+                                            ("extra", "failed")]
+
+
+def test_summary_rows_grades_each_extra_by_its_own_title(tmp_path):
+    """A failed episode title does not fail the extras: each renamed extra
+    reads its own title's rc."""
+    from skive.rip_tv import _summary_rows
+    ok_extra = tmp_path / "Show - Extra 01.mkv"
+    bad_extra = tmp_path / "Show - Extra 02.mkv"
+    ok_extra.write_bytes(b"x")
+    bad_extra.write_bytes(b"x")
+    rows = _summary_rows(tmp_path, "Show", 1, [], set(), 2, {0: 2, 1: 0, 2: 2},
+                         [1, 2], {1: (0, 0), 2: (0, 0)}, {ok_extra: 1, bad_extra: 2})
+    assert [(r[0], r[3]) for r in rows] == [("Show - Extra 01", "ok"),
+                                            ("Show - Extra 02", "failed")]
+
+
+def test_summary_rows_keep_a_multi_episode_files_full_range(tmp_path):
+    """A retained double (or a declined chapter split) reads `S01E01-E03`,
+    not just its first episode."""
+    from skive.rip_tv import _summary_rows
+    (tmp_path / "Show_S01E01-E03.mkv").write_bytes(b"x")
+    probed = [{"ep": 1, "file": "Show_S01E01-E03.mkv", "t": 0, "dur_s": 60}]
+    rows = _summary_rows(tmp_path, "Show", 1, probed, set(), 0, {}, [0], {0: (1, 3)}, {})
+    assert [(r[0], r[3]) for r in rows] == [("S01E01-E03", "ok")]
 
 
 def test_rip_tv_interrupt_summary_marks_inflight_title_interrupted(tmp_path, monkeypatch, capsys):

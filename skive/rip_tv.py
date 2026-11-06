@@ -169,7 +169,8 @@ def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) 
     return show_dir / f"{display}_S{season_str}E{lo:02d}-E{hi:02d}.mkv"
 
 
-def rename_tv(display: str, show_dir: Path, season: int, assignment: dict[int, tuple[int, int]]) -> None:
+def rename_tv(display: str, show_dir: Path, season: int,
+              assignment: dict[int, tuple[int, int]]) -> dict[Path, int]:
     """Rename staged files per the episode map.
 
     Junk-labeled titles become <display>_SNNENN[-ENNN].mkv or <display> - Extra NN.mkv.
@@ -181,7 +182,11 @@ def rename_tv(display: str, show_dir: Path, season: int, assignment: dict[int, t
             renamed here rest directly in it
         season: Season number
         assignment: title -> (lo, hi) mapping
+
+    Returns:
+        Each renamed file's target path -> its title number
     """
+    renamed: dict[Path, int] = {}
     for mkv in show_dir.glob("*.mkv"):
         base = mkv.stem
         # Extract _tNN
@@ -212,8 +217,10 @@ def rename_tv(display: str, show_dir: Path, season: int, assignment: dict[int, t
             continue
 
         mkv.rename(target)
+        renamed[target] = title_num
         cur = base[:m.start()]
         ui.info(f"{cur} → {target.stem}")
+    return renamed
 
 
 def rename_tv_fast(display: str, show_dir: Path, season: int,
@@ -474,24 +481,44 @@ def _size(path: Path) -> str:
 
 def _summary_rows(show_dir: Path, display: str, season: int, probed: list[dict],
                   preexisting: set[Path], worst_rc: int,
-                  outcomes: dict[int, int] | None = None) -> list[tuple]:
-    """This run's run-summary rows: each episode file it staged (failed when
-    its own title's rc is known and non-zero, else by the run's worst rc),
-    then the extras it staged. Files that predate the run are not its items.
+                  outcomes: dict[int, int] | None = None,
+                  attempted: list[int] | None = None,
+                  assignment: dict[int, tuple[int, int]] | None = None,
+                  renamed: dict[Path, int] | None = None) -> list[tuple]:
+    """This run's run-summary rows: each episode file it staged, labeled
+    with its full range (failed when its own title's rc is known and
+    non-zero, else by the run's worst rc), then the extras it staged (by
+    their own title's rc when the rename recorded it), then one failed row
+    per attempted title whose output is missing. Files that predate the run
+    are not its items.
     """
     outcomes = outcomes or {}
+    assignment = assignment or {}
+    renamed = renamed or {}
     rows = []
+    new_eps: set[int] = set()
     for r in probed:
         f = show_dir / r["file"]
         if f in preexisting:
             continue
+        new_eps.add(r["ep"])
         rc = outcomes.get(r["t"], worst_rc)
-        rows.append((f"S{season:02d}E{r['ep']:02d}",
+        rows.append((f.stem.removeprefix(f"{display}_"),
                      _hms(r["dur_s"]) if r["dur_s"] is not None else "?",
                      _size(f), "ok" if rc == 0 else "failed"))
-    for f in sorted(show_dir.glob("*.mkv")):
-        if f.name.startswith(f"{display} - Extra ") and f not in preexisting:
-            rows.append((f.stem, "?", _size(f), "ok" if worst_rc == 0 else "failed"))
+    extras = [f for f in sorted(show_dir.glob("*.mkv"))
+              if f.name.startswith(f"{display} - Extra ") and f not in preexisting]
+    for f in extras:
+        rc = outcomes.get(renamed[f], worst_rc) if f in renamed else worst_rc
+        rows.append((f.stem, "?", _size(f), "ok" if rc == 0 else "failed"))
+    missing_extras = 0
+    for t in attempted or []:
+        lohi = assignment.get(t, (0, 0))
+        if lohi[0] == 0:
+            missing_extras += 1
+        elif lohi[0] not in new_eps:
+            rows.append((_episode_code(season, lohi), "?", "?", "failed"))
+    rows += [("extra", "?", "?", "failed")] * max(0, missing_extras - len(extras))
     return rows
 
 
@@ -543,17 +570,23 @@ def rip_tv(args) -> None:
         minlength = preamble.minlength
         preexisting = set(show_dir.glob("*.mkv")) | set(stage_tv.glob("*.mkv"))
 
-        def start_rip(order: list[int], names: list[str]):
+        def start_rip(order: list[int], names: list[str], by_title: bool = False):
             """Seed the footer with the first title and return the
             title-start callback: each title's item heading prints when that
-            title starts ripping (names[i] for the i-th title ripped)."""
+            title starts ripping. A selected-title rip (by_title) calls back
+            with the title number, so a title that fails before saving never
+            shifts the next one's label; an all-titles rip calls back per
+            saved file and takes names[i] for the i-th title ripped."""
             started = 0
             if view.tty:
                 view.footer(f"title 1/{len(order)}", names[0] if names else display, "rip")
 
-            def on_start(_number) -> None:
+            def on_start(number) -> None:
                 nonlocal started, inflight
-                started += 1
+                if by_title and number in order:
+                    started = order.index(number) + 1
+                else:
+                    started += 1
                 inflight = names[started - 1] if started <= len(names) else display
                 ui.item(started, len(order), inflight)
             return on_start
@@ -569,7 +602,7 @@ def rip_tv(args) -> None:
             names = [f"{display} extra"] * len(order)
             worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc,
                                   total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log,
-                                  device=preamble.device, on_title_start=start_rip(order, names), names=names)
+                                  device=preamble.device, on_title_start=start_rip(order, names, titles is not None), names=names)
             inflight = None
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
@@ -763,6 +796,9 @@ def rip_tv(args) -> None:
                         continue
                     for f in doomed:
                         f.unlink()
+                    # Cleared files no longer predate the run: a replacement
+                    # staged at the same path is this run's item.
+                    preexisting.difference_update(doomed)
                     # No re-assignment: the map comes from the stated range, not from
                     # staging. The refreshed set only steers the next pre-fill.
                     staged = staged_eps(show_dir, display, season)
@@ -788,6 +824,8 @@ def rip_tv(args) -> None:
         rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
         probed: list[dict] = []
         outcomes: dict[int, int] = {}  # title -> rc, selected-title rips only
+        attempted: list[int] = []  # titles this run ripped, in rip order
+        renamed: dict[Path, int] | None = None  # full-scan renames: target -> title
         try:
             # Rip phase
             log.phase("rip")
@@ -799,6 +837,7 @@ def rip_tv(args) -> None:
                 order = [t for t, _, _ in titles_info]
                 names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
                 header = fast_scan_header(display, len(titles_info))
+                attempted = order
                 worst_rc = rip_titles(None, profile_path, tv_floor(minlength), stage_tv, disc=preamble.disc,
                                       total=len(titles_info), infos=titles_full, header=header, log=log,
                                       device=preamble.device, on_title_start=start_rip(order, names),
@@ -818,9 +857,11 @@ def rip_tv(args) -> None:
                 order = (rip_selection if rip_selection is not None
                          else sorted(t.number for t in titles_full))
                 names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
+                attempted = order
                 worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
                                       total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log,
-                                      device=preamble.device, on_title_start=start_rip(order, names),
+                                      device=preamble.device,
+                                      on_title_start=start_rip(order, names, rip_selection is not None),
                                       names=names, outcomes=outcomes)
             inflight = None
 
@@ -842,7 +883,7 @@ def rip_tv(args) -> None:
                 if not joined:
                     log.note("rename", "join aborted — an episode's staged file is missing")
             else:
-                rename_tv(display, show_dir, season, assignment)
+                renamed = rename_tv(display, show_dir, season, assignment)
 
             if joined:
                 # Chapter split (ADR 0009): a play-all-only disc's combined file
@@ -882,7 +923,7 @@ def rip_tv(args) -> None:
         view.close()
         # The run summary: this run's episodes and extras × duration × size × result.
         rows = _summary_rows(show_dir, display, season, probed, preexisting,
-                             worst_rc, outcomes)
+                             worst_rc, outcomes, attempted, assignment, renamed)
         n_ok = sum(1 for r in rows if r[3] == "ok")
         ui.run_summary(rows, n_ok, len(rows) - n_ok, columns=SUMMARY_COLUMNS,
                        replay=view.replay_lines(), log=log, failed=rc != 0)
