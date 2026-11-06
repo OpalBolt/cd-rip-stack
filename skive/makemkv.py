@@ -170,6 +170,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     cur_done = 0
     tot_done = disc_offset
     started = time.monotonic()
+    title_t0 = started  # the current title's start: the call's, then each next title's save
     last_prog = started  # fallback progress-line throttle (transcode cadence)
 
     def tool_out(text: str) -> None:
@@ -226,8 +227,10 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                 # New sub-task; "Saving to MKV file" marks the start of each title
                 val = _qval(line)
                 if "Saving to MKV file" in val:
-                    if cur_title and on_title_start is not None:
-                        ui.item_end("ok", "done")  # the next title started: this one finished
+                    if cur_title:
+                        # the next title started; this one's outcome is not reported
+                        ui.unindent()
+                        title_t0 = time.monotonic()
                     cur_title += 1
                     if names and cur_title + title_offset <= len(names):
                         what = names[cur_title + title_offset - 1]
@@ -267,16 +270,19 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         # a crash still tells the operator what the tool said.
         for line in hidden:
             tool_out(line)
-    if on_title_start is not None:  # close the last title's item frame
-        if rc == 0:
-            ui.item_end("ok", "done")
-        else:
-            ui.item_end("fail", f"failed: rip (rc={rc})")
     outcome = "done" if rc == 0 else f"failed (rc={rc})"
     summary = f"{desc}: {outcome} · title {cur_title + title_offset}/{total_titles}"
     if whole_total:
         summary += f" · disc {hsize(tot_done)}/{hsize(whole_total)}"
-    ui.info(summary)
+    took = ui._hms(int(time.monotonic() - title_t0))
+    kind = "ok" if rc == 0 else "fail"
+    phase_line = on_title_start is not None and cur_title and live_view
+    if phase_line:  # TTY: the summary is the last title's timed rip phase line, inside its frame
+        (ui.ok if rc == 0 else ui.fail)(summary, phase="rip", elapsed=took)
+    if on_title_start is not None:  # close the last title's item frame
+        ui.item_end(kind, "done" if rc == 0 else f"failed: rip (rc={rc})", took)
+    if not phase_line:
+        ui.info(summary)
     return rc
 
 def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None, device: str | None = None, on_title_start=None, names: list[str] | None = None, outcomes: dict[int, int] | None = None) -> int:

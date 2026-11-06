@@ -41,6 +41,7 @@ THEME = Theme({"ok": "green", "warn": "yellow", "fail": "red",
                "phase.copy": "blue", "phase.merge": "yellow",
                "phase.subs": "magenta", "phase.crop": "cyan",
                "phase.prefetch": "dim blue", "phase.encode": "green",
+               "phase.rip": "green",
                "frame": "dim", "border": "blue", "title": "bold"})
 WIDTH_CAP = 100  # every box, frame rule and table: min(console width, 100)
 PLAIN_HEAD = Box(str(SIMPLE_HEAD).replace("\u2500", "-"), ascii=True)  # piped tables: no box characters
@@ -499,11 +500,13 @@ def item(pos: int, total: int, name: str) -> None:
 
 def item_end(kind: str, text: str, elapsed: str | None = None) -> None:
     """The item frame's closing rule `╰─ ✓ done 7m56s ───`, coloured by kind,
-    the elapsed bold (the frame's own age when elapsed is None). Only an open
-    frame closes: plain mode, or no frame, prints nothing."""
+    the elapsed bold (the frame's own age when elapsed is None, none when it
+    is ""). Only an open frame closes: plain mode, or no frame, prints
+    nothing."""
     global _frame_open
     if _frame_open and _styled():
-        elapsed = elapsed or _hms(int(time.monotonic() - _frame_t0))
+        if elapsed is None:
+            elapsed = _hms(int(time.monotonic() - _frame_t0))
         line = Text(f"\u2570\u2500 {SYMBOLS[kind]} {text}", style=_SYMBOL_STYLE[kind])
         if elapsed:
             line.append(f" {elapsed}", style="item")

@@ -317,6 +317,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     raw_held = None  # (track, line): the newest progress line not raw-logged yet
     pending_track = None  # completed, its title line not seen yet
     headed_tracks: set[int] = set()
+    track_t0: dict[int, float] = {}  # first progress line per track
+    track_took: dict[int, str] = {}  # rip time per completed track; absent with no progress seen
     outcomes = header.setdefault("_tracks", {}) if header is not None else {}
 
     def emit_opener() -> None:
@@ -335,13 +337,21 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
             view.footer(f"track {number}/{position}", title, f"offset {offset}")
             view.progress(pct, eta)
 
+    def close_track(number: int) -> None:
+        """TTY: the track's timed rip phase line; then its frame's done rule
+        (no duration when no progress line timed it)."""
+        took = track_took.get(number)
+        if on_tty:
+            ui.ok(f"track {number}", phase="rip", elapsed=took)
+        ui.item_end("ok", "done", took or "")
+
     def show_track(number: int, title: str, pct: float) -> None:
         emit_opener()
         ui.item(number, track_total or number, title)
         headed_tracks.add(number)
         set_footer(number, title, pct)
         if outcomes.get(number) == "ok":  # headed only once it finished
-            ui.item_end("ok", "done")
+            close_track(number)
 
     try:
         if process.stdout is not None:
@@ -391,6 +401,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                     pct = float(progress.group(2))  # cyanrip's own track percent
                     eta = progress.group(3)
                     outcomes.setdefault(number, "interrupted")  # in flight
+                    track_t0.setdefault(number, time.monotonic())
                     if number not in headed_tracks:
                         show_track(number, f"track {number}", pct)
                     elif on_tty:
@@ -420,8 +431,11 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         show_track(pending_track, f"track {pending_track}", 100.0)
                     pending_track = int(done.group(1))
                     outcomes[pending_track] = "ok"
+                    if pending_track in track_t0:
+                        track_took[pending_track] = ui._hms(
+                            int(time.monotonic() - track_t0[pending_track]))
                     if pending_track in headed_tracks:
-                        ui.item_end("ok", "done")
+                        close_track(pending_track)
                     if on_tty:
                         view.progress(100.0, eta)
                 captured.append(line)

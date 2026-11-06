@@ -1113,10 +1113,15 @@ def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
     # the opener box: title in the border, album and offset inside
     assert err.index("╭─ skive rip music ─") < err.index("│ Test Artist - Test Album ")
     assert err.index("│ offset +6 ") < err.index("╭─ 1/2  First song")
-    # each track's frame closes with its result and time
+    # no progress line timed these tracks: each frame closes with its result
+    # and an untimed rip phase line, never an invented 0s
     first = err[err.index("╭─ 1/2  First song"):err.index("╭─ 2/2  Second song")]
-    assert "╰─ ✓ done 0s ─" in first
-    assert "╰─ ✓ done 0s ─" in err[err.index("╭─ 2/2  Second song"):]
+    assert "│ ✓ rip       track 1\n" in first
+    assert "╰─ ✓ done ─" in first
+    second = err[err.index("╭─ 2/2  Second song"):]
+    assert "│ ✓ rip       track 2\n" in second
+    assert "╰─ ✓ done ─" in second
+    assert "done 0s" not in err
     footer = view.render()
     assert "track 2/2" in footer
     assert "Second song" in footer
@@ -1250,6 +1255,52 @@ def test_indented_real_titles_head_every_track(monkeypatch, capsys):
     assert "info  2/19  The Healer" in err
     assert "info  3/19  The Thrill Is Gone" in err
     assert "1/19  track 1" not in err
+
+
+def test_track_frame_carries_timed_rip_phase_line(monkeypatch, capsys):
+    """A track timed by its progress lines gets the rip phase line with the
+    window from its first progress line to completion, inside its frame, and
+    the done rule carries the same time."""
+    from skive import ui
+
+    clock = iter([100.0, 172.0])
+    monkeypatch.setattr("skive.rip_music.time.monotonic", lambda: next(clock, 172.0))
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    process = Mock(stdout=iter([
+        "Disc tracks: 1\n",
+        "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
+        "Track 1 ripped and encoded successfully!\n",
+    ]))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    lines = capsys.readouterr().err.splitlines()
+    phase = next(n for n, line in enumerate(lines) if line.startswith("│ ✓ rip       track 1"))
+    assert lines[phase].endswith(" 1m12s")
+    assert lines[phase + 1].startswith("╰─ ✓ done 1m12s ─")
+
+
+def test_track_frame_plain_has_no_rip_phase_line(capsys):
+    """Plain mode keeps today's track output: the heading, no phase line."""
+    process = Mock(stdout=iter([
+        "Disc tracks: 1\n",
+        "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
+        "Track 1 ripped and encoded successfully!\n",
+    ]))
+    process.wait.return_value = 0
+    with tempfile.TemporaryDirectory() as tmpdir, \
+            patch("subprocess.Popen", return_value=process):
+        _cyanrip_run("+6", [], Path(tmpdir))
+    err = capsys.readouterr().err
+    assert "info  1/1  track 1" in err
+    assert "rip" not in err.replace("ripped", "")
 
 
 def test_progress_stream_drives_heading_and_footer_at_default_verbosity(monkeypatch, capsys):

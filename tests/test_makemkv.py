@@ -568,12 +568,15 @@ def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
     assert "title 3/6" in out
 
 
-@pytest.mark.parametrize("rc, last", [(0, "\u2570\u2500 \u2713 done "),
-                                      (2, "\u2570\u2500 \u2717 failed: rip (rc=2) ")])
-def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosity, capsys, rc, last):
-    """Each title the caller framed (on_title_start opens ui.item) closes when
-    the next title starts (done) and at the end with the call's outcome, the
-    frame's time in the rule."""
+@pytest.mark.parametrize("rc, last, phase", [
+    (0, "\u2570\u2500 \u2713 done 0s ", "\u2502 \u2713 rip       all titles: done \u00b7 title 2/2"),
+    (2, "\u2570\u2500 \u2717 failed: rip (rc=2) 0s ",
+     "\u2502 \u2717 rip       all titles: failed (rc=2) \u00b7 title 2/2")])
+def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosity, capsys, rc, last, phase):
+    """Each title the caller framed (on_title_start opens ui.item) closes
+    neutrally when the next title starts (its outcome is never reported, so a
+    title that failed partway must not read done) and at the end with the
+    call's outcome; the last frame carries the timed rip phase line."""
     from skive import ui
     verbosity(0)
     ui.set_view(ui.RunView(tty=True, live=False))
@@ -588,9 +591,31 @@ def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosit
     lines = capsys.readouterr().err.splitlines()
     frames = [line for line in lines if line[:1] in "\u256d\u2570"]
     assert frames[0].startswith("\u256d\u2500 1/2  title 1")
-    assert frames[1].startswith("\u2570\u2500 \u2713 done 0s \u2500")
+    assert frames[1] == "\u2570" + "\u2500" * (len(frames[1]) - 1)  # neutral: no result
     assert frames[2].startswith("\u256d\u2500 2/2  title 2")
     assert frames[3].startswith(last) and len(frames) == 4
+    phase_lines = [line for line in lines if line.startswith("\u2502 ") and " rip " in line]
+    assert len(phase_lines) == 1 and phase_lines[0].startswith(phase)
+    assert phase_lines[0].endswith(" 0s")
+    assert lines.index(phase_lines[0]) == lines.index(frames[3]) - 1  # inside the last frame
+
+
+def test_run_with_progress_plain_keeps_summary_without_phase_line(verbosity, capsys):
+    """Plain mode: the per-call summary keeps today's wording; no phase line,
+    no frame rules."""
+    from skive import ui
+    verbosity(0)
+    ui.set_view(ui.RunView(tty=False, live=False))
+    try:
+        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+                'PRGC:50,"Saving to MKV file 1 of 1"'])):
+            _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 3 (1/1)",
+                               on_title_start=lambda n: ui.item(n, 1, f"title {n}"))
+    finally:
+        ui.clear_view()
+    err = capsys.readouterr().err
+    assert "info  title 3 (1/1): done \u00b7 title 1/1" in err
+    assert " rip " not in err and "\u2570" not in err
 
 
 def test_rip_titles_records_each_selected_titles_rc(tmp_path):

@@ -487,19 +487,21 @@ def _fmt_dur(seconds: int) -> str:
 
 
 def _render(titles: list[TitleInfo], selected: list[bool], cursor: int) -> list[str]:
-    """Render the menu (header + title table + hint) to plain lines."""
+    """Render the menu (header + title table + hint) to lines (ANSI-styled on a TTY)."""
     buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=110)
+    styled = ui._styled()  # TTY: the shared rounded table; plain: the bare grid as before
+    console = Console(file=buf, force_terminal=styled, width=ui._width() if styled else 110,
+                      theme=ui.THEME, highlight=False)
     console.print(("> " if cursor == 0 else "  ") + "Rip all titles")
-    table = Table(show_header=False, box=None, pad_edge=False, padding=(0, 1))
-    table.add_column("cur")
-    table.add_column("sel")
-    table.add_column("title", justify="right")
-    table.add_column("dur", justify="right")
-    table.add_column("size", justify="right")
-    table.add_column("flag")
-    table.add_column("audio")
-    table.add_column("subs")
+    columns = ("", "", "title", "length", "size", "flag", "audio", "subs")
+    if styled:
+        table = ui.table(*columns)
+    else:
+        table = Table(show_header=False, box=None, pad_edge=False, padding=(0, 1))
+        for name in columns:
+            table.add_column(name)
+    for col in table.columns[2:5]:
+        col.justify = "right"
     for i, t in enumerate(titles):
         table.add_row(
             ">" if cursor == i + 1 else " ",

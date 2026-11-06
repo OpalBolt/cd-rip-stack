@@ -227,6 +227,30 @@ def test_render_menu_lines():
     assert any("space=toggle" in line for line in lines)
 
 
+def test_render_menu_tty_uses_shared_rounded_table():
+    """On a TTY the title overview is the shared rounded table with a header
+    row; the cursor, checkboxes, title numbers and key hint stay. Plain keeps
+    the bare headerless grid."""
+    import re
+    from skive import ui
+    from skive.scan import _render, TitleInfo
+
+    titles = [TitleInfo(2, 5203, 5_845_346_392, "dan", "dan,eng", False)]
+    plain = _render(titles, [False], 1)
+    assert not any("\u256d" in line or "length" in line for line in plain)
+    ui.set_view(ui.RunView(tty=True, live=False))
+    try:
+        lines = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in _render(titles, [False], 1)]
+    finally:
+        ui.clear_view()
+    assert lines[0].strip() == "Rip all titles"
+    assert lines[1].startswith("\u256d")
+    assert "title" in lines[2] and "length" in lines[2] and "subs" in lines[2]
+    row = next(line for line in lines if "title 2" in line)
+    assert row.startswith("\u2502 >") and "[ ]" in row
+    assert any("space=toggle" in line for line in lines)
+
+
 def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
     """A disc with media but zero parseable titles aborts instead of ripping blind."""
     import pytest
