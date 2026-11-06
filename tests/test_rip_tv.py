@@ -2251,7 +2251,7 @@ def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, ca
         assert col in err
     assert any("S01E01" in l and "1:05:30" in l and "ok" in l
                for l in err.splitlines())
-    assert "3 ok, 0 failed" in err
+    assert "ok    3 ok\n" in err
 
 
 def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeypatch, capsys):

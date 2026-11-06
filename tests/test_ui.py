@@ -196,28 +196,93 @@ def test_replay_buffer_keeps_warn_and_fail_tty_only():
     assert fallback.replay_lines() == []
 
 
-def test_run_summary_table_cells_count_and_banner(capsys):
+def test_run_summary_table_cells_result_line_and_banner(capsys):
     """ui.run_summary: one stderr table — per-phase cells from the parts
     strings, '-' for phases never run, total over the recorded secs, result
-    ok/FAILED — then the count line, then the banner only when set."""
+    ok/failed — then the banner only when set, then the result line."""
     rows = [
-        ("A (2001)", ["copy 1s", "subs 5s", "encode 1m10s"], True),
-        ("B (2002)", ["copy prefetched", "encode 30s"], False),
+        ("A (2001)", ["copy 1s", "subs 5s", "encode 1m10s"], "ok"),
+        ("B (2002)", ["copy prefetched", "encode 30s"], "failed"),
     ]
     ui.run_summary(rows, 1, 1, None)
     err = capsys.readouterr().err
     for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
         assert col in err
     arow = next(l for l in err.splitlines() if l.strip().startswith("A (2001)"))
-    assert "1m16s" in arow and "ok" in arow  # 1 + 5 + 70 secs, merge/detect absent
+    assert "1m16s" in arow and arow.rstrip().endswith("ok")  # 1 + 5 + 70 secs, merge/detect absent
     brow = next(l for l in err.splitlines() if l.strip().startswith("B (2002)"))
-    assert "prefetched" in brow and "30s" in brow and "FAILED" in brow
-    assert "1 ok, 1 failed" in err
+    assert "prefetched" in brow and "30s" in brow and brow.rstrip().endswith("failed")
+    assert err.endswith("fail  1 failed · 1 ok\n")  # no log: no time, no pointer
     assert "--keep:" not in err  # keep_banner=None: the honesty rule
 
     ui.run_summary([], 0, 0, "--keep: lossless sources moved to /x -- verify, then clean by hand")
     err = capsys.readouterr().err
-    assert "--keep: lossless sources moved to /x -- verify, then clean by hand" in err
+    assert err.endswith("--keep: lossless sources moved to /x -- verify, then clean by hand\n"
+                        "ok    0 ok\n")
+
+
+def _ended_log(tmp_path, secs):
+    """A RipLog whose clock says `secs` passed since start."""
+    from datetime import datetime, timedelta
+
+    from skive.common import RipLog
+    t0 = datetime(2026, 11, 12, 21, 4)
+    clock = iter([t0, t0 + timedelta(seconds=secs)])
+    log = RipLog("skive transcode", "handbrake", root=tmp_path, now=lambda: next(clock))
+    log.start()
+    return log
+
+
+def test_run_summary_plain_success_ending(tmp_path, capsys):
+    log = _ended_log(tmp_path, 2 * 3600 + 41 * 60 + 7)
+    ui.run_summary([("A (2001)", ["encode 1m10s"], "ok")], 1, 0, log=log)
+    err = capsys.readouterr().err
+    assert err.endswith("ok    1 ok · 2h41m\n")
+    assert "\x1b" not in err
+
+
+def test_run_summary_plain_failure_ending_points_at_the_run_log(tmp_path, capsys):
+    log = _ended_log(tmp_path, 95)
+    rows = [("A (2001)", ["encode 1m10s"], "ok"), ("B (2002)", ["encode 25s"], "failed")]
+    ui.run_summary(rows, 1, 1, log=log)
+    err = capsys.readouterr().err
+    assert err.endswith(f"fail  1 failed · 1 ok · 1m35s — see "
+                        f"{tmp_path}/logs/rip.jsonl (run {log.run})\n")
+
+
+def test_run_summary_plain_interrupt_ending(tmp_path, capsys):
+    log = _ended_log(tmp_path, 3600 + 12 * 60)
+    rows = [("A (2001)", ["encode 1m10s"], "ok"), ("B (2002)", ["copy 4s"], "interrupted")]
+    ui.run_summary(rows, 1, 0, log=log, interrupt_note="partial deleted")
+    err = capsys.readouterr().err
+    brow = next(l for l in err.splitlines() if l.strip().startswith("B (2002)"))
+    assert brow.rstrip().endswith("interrupted")
+    assert err.endswith("fail  interrupted · 1 ok · 1h12m — partial deleted\n")
+
+
+def test_run_summary_tty_symbols_in_result_column_and_line():
+    """On a terminal the result column and line lead with ✓ / ✗ and the
+    replayed warn/fail lines carry their symbols; the table is borderless."""
+    import io
+
+    from rich.console import Console
+    buf = io.StringIO()
+    tty = Console(file=buf, force_terminal=True, color_system=None, width=80,
+                  theme=ui.THEME)
+    real = ui.console
+    ui.console = tty
+    try:
+        ui.run_summary([("A (2001)", ["encode 1m10s"], "ok"),
+                        ("B (2002)", ["encode 5s"], "interrupted")], 1, 0,
+                       replay=["warn  subtitle track 3 barren, dropped"],
+                       interrupt_note="partial deleted")
+    finally:
+        ui.console = real
+    out = buf.getvalue()
+    assert out.startswith("! subtitle track 3 barren, dropped\n")
+    assert "✓ ok" in out and "✗ interrupted" in out
+    assert "│" not in out and "|" not in out  # no column rules
+    assert out.endswith("✗ interrupted · 1 ok — partial deleted\n")
 
 
 def test_transcode_progress_plain_line_vs_tty_footer(capsys):

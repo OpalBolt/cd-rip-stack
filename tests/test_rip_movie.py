@@ -921,7 +921,7 @@ def test_rip_movie_prints_run_summary_rows_and_count(monkeypatch, tmp_path, caps
         assert col in err
     rows21 = [l for l in err.splitlines() if "1:44:09" in l]
     assert any("_t21" in l and "1.0 B" in l and "ok" in l for l in rows21)
-    assert "2 ok, 0 failed" in err
+    assert "ok    2 ok\n" in err
 
 
 def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_path, capsys):

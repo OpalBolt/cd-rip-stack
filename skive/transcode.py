@@ -1198,11 +1198,14 @@ def run_transcode(args) -> int:
     # harmless (the files are already gone and _rmf tolerates that).
     inflight: list[str] = []
     inflight_side: str | None = None  # this item's sidecar temp dir, once the pass starts
+    current: str | None = None  # the in-flight unit's summary label until _item_done
+    parts: list[str] = []  # the in-flight unit's phase cells (reset per item)
     def _item_done(label: str, parts: list[str], ok: bool) -> None:
         """Per-item console summary line; keeps the batch ok/failed counts
         and one row for the end-of-run summary table."""
-        nonlocal n_ok, n_failed
-        rows.append((label, list(parts), ok))
+        nonlocal n_ok, n_failed, current
+        current = None
+        rows.append((label, list(parts), "ok" if ok else "failed"))
         if ok:
             n_ok += 1
             ui.ok(f"{label}: {' + '.join(parts)}")
@@ -1296,6 +1299,7 @@ def run_transcode(args) -> int:
     ui.set_view(view)
     global _POS, _ITEM
     _POS = _ITEM = ""
+    interrupted = False
     log.start()
     try:
         for i in items:
@@ -1307,12 +1311,15 @@ def run_transcode(args) -> int:
                 main = (not i.is_tv and i.sfx == "t" and i.movie in main_num
                         and main_num[i.movie][0] == i.num)
                 _POS, _ITEM = f"{u + 1}/{len(units)}", i.movie if main else i.base
+                current = i.movie if main else i.name
                 ui.item(u + 1, len(units), _ITEM)
                 view.footer(_POS, _ITEM)
             else:
+                current = None
                 ui.unindent()
             inflight = []
             inflight_side = None
+            parts = []
             log.name = i.movie
             safe = common.sanitize(i.movie)
 
@@ -1618,7 +1625,8 @@ def run_transcode(args) -> int:
         # CONTEXT.md Interrupt: drop this item's partial temp output (the local
         # copy, the unshipped sidecar dir, and .h265 encode live in the work
         # dir), leave the SOURCE in staging — sources only move on success —
-        # record status=interrupted, exit 130.
+        # record status=interrupted; the summary below marks the in-flight
+        # item interrupted, then exit 130.
         log.fail_open_phase("interrupted")
         view.close()  # before any print, so the Live region never garbles them
         for p in inflight:
@@ -1629,11 +1637,15 @@ def run_transcode(args) -> int:
             _rmf(p)
         if inflight_side is not None:
             shutil.rmtree(inflight_side, ignore_errors=True)
+        if current is not None:
+            rows.append((current, list(parts), "interrupted"))
         log.interrupted()
-        ui.fail("interrupted -- partial temp output deleted, source left in staging")
-        return 130
+        interrupted = True
     except Exception as e:
         failed = 1
+        if current is not None:
+            rows.append((current, list(parts), "failed"))
+            n_failed += 1
         ui.fail(f"FATAL: {e}")
         log.note("run", f"FATAL: {e}")
         log.fail_open_phase("FAIL")
@@ -1645,5 +1657,6 @@ def run_transcode(args) -> int:
     ui.run_summary(rows, n_ok, n_failed,
                    f"--keep: lossless sources moved to {lossless_root} -- verify, "
                    f"then clean by hand" if keep and parked else None,
-                   replay=view.replay_lines())
-    return failed
+                   replay=view.replay_lines(), log=log,
+                   interrupt_note="partial deleted" if interrupted else None)
+    return 130 if interrupted else failed

@@ -23,6 +23,7 @@ import sys
 import threading
 from pathlib import Path
 
+from rich.box import SIMPLE_HEAD
 from rich.console import Console, Group
 from rich.progress_bar import ProgressBar
 from rich.table import Table
@@ -330,29 +331,85 @@ def _hms(secs: int) -> str:
     return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
 
 
+def _span(secs: int) -> str:
+    """Run length for the result line: `2h41m`, else the _hms form."""
+    if secs < 3600:
+        return _hms(secs)
+    h, rest = divmod(secs, 3600)
+    return f"{h}h{rest // 60:02d}m"
+
+
+def _result_cell(word: str, styled: bool) -> Text | str:
+    """A result-column cell: `✓ ok` / `✗ failed` / `✗ interrupted` on a
+    TTY, the bare word plain."""
+    word = str(word).lower()
+    if word not in ("ok", "failed", "interrupted"):
+        return word
+    if not styled:
+        return word
+    kind = "ok" if word == "ok" else "fail"
+    return Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]), f" {word}")
+
+
+def _result_text(n_ok: int, n_failed: int, elapsed: int | None = None,
+                interrupt_note: str | None = None,
+                see: str | None = None) -> tuple[str, str]:
+    """The run's closing result line as (kind, text): counts, run length,
+    then `— <interrupt_note>` after an interrupt or `— <see>` after a
+    failure."""
+    parts = ["interrupted"] if interrupt_note is not None else []
+    if n_failed:
+        parts.append(f"{n_failed} failed")
+    parts.append(f"{n_ok} ok")
+    if elapsed is not None:
+        parts.append(_span(elapsed))
+    text = " \u00b7 ".join(parts)
+    if interrupt_note is not None:
+        text += f" \u2014 {interrupt_note}"
+    elif n_failed and see:
+        text += f" \u2014 {see}"
+    return ("fail" if interrupt_note is not None or n_failed else "ok"), text
+
+
 def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
-                replay=(), columns=None) -> None:
+                replay=(), columns=None, log=None,
+                interrupt_note: str | None = None) -> None:
     """End-of-run summary on stderr (after the run view closed): warn/fail
-    lines replayed (TTY only), one table of rows, the ok/failed count, and
-    the --keep banner only when keep_banner is set. columns=None keeps the
-    transcode shape (per-phase cells summed into a total); a columns tuple
-    renders each row as ready cells (the rip shape)."""
+    lines replayed (TTY only), one borderless table of rows, the --keep
+    banner only when keep_banner is set, then one result line. columns=None
+    keeps the transcode shape (per-phase cells summed into a total; the row's
+    third field is ok/failed/interrupted); a columns tuple renders each row
+    as ready cells (the rip shape). log (the run's RipLog) adds the run
+    length and, after a failure, where to look; interrupt_note marks an
+    interrupted run (`✗ interrupted · 2 ok · 1h12m — partial deleted`)."""
+    styled = _styled()
+    elapsed = see = None
+    if log is not None:
+        if log._start is not None:
+            elapsed = int((log._now() - log._start).total_seconds())
+        see = f"see {log._run_log} (run {log.run})"
+    kind, result = _result_text(n_ok, n_failed, elapsed, interrupt_note, see)
     with _print_lock:
         for line in replay:
-            print(line, file=sys.stderr)
-        from rich.console import Console
-        from rich.table import Table
-        console = Console(file=sys.stderr)
-        table = Table(box=None)  # plain ASCII under pytest's non-TTY stderr
+            rkind, _, text = line.partition("  ")
+            if styled and rkind in SYMBOLS:
+                console.print(Text.assemble((SYMBOLS[rkind], _SYMBOL_STYLE[rkind]),
+                                            f" {text}"), soft_wrap=True)
+            else:
+                print(line, file=sys.stderr)
+        # SIMPLE_HEAD's blank top and bottom edges space the table from the
+        # replay above and the result line below
+        table = Table(box=SIMPLE_HEAD, header_style="dim")
         if columns is not None:
             for col in columns:
                 table.add_column(col)
             for row in rows:
-                table.add_row(*(str(c) for c in row))
+                table.add_row(*(_result_cell(c, styled) if col == "result" else str(c)
+                                for col, c in zip(columns, row)))
         else:
             for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
                 table.add_column(col)
-            for label, parts, ok in rows:
+            for label, parts, word in rows:
                 cells: dict[str, str] = {}
                 total = 0
                 for part in parts:
@@ -363,11 +420,15 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                         total += s
                 table.add_row(label,
                               *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
-                              _hms(total), "ok" if ok else "FAILED")
+                              _hms(total), _result_cell(word, styled))
         console.print(table)
-        console.print(f"{n_ok} ok, {n_failed} failed")
         if keep_banner is not None:
-            console.print(keep_banner)
+            console.print(keep_banner, soft_wrap=True)
+        if styled:
+            console.print(Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]),
+                                        f" {result}"), soft_wrap=True)
+        else:
+            print(_plain_event(kind, result), file=sys.stderr)
 
 
 def _print(kind: str, text: str) -> None:

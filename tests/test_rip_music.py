@@ -1071,7 +1071,7 @@ def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
         assert col in err
     assert any(l.strip().startswith("1") and "0:04:29" in l and "ok" in l
                for l in err.splitlines())
-    assert "19 ok, 0 failed" in err
+    assert "ok    19 ok\n" in err
 
 
 def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):

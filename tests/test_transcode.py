@@ -592,12 +592,12 @@ def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monk
     log = run_log(env)
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
-    assert "interrupted -- partial temp output deleted, source left in staging" \
-        in err
-    # no summary after an interrupt (today's contract): no table row, no
-    # count line, no --keep banner past the interrupt fail line
-    tail = err.split("interrupted -- partial temp output deleted, source left in staging", 1)[1]
-    assert "| copy" not in tail and "ok, " not in tail and "--keep:" not in tail
+    # the summary stays in scrollback: the in-flight item reads interrupted,
+    # no --keep banner (nothing parked), and the result line closes the run
+    row = [l for l in err.splitlines() if l.strip().startswith("Slit (2004)")]
+    assert len(row) == 1 and row[0].rstrip().endswith("interrupted")
+    assert "--keep:" not in err
+    assert re.search(r"fail  interrupted · 0 ok · \d+s — partial deleted\n$", err)
 
 
 def test_recorded_main_parts_still_merge(env):
@@ -1413,8 +1413,10 @@ def test_interrupt_drops_temp_partial_source_stays_log_130(env, capsys, monkeypa
     enc = [l for l in log if l["phase"] == "encode"]
     assert enc[-1]["status"] == "interrupted" and enc[-1]["elapsed_s"] >= 0
     assert log[-1]["phase"] == "total" and log[-1]["status"] == "interrupted"
-    assert "interrupted -- partial temp output deleted, source left in staging" \
-        in capsys.readouterr().err
+    err = capsys.readouterr().err
+    row = [l for l in err.splitlines() if l.strip().startswith("Stop (2007)")]
+    assert len(row) == 1 and "copy" not in row[0] and row[0].rstrip().endswith("interrupted")
+    assert re.search(r"fail  interrupted · 0 ok · \d+s — partial deleted\n$", err)
 
 
 def test_fatal_logs_note_and_closes_open_phase(env, capsys, monkeypatch):
@@ -1460,7 +1462,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     cap = capsys.readouterr()
     assert re.search(
         r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+\n", cap.err)
-    assert "1 ok, 0 failed" in cap.err
+    assert re.search(r"ok    1 ok · \d+s\n$", cap.err)  # the result line
 
 
 def test_keep_banner_prints_only_when_something_parked(env, capsys):
@@ -1860,10 +1862,10 @@ def test_prefetch_multi_part_main_siblings_all_consumed(env):
 
 
 def test_run_summary_table_count_and_keep_banner(env, capsys):
-    """Run end (CONTEXT.md Run summary): after the panels clear, stderr
-    carries one table row per item — phase timings and ok/FAILED — the
-    ok/failed count line, and the --keep banner only because a source
-    actually parked."""
+    """Run end (CONTEXT.md Run summary): after the footer clears, stderr
+    carries one table row per item — phase timings and ok/failed — the
+    --keep banner only because a source actually parked, then the result
+    line naming the run log and run id after the failure."""
     vid = env / "vid"
     mk(vid, "rip/movies/Park (2011)/d0/Park (2011)_t00.mkv", "PARK-MAIN")
     mk(vid, "rip/movies/Failme (1999)/d1/Failme (1999)_t00.mkv", "FAILME")
@@ -1872,13 +1874,16 @@ def test_run_summary_table_count_and_keep_banner(env, capsys):
     err = capsys.readouterr().err
 
     assert rc == 1
-    for label, result in (("Park (2011)_t00", "ok"), ("Failme (1999)_t00", "FAILED")):
+    for label, result in (("Park (2011)_t00", "ok"), ("Failme (1999)_t00", "failed")):
         row = [l for l in err.splitlines() if l.strip().startswith(label)]
         assert len(row) == 1
         assert result in row[0]
         assert re.search(r"\d+s", row[0])  # total over recorded phase secs
-    assert "1 ok, 1 failed" in err
-    assert "--keep: lossless sources moved to" in err
+    banner, result = err.rstrip("\n").splitlines()[-2:]
+    assert banner.startswith("--keep: lossless sources moved to")
+    run = run_log(env)[0]["run"]
+    assert re.fullmatch(
+        rf"fail  1 failed · 1 ok · \d+s — see \S+/logs/rip\.jsonl \(run {run}\)", result)
 
 
 def test_fallback_warn_prints_once_no_summary_replay(env, capsys):
