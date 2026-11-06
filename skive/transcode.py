@@ -1309,6 +1309,8 @@ def run_transcode(args) -> int:
                 _POS, _ITEM = f"{u + 1}/{len(units)}", i.movie if main else i.base
                 ui.item(u + 1, len(units), _ITEM)
                 view.footer(_POS, _ITEM)
+            else:
+                ui.unindent()
             inflight = []
             inflight_side = None
             log.name = i.movie

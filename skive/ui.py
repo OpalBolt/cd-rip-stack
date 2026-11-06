@@ -295,6 +295,12 @@ def opener(text: str) -> None:
         _plain(_plain_event("info", text))
 
 
+def unindent() -> None:
+    """Events for an item with no heading must not hang under the last one."""
+    global _indent
+    _indent = False
+
+
 def item(pos: int, total: int, name: str) -> None:
     """The item heading `▸ 2/4  Name`; on a TTY later lines indent beneath
     it until the next heading."""
