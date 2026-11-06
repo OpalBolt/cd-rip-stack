@@ -428,6 +428,39 @@ def test_seam_view_perf_line_renders_and_drops():
     assert view._live is None and not hasattr(view, "_sampler")
 
 
+def test_encode_footer_line2_carries_prefetch_and_perf_at_80_columns():
+    """During an encode the footer is two lines: line 1 position, item,
+    phase, bar, percent, ETA; line 2 the prefetch copy and the perf line.
+    Line 2 disappears once both are empty."""
+    view = ui.RunView(tty=True, live=False)
+    view.footer("2/4", "Arrival (2016)", "encode")
+    view.progress(42, "31m")
+    view.bg("prefetch", "Blade Runner (1982).mkv  40%")
+    view.perf("CPU 62% \u00b7 cpu 78\u00b0C \u00b7 gpu 61\u00b0C")
+    lines = view.render(width=80).rstrip("\n").split("\n")
+    assert len(lines) == 2
+    assert lines[0].startswith(" 2/4  Arrival (2016) \u00b7 encode")
+    assert "42%" in lines[0] and "ETA 31m" in lines[0]
+    assert "prefetch Blade Runner (1982).mkv  40%" in lines[1]
+    assert "CPU 62% \u00b7 cpu 78\u00b0C \u00b7 gpu 61\u00b0C" in lines[1]
+    view.bg_clear("prefetch")
+    view.perf("")
+    lines = view.render(width=80).rstrip("\n").split("\n")
+    assert len(lines) == 1 and "ETA 31m" in lines[0]
+
+
+def test_footer_line2_hot_temp_uses_hot_style():
+    """A perf segment at >= 95 °C renders in the theme's `hot` style; the
+    rest of line 2 stays dim."""
+    view = ui.RunView(tty=True, live=False)
+    text, hot = ui.perf_text(62, {"cpu": 96.0, "gpu": 61.0})
+    view.perf(text, hot)
+    line2 = view._footer(80).renderables[-1]
+    styles = {line2.plain[s.start:s.end]: s.style for s in line2.spans}
+    assert styles["cpu 96\u00b0C"] == "hot"
+    assert styles["CPU 62%"] == "dim" and styles["gpu 61\u00b0C"] == "dim"
+
+
 def test_fallback_view_has_no_perf(capsys):
     view = ui.RunView()
     view.perf("CPU 62% \u00b7 cpu 78\u00b0C")

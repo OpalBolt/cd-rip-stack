@@ -1901,7 +1901,7 @@ def test_fallback_warn_prints_once_no_summary_replay(env, capsys):
 
 def test_prefetch_copy_line_in_background_panel(env, tmp_path):
     """Slice 04: during unit 1's encode the prefetch renders as one live
-    background line (name + pct + MB), updated in place per 10% step, and
+    background line (name + pct), updated in place per 10% step, and
     the key is cleared when the prefetch thread ends."""
     _slow_hb(tmp_path)
     vid = env / "vid"

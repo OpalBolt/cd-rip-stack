@@ -175,7 +175,7 @@ class RunView:
             lines.append(row)
         bg, perf = self._bg, self._perf
         if bg or perf:
-            line2 = Text("      ")
+            line2 = Text("      ", no_wrap=True, overflow="crop")  # one row: footer stays ≤ 2 lines
             line2.append("  ".join(f"{k} {bg[k]}" for k in sorted(bg)), style="dim")
             if perf:
                 text, hot = perf

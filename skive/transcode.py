@@ -787,7 +787,7 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
                 line = f"{pct}%  ({done // mb}/{total // mb} MB)"
                 if bg is not None:
                     if v is not None and v.tty:
-                        v.bg(bg, f"{os.path.basename(src)}  {line}")
+                        v.bg(bg, f"{os.path.basename(src)}  {pct}%")  # name + pct: fits line 2 beside perf
                     else:
                         print(f"  {line}")
                 elif v is not None and v.tty:
@@ -1276,12 +1276,12 @@ def run_transcode(args) -> int:
                     if pf_cancel.is_set():
                         return
                     dst = os.path.join(tmp_dir, x.name)
-                    _copy2(x.path, dst, pf_cancel, bg="copy")
+                    _copy2(x.path, dst, pf_cancel, bg="prefetch")
                     pf_ready[x.path] = dst
             finally:
                 v = ui.view()
                 if v is not None:
-                    v.bg_clear("copy")
+                    v.bg_clear("prefetch")
 
         pf_thread = threading.Thread(target=work, daemon=True)
         pf_thread.start()
