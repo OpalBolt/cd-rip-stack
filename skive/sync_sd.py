@@ -229,11 +229,9 @@ def sync_sd(args) -> None:
     except SystemExit as e:
         rc = e.code if isinstance(e.code, int) else 1
     finally:
-        try:
-            if we_mounted and card_mnt is not None:
-                unmount_card(card_mnt)
-        finally:
-            log.finish(rc)
-            ui.clear_log()
+        ui.clear_log()
+        log.finish(rc)
+        if we_mounted and card_mnt is not None:
+            unmount_card(card_mnt)
 
     sys.exit(rc)

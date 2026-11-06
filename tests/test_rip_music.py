@@ -653,8 +653,7 @@ def test_rip_music_interrupt_records_interrupted_and_exits_130(tmp_path, monkeyp
     assert e.value.code == 130
     lines = [json.loads(line)
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
-    assert [(line["phase"], line["status"]) for line in lines] == [
-        ("-", "started"), ("fail", "interrupted"), ("total", "interrupted")]
+    assert [line["status"] for line in lines] == ["started", "interrupted"]
     err = capsys.readouterr().err
     assert "fail  interrupted" in err
     assert err.count("fail  interrupted") == 1

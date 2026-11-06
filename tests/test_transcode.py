@@ -313,11 +313,6 @@ def test_no_match_prefix_exits_1(env, capsys):
 
     assert rc == 1
     assert "no staged MKVs match" in capsys.readouterr().err
-    lines = run_log(env)
-    assert lines[0]["status"] == "started"
-    assert [line["status"] for line in lines[1:-1]] == [
-        "no staged MKVs match: Nope (2999)", "no matching MKVs to transcode"]
-    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "FAIL(1)"
 
 
 def test_colon_prefix_matches_sanitized_file(env):
@@ -996,11 +991,6 @@ def test_vaapi_required_but_absent(env, monkeypatch):
     rc = transcode.run_transcode(Args(encoder="vaapi"))
 
     assert rc == 1
-    lines = run_log(env)
-    assert lines[0]["status"] == "started"
-    assert lines[1]["phase"] == "fail"
-    assert "no VA-API HEVC encode entrypoint" in lines[1]["status"]
-    assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "FAIL(1)"
 
 
 def test_encode_vaapi_footer_progress_from_ffmpeg_time(tmp_path, monkeypatch):

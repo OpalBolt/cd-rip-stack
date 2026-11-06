@@ -1903,7 +1903,7 @@ def test_post_rip_rerip_same_season_merges_replaces_and_keeps(tmp_path):
 
 def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
     """An existing validation.json naming a different show is never
-    overwritten: one warning, the old file kept byte-for-byte."""
+    overwritten: stderr note, logged, the old file kept byte-for-byte."""
     pre, log = _tv_preamble_for(tmp_path)
     pre.title_dir.mkdir()
     old_text = '{\n  "tmdb": {"id": "999"}\n}'
@@ -1916,7 +1916,8 @@ def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
 
     assert path.read_text(encoding="utf-8") == old_text
     assert "records a different show" in capsys.readouterr().err
-    assert not any("different show — kept" in str(c.args) for c in log.note.call_args_list)
+    log.note.assert_any_call("validation",
+                             "existing validation.json names a different show — kept")
 
 
 def test_post_rip_second_season_merges_into_show_document(tmp_path):
