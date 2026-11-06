@@ -993,6 +993,39 @@ def test_vaapi_required_but_absent(env, monkeypatch):
     assert rc == 1
 
 
+def test_encode_vaapi_footer_progress_from_ffmpeg_time(tmp_path, monkeypatch):
+    """ffmpeg progress lines carry time=/speed=, not a percent or ETA: the
+    TTY footer derives both from the input's Duration: banner line."""
+    out = tmp_path / "out.mkv"
+    out.write_bytes(b"x")
+    lines = [
+        "Input #0, matroska,webm, from 'in.mkv':\n",
+        "  Duration: 01:40:00.00, start: 0.000000, bitrate: 6234 kb/s\n",
+        "frame= 9000 fps=120 q=-0.0 size=  204800KiB time=00:25:00.00 "
+        "bitrate=1118.5kbits/s speed=5.00x\n",
+    ]
+
+    class FakeProc:
+        stdout = iter(lines)
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(transcode, "_find_tool", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(transcode, "_vcn_probe", lambda: {"low_power": False})
+    monkeypatch.setattr(transcode.subprocess, "Popen", lambda *a, **k: FakeProc())
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        assert transcode._encode_vaapi("in.mkv", str(out))
+    finally:
+        ui.clear_view()
+
+    rendered = view.render()
+    # 25 of 100 minutes; 75 minutes left at 5x = 15 minutes
+    assert "25%" in rendered and "ETA 00h15m00s" in rendered
+
+
 def test_dvd_not_upscaled(env):
     vid = env / "vid"
     mk(vid, "rip/movies/Dvd (2001)/d0/Dvd (2001)_t00.mkv", "480")  # ffprobe stub sees "480" -> SD

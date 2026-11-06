@@ -80,6 +80,11 @@ _COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac"
 # encode-progress parse for the run view's footer bar (TTY only)
 _RX_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _RX_ETA = re.compile(r"ETA\s+(\S+)")
+# ffmpeg progress carries no percent/ETA: derive them from the encoded time=,
+# the input's Duration: banner line, and speed=
+_RX_FF_DURATION = re.compile(r"^\s*Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_RX_FF_TIME = re.compile(r"time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_RX_FF_SPEED = re.compile(r"speed=\s*(\d+(?:\.\d+)?)x")
 _POS = ""  # the current item's position (`2/4`) while a run view is live
 _ITEM = ""  # the current item's name, beside the position in the footer
 
@@ -96,11 +101,38 @@ def _tool(name: str, line: str) -> None:
         v.tool(name, line)
 
 
-def _footer_progress(stripped: str) -> None:
+def _hms_match(m: re.Match) -> float:
+    """Seconds from an (hours, minutes, seconds) regex match."""
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+
+
+def _ffmpeg_progress(stripped: str, duration_s: float | None) -> tuple[float | None, str | None]:
+    """(pct, eta) of an ffmpeg `frame= ... time=... speed=...x` line against
+    the input duration; ETA in HandBrake's 00h00m00s shape. A field that can't
+    be derived (no duration, time=N/A, no speed) is None."""
+    t = _RX_FF_TIME.search(stripped)
+    if t is None or not duration_s:
+        return None, None
+    done = _hms_match(t)
+    pct = max(0.0, min(100.0, 100 * done / duration_s))
+    s = _RX_FF_SPEED.search(stripped)
+    speed = float(s.group(1)) if s else 0.0
+    if speed <= 0:
+        return pct, None
+    left = int(max(duration_s - done, 0) / speed)
+    return pct, f"{left // 3600:02d}h{left % 3600 // 60:02d}m{left % 60:02d}s"
+
+
+def _footer_progress(stripped: str, ffmpeg_duration_s: float | None = None) -> None:
     """Every encode-progress update moves the TTY footer bar (pct/ETA parsed;
-    unparseable fields omitted). No-op off a TTY."""
+    unparseable fields omitted). HandBrake lines carry both; an ffmpeg line
+    (ffmpeg_duration_s given) derives them from time= and speed=. No-op off a
+    TTY."""
     v = ui.view()
     if v is not None and v.tty:
+        if ffmpeg_duration_s is not None:
+            v.progress(*_ffmpeg_progress(stripped, ffmpeg_duration_s))
+            return
         m, e = _RX_PCT.search(stripped), _RX_ETA.search(stripped)
         v.progress(float(m.group(1)) if m else None,
                    e.group(1) if e else None)
@@ -471,13 +503,14 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
     last_prog = 0.0  # monotonic ts of the last console progress line
+    duration_s = 0.0  # the input's Duration: banner line (0 = not seen yet)
     try:
         for line in proc.stdout:
             stripped = line.rstrip()
             if stripped.startswith("frame=") and "fps=" in stripped:
                 # progress \r updates: throttle, never hidden-replay, raw-log
                 # only what actually printed; the TTY footer takes every one
-                _footer_progress(stripped)
+                _footer_progress(stripped, duration_s)
                 if verbose >= 2:
                     _progress_line("ffmpeg", stripped)
                     if log is not None:
@@ -488,6 +521,10 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
                     if log is not None:
                         log.raw("ffmpeg", stripped)
                 continue
+            if not duration_s:
+                d = _RX_FF_DURATION.match(stripped)
+                if d is not None:
+                    duration_s = _hms_match(d)
             if verbose >= 2 or (verbose >= 1 and "rror" in stripped):
                 _tool("ffmpeg", stripped)
             elif stripped:
