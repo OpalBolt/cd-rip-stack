@@ -808,7 +808,7 @@ def rip_tv(args) -> None:
         n_ok = sum(1 for r in summary_rows if r[3] == "ok")
         ui.run_summary(summary_rows, n_ok, len(summary_rows) - n_ok,
                        columns=("Episode", "duration", "size", "result"),
-                       replay=view.replay_lines())
+                       replay=view.replay_lines(), failed=worst_rc != 0)
         sys.exit(worst_rc)
     except KeyboardInterrupt:
         # Interrupt outside the rip try (TMDB prompt via rip_preamble, season

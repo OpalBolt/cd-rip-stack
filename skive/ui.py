@@ -353,42 +353,50 @@ def _result_cell(word: str, styled: bool) -> Text | str:
 
 def _result_text(n_ok: int, n_failed: int, elapsed: int | None = None,
                 interrupt_note: str | None = None,
-                see: str | None = None) -> tuple[str, str]:
+                see: str | None = None, failed: bool = False) -> tuple[str, str]:
     """The run's closing result line as (kind, text): counts, run length,
     then `— <interrupt_note>` after an interrupt or `— <see>` after a
-    failure."""
+    failure. failed marks a run that failed with no failed row (a fatal
+    error outside any item, a rip that failed before its rows existed)."""
+    failed = failed or bool(n_failed)
     parts = ["interrupted"] if interrupt_note is not None else []
     if n_failed:
         parts.append(f"{n_failed} failed")
+    elif failed:
+        parts.append("failed")
     parts.append(f"{n_ok} ok")
     if elapsed is not None:
         parts.append(_span(elapsed))
     text = " \u00b7 ".join(parts)
     if interrupt_note is not None:
         text += f" \u2014 {interrupt_note}"
-    elif n_failed and see:
+    elif failed and see:
         text += f" \u2014 {see}"
-    return ("fail" if interrupt_note is not None or n_failed else "ok"), text
+    return ("fail" if interrupt_note is not None or failed else "ok"), text
 
 
 def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                 replay=(), columns=None, log=None,
-                interrupt_note: str | None = None) -> None:
+                interrupt_note: str | None = None, failed: bool = False) -> None:
     """End-of-run summary on stderr (after the run view closed): warn/fail
     lines replayed (TTY only), one borderless table of rows, the --keep
     banner only when keep_banner is set, then one result line. columns=None
     keeps the transcode shape (per-phase cells summed into a total; the row's
     third field is ok/failed/interrupted); a columns tuple renders each row
     as ready cells (the rip shape). log (the run's RipLog) adds the run
-    length and, after a failure, where to look; interrupt_note marks an
-    interrupted run (`✗ interrupted · 2 ok · 1h12m — partial deleted`)."""
+    length and, after a failure, where to look (the run log, plus the raw
+    log when finish() retained it); interrupt_note marks an interrupted run
+    (`✗ interrupted · 2 ok · 1h12m — partial deleted`); failed carries the
+    run's own outcome so a failure with no failed row still ends `✗`."""
     styled = _styled()
     elapsed = see = None
     if log is not None:
         if log._start is not None:
             elapsed = int((log._now() - log._start).total_seconds())
         see = f"see {log._run_log} (run {log.run})"
-    kind, result = _result_text(n_ok, n_failed, elapsed, interrupt_note, see)
+        if log._raw_log.exists():
+            see += f", raw {log._raw_log}"
+    kind, result = _result_text(n_ok, n_failed, elapsed, interrupt_note, see, failed)
     with _print_lock:
         for line in replay:
             rkind, _, text = line.partition("  ")

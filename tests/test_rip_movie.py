@@ -924,6 +924,19 @@ def test_rip_movie_prints_run_summary_rows_and_count(monkeypatch, tmp_path, caps
     assert "ok    2 ok\n" in err
 
 
+def test_rip_movie_failed_rip_with_no_rows_ends_on_a_failure_line(monkeypatch, capsys):
+    """makemkvcon fails and nothing staged: no summary rows, but the result
+    line still reports the failure the exit code carries."""
+    _log, _prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
+    rip.return_value = 2
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 2
+    assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
+
+
 def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_path, capsys):
     """Full-scan rip: validation.json lands at the title-folder root with the
     full movie shape, durations probed from the staged files (6249/6600 — not

@@ -1658,5 +1658,6 @@ def run_transcode(args) -> int:
                    f"--keep: lossless sources moved to {lossless_root} -- verify, "
                    f"then clean by hand" if keep and parked else None,
                    replay=view.replay_lines(), log=log,
-                   interrupt_note="partial deleted" if interrupted else None)
+                   interrupt_note="partial deleted" if interrupted else None,
+                   failed=bool(failed))
     return 130 if interrupted else failed

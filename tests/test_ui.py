@@ -247,7 +247,25 @@ def test_run_summary_plain_failure_ending_points_at_the_run_log(tmp_path, capsys
     ui.run_summary(rows, 1, 1, log=log)
     err = capsys.readouterr().err
     assert err.endswith(f"fail  1 failed · 1 ok · 1m35s — see "
+                        f"{tmp_path}/logs/rip.jsonl (run {log.run}), "
+                        f"raw {tmp_path}/logs/raw/{log.run}.jsonl\n")
+
+
+def test_run_summary_failure_ending_omits_a_raw_log_not_retained(tmp_path, capsys):
+    log = _ended_log(tmp_path, 95)
+    log._raw_log.unlink()
+    ui.run_summary([("B (2002)", ["encode 25s"], "failed")], 0, 1, log=log)
+    err = capsys.readouterr().err
+    assert err.endswith(f"fail  1 failed · 0 ok · 1m35s — see "
                         f"{tmp_path}/logs/rip.jsonl (run {log.run})\n")
+
+
+def test_run_summary_failed_run_without_rows_ends_failed(capsys):
+    """A run that failed before any row existed (an empty failed rip) still
+    ends on a failure line, not `0 ok`."""
+    ui.run_summary([], 0, 0, columns=("Title", "duration", "size", "result"),
+                   failed=True)
+    assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
 
 
 def test_run_summary_plain_interrupt_ending(tmp_path, capsys):

@@ -152,7 +152,7 @@ def rip_music(args) -> None:
                     for i, t in enumerate(summary_tracks)]
             ui.run_summary(rows, len(rows), 0 if rc == 0 else 1,
                            columns=("track", "duration", "result"),
-                           replay=view.replay_lines())
+                           replay=view.replay_lines(), failed=rc != 0)
     finally:
         view.close()
         ui.clear_view()

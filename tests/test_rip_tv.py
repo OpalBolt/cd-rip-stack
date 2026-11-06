@@ -2155,7 +2155,7 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
 
 
 def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
-               rename=None):
+               rename=None, rip_rc=0):
     """Drive rip_tv over a full-scan disc with the REAL console (capsys
     captures what a user sees) and a seam run view set by the caller.
     Returns the SystemExit code."""
@@ -2199,7 +2199,7 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
             patch("skive.rip_tv.Prompt", prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rip_titles", return_value=rip_rc), \
             patch("skive.rip_tv.rename_tv", side_effect=rename or fake_rename), \
             patch("skive.rip_tv.split_combined"), \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
@@ -2252,6 +2252,15 @@ def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, ca
     assert any("S01E01" in l and "1:05:30" in l and "ok" in l
                for l in err.splitlines())
     assert "ok    3 ok\n" in err
+
+
+def test_rip_tv_failed_rip_with_no_rows_ends_on_a_failure_line(tmp_path, monkeypatch, capsys):
+    """makemkvcon fails and no episode staged: no summary rows, but the
+    result line still reports the failure the exit code carries."""
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""],
+                      rename=lambda *a: None, rip_rc=2)
+    assert code == 2
+    assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
 
 
 def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeypatch, capsys):

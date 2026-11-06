@@ -1883,7 +1883,31 @@ def test_run_summary_table_count_and_keep_banner(env, capsys):
     assert banner.startswith("--keep: lossless sources moved to")
     run = run_log(env)[0]["run"]
     assert re.fullmatch(
-        rf"fail  1 failed · 1 ok · \d+s — see \S+/logs/rip\.jsonl \(run {run}\)", result)
+        rf"fail  1 failed · 1 ok · \d+s — see \S+/logs/rip\.jsonl \(run {run}\), "
+        rf"raw \S+/logs/raw/{run}\.jsonl", result)
+
+
+def test_fatal_outside_an_encode_unit_ends_on_a_failure_line(env, capsys, monkeypatch):
+    """A fatal error with no item in flight (the --keep park of an unmarked
+    extra with no staged main) fails the run, and the result line says so
+    even though no summary row failed."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Lone (2003)/d0/Lone (2003) - Extra 01.mkv", "LONE-EXTRA")
+
+    def refuse(*a, **k):
+        raise OSError("lossless share read-only")
+
+    monkeypatch.setattr(transcode, "_archive", refuse)
+
+    rc = transcode.run_transcode(Args(keep=True))
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "FATAL: lossless share read-only" in err
+    run = run_log(env)[0]["run"]
+    assert re.search(
+        rf"fail  failed · 0 ok · \d+s — see \S+/logs/rip\.jsonl \(run {run}\), "
+        rf"raw \S+/logs/raw/{run}\.jsonl\n$", err)
 
 
 def test_fallback_warn_prints_once_no_summary_replay(env, capsys):
