@@ -508,6 +508,28 @@ def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, caps
     assert err.count("fail  interrupted") == 1
 
 
+def test_rip_movie_summary_prints_after_view_closed(monkeypatch):
+    """Regression (P1): on the success path view.close() runs before
+    ui.run_summary — the summary never prints under a live Live region."""
+    from skive import ui
+
+    _log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    seen = []
+    real = ui.run_summary
+    monkeypatch.setattr(ui, "run_summary",
+                        lambda *a, **k: seen.append(view._closed) or real(*a, **k))
+    try:
+        with pytest.raises(SystemExit) as e:
+            rip_movie(FakeArgs())
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 0
+    assert seen == [True]  # the view was already closed when the summary printed
+
+
 def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
     """Ctrl+C at the TMDB prompt (inside rip_preamble): the preamble logged the
     interrupted status, main's fallback owns the one-line exit — no traceback."""

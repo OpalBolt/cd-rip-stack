@@ -412,8 +412,11 @@ def rip_movie(args) -> None:
             # Clean up temp profile
             profile_path.unlink(missing_ok=True)
             log.finish(rc)
-        # The run summary (after the view closed; no summary on interrupt —
-        # transcode precedent): per-title rows × duration × size × result.
+        # Close the view before the summary prints (its Live redraw would
+        # garble them); replay works after close, and the outer close is
+        # idempotent. No summary on interrupt — transcode precedent.
+        view.close()
+        # The run summary: per-title rows × duration × size × result.
         for r in probed:
             f = title_dir / r["file"]
             try:
