@@ -708,7 +708,7 @@ def test_no_bare_print_in_skive_outside_ui():
     from pathlib import Path
     bare = re.compile(r"(?<![\w.])print\(")
     hits = [f"{path.name}:{n}: {line.strip()}"
-            for path in sorted(Path(ui.__file__).parent.glob("*.py"))
+            for path in sorted(Path(ui.__file__).parent.rglob("*.py"))
             if path.name != "ui.py"
             for n, line in enumerate(path.read_text().splitlines(), 1)
             if bare.search(line)]
