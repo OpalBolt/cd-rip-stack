@@ -18,6 +18,25 @@ skive validate --fix       # also apply the safe automatic rename
 skive validate --json      # the report as JSON (composes: --json --issues)
 ```
 
+The report opens with a heading, then a findings table, then one result line.
+The check column carries a severity symbol (`✗` issue, `!` off-norm, `✓`
+inside the norm), and the last line counts the issues:
+
+```text
+Library validation — /mnt/videos/library
+
+  folder                     check            detail              Δ
+ ─────────────────────────────────────────────────────────────────────────
+  movies/Mamma Mia! (2008)   ✓ ratio          1:48:12 / 1:49:00   in 0.05
+  movies/Arrival (2016)      ✗ ratio          1:20:00 / 1:56:00   -0.23
+  movies/Arrival (2016)      ✗ staging name   Arrival_t01.mkv
+
+! 2 issues in 1 folder
+```
+
+Piped, the symbols become words (`ok`, `warn`, `fail`) and the last line reads
+`warn  2 issues in 1 folder`. A clean library ends on `✓ no findings`.
+
 The checks — one row each in the report:
 
 - **Ratio** — duration ÷ TMDB runtime per graded file: the movie main
@@ -74,6 +93,22 @@ skive search all "kind of blue"
 Each hit prints the title and its states; TV hits list the seasons carried
 (`S01, S02` — zero as `Specials`), and staging hits are marked, so you know
 a copy is not filed yet. Music hits print `Artist / Album`.
+
+On a terminal, a hit is a bold heading with one symbol row per state:
+
+```text
+Mamma Mia! (2008) · movie
+  · staged
+  ✓ in library
+```
+
+Piped, the same hit is plain data on stdout, ready for `grep`:
+
+```text
+Mamma Mia! (2008) — movie
+  staging
+  library
+```
 
 Zero hits print `no hits` plus up to three did-you-mean near-miss titles —
 and the command still exits 0. A scoped share that cannot be mounted prints

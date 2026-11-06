@@ -25,10 +25,19 @@ writing each album as final-named FLACs into its own `<album>/` subfolder.
 Several MusicBrainz releases match the disc → skive lists them, asks for a
 number, re-runs cyanrip with `-R <n>` (blank answer aborts); no release at
 all → the submit-this-disc URL goes into the run log. On a terminal the
-console draws the run view: album name, track counter, and recent events. Piped,
-it prints plain tagged lines. `-v` adds cyanrip tool lines and `-vv` passes
-cyanrip raw. The run ends with a per-track summary (track, duration, result). A clean rip just finishes — eject and swap discs by
-hand. Ctrl-C stops the child cleanly, logs `interrupted`, exits 130.
+console opens with one line (`skive rip music · <album> · offset 6`), then a
+`▸ 7/12  Paranoid Android` heading per track with its events indented beneath.
+A footer redraws under the scroll with the track counter, title, offset and a
+progress bar:
+
+```text
+ track 7/12  Paranoid Android · offset 6  ━━━━━━━━━━━━          61%
+```
+
+Piped, it prints plain tagged lines (`info  7/12  Paranoid Android`). `-v` adds
+cyanrip tool lines and `-vv` passes cyanrip raw. The run ends with a per-track
+summary table (track, duration, result) and one result line. A clean rip just
+finishes — eject and swap discs by hand. Ctrl-C stops the child cleanly, logs `interrupted`, exits 130.
 
 ### The album record
 
@@ -54,6 +63,12 @@ album `filed` or `left`. The mode follows the source: `cd` and `other` get
 normal MusicBrainz autotagging; `bandcamp` imports as-is (`-A`) — tags stay
 as they came, but the album still gets its library path, ReplayGain, cover
 art and genres.
+
+beets runs in its own interactive session, which skive does not touch. Around
+it, skive prints one line per album (`✓ filed <album>`, `! left <album>: still
+in rip/cd`) and ends on one result line, for example `✓ 3 filed · 12s` or
+`! 3 filed · 1 left · 12s — see /mnt/music/logs/rip.jsonl (run <id>)`. Piped,
+the symbols become `ok` and `warn`.
 
 Each filed album ends with a `validation.json` provenance record: source,
 release identity, track list, and per disc the tag run, date and mode. The
@@ -88,6 +103,11 @@ FAT/exFAT reject `-a`'s timestamps; re-runs skip files already on the card.
 `validation.json`, `*.log` and `*.cue` are excluded: the card holds only
 playable music. A card this run mounted is unmounted on exit — success,
 Ctrl-C, or failure; one already mounted stays mounted.
+
+If you pass no mountpoint and no card is mounted, skive lists the disks and asks
+`Pick one` on a `›` line. On a terminal, a one-line footer shows the rsync
+progress bar, rate and ETA. The run ends on one result line: `✓ synced 4.1 GB ·
+2m10s`, or `✗ interrupted · 2m10s — re-run to resume`.
 
 ## search music
 

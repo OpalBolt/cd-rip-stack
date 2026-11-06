@@ -32,6 +32,31 @@ transcode box is a separate build — [transcode](docs/transcode.md).
 | `skive validate` | report library findings (read-only, never changes anything) | [tools](docs/tools.md) |
 | `skive search` | search selected on-disk roots for an already-ripped title | [tools](docs/tools.md) |
 
+## The console
+
+Every command prints ordinary lines that stay in scrollback. Each line starts
+with a symbol: `✓` done, `·` routine, `!` warning, `✗` failure. Long commands
+open with one line that states their scope, give each item a `▸` heading,
+and redraw a footer of at most two lines (progress bar, ETA) under the scroll.
+They end on a summary table and one result line.
+
+```text
+✗ 1 failed · 1 ok · 1h36m — see /mnt/videos/logs/rip.jsonl (run 93721d6e)
+```
+
+Piped output, `NO_COLOR` and `TERM=dumb` give plain lines with no escape
+codes. Each line starts with a padded word instead of a symbol:
+
+```text
+info  1/3  Rogue One (2016)
+ok    encoded  41m12s
+warn  subtitle track 3 barren, dropped
+fail  Blade Runner (1982): encode failed (ffmpeg exit 1)
+```
+
+Every prompt shows the default in brackets and reads the answer on a `›`
+line. The [transcode](docs/transcode.md#the-console) page shows a full run.
+
 ## Docs
 
 One page per job:
@@ -51,6 +76,6 @@ One page per job:
 
 ## Development
 
-Tests: `uv run pytest` (768 passing). How skive decides things and the
+Tests: `uv run pytest` (933 passing). How skive decides things and the
 glossary: [CONTEXT.md](CONTEXT.md). Deferred work: [roadmap.md](roadmap.md).
 Decisions: [docs/adr/](docs/adr/).

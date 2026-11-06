@@ -145,19 +145,79 @@ The run log (`logs/rip.jsonl`) gets one timed line per item per part —
 part's numbers in `status`: copy reports `N MB at M MB/s`, encode
 `ok, N MB`, merge `ok`, subs `K sidecar(s)[, B barren]`. A
 phase that dies closes with `FAIL` and its elapsed; an interrupted run
-closes with `interrupted`. On a terminal the console
-draws the run view: a status panel, a background panel for the prefetch copy,
-a log panel, and a perf line (CPU, load, temperatures). Piped, the same events
-print as plain tagged lines (`info`/`warn`/`fail`). At the end the panels clear
-and a run summary prints: warnings and failures again, a per-item table of
-timings and results, and the ok/failed count. Tool lines show at `-v`/`-vv`
-(verbosity gates the console only). A `barren` note means a bitmap subtitle track's
+closes with `interrupted`. A `barren` note means a bitmap subtitle track's
 OCR yielded zero cues — the track is dropped with a loud note in the run
 log and the encode ships without that sidecar. It is not a failure: no
 quarantine, exit stays clean. Only a real seconv/tesseract failure
-quarantines (see below). Prefetch shows as a `prefetch` note during the
-previous encode; when the lookahead lands, the item's own copy phase
+quarantines (see below). Prefetch shows on the footer's second line during the
+previous encode (piped, as a `prefetch` note); when the lookahead lands, the item's own copy phase
 reads `prefetched — overlapped with the previous encode`.
+
+### The console
+
+On a terminal, every event stays in scrollback. Each line starts with a
+symbol: `✓` done, `·` routine, `!` warning, `✗` failure. A run opens with
+one line that states its scope. Each item then gets a bold `▸` heading, and
+its events indent beneath it:
+
+```text
+skive transcode · 3 to encode
+▸ 1/3  Rogue One (2016)
+  · copy 5744 MB at 64 MB/s  1m30s
+  ✓ encoded  41m12s
+▸ 2/3  Arrival (2016)
+  ! subtitle track 3 barren, dropped
+  ✗ Blade Runner (1982): encode failed (ffmpeg exit 1)
+```
+
+Under the scroll, a footer of at most two lines redraws in place. Line one
+holds the position, item, phase, a progress bar and the ETA. Line two holds
+the prefetch copy and the perf line (CPU, load, temperatures):
+
+```text
+ 2/3  Arrival (2016) · encode  ━━━━━━━━              42%  ETA 31m
+      prefetch Blade Runner (1982).mkv 40%      CPU 62% · cpu 78° · gpu 61°
+```
+
+The bar fills with colour on a terminal. Progress shows in the footer
+only and never prints to scrollback.
+
+When the run ends, the footer disappears and the run summary prints. It
+replays the warnings and failures, shows a borderless table of timings and
+results, and ends on one result line. After a failure the result line names
+the run log and the raw log to read:
+
+```text
+! subtitle track 3 barren, dropped
+✗ Blade Runner (1982): encode failed (ffmpeg exit 1)
+
+  Item                  copy    merge   subs   encode   total    result
+ ─────────────────────────────────────────────────────────────────────────
+  Rogue One (2016)      1m30s   -       12s    41m12s   42m54s   ✓ ok
+  Blade Runner (1982)   3m02s   -       -      7m40s    10m42s   ✗ failed
+
+✗ 1 failed · 1 ok · 1h36m — see /mnt/videos/logs/rip.jsonl (run 93721d6e), raw /mnt/videos/logs/raw/93721d6e.jsonl
+```
+
+After Ctrl+C the footer goes, in-flight items show `✗ interrupted`, and the
+result line reads `✗ interrupted · 2 ok · 1h12m — partial deleted`.
+
+Piped or redirected output, `NO_COLOR` and `TERM=dumb` give plain lines with
+no escape codes. Each line starts with a padded word instead of a symbol
+(`ok`, `info`, `warn`, `fail`). There is no indent and no footer. Progress
+prints as throttled lines:
+
+```text
+info  skive transcode · 3 to encode
+info  1/3  Rogue One (2016)
+info  copy 5744 MB at 64 MB/s  1m30s
+ok    encoded  41m12s
+info  2/3  Arrival (2016)
+warn  subtitle track 3 barren, dropped
+fail  Blade Runner (1982): encode failed (ffmpeg exit 1)
+```
+
+Tool lines show at `-v`/`-vv` (verbosity gates the console only).
 
 ## Existing library: subtitle backfill
 

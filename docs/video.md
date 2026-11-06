@@ -43,10 +43,15 @@ Enter rips the checked ones, `↑/↓` or `j/k` move, `q` quits.
 ## rip movie
 
 Before the rip starts, the pre-rip gate: a table (title, duration, size,
-ratio vs the TMDB runtime), then `ok? (Enter=rip, q=quit)`. Several titles
-near the TMDB runtime raise a loud main-pick prompt — Enter takes the default
+ratio vs the TMDB runtime), then the confirm prompt. Several titles near the
+TMDB runtime raise a loud main-pick prompt — Enter takes the default
 (biggest), a number picks, `q` quits, anything else re-asks. Any yellow ratio
 row escalates the confirm to a default-No `y/N`.
+
+```text
+Rip with this map? [Enter] rip · q quit
+›
+```
 
 ```bash
 skive rip movie --extras   # a bonus disc: no main pick, extras numbering
@@ -77,7 +82,13 @@ one per eligible title) — Enter takes it. Titles are assigned to that stated r
 column (disc ÷ TMDB runtime, green ~0.92–1.04 — PAL runs ~4–5% short) grades,
 never decides.
 
-The confirm table is the single place to correct the map:
+The confirm table is the single place to correct the map. The prompt lists
+the answers:
+
+```text
+Rip with this map? [Enter] rip · 3=7 / 1=1-2 / 2=e fix row · n range · c clear staged · q quit
+›
+```
 
 | Answer | Does |
 |---|---|
@@ -89,6 +100,37 @@ The confirm table is the single place to correct the map:
 | `q` | quit — nothing ripped, the rip never started |
 
 A title left outside the stated range lists as `→ extra`.
+
+## The console
+
+Every prompt has one shape: the question, the default in brackets, the
+choices dimmed, then an answer on a `›` line. A destructive confirm defaults
+to No:
+
+```text
+delete 4 staged files for Andor (2022)? [y/N]
+›
+```
+
+After the picks and the map, the rip opens with one line that names the
+scope (`skive rip tv · Andor (2022) · season 1 · disc 2 · /dev/sr0`). Each
+title then gets a bold heading with its events indented beneath
+(`▸ 3/6  Andor (2022) S01E04` for TV, `▸ 1/2  title 7` for a movie). Events stay in scrollback with a symbol: `✓` done, `·` routine,
+`!` warning, `✗` failure.
+
+A footer of two lines redraws under the scroll. Line one names the title in
+progress, with a progress bar and ETA. Line two shows the disc total:
+
+```text
+ title 3/6  Andor (2022) S01E04 · rip  ━━━━━━                31%  ETA 14m
+      disc 9.4/31.2 GB
+```
+
+The run ends with the footer gone, a summary table of titles, and one result
+line (`✓ 6 ok · 1h02m`). After a failure, the line names the run log to read.
+Piped, or with `NO_COLOR` or `TERM=dumb`, the same events print as plain
+tagged lines (`info`, `ok`, `warn`, `fail`) with no footer. The
+[transcode](transcode.md#the-console) page shows both forms in full.
 
 ## Play-all-only discs and the chapter split
 
