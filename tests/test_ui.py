@@ -522,6 +522,14 @@ def test_bg_progress_renders_bar_rate_then_ready_lane():
     assert "12 MB/s" not in text
 
 
+def test_ready_lane_reserves_suffix_at_narrow_width():
+    view = _tty_seam_view()
+    view.bg("prefetch", "An Extremely Long Movie Title (2012) \u2713 ready")
+    lane = _lanes(view, 55)[0]
+    assert lane.endswith("\u2713 ready")
+    assert "\u2026" in lane
+
+
 def test_bg_is_noop_in_fallback_mode(capsys):
     view = ui.RunView()
     assert not view.tty

@@ -1319,8 +1319,11 @@ def run_transcode(args) -> int:
     _open(scope, f"{len(units)} to encode{session}")
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
-    pf_ready: dict[str, tuple[str, int, int]] = {}
-    # staged src -> (local dst, elapsed seconds, lookahead unit index)
+    pf_ready: dict[str, tuple[str, int, int, int, int, int]] = {}
+    # staged src -> (local dst, file elapsed, unit index, unit elapsed, unit MB, unit MB/s)
+    pf_errors: dict[int, str] = {}
+    pf_ready_logged: set[int] = set()
+    pf_summary_added: set[int] = set()
     pf_started: set[int] = set()
     pf_thread: threading.Thread | None = None
     pf_cancel = threading.Event()  # set by the interrupt arm so _copy2 stops mid-file
@@ -1336,15 +1339,31 @@ def run_transcode(args) -> int:
             pf_thread.join()
             pf_thread = None
 
+    def _pf_log_ready(unit_idx, ready, log) -> None:
+        if unit_idx in pf_ready_logged:
+            return
+        size, rate = ready[4], ready[5]
+        movie = units[unit_idx][0].movie
+        log.note("prefetch", f"{movie} ready · {size} MB at {rate} MB/s", echo=False)
+        pf_ready_logged.add(unit_idx)
+
     def _pf_take(src, log, parts):
         """Consume a prefetched local copy; join a still-running thread first
         (the encode finished early — the natural sequential degradation).
         Returns the dst, or None to copy sequentially as today."""
         _pf_join()
+        unit_idx = unit_of.get(src)
         ready = pf_ready.pop(src, None)
         if ready is None:
+            error = pf_errors.pop(unit_idx, None) if unit_idx is not None else None
+            if error is not None:
+                movie = units[unit_idx][0].movie
+                msg = f"prefetch failed ({error}) -- {movie} copies sequentially"
+                log.note("prefetch", msg, echo=False)
+                ui.warn(msg)
             return None
-        dst, elapsed, unit_idx = ready
+        dst, elapsed, unit_idx, unit_elapsed, _, _ = ready
+        _pf_log_ready(unit_idx, ready, log)
         log.phase("copy")
         # RipLog measures from its phase clock; rewind that clock to preserve
         # the elapsed time spent in the background thread.
@@ -1352,8 +1371,10 @@ def run_transcode(args) -> int:
             log._phase_start -= timedelta(seconds=elapsed)
         log.phase_end("prefetched — overlapped with the previous encode")
         _phase_line(ui.ok, f"{os.path.basename(dst)} prefetched ({_hms(elapsed)}, overlapped)",
-                    "copy", None)
-        parts.append(f"copy {_hms(elapsed)} ⇢")
+                    "copy", elapsed)
+        if unit_idx not in pf_summary_added:
+            parts.append(f"copy {_hms(unit_elapsed)} ⇢")
+            pf_summary_added.add(unit_idx)
         if not any(value[2] == unit_idx for value in pf_ready.values()):
             v = ui.view()
             if v is not None:
@@ -1397,12 +1418,15 @@ def run_transcode(args) -> int:
         def work():
             complete = False
             started = time.monotonic()
+            file_elapsed = {}
             try:
                 for x in nxt_unit:
                     if pf_cancel.is_set():
                         return
                     dst = os.path.join(tmp_dir, x.name)
+                    file_started = time.monotonic()
                     _copy2(x.path, dst, pf_cancel, bg="prefetch")
+                    file_elapsed[x.path] = max(int(time.monotonic() - file_started), 1)
                     if pf_cancel.is_set():
                         return
                 elapsed = max(int(time.monotonic() - started), 1)
@@ -1413,15 +1437,20 @@ def run_transcode(args) -> int:
                     if pf_cancel.is_set():
                         return
                     for x in nxt_unit:
-                        pf_ready[x.path] = (os.path.join(tmp_dir, x.name), elapsed, nxt)
+                        pf_ready[x.path] = (os.path.join(tmp_dir, x.name),
+                                            file_elapsed[x.path], nxt, elapsed,
+                                            size, rate)
                     v = ui.view()
                     if v is not None:
                         v.bg("prefetch", f"{nxt_unit[0].movie} \u2713 ready")
                     ui.ok(f"{nxt_unit[0].movie} ready \u00b7 {size} MB at {rate} MB/s",
                           phase="prefetch", elapsed=_hms(elapsed))
                     complete = True
-            except Exception:
-                # _pf_take falls back to the sequential copy; no ready event.
+            except Exception as e:
+                # The main thread reports this when the unit is consumed; the
+                # worker never races RipLog.
+                with pf_lock:
+                    pf_errors[nxt] = str(e) or type(e).__name__
                 return
             finally:
                 if not complete:
@@ -1435,7 +1464,7 @@ def run_transcode(args) -> int:
         pf_thread = threading.Thread(target=work, daemon=True)
         pf_thread.start()
 
-    def _pf_drop(paths) -> None:
+    def _pf_drop(paths, log=None) -> None:
         """Drop prefetched-but-unconsumed copies (guard quarantine etc.)."""
         _pf_join()
         paths = list(paths)
@@ -1443,6 +1472,8 @@ def run_transcode(args) -> int:
             dropped = set(paths)
             for src, ready in list(pf_ready.items()):
                 if ready[0] in dropped:
+                    if log is not None:
+                        _pf_log_ready(ready[2], ready, log)
                     pf_ready.pop(src, None)
             v = ui.view()
             if v is not None:
@@ -1535,6 +1566,7 @@ def run_transcode(args) -> int:
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=episode, log=log, parts=parts,
                                 crop=crop):
+                    _pf_join()
                     shutil.move(local_out, dest)
                     if side_dir is not None:
                         _ship_sidecars(side_dir, dest_dir, res)
@@ -1619,7 +1651,7 @@ def run_transcode(args) -> int:
                             handled.add(s.path)
                         # its prefetched copies (if the lookahead got here
                         # first) are unconsumed now -- drop, never leak
-                        _pf_drop(os.path.join(tmp_dir, s.name) for s in siblings)
+                        _pf_drop((os.path.join(tmp_dir, s.name) for s in siblings), log)
                         failed = 1
                         _item_done(i.movie, parts, False, "guard (tracks differ)")
                         continue
@@ -1674,6 +1706,7 @@ def run_transcode(args) -> int:
                 if _encode_part(local_src, local_out, args.encoder, hb_exe,
                                 ffprobe_exe, no_subs=True, log=log, parts=parts,
                                 crop=crop):
+                    _pf_join()
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
                     # the doc that picked this main gets the encode appended
@@ -1771,6 +1804,7 @@ def run_transcode(args) -> int:
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
                             ffprobe_exe, no_subs=False, log=log, parts=parts,
                             speed=speed, crop=crop):
+                _pf_join()
                 shutil.move(local_out, dest)
                 for p in cleanup:
                     _rmf(p)
@@ -1790,6 +1824,8 @@ def run_transcode(args) -> int:
         # never consumed (cap deferral, guard quarantine, normal end) drop
         # here -- never a leak, never a crash
         _pf_join()
+        for ready in list(pf_ready.values()):
+            _pf_log_ready(ready[2], ready, log)
         for p in pf_files:
             _rmf(p)
     except KeyboardInterrupt:

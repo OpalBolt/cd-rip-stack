@@ -271,8 +271,18 @@ class RunView:
                     row.add_row(*cells)
                     lanes.append(row)
                 else:
-                    lanes.append(Text(f"{k} {entry}", style="dim", no_wrap=True,
-                                      overflow="ellipsis"))
+                    ready = " \u2713 ready"
+                    if str(entry).endswith(ready):
+                        title = Text(f"{k} ")
+                        name = Text(str(entry)[:-len(ready)], style="dim")
+                        name.truncate(max(width - title.cell_len - len(ready), 1),
+                                      overflow="ellipsis")
+                        title.append_text(name)
+                        title.append(ready, style="dim")
+                        lanes.append(title)
+                    else:
+                        lanes.append(Text(f"{k} {entry}", style="dim", no_wrap=True,
+                                          overflow="ellipsis"))
         if perf and width >= 60:
             text, hot = perf
             line = Text(no_wrap=True, overflow="ellipsis")

@@ -1960,7 +1960,8 @@ def test_prefetch_overlaps_encode(env, tmp_path, capsys):
     assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
     log = run_log(env)
     notes = [l for l in log if l["phase"] == "prefetch"]
-    assert len(notes) == 1 and "in the background" in notes[0]["status"]
+    assert ["in the background" in n["status"] for n in notes] == [True, False]
+    assert "ready" in notes[1]["status"]
     # the run log only emits phase END lines: One's copy end and encode end
     # bracket the encode window, and the sleep guarantees it is > 1 s wide
     enc = [l for l in log if l["phase"] == "encode"]
@@ -1976,6 +1977,81 @@ def test_prefetch_overlaps_encode(env, tmp_path, capsys):
     assert err.index("prefetch: copying Two (2002)_t00.mkv") < err.index("subtitle pass:")
     assert "⇢" in err
     assert "copying Two (2002)_t00.mkv to local temp" not in err
+
+
+def test_failed_prefetch_reports_and_falls_back_sequentially(env, monkeypatch, capsys):
+    """A worker failure is reported by the main thread, then the unit still
+    copies sequentially and completes."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    real_copy2 = transcode._copy2
+
+    def fail_prefetch(src, dst, cancel=None, bg=None):
+        if bg and pathlib.Path(src).name.startswith("Two"):
+            raise OSError("prefetch read failed")
+        return real_copy2(src, dst, cancel, bg)
+
+    monkeypatch.setattr(transcode, "_copy2", fail_prefetch)
+    assert transcode.run_transcode(Args()) == 0
+    assert (vid / "library" / "movies" / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
+    err = capsys.readouterr().err
+    assert "prefetch failed (prefetch read failed)" in err
+    assert "copies sequentially" in err
+    assert "copied in" in err
+
+
+def test_prefetch_multipart_logs_each_file_and_counts_unit_once(env, monkeypatch, capsys):
+    """A multipart lookahead records each file's elapsed time, while the
+    summary uses the unit's elapsed time once."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Parts (2007)/d0/Parts (2007)_t21.p1.mkv", "P1")
+    mk(vid, "rip/movies/Parts (2007)/d0/Parts (2007)_t21.p2.mkv", "P2")
+    clock = {"worker": 0}
+    real_monotonic = transcode.time.monotonic
+    real_copy2 = transcode._copy2
+
+    def monotonic():
+        if threading.current_thread() is not threading.main_thread():
+            return clock["worker"]
+        return real_monotonic()
+
+    def timed_copy(src, dst, cancel=None, bg=None):
+        result = real_copy2(src, dst, cancel, bg)
+        if bg:
+            clock["worker"] += 2 if pathlib.Path(src).name.endswith("p1.mkv") else 5
+        return result
+
+    monkeypatch.setattr(transcode.time, "monotonic", monotonic)
+    monkeypatch.setattr(transcode, "_copy2", timed_copy)
+    assert transcode.run_transcode(Args()) == 0
+    copies = [l for l in run_log(env) if l["phase"] == "copy"]
+    assert [l["elapsed_s"] for l in copies[1:]] == [2, 5]
+    row = next(l for l in capsys.readouterr().err.splitlines()
+               if l.strip().startswith("Parts (2007)"))
+    assert "7s ⇢" in row
+
+
+def test_interrupt_while_prefetch_finish_wait_leaves_source_unshipped(env, monkeypatch):
+    """Ctrl+C during the item-close prefetch join happens before shipping or
+    archiving the just-encoded item."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    real_join = threading.Thread.join
+    raised = {"value": False}
+
+    def interrupt_join(thread, *args, **kwargs):
+        if not raised["value"]:
+            raised["value"] = True
+            raise KeyboardInterrupt
+        return real_join(thread, *args, **kwargs)
+
+    monkeypatch.setattr(threading.Thread, "join", interrupt_join)
+    assert transcode.run_transcode(Args()) == 130
+    assert (vid / "rip" / "movies" / "One (2001)" / "d0" / "One (2001)_t00.mkv").exists()
+    assert not (vid / "library" / "movies" / "One (2001)" / "One (2001).mkv").exists()
 
 
 def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkeypatch):
