@@ -90,7 +90,8 @@ def test_tty_lines_carry_symbols_frame_and_gutter(monkeypatch):
                          "\u2502 \u00b7 copy 4m12s",
                          "\u2502 ! subtitle track 3 barren, dropped",
                          "\u2502 \u2717 encode failed",
-                         "\u2502 handbrake  ERROR x"]
+                         "\u2502 handbrake  ERROR x",
+                         "\u2570" + "\u2500" * 79]  # clear_view closes the frame
     assert view.replay_lines() == ["warn  subtitle track 3 barren, dropped",
                                    "fail  encode failed"]
 
@@ -890,3 +891,18 @@ def test_no_bare_print_in_skive_outside_ui():
             for n, line in enumerate(path.read_text().splitlines(), 1)
             if bare.search(line)]
     assert hits == []
+
+
+def test_clear_view_closes_an_open_frame_so_no_gutter_leaks(monkeypatch):
+    """A run that dies before run_summary still clears its view in cleanup;
+    that closes the open frame, so later output carries no gutter."""
+    con, buf = _tty(80)
+    monkeypatch.setattr(ui, "console", con)
+    ui.set_view(ui.RunView(tty=True, live=False))
+    ui.item(1, 1, "Crash (2001)")
+    ui.clear_view()
+    assert not ui._frame_open
+    ui.info("next command")
+    lines = buf.getvalue().splitlines()
+    assert lines[1] == "\u2570" + "\u2500" * 79
+    assert lines[-1] == "\u00b7 next command"

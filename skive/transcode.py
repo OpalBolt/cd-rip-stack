@@ -70,6 +70,9 @@ _RX_EXTRA = re.compile(
 )
 _RX_EP = re.compile(r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$")
 _RX_MAIN = re.compile(r"^t\d+$")  # validation.json's recorded main: "tNN"
+# the last failed encode's reason (`handbrake exit 3`) for the item's closing
+# rule; _encode keeps its bool contract (tests fake it)
+_encode_why = ""
 _RX_DDIR = re.compile(r"^d\d+$")  # rip/<type>/<Name (Year)>/d<disc> staging subdir
 _TV_ROOTS = ("TV", "tv")  # rip/TV (legacy ps1 staging) and rip/tv (SPEC layout)
 # one comma-joined argument: stays a single argv entry
@@ -483,9 +486,11 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
     _encode: every line raw-logged as "ffmpeg", frame= progress throttled to
     one a minute, hidden lines replayed on failure, rc==0 alone is not
     success (the output must exist)."""
+    global _encode_why
     ff = _find_tool("ffmpeg")
     vcn = _vcn_probe()
     if not ff or not vcn:
+        _encode_why = f"{'ffmpeg' if not ff else 'vainfo'} missing"
         ui.fail("hardware path needs ffmpeg and a VCN with HEVC "
                 f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
                 "(scripts/setup-transcode.sh installs both)")
@@ -546,6 +551,7 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
         common.kill_child_after_grace(proc)
         raise
     if rc != 0:
+        _encode_why = f"ffmpeg exit {rc}"
         for line in hidden:
             _tool("ffmpeg", line)
         return False
@@ -553,6 +559,7 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
         for line in hidden:
             _tool("ffmpeg", line)
         ui.fail(f"ffmpeg exited 0 but wrote no output: {out}")
+        _encode_why = "ffmpeg wrote no output"
         return False
     return True
 
@@ -575,6 +582,7 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     or the raw log. rc==0 alone is not success -- the output file must exist,
     because a rejected job init (bad argv) exits 0 writing nothing (the
     Conan FATAL)."""
+    global _encode_why
     if encoder == "vaapi":  # hardware path: ffmpeg, never HandBrakeCLI
         return _encode_vaapi(src, out, no_subs=no_subs, log=log, crop=crop)
     if encoder == "x265-fast":  # auto's CPU fallback; an item's own marker
@@ -641,6 +649,7 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         common.kill_child_after_grace(proc)
         raise
     if rc != 0:
+        _encode_why = f"handbrake exit {rc}"
         for line in hidden:
             _tool("handbrake", line)
         return False
@@ -651,6 +660,7 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
         for line in hidden:
             _tool("handbrake", line)
         ui.fail(f"handbrake exited 0 but wrote no output: {out}")
+        _encode_why = "handbrake wrote no output"
         return False
     return True
 
@@ -1125,14 +1135,16 @@ def run_transcode(args) -> int:
     # noise); the three _encode_part call sites read args.encoder, so the
     # resolved value is written back onto args
     encoder_line = args.encoder  # the opener's encoder; notes print under it, never above
+    encoder_note = ""  # plain's pre-frame `encode:` announcement of the resolved encoder
     if args.encoder in ("auto", "vaapi"):
         vcn = _vcn_probe()
         if vcn:
             args.encoder = "vaapi"
             encoder_line = ("VCN hevc_vaapi CQP 24"
                             + (" (low-power entrypoint)" if vcn["low_power"] else ""))
-            log.note("encode", "VCN hardware hevc_vaapi CQP 24"
-                     + (" (low-power entrypoint)" if vcn["low_power"] else ""), echo=False)
+            encoder_note = ("VCN hardware hevc_vaapi CQP 24"
+                            + (" (low-power entrypoint)" if vcn["low_power"] else ""))
+            log.note("encode", encoder_note, echo=False)
         elif args.encoder == "vaapi":
             ui.fail("-e vaapi but this box has no VA-API HEVC encode "
                     "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
@@ -1141,20 +1153,44 @@ def run_transcode(args) -> int:
         else:
             args.encoder = "x265-fast"
             encoder_line = "x265 fast preset (no VCN -- auto fell back)"
-            log.note("encode", "no VCN (vainfo) -- auto fell back to x265 (fast preset)",
-                     echo=False)
+            encoder_note = "no VCN (vainfo) -- auto fell back to x265 (fast preset)"
+            log.note("encode", encoder_note, echo=False)
     skipped: list[str] = []
     items, want_hit = _scan(input_dir, args.prefixes, skipped)
     # run warnings print under the opener (and replay), never above it
     notes = [f"no staged MKVs match: {w}" for w in args.prefixes if w not in want_hit]
-    if not items:
-        for line in notes + skipped:
+    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
+    ui.set_view(view)  # before the opener: the warnings under it reach the replay
+
+    def _open(scope: str) -> None:
+        """The run opener with the run's warnings under it, never above. TTY:
+        encoder and skip count in the box, each skip a `!` line straight
+        under it. Plain keeps its pre-frame lines: the `encode:` note and
+        `info` skips (and no opener for an empty scan)."""
+        if view.tty:
+            ui.opener("skive transcode", scope, f"encoder {encoder_line}"
+                      + (f" \u00b7 {len(skipped)} skipped (junk label)" if skipped else ""))
+            for line in skipped:
+                ui.warn(line)
+        else:
+            if items:
+                ui.opener("skive transcode", scope)
+            if encoder_note:
+                ui.info(f"encode: {encoder_note}")
+            for line in skipped:
+                ui.info(line)
+        for line in notes:
             ui.warn(line)
+
+    if not items:
+        _open("0 to encode")
         if args.prefixes:
             ui.warn("no matching MKVs to transcode")
-            return 1
-        ui.info(f"no MKVs in {input_dir}")
-        return 0
+        else:
+            ui.info(f"no MKVs in {input_dir}")
+        view.close()
+        ui.clear_view()
+        return 1 if args.prefixes else 0
 
     # main-feature fallback per movie = the _tNN group with the most bytes (a
     # split main's .pN halves sum; tie -> lowest number). Extras are never
@@ -1264,12 +1300,7 @@ def run_transcode(args) -> int:
     scope = (f"{len(units)} of {len(units) + deferred} this session (cap {args.limit}, "
              f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred" if deferred
              else f"{len(units)} to encode")  # nothing deferred: the cap changes nothing, say nothing
-    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
-    ui.set_view(view)  # before the opener: the warnings under it reach the replay
-    ui.opener("skive transcode", scope, f"encoder {encoder_line}"
-              + (f" \u00b7 {len(skipped)} skipped (junk label)" if skipped else ""))
-    for line in notes + skipped:
-        ui.warn(line)
+    _open(scope)
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
     pf_ready: dict[str, str] = {}  # staged src -> local dst, filled on completion
@@ -1445,7 +1476,7 @@ def run_transcode(args) -> int:
                     log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                     handled.add(i.path)
                     failed = 1
-                    _item_done(i.name, parts, False, f"encode ({args.encoder})")
+                    _item_done(i.name, parts, False, f"encode ({_encode_why})")
                 continue
 
             # -- recorded main with no staged title: loud skip, never a
@@ -1496,7 +1527,10 @@ def run_transcode(args) -> int:
                     # encodes -- all parts quarantine whole for a human
                     bad = _split_mismatch(siblings, ffprobe_exe)
                     if bad:
-                        log.note("guard", f"FAIL tracks differ: {bad} -- all parts to issues/movies")
+                        msg = f"tracks differ: {bad} -- all parts to issues/movies"
+                        log.note("guard", f"FAIL {msg}", echo=not view.tty)
+                        if view.tty:  # a fail line, so the summary replays the guard failure
+                            ui.fail(f"guard: {msg}")
                         for s in siblings:
                             _quarantine(s.path, s, issues_root, log)
                             handled.add(s.path)
@@ -1611,7 +1645,7 @@ def run_transcode(args) -> int:
                         handled.add(s.path)
                     failed = 1
                     _item_done(names if len(siblings) > 1 else i.name, parts, False,
-                               f"encode ({args.encoder})")
+                               f"encode ({_encode_why})")
                 continue
 
             # -- extras (non-main _t title, or an extras-disc title): the
@@ -1666,7 +1700,7 @@ def run_transcode(args) -> int:
                 log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                 handled.add(i.path)
                 failed = 1
-                _item_done(i.name, parts, False, f"encode ({args.encoder})")
+                _item_done(i.name, parts, False, f"encode ({_encode_why})")
 
         # leftover sweep (slice 03): prefetched files for units the live loop
         # never consumed (cap deferral, guard quarantine, normal end) drop
@@ -1702,7 +1736,9 @@ def run_transcode(args) -> int:
             n_failed += 1
         ui.fail(f"FATAL: {e}")
         if current is not None:
-            ui.item_end("fail", "failed: FATAL", _hms(int(time.monotonic() - item_t0)))
+            # the phase the exception broke (still open until fail_open_phase below)
+            ui.item_end("fail", f"failed: {log._phase_name or 'run'} ({e})",
+                        _hms(int(time.monotonic() - item_t0)))
         log.note("run", f"FATAL: {e}")
         log.fail_open_phase("FAIL")
     finally:

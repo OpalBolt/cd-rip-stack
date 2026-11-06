@@ -961,7 +961,7 @@ def test_auto_resolves_to_vaapi(env):
     assert not (env / "hb-calls.log").exists()
 
 
-def test_auto_falls_back_to_x265_fast(env, monkeypatch):
+def test_auto_falls_back_to_x265_fast(env, monkeypatch, capsys):
     """No VCN (the BC-250, or a box without the freeworld driver): auto falls
     back to x265 at the fast preset."""
     vid = env / "vid"
@@ -979,6 +979,9 @@ def test_auto_falls_back_to_x265_fast(env, monkeypatch):
     line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
     assert "--encoder-preset fast" in line
     assert "--crop" not in line
+    # plain keeps its encoder announcement, under the opener
+    assert capsys.readouterr().err.splitlines()[1] == \
+        "info  encode: no VCN (vainfo) -- auto fell back to x265 (fast preset)"
 
 
 def test_vaapi_required_but_absent(env, monkeypatch):
@@ -1706,9 +1709,10 @@ def test_session_cap_defers_beyond_limit(env, capsys):
 
 
 def test_opener_comes_first_skips_under_it_and_counter_counts_the_session(env, capsys):
-    """Nothing of the run prints above the opener: it states the session
-    against the queue and the encoder plus skip count, the junk-label skips
-    follow as warn lines, and the item counter counts this session (1/1)."""
+    """Plain: nothing of the run prints above the opener, which states the
+    session against the queue (no encoder, no skip count: TTY-only); the
+    junk-label skips keep their pre-frame `info` form, and the item counter
+    counts this session (1/1)."""
     vid = env / "vid"
     mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
     mk(vid, "rip/movies/Bbb (2002)/Bbb (2002)_t00.mkv", "BBB")
@@ -1719,9 +1723,8 @@ def test_opener_comes_first_skips_under_it_and_counter_counts_the_session(env, c
     assert rc == 0
     lines = capsys.readouterr().err.splitlines()
     assert lines[0] == ("info  skive transcode \u00b7 1 of 2 this session (cap 1, "
-                        "~15\u201320 min) \u00b7 1 deferred \u00b7 encoder x265 \u00b7 "
-                        "1 skipped (junk label)")
-    assert lines[1].startswith("warn  skip (junk label -- mid-rip or failed rename): ")
+                        "~15\u201320 min) \u00b7 1 deferred")
+    assert lines[1].startswith("info  skip (junk label -- mid-rip or failed rename): ")
     assert lines[2] == "info  1/1  Aaa (2001)"
 
 
@@ -1737,13 +1740,13 @@ def test_deferred_count_skips_a_missing_recorded_main(env, capsys):
 
     assert rc == 0
     first = capsys.readouterr().err.splitlines()[0]
-    assert first.startswith("info  skive transcode \u00b7 1 to encode \u00b7 ")
-    assert "deferred" not in first
+    assert first == "info  skive transcode \u00b7 1 to encode"  # nothing deferred
 
 
 def test_tty_run_warnings_print_under_the_opener_and_replay(env, monkeypatch):
-    """TTY: an unmatched prefix and an unreadable recorded main warn under
-    the opener box, never above it, and reach the summary's replay."""
+    """TTY: the encoder and skip count sit in the opener box; the junk skip
+    lands directly under it, then an unmatched prefix and an unreadable
+    recorded main warn -- never above it, all in the summary's replay."""
     import io
 
     from rich.console import Console
@@ -1756,6 +1759,7 @@ def test_tty_run_warnings_print_under_the_opener_and_replay(env, monkeypatch):
     vid = env / "vid"
     mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
     mk(vid, "rip/movies/Aaa (2001)/validation.json", _movie_doc(42))
+    mk(vid, "rip/movies/Aaa (2001)/d2/B1_t00.mkv", "JUNK")
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
@@ -1766,12 +1770,92 @@ def test_tty_run_warnings_print_under_the_opener_and_replay(env, monkeypatch):
     assert rc == 0
     lines = buf.getvalue().splitlines()
     assert lines[0].startswith("\u256d\u2500 skive transcode")
+    assert "encoder x265 \u00b7 1 skipped (junk label)" in lines[2]
     box_end = next(n for n, l in enumerate(lines) if l.startswith("\u2570"))
-    assert lines[box_end + 1] == "! no staged MKVs match: Nope (2999)"
-    assert lines[box_end + 2].startswith("! validation: ") and "unreadable main 42" in lines[box_end + 2]
+    assert lines[box_end + 1].startswith("! skip (junk label -- mid-rip or failed rename): ")
+    assert lines[box_end + 2] == "! no staged MKVs match: Nope (2999)"
+    assert lines[box_end + 3].startswith("! validation: ") and "unreadable main 42" in lines[box_end + 3]
     replay = view.replay_lines()
-    assert replay[0] == "warn  no staged MKVs match: Nope (2999)"
-    assert "unreadable main 42" in replay[1]
+    assert replay[0].startswith("warn  skip (junk label")
+    assert replay[1] == "warn  no staged MKVs match: Nope (2999)"
+    assert "unreadable main 42" in replay[2]
+
+
+def _tty_run(monkeypatch, args, width=200):
+    """run_transcode on a TTY seam view; returns (rc, scrollback lines, view)."""
+    import io
+
+    from rich.console import Console
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    buf = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(
+        file=buf, force_terminal=True, color_system=None, width=width, theme=ui.THEME,
+        highlight=False, emoji=False))
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        rc = transcode.run_transcode(args)
+    finally:
+        ui.clear_view()
+    return rc, buf.getvalue().splitlines(), view
+
+
+def test_all_junk_scan_still_opens_tty_and_stays_plain_piped(env, monkeypatch, capsys):
+    """An all-junk scan: TTY opens the box (0 to encode, the skip count) with
+    the skip under it; plain keeps its pre-frame lines, no opener."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Baz (2003)/d2/B1_t00.mkv", "JUNK")
+
+    rc = transcode.run_transcode(Args())
+    plain = capsys.readouterr().err.splitlines()
+    assert rc == 0
+    assert plain[0].startswith("info  skip (junk label -- mid-rip or failed rename): ")
+    assert plain[1].startswith("info  no MKVs in ") and len(plain) == 2
+
+    rc, lines, _ = _tty_run(monkeypatch, Args())
+    assert rc == 0
+    assert lines[0].startswith("\u256d\u2500 skive transcode")
+    assert "0 to encode" in lines[1] and "1 skipped (junk label)" in lines[2]
+    assert lines[4].startswith("! skip (junk label -- mid-rip or failed rename): ")
+    assert lines[5].startswith("\u00b7 no MKVs in ")
+    assert ui.view() is None
+
+
+def test_tty_encode_failure_closes_with_phase_and_reason(env, monkeypatch):
+    vid = env / "vid"
+    mk(vid, "rip/movies/Bad (2001)/Bad (2001)_t00.mkv", "FAILME")
+
+    rc, lines, _ = _tty_run(monkeypatch, Args())
+
+    assert rc == 1
+    assert any(l.startswith("\u2570\u2500 \u2717 failed: encode (handbrake exit 3) ")
+               for l in lines)
+
+
+def test_tty_exception_closes_with_phase_and_reason(env, monkeypatch):
+    vid = env / "vid"
+    mk(vid, "rip/movies/Bad (2001)/Bad (2001)_t00.mkv", "BAD")
+
+    def broken_copy(src, dst):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(transcode, "_copy2", broken_copy)
+    rc, lines, _ = _tty_run(monkeypatch, Args())
+
+    assert rc == 1
+    assert any(l.startswith("\u2570\u2500 \u2717 failed: copy (disk gone) ") for l in lines)
+
+
+def test_tty_guard_failure_reaches_the_replay(env, monkeypatch):
+    vid = env / "vid"
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "PART-ONE")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "TRACKS-DIFFER")
+
+    rc, lines, view = _tty_run(monkeypatch, Args())
+
+    assert rc == 1
+    assert any(r.startswith("fail  guard: tracks differ: ") for r in view.replay_lines())
 
 
 def test_interrupt_closes_the_item_frame_before_the_summary_box(env, monkeypatch):

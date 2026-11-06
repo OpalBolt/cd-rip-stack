@@ -55,8 +55,8 @@ _SYMBOL_STYLE = {"ok": "ok", "info": "dim", "warn": "warn", "fail": "fail"}
 
 _print_lock = threading.Lock()
 _view = None  # the run's RunView while one is live (common.VERBOSITY precedent)
-# TTY: an item frame is open, so lines print behind its `│` gutter; reset by
-# run_summary so a crashed run never leaks a gutter into the next output
+# TTY: an item frame is open, so lines print behind its `│` gutter; closed by
+# clear_view and run_summary so a crashed run never leaks a gutter onward
 _frame_open = False
 _scope = ""  # the opener's scope line: the live box's text when it has no lane
 
@@ -68,6 +68,7 @@ def set_view(view) -> None:
 
 def clear_view() -> None:
     global _view
+    _neutral_close()  # a run that died before run_summary never leaks its gutter
     _view = None
 
 
