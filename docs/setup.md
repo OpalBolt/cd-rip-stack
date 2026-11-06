@@ -117,9 +117,10 @@ Logs live on the share each command works on: video commands (`rip movie`,
 
 Verbosity (`-v`, `-vv`) gates the console's tool lines only — both logs are
 always written. Long commands keep every event in scrollback with a symbol
-(`✓ · ! ✗`) and redraw a footer of at most two lines beneath it. Piped, or
-with `NO_COLOR` or `TERM=dumb`, they print plain tagged lines (`info`, `ok`,
-`warn`, `fail`) with no escape codes. The `skive transcode` section of
+(`✓ · ! ✗`) and redraw a footer of at most two lines beneath it. `NO_COLOR`
+and `TERM=dumb` only affect the colour. Piped or redirected, they print plain
+tagged lines (`info`, `ok`, `warn`, `fail`) with no escape codes and no
+footer. The `skive transcode` section of
 [transcode](transcode.md) shows both forms.
 
 Related: [nas-layout](nas-layout.md) · [video](video.md) · [music](music.md)

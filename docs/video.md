@@ -103,9 +103,9 @@ A title left outside the stated range lists as `→ extra`.
 
 ## The console
 
-Every prompt has one shape: the question, the default in brackets, the
-choices dimmed, then an answer on a `›` line. A destructive confirm defaults
-to No:
+Every prompt has one shape: the question, the default in brackets when it
+has one (the sync-sd picker has none), the choices dimmed, then an answer on
+a `›` line. A destructive confirm defaults to No:
 
 ```text
 delete 4 staged files for Andor (2022)? [y/N]
@@ -128,8 +128,9 @@ progress, with a progress bar and ETA. Line two shows the disc total:
 
 The run ends with the footer gone, a summary table of titles, and one result
 line (`✓ 6 ok · 1h02m`). After a failure, the line names the run log to read.
-Piped, or with `NO_COLOR` or `TERM=dumb`, the same events print as plain
-tagged lines (`info`, `ok`, `warn`, `fail`) with no footer. The
+`NO_COLOR` and `TERM=dumb` only affect the colour. Piped or redirected, the
+same events print as plain tagged lines (`info`, `ok`, `warn`, `fail`) with
+no footer. The
 [transcode](transcode.md#the-console) page shows both forms in full.
 
 ## Play-all-only discs and the chapter split

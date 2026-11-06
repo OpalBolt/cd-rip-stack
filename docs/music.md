@@ -26,7 +26,7 @@ Several MusicBrainz releases match the disc → skive lists them, asks for a
 number, re-runs cyanrip with `-R <n>` (blank answer aborts); no release at
 all → the submit-this-disc URL goes into the run log. On a terminal the
 console opens with one line (`skive rip music · <album> · offset 6`), then a
-`▸ 7/12  Paranoid Android` heading per track with its events indented beneath.
+`▸ 7/12  <title>` heading per track with its events indented beneath.
 A footer redraws under the scroll with the track counter, title, offset and a
 progress bar:
 
@@ -34,8 +34,18 @@ progress bar:
  track 7/12  Paranoid Android · offset 6  ━━━━━━━━━━━━          61%
 ```
 
-Piped, it prints plain tagged lines (`info  7/12  Paranoid Android`). `-v` adds
-cyanrip tool lines and `-vv` passes cyanrip raw. The run ends with a per-track
+cyanrip prints a track's title only after the track finishes. A track that
+cyanrip reported progress for already has its heading by then, so the heading
+reads `▸ 7/12  track 7` and the title shows only in the footer. The heading
+carries the title (`▸ 7/12  Paranoid Android`) when no progress line came
+first. Piped, the same two forms print as plain tagged lines:
+
+```text
+info  7/12  Paranoid Android
+info  7/12  track 7
+```
+
+`-v` adds cyanrip tool lines and `-vv` passes cyanrip raw. The run ends with a per-track
 summary table (track, duration, result) and one result line. A clean rip just
 finishes — eject and swap discs by hand. Ctrl-C stops the child cleanly, logs `interrupted`, exits 130.
 

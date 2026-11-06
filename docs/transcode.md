@@ -161,60 +161,87 @@ one line that states its scope. Each item then gets a bold `▸` heading, and
 its events indent beneath it:
 
 ```text
-skive transcode · 3 to encode
-▸ 1/3  Rogue One (2016)
-  · copy 5744 MB at 64 MB/s  1m30s
-  ✓ encoded  41m12s
-▸ 2/3  Arrival (2016)
-  ! subtitle track 3 barren, dropped
-  ✗ Blade Runner (1982): encode failed (ffmpeg exit 1)
+skive transcode · 2 to encode
+▸ 1/2  Rogue One (2016)
+  · copying Rogue One (2016)_t00.mkv to local temp...
+  · copied in 1m30s (5744 MB at 63 MB/s)
+  · subtitle pass: 3 subtitle track(s), 2 kept: Rogue One (2016)_t00.mkv
+  · OCR eng track 3...
+  · OCR dan track 4...
+  · barren dan (track 4): OCR yielded 0 cues -- dropped
+  ✓ Rogue One (2016)_t00.mkv: copy 1m30s + subs 12s + detect 8s + encode 41m12s
+▸ 2/2  Blade Runner (1982)
+  · copied in 3m02s (6100 MB at 33 MB/s)
+  · no crop -- detection failed
+  ✗ Blade Runner (1982)_t01.mkv: copy 3m02s + subs 4s + detect 5s + encode 7m40s -- FAILED
 ```
+
+Each item ends on one line that names its file and lists every phase with its
+time. A barren subtitle track is an `info` line in the item, not a warning.
 
 Under the scroll, a footer of at most two lines redraws in place. Line one
 holds the position, item, phase, a progress bar and the ETA. Line two holds
 the prefetch copy and the perf line (CPU, load, temperatures):
 
 ```text
- 2/3  Arrival (2016) · encode  ━━━━━━━━              42%  ETA 31m
-      prefetch Blade Runner (1982).mkv 40%      CPU 62% · cpu 78° · gpu 61°
+ 1/2  Rogue One (2016) · encode  ━━━━━━━━              42%  ETA 31m
+      prefetch Blade Runner (1982)_t01.mkv  40%      CPU 62% · cpu 78° · gpu 61°
 ```
 
 The bar fills with colour on a terminal. Progress shows in the footer
 only and never prints to scrollback.
 
 When the run ends, the footer disappears and the run summary prints. It
-replays the warnings and failures, shows a borderless table of timings and
-results, and ends on one result line. After a failure the result line names
-the run log and the raw log to read:
+replays the warnings and failures (not the `info` lines, so a barren track
+does not appear again), shows a borderless table of timings and results, and
+ends on one result line. After a failure the result line names the run log
+and the raw log to read:
 
 ```text
-! subtitle track 3 barren, dropped
-✗ Blade Runner (1982): encode failed (ffmpeg exit 1)
+✗ Blade Runner (1982)_t01.mkv: copy 3m02s + subs 4s + detect 5s + encode 7m40s -- FAILED
 
-  Item                  copy    merge   subs   encode   total    result
- ─────────────────────────────────────────────────────────────────────────
-  Rogue One (2016)      1m30s   -       12s    41m12s   42m54s   ✓ ok
-  Blade Runner (1982)   3m02s   -       -      7m40s    10m42s   ✗ failed
+  Item                          copy    merge   subs   encode   total    result
+ ─────────────────────────────────────────────────────────────────────────────────
+  Rogue One (2016)_t00.mkv      1m30s   -       12s    41m12s   43m02s   ✓ ok
+  Blade Runner (1982)_t01.mkv   3m02s   -       4s     7m40s    10m51s   ✗ failed
 
 ✗ 1 failed · 1 ok · 1h36m — see /mnt/videos/logs/rip.jsonl (run 93721d6e), raw /mnt/videos/logs/raw/93721d6e.jsonl
 ```
 
+The `total` column sums every phase, including `detect`, which has no column
+of its own.
+
 After Ctrl+C the footer goes, in-flight items show `✗ interrupted`, and the
 result line reads `✗ interrupted · 2 ok · 1h12m — partial deleted`.
 
-Piped or redirected output, `NO_COLOR` and `TERM=dumb` give plain lines with
+`NO_COLOR` and `TERM=dumb` only affect the colour: a terminal keeps the
+symbols and the footer. Piped or redirected output gives plain lines with
 no escape codes. Each line starts with a padded word instead of a symbol
-(`ok`, `info`, `warn`, `fail`). There is no indent and no footer. Progress
-prints as throttled lines:
+(`ok`, `info`, `warn`, `fail`). There is no indent, no footer and no
+replay. Progress prints as lines instead: a copy logs `info  10%  (574/5744 MB)`
+every 10% and the encode a throttled tool line, both left out of this run:
 
 ```text
-info  skive transcode · 3 to encode
-info  1/3  Rogue One (2016)
-info  copy 5744 MB at 64 MB/s  1m30s
-ok    encoded  41m12s
-info  2/3  Arrival (2016)
-warn  subtitle track 3 barren, dropped
-fail  Blade Runner (1982): encode failed (ffmpeg exit 1)
+info  skive transcode · 2 to encode
+info  1/2  Rogue One (2016)
+info  copying Rogue One (2016)_t00.mkv to local temp...
+info  copied in 1m30s (5744 MB at 63 MB/s)
+info  subtitle pass: 3 subtitle track(s), 2 kept: Rogue One (2016)_t00.mkv
+info  OCR eng track 3...
+info  OCR dan track 4...
+info  barren dan (track 4): OCR yielded 0 cues -- dropped
+ok    Rogue One (2016)_t00.mkv: copy 1m30s + subs 12s + detect 8s + encode 41m12s
+info  2/2  Blade Runner (1982)
+info  copied in 3m02s (6100 MB at 33 MB/s)
+info  no crop -- detection failed
+fail  Blade Runner (1982)_t01.mkv: copy 3m02s + subs 4s + detect 5s + encode 7m40s -- FAILED
+
+  Item                          copy    merge   subs   encode   total    result
+ ─────────────────────────────────────────────────────────────────────────────────
+  Rogue One (2016)_t00.mkv      1m30s   -       12s    41m12s   43m02s   ok
+  Blade Runner (1982)_t01.mkv   3m02s   -       4s     7m40s    10m51s   failed
+
+fail  1 failed · 1 ok · 1h36m — see /mnt/videos/logs/rip.jsonl (run 93721d6e), raw /mnt/videos/logs/raw/93721d6e.jsonl
 ```
 
 Tool lines show at `-v`/`-vv` (verbosity gates the console only).

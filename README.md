@@ -44,18 +44,21 @@ They end on a summary table and one result line.
 ✗ 1 failed · 1 ok · 1h36m — see /mnt/videos/logs/rip.jsonl (run 93721d6e)
 ```
 
-Piped output, `NO_COLOR` and `TERM=dumb` give plain lines with no escape
-codes. Each line starts with a padded word instead of a symbol:
+On a terminal `NO_COLOR` and `TERM=dumb` only affect the colour: the symbols
+and the footer stay. Piped or redirected output gives plain lines with no escape
+codes and no footer. Each line starts with a padded word instead of a symbol:
 
 ```text
-info  1/3  Rogue One (2016)
-ok    encoded  41m12s
-warn  subtitle track 3 barren, dropped
-fail  Blade Runner (1982): encode failed (ffmpeg exit 1)
+info  1/2  Rogue One (2016)
+info  copied in 1m30s (5744 MB at 63 MB/s)
+info  barren dan (track 4): OCR yielded 0 cues -- dropped
+ok    Rogue One (2016)_t00.mkv: copy 1m30s + subs 12s + detect 8s + encode 41m12s
+fail  Blade Runner (1982)_t01.mkv: copy 3m02s + subs 4s + detect 5s + encode 7m40s -- FAILED
 ```
 
-Every prompt shows the default in brackets and reads the answer on a `›`
-line. The [transcode](docs/transcode.md#the-console) page shows a full run.
+Every prompt reads the answer on a `›` line. A prompt that has a default
+shows it in brackets (`[1]`, `[y/N]`); a few, like the sync-sd picker, have
+none. The [transcode](docs/transcode.md#the-console) page shows a full run.
 
 ## Docs
 
