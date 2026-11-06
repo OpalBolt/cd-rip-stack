@@ -653,6 +653,26 @@ def test_multiple_releases_miss_lists_candidates_and_rerun_command(tmp_path, cap
     assert "ok" not in rip
 
 
+def test_miss_rerun_command_quotes_flags_for_the_shell(tmp_path, capsys):
+    """The re-run command round-trips through a shell: a flag value with a
+    space stays one argument."""
+    import shlex
+    process = Mock(stdout=iter(MULTIPLE_RELEASES))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit):
+            rip_music(FakeArgs(offset="6", cyanrip_flags=["-D", "My Album"]))
+
+    err = capsys.readouterr().err
+    line = next(l for l in err.splitlines() if "skive rip music 6" in l)
+    command = line[line.index("skive rip music"):line.index("<n>") + 3]
+    assert shlex.split(command) == ["skive", "rip", "music", "6", "--",
+                                    "-D", "My Album", "-R", "<n>"]
+
+
 def test_repo_sweep_no_local_paths():
     """Test no ~/media/audio paths in skive/, config/, windows/ (not lib, not README)."""
     excluded = {".git", ".venv", "uv.lock", "tests/__pycache__", "skive/__pycache__"}
@@ -1255,7 +1275,7 @@ def test_progress_stream_drives_heading_and_footer_at_default_verbosity(monkeypa
     assert "progress - 50.00%" not in err  # not in scrollback, nor in the failure replay
     assert "track 2/4" in footer
     assert "offset +6" in footer
-    assert "38%" in footer  # (1 + 0.5) / 4 of the disc
+    assert "50%" in footer  # cyanrip's track percent, not a disc estimate
 
 
 def test_album_without_artist_opens_before_track_work(monkeypatch, capsys):
@@ -1357,6 +1377,7 @@ def test_disc_eta_reaches_the_footer(monkeypatch, capsys):
     finally:
         ui.clear_view()
 
+    assert "63%" in footer  # track 3's own percent, not ~16% of the disc
     assert "ETA 27m" in footer
 
 

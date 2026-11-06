@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 import sys
 import subprocess
 import time
@@ -151,9 +152,9 @@ def rip_music(args) -> None:
         n_ok = sum(row[2] == "ok" for row in rows)
         n_failed = sum(row[2] == "failed" for row in rows)
         if miss:
-            ui.musicbrainz_miss(miss, " ".join(
-                ["skive rip music", args.offset, "--", *(args.cyanrip_flags or []),
-                 "-R", "<n>"]))
+            ui.musicbrainz_miss(miss, shlex.join(
+                ["skive", "rip", "music", args.offset, "--", *(args.cyanrip_flags or [])])
+                + " -R <n>")
             ui.result_line("fail", _miss_result(miss),
                            elapsed=int((log._now() - log._start).total_seconds()))
         else:
@@ -339,10 +340,6 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         headed_tracks.add(number)
         set_footer(number, title, pct)
 
-    def track_pct(number: int, fraction: float = 1.0) -> float:
-        position = track_total or number
-        return min(100.0, (number - 1 + fraction) * 100 / position)
-
     try:
         if process.stdout is not None:
             verbose = common.VERBOSITY
@@ -388,20 +385,20 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                     emit_opener()  # before any track work begins
                 if progress:
                     number = int(progress.group(1))
-                    fraction = float(progress.group(2)) / 100
+                    pct = float(progress.group(2))  # cyanrip's own track percent
                     eta = progress.group(3)
                     outcomes.setdefault(number, "interrupted")  # in flight
                     if number not in headed_tracks:
-                        show_track(number, f"track {number}", track_pct(number, fraction))
+                        show_track(number, f"track {number}", pct)
                     elif on_tty:
-                        view.progress(track_pct(number, fraction), eta)
+                        view.progress(pct, eta)
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
                     if pending_track in headed_tracks:
-                        set_footer(pending_track, title, track_pct(pending_track))
+                        set_footer(pending_track, title, 100.0)
                     else:
-                        show_track(pending_track, title, track_pct(pending_track))
+                        show_track(pending_track, title, 100.0)
                     pending_track = None
                 if header is not None:
                     field = album_header_field(stripped)
@@ -417,18 +414,17 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                 done = _TRACK_DONE.match(stripped)
                 if done:
                     if pending_track is not None and pending_track not in headed_tracks:
-                        show_track(pending_track, f"track {pending_track}",
-                                   track_pct(pending_track))
+                        show_track(pending_track, f"track {pending_track}", 100.0)
                     pending_track = int(done.group(1))
                     outcomes[pending_track] = "ok"
                     if on_tty:
-                        view.progress(track_pct(pending_track), eta)
+                        view.progress(100.0, eta)
                 captured.append(line)
 
         rc = process.wait()
         emit_opener()
         if pending_track is not None and pending_track not in headed_tracks:
-            show_track(pending_track, f"track {pending_track}", track_pct(pending_track))
+            show_track(pending_track, f"track {pending_track}", 100.0)
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: forward to the child, grace window, then kill,
         # and let the interrupt rip_music's handler log status=interrupted.

@@ -22,10 +22,11 @@ skips skive's online gate, so an offline rip still runs.
 
 The share mounts on demand and cyanrip runs inside `/mnt/music/rip/cd/`,
 writing each album as final-named FLACs into its own `<album>/` subfolder.
-Several MusicBrainz releases match the disc → skive lists them, asks for a
-number, re-runs cyanrip with `-R <n>` (blank answer aborts); no release at
-all → the submit-this-disc URL goes into the run log. On a terminal the
-console opens with one line (`skive rip music · <album> · offset 6`), then a
+If MusicBrainz can't name the disc, the rip fails with a miss box and never
+prompts. Several releases match → the box lists the candidates; re-run by hand
+with the printed command (`skive rip music 6 -- -R <n>`). No release at all →
+the box gives the attach link: attach the disc to its release, then re-run. On
+a terminal the console opens with one line (`skive rip music · <album> · offset 6`), then a
 `▸ 7/12  <title>` heading per track with its events indented beneath.
 A footer redraws under the scroll with the track counter, title, offset and a
 progress bar:
