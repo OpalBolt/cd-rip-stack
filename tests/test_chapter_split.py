@@ -629,3 +629,23 @@ def test_split_combined_interrupt_after_unlink_keeps_pieces(
     assert not combined.exists()
     notes = _split_notes(log)
     assert notes == ["3 episodes cut — combined deleted"]
+
+
+def test_boundary_loop_prints_under_a_seam_view(monkeypatch):
+    """The boundary table and fix prompt print normally while a seam run
+    view is suspended (ADR 0012: interactive surfaces never print under the
+    Live region), and the loop still answers."""
+    from skive import ui
+
+    con, _p = _stage(monkeypatch, [""])
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
+                              DOWNTON_DURATION, DOWNTON_RUNTIMES)
+    finally:
+        ui.clear_view()
+    assert spans == SUGGESTED
+    text = con.export_text()
+    assert "split?" in text
+    assert "S01E01" in text

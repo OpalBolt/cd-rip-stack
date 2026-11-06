@@ -46,7 +46,7 @@ def test_interrupted_exit_purges_junk_keeps_renamed_exits_130(tmp_path, capsys):
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
     assert err.count("\n") == 1
-    assert "fail  interrupted — partial deleted, kept 1 titles" in err  # spill: slice-06 ui.fail convention
+    assert "fail  interrupted — partial deleted, kept 1 titles" in err
 
 
 def test_interrupted_exit_leaves_raw_log_for_evidence(tmp_path):

@@ -335,3 +335,23 @@ def test_sampler_tick_drives_view_and_clears(tmp_path):
     sampler.tick()
     assert view._perf[0] == "CPU 50% \u00b7 cpu 78\u00b0C"
     assert "CPU 50%" in view.render()
+
+
+def test_module_suspend_delegates_to_registered_view():
+    """ui.suspend() delegates to the registered view's suspend and is a
+    plain no-op context when no view is registered (rip_tv/chapter_split
+    prompts print normally either way)."""
+    import contextlib
+
+    v = ui.RunView(tty=True, live=False)
+    calls = []
+    v.suspend = lambda: calls.append(1) or contextlib.nullcontext()
+    ui.set_view(v)
+    try:
+        with ui.suspend():
+            pass
+    finally:
+        ui.clear_view()
+    assert calls == [1]
+    with ui.suspend():  # no view: still a valid context
+        pass

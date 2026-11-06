@@ -38,6 +38,18 @@ def view():
     return _view
 
 
+@contextlib.contextmanager
+def suspend():
+    """Suspend the registered run view while an interactive prompt or table
+    prints normally (scrollback); redraw after. A no-op `with` when no view
+    is registered (fallback, tests) or the view holds no Live."""
+    if _view is None:
+        yield
+        return
+    with _view.suspend():
+        yield
+
+
 class RunView:
     """One instance per run. TTY mode: rich Live with stacked panels
     (status top, then a background panel only while concurrent activity

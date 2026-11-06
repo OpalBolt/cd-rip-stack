@@ -3,7 +3,7 @@
 import os
 import sys
 
-from skive import ui  # spill: slice-06 event convention (fail  interrupted ...)
+from skive import ui
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,7 +75,7 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     minlength = int(os.environ.get("RIP_MINLENGTH", "120"))
     media, label, device = sniff_disc(disc=disc)
     if not media:
-        print("skive: no disc detected in the drive — insert one and re-run.", file=sys.stderr)
+        ui.fail("no disc detected in the drive — insert one and re-run.")
         sys.exit(1)
     # makemkvcon's DRV line carries the real device; only fall back to the
     # disc:N -> /dev/srN guess when the line printed no path (with parallel
@@ -86,11 +86,11 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
         if args.verified:
             log.note("media", f"recordable media ({media}) — override by --verified")
         else:
-            print(f"skive: RECORDABLE media in the drive ({media}) — this looks like a burned copy, not a", file=sys.stderr)
-            print("  pressed original (thrift-store discs are often bootlegs). check the disc by eye: burns", file=sys.stderr)
-            print("  have purple/green/blue dye and often a stick-on or inkjet label; originals are silver", file=sys.stderr)
-            print("  with printed artwork. genuinely-original recordable releases exist (e.g. Warner Archive", file=sys.stderr)
-            print("  DVD-R) — if you verify it is one, re-run with --verified.", file=sys.stderr)
+            ui.warn(f"RECORDABLE media in the drive ({media}) — this looks like a burned copy, not a")
+            ui.warn("pressed original (thrift-store discs are often bootlegs). check the disc by eye: burns")
+            ui.warn("have purple/green/blue dye and often a stick-on or inkjet label; originals are silver")
+            ui.warn("with printed artwork. genuinely-original recordable releases exist (e.g. Warner Archive")
+            ui.warn("DVD-R) — if you verify it is one, re-run with --verified.")
             sys.exit(1)
     else:
         log.note("media", f"media={media}")
@@ -113,7 +113,7 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
         try:
             scan_durations = scanner(disc, device)
         except RuntimeError as e:
-            print(f"skive: fast scan failed ({e}) — falling back to the full MakeMKV scan", file=sys.stderr)
+            ui.warn(f"fast scan failed ({e}) — falling back to the full MakeMKV scan")
             log.note("scan", "fast scan failed — full-scan fallback")
         else:
             if ambiguous(scan_durations):
@@ -121,7 +121,7 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
                 # that the fast path's duration join would mis-handle — discard
                 # the fast result and take the full scan path (same code path
                 # as the RuntimeError fallback below).
-                print("skive: fast scan found duplicate-duration titles — escalating to the full MakeMKV scan", file=sys.stderr)
+                ui.warn("fast scan found duplicate-duration titles — escalating to the full MakeMKV scan")
                 log.note("scan", "duplicate durations — full-scan escalation")
                 scan_durations = None
             else:
@@ -138,7 +138,7 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
             resolved_kind, tmdb_id = parse_tmdbid(args.tmdbid, kind)
             pick = fetch_by_id(resolved_kind, tmdb_id)
         except (ValueError, RuntimeError) as e:
-            print(f"skive: TMDB resolve failed: {e}", file=sys.stderr)
+            ui.warn(f"TMDB resolve failed: {e}")
             sys.exit(1)
     else:
         pick = search_loop(kind, prefill=label)
@@ -276,9 +276,9 @@ def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick,
                 continue  # a different film under this name — gate (b)'s case
             duplicates.append(folder)
     if duplicates:
-        print(f'"{display}" is already ripped:', file=sys.stderr)
+        ui.warn(f'"{display}" is already ripped:')
         for folder in duplicates:
-            print(f"  {folder}", file=sys.stderr)
+            ui.warn(f"  {folder}")
         if not _confirm("already ripped — continue? (y/N): "):
             _refuse(log, f'"{display}" already ripped in '
                          f"{len(duplicates)} folder(s) — nothing ripped")
@@ -312,12 +312,11 @@ def tv_season_gate(videos_mnt: Path, log: RipLog, display: str, season: int) -> 
         if season in seasons and state != "staging":
             clashing.append(folder)
         elif seasons:
-            print(f"already on disk: {state} {fmt_seasons(seasons)} — this disc is {label}",
-                  file=sys.stderr)
+            ui.info(f"already on disk: {state} {fmt_seasons(seasons)} — this disc is {label}")
     if clashing:
-        print(f'"{display}" {label} is already ripped:', file=sys.stderr)
+        ui.warn(f'"{display}" {label} is already ripped:')
         for folder in clashing:
-            print(f"  {folder}", file=sys.stderr)
+            ui.warn(f"  {folder}")
         if not _confirm("already ripped — continue? (y/N): "):
             _refuse(log, f'"{display}" {label} already ripped — nothing ripped')
 

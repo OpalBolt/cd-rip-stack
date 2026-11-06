@@ -15,6 +15,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+from skive import ui
 from skive.tv_match import audit_cell
 
 console = Console()
@@ -295,29 +296,30 @@ def boundary_loop(season: int, lo: int, hi: int, spans: list[tuple[int, int]],
     """
     n = len(chapter_starts)
     start_chs = [s for s, _ in spans]
-    while True:
-        note = boundary_note(boundary_flags(start_chs, chapter_starts,
-                                            ep_runtimes, lo, hi))
-        if note:
-            console.print(note)
-        console.print(boundary_table(season, lo, spans_from_starts(start_chs, n),
-                                     chapter_starts, duration_s, ep_runtimes))
-        console.print("split? (Enter=cut at these boundaries, fixes like 2=14, "
-                      "q=keep combined): ", end="")
-        ans = (Prompt.ask("") or "").strip()
-        if not ans:
-            return spans_from_starts(start_chs, n)
-        if ans.lower() == "q":
-            return None
-        fix = parse_fix(ans)
-        if fix is None:
-            console.print(f"cannot read fix row {ans!r} — want e=ch like 2=14")
-            continue
-        why = fix_rejection(fix, start_chs, n, lo, hi)
-        if why:
-            console.print(why)
-            continue
-        start_chs[fix[0] - lo] = fix[1]
+    with ui.suspend():  # the boundary table prints normally; the view redraws after
+        while True:
+            note = boundary_note(boundary_flags(start_chs, chapter_starts,
+                                                ep_runtimes, lo, hi))
+            if note:
+                console.print(note)
+            console.print(boundary_table(season, lo, spans_from_starts(start_chs, n),
+                                         chapter_starts, duration_s, ep_runtimes))
+            console.print("split? (Enter=cut at these boundaries, fixes like 2=14, "
+                          "q=keep combined): ", end="")
+            ans = (Prompt.ask("") or "").strip()
+            if not ans:
+                return spans_from_starts(start_chs, n)
+            if ans.lower() == "q":
+                return None
+            fix = parse_fix(ans)
+            if fix is None:
+                console.print(f"cannot read fix row {ans!r} — want e=ch like 2=14")
+                continue
+            why = fix_rejection(fix, start_chs, n, lo, hi)
+            if why:
+                console.print(why)
+                continue
+            start_chs[fix[0] - lo] = fix[1]
 
 
 def split_combined(combined: Path, targets: dict[int, Path], season: int,
@@ -366,7 +368,7 @@ def split_combined(combined: Path, targets: dict[int, Path], season: int,
         if suggested[0] is None:
             log.note("split", f"skipped: {suggested[1]} — combined kept")
             return
-        console.print(f"chapter split — {combined.name}")
+        ui.info(f"chapter split — {combined.name}")
         confirmed = boundary_loop(season, lo, hi, suggested[0], chapter_starts,
                                   duration_s, ep_runtimes)
         if confirmed is None:

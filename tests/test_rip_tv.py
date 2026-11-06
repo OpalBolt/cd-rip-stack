@@ -1688,7 +1688,7 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
-    assert "fail  interrupted — partial deleted, kept 1 titles" in err  # spill: slice-06 ui.fail convention
+    assert "fail  interrupted — partial deleted, kept 1 titles" in err
     assert err.count("fail  interrupted") == 1
 
 
@@ -2147,5 +2147,205 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
-    assert "fail  interrupted — partial deleted, kept 0 titles" in err  # spill: slice-06 ui.fail convention
+    assert "fail  interrupted — partial deleted, kept 0 titles" in err
+    assert err.count("fail  interrupted") == 1
+
+
+# --- Run view wiring (slice 07: suspend + per-episode run summary) ----------
+
+
+def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
+               rename=None):
+    """Drive rip_tv over a full-scan disc with the REAL console (capsys
+    captures what a user sees) and a seam run view set by the caller.
+    Returns the SystemExit code."""
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    episodes = episodes or [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]
+    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 3890,
+            "Show (2000)_S01E03.mkv": 3650}
+
+    def fake_rename(_display, _dir, _season, _assignment):
+        for name in durs:
+            (show_dir / name).write_bytes(b"x" * 1024)
+
+    def fake_run(cmd, **k):
+        return Mock(stdout=f"{durs.get(Path(cmd[-1]).name, 600.0)}\n")
+
+    real_post = post_rip_validation
+    prompt = MagicMock()
+    prompt.ask.side_effect = answers
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.fast_scan_dvd",
+                  side_effect=RuntimeError("tests force the full-scan fallback")), \
+            patch("skive.rip_common.scan_disc",
+                  return_value=("DVD-ROM", "", titles or _gk_titles())), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                title="Show", year="2000", original_language="en", type="tv", id="5")), \
+            patch("skive.rip_tv.Prompt", prompt), \
+            patch("skive.rip_tv.fetch_season", return_value=episodes), \
+            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
+            patch("skive.rip_tv.rip_titles", return_value=0), \
+            patch("skive.rip_tv.rename_tv", side_effect=rename or fake_rename), \
+            patch("skive.rip_tv.split_combined"), \
+            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
+            patch("skive.rip_tv.post_rip_validation",
+                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
+        with pytest.raises(SystemExit) as e:
+            rip_tv(FakeArgs())
+        return e.value.code
+
+
+def test_rip_tv_prompts_print_under_a_seam_view(tmp_path, monkeypatch, capsys):
+    """The season prompt, the episode overview and the confirm table/prompt
+    print to stdout (scrollback) while a seam view is set — every
+    interactive surface suspends the view — and the run completes."""
+    from skive import ui
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        code = _view_flow(tmp_path, monkeypatch, ["", "", ""])
+    finally:
+        ui.clear_view()
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "season [1] (0 = specials)" in out
+    assert "episodes on this disc" in out
+    assert "ok? (Enter=rip, fixes like 3=7" in out
+
+
+def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, capsys):
+    """The run summary: per staged episode rows (SnnEnn × duration × size ×
+    result) plus the ok/failed count, printed after the view closed."""
+    from skive import ui
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    seen = []
+    real = ui.run_summary
+    monkeypatch.setattr(ui, "run_summary",
+                        lambda *a, **k: seen.append(view._closed) or real(*a, **k))
+    try:
+        code = _view_flow(tmp_path, monkeypatch, ["", "", ""])
+    finally:
+        ui.clear_view()
+    assert code == 0
+    assert seen == [True]  # closed before the summary printed
+    err = capsys.readouterr().err
+    for col in ("Episode", "duration", "size", "result"):
+        assert col in err
+    assert any("S01E01" in l and "1:05:30" in l and "ok" in l
+               for l in err.splitlines())
+    assert "3 ok, 0 failed" in err
+
+
+def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeypatch, capsys):
+    """Ctrl+C mid-rip (the inner arm): the view closes before
+    interrupted_exit's ui.fail — the fail line reaches stderr once, exit 130."""
+    from skive import ui
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)" / "d0"
+
+    def interrupt(*a, **k):
+        show_dir.mkdir(parents=True, exist_ok=True)
+        raise KeyboardInterrupt
+
+    prompt = MagicMock()
+    prompt.ask.side_effect = ["", "", ""]
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+                patch("skive.rip_common.fast_scan_dvd",
+                      side_effect=RuntimeError("tests force the full-scan fallback")), \
+                patch("skive.rip_common.scan_disc",
+                      return_value=("DVD-ROM", "", _gk_titles())), \
+                patch("skive.rip_common.ensure_mounted"), \
+                patch("skive.rip_common.purge_junk"), \
+                patch("skive.rip_common.require_online"), \
+                patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                    title="Show", year="2000", original_language="en", type="tv", id="5")), \
+                patch("skive.rip_tv.Prompt", prompt), \
+                patch("skive.rip_tv.fetch_season",
+                      return_value=[(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]), \
+                patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent.xml")), \
+                patch("skive.rip_tv.rip_titles", side_effect=interrupt):
+            with pytest.raises(SystemExit) as e:
+                rip_tv(FakeArgs())
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 130
+    assert view._closed
+    err = capsys.readouterr().err
+    assert "fail  interrupted" in err
+    assert err.count("fail  interrupted") == 1
+
+
+def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
+    """Ctrl+C at the season prompt (the outer arm): the view still closes
+    before the interrupt exit, 130, one fail line."""
+    import json
+    from skive import ui
+    from skive.tmdb import TMDBPick
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    (tmp_path / "rip" / "tv" / "Show (2000)").mkdir(parents=True)
+    prompt = MagicMock()
+    prompt.ask.side_effect = KeyboardInterrupt
+
+    @dataclass
+    class FakeArgs:
+        titles = "all"
+        extras = False
+        tmdbid = None
+        verified = True
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+                patch("skive.rip_common.fast_scan_dvd",
+                      side_effect=RuntimeError("tests force the full-scan fallback")), \
+                patch("skive.rip_common.scan_disc",
+                      return_value=("DVD-ROM", "", _gk_titles())), \
+                patch("skive.rip_common.ensure_mounted"), \
+                patch("skive.rip_common.purge_junk"), \
+                patch("skive.rip_common.require_online"), \
+                patch("skive.rip_common.search_loop", return_value=TMDBPick(
+                    title="Show", year="2000", original_language="en", type="tv", id="5")), \
+                patch("skive.rip_tv.Prompt", prompt):
+            with pytest.raises(SystemExit) as e:
+                rip_tv(FakeArgs())
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 130
+    assert view._closed
+    err = capsys.readouterr().err
     assert err.count("fail  interrupted") == 1
