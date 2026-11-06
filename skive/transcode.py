@@ -447,6 +447,7 @@ def _encode_vaapi(src: str, out: str, no_subs: bool = False,
     vf += "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload"
     cmd = [ff, "-hide_banner", "-y",
            "-vaapi_device", "/dev/dri/renderD128",
+           "-reinit_filter", "0",  # mid-stream colour-tag changes must not rebuild the graph (auto_scale can't feed hwupload)
            "-i", src,
            "-map", "0:v:0", "-map", "0:a?"]
     if not no_subs:
