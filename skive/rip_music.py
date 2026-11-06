@@ -131,9 +131,9 @@ def rip_music(args) -> None:
             # never garbles the fail line.
             view.close()
             rc = 130
-            log.interrupted()
-            ui.clear_log()  # the structured total already records this interrupt
             ui.fail("interrupted")
+            log.interrupted()
+            ui.clear_log()
         except SystemExit as e:
             rc = e.code if isinstance(e.code, int) else 1
         finally:

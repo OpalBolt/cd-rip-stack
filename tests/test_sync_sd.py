@@ -1,5 +1,6 @@
 """Tests for sync_sd.py — no real lsblk/sudo/rsync; stub the binaries."""
 
+import json
 import shutil
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -324,6 +325,39 @@ def test_sync_sd_unmount_on_rsync_failure(tmp_path):
             sync_sd(FakeArgs())
         assert e.value.code == 5
     umount.assert_called_once_with(cardmnt)
+
+
+def test_sync_sd_failed_unmount_warning_is_kept_in_run_log(tmp_path, capsys):
+    """Cleanup warnings remain attached to the run until the card unmounts."""
+    from skive import ui
+
+    (tmp_path / "library").mkdir()
+    cardmnt = tmp_path / "cardmnt"
+    cardmnt.mkdir()
+
+    def failed_unmount(path):
+        ui.warn(f"could not unmount {path} — run: sudo umount {path}")
+
+    with stub(
+        find_mounted_cards=Mock(return_value=[]),
+        list_unmounted_disks=Mock(return_value=["sdb"]),
+        Prompt=Mock(ask=Mock(return_value="1")),
+        resolve_partition=Mock(return_value="sdb1"),
+        mount_card=Mock(return_value=True),
+        unmount_card=failed_unmount,
+        ensure_mounted=Mock(),
+        rsync_library=Mock(return_value=0),
+        tempfile=Mock(mkdtemp=Mock(return_value=str(cardmnt))),
+    ):
+        with pytest.raises(SystemExit) as e:
+            sync_sd(FakeArgs())
+        assert e.value.code == 0
+
+    lines = [json.loads(line) for line in
+             (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert any(line["phase"] == "warn" and "could not unmount" in line["status"]
+               for line in lines)
+    assert "could not unmount" in capsys.readouterr().err
 
 
 def test_sync_sd_unmount_on_keyboard_interrupt(tmp_path):

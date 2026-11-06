@@ -1065,14 +1065,32 @@ def _title_dir_of(path: str) -> str:
     return d
 
 
-def run_transcode(args) -> int:
+@dataclass
+class _TranscodeSetup:
+    vid: str
+    keep: bool
+    retry: bool
+    input_dir: str
+    lib_dir: str
+    lossless_root: str
+    issues_root: str
+    tmp_dir: str
+    hb_exe: str
+    mkv_exe: str
+    ffprobe_exe: str
+    seconv_exe: str
+    tess_exe: str
+
+
+def _prepare_transcode(args) -> _TranscodeSetup | None:
+    """Resolve the transcode paths and tools before opening a run log."""
     common.set_verbosity(getattr(args, "verbose", 0))
     vid = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
     if not os.path.isdir(vid):
         ui.fail(
             f"{vid} is not reachable. The videos share isn't "
             f"mounted -- mount it at {vid} (see README: transcode box), or set VIDEOS_MOUNT.")
-        return 1
+        return None
     keep = args.keep
     retry = args.retry
     # --retry walks the issues folder instead of rip/ staging; the source
@@ -1093,10 +1111,42 @@ def run_transcode(args) -> int:
     seconv_exe = _find_on_path("seconv")
     tess_exe = _find_on_path("tesseract")  # seconv shells out to it
     if not hb_exe or not mkv_exe or not ffprobe_exe or not seconv_exe or not tess_exe:
-        return 1
+        return None
+    return _TranscodeSetup(vid, keep, retry, input_dir, lib_dir, lossless_root,
+                           issues_root, tmp_dir, hb_exe, mkv_exe, ffprobe_exe,
+                           seconv_exe, tess_exe)
 
-    log = common.RipLog("skive transcode", "handbrake", "-", root=vid)
+
+def run_transcode(args) -> int:
+    setup = _prepare_transcode(args)
+    if setup is None:
+        return 1
+    log = common.RipLog("skive transcode", "handbrake", "-", root=setup.vid)
+    log.start()
     ui.set_log(log)
+    rc = 1
+    try:
+        rc = _run_transcode(args, setup, log)
+        return rc
+    finally:
+        ui.clear_log()
+        log.finish(rc)
+
+
+def _run_transcode(args, setup: _TranscodeSetup, log: common.RipLog) -> int:
+    vid = setup.vid
+    keep = setup.keep
+    retry = setup.retry
+    input_dir = setup.input_dir
+    lib_dir = setup.lib_dir
+    lossless_root = setup.lossless_root
+    issues_root = setup.issues_root
+    tmp_dir = setup.tmp_dir
+    hb_exe = setup.hb_exe
+    mkv_exe = setup.mkv_exe
+    ffprobe_exe = setup.ffprobe_exe
+    seconv_exe = setup.seconv_exe
+    tess_exe = setup.tess_exe
     # encoder resolution happens once here (vainfo probing per file would be
     # noise); the three _encode_part call sites read args.encoder, so the
     # resolved value is written back onto args
@@ -1300,7 +1350,6 @@ def run_transcode(args) -> int:
     global _POS, _ITEM
     _POS = _ITEM = ""
     interrupted = False
-    log.start()
     try:
         for i in items:
             if i.path in handled:
@@ -1651,8 +1700,6 @@ def run_transcode(args) -> int:
     finally:
         view.close()
         ui.clear_view()
-        ui.clear_log()
-        log.finish(failed)
 
     ui.run_summary(rows, n_ok, n_failed,
                    f"--keep: lossless sources moved to {lossless_root} -- verify, "

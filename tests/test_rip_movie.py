@@ -1119,7 +1119,7 @@ def test_post_rip_rerip_unresolved_main_keeps_old(tmp_path):
 
 def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
     """An existing validation.json naming a different film is never
-    overwritten: stderr note, logged, the old file kept byte-for-byte."""
+    overwritten: one warning, the old file kept byte-for-byte."""
     from skive.rip_movie import post_rip_validation
 
     pre, log = _preamble_for(tmp_path)
@@ -1135,4 +1135,4 @@ def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
 
     assert path.read_text(encoding="utf-8") == old_text
     assert "records a different film" in capsys.readouterr().err
-    log.note.assert_any_call("validation", "existing validation.json names a different film — kept")
+    assert not any("different film — kept" in str(c.args) for c in log.note.call_args_list)

@@ -115,7 +115,6 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
             scan_durations = scanner(disc, device)
         except RuntimeError as e:
             ui.warn(f"fast scan failed ({e}) — falling back to the full MakeMKV scan")
-            log.note("scan", "fast scan failed — full-scan fallback")
         else:
             if ambiguous(scan_durations):
                 # Escalation trigger (ADR 0002): duplicate/decoy/angle playlists
@@ -123,7 +122,6 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
                 # the fast result and take the full scan path (same code path
                 # as the RuntimeError fallback below).
                 ui.warn("fast scan found duplicate-duration titles — escalating to the full MakeMKV scan")
-                log.note("scan", "duplicate durations — full-scan escalation")
                 scan_durations = None
             else:
                 fast_scan = True
@@ -338,9 +336,9 @@ def interrupted_exit(log, stage_dirs: list[Path]) -> None:
     """
     purge_junk(stage_dirs, quiet=True)  # one summary line, no per-file chatter
     kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))
-    log.interrupted()
-    ui.clear_log()  # the structured total already records this interrupt
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
+    log.interrupted()
+    ui.clear_log()
     sys.exit(130)
 
 

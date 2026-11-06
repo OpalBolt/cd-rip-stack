@@ -135,7 +135,6 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
         old_id = old_tmdb.get("id") if isinstance(old_tmdb, dict) else None
         if old_id is None or str(old_id) != str(pick.id):
             ui.warn(f"{path} records a different film — validation left untouched")
-            log.note("validation", "existing validation.json names a different film — kept")
             return rows
         doc = merge_movie_document(old, doc)
     if include_extras:

@@ -458,7 +458,6 @@ def post_rip_validation(preamble, season: int, assignment: dict[int, tuple[int, 
         old_id = old_tmdb.get("id") if isinstance(old_tmdb, dict) else None
         if old_id is None or str(old_id) != str(preamble.pick.id):
             ui.warn(f"{path} records a different show — validation left untouched")
-            log.note("validation", "existing validation.json names a different show — kept")
             return rows
         doc = merge_tv_document(old, doc)
     write_validation(path, doc)

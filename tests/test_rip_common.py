@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from skive import rip_common
+from skive import rip_common, ui
 from skive.common import MENU, RipLog
 from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
@@ -18,6 +18,7 @@ from skive.validation import VALIDATION_FILENAME, movie_document, write_validati
 def _tmp_log(tmp_path):
     log = RipLog("skive rip movie", "makemkvcon", "Test", root=str(tmp_path))
     log.start()
+    ui.set_log(log)
     return log
 
 
@@ -43,6 +44,9 @@ def test_interrupted_exit_purges_junk_keeps_renamed_exits_130(tmp_path, capsys):
     assert not (stage / "B1_t0.mkv").exists()
     assert (stage / "Show (2020)_S01E01.mkv").exists()
     lines = _run_log_lines(tmp_path)
+    assert any(line["phase"] == "fail" and
+               line["status"] == "interrupted — partial deleted, kept 1 titles"
+               for line in lines)
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
     assert err.count("\n") == 1
@@ -309,7 +313,7 @@ def test_tv_dvd_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mo
     assert result.scan_durations is None
     assert result.titles_full == full_titles
     assert "escalating to the full MakeMKV scan" in capsys.readouterr().err
-    assert any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
+    assert not any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
 
 
 # --- Blu-ray fast-scan gate (ADR 0002, BD half) ---
@@ -355,7 +359,7 @@ def test_tv_bd_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mon
     assert result.scan_durations is None
     assert result.titles_full == full_titles
     assert "escalating to the full MakeMKV scan" in capsys.readouterr().err
-    assert any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
+    assert not any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
 
 
 def test_tv_bd_fast_scan_failure_falls_back_to_full_scan(tmp_path, monkeypatch, capsys):
@@ -482,7 +486,7 @@ def test_movie_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mon
     assert result.scan_durations is None
     assert result.titles_full == full_titles
     assert "escalating to the full MakeMKV scan" in capsys.readouterr().err
-    assert any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
+    assert not any("full-scan escalation" in str(c.args) for c in log.note.call_args_list)
 
 
 def test_preamble_titles_flag_never_fast_scan(tmp_path, monkeypatch):
