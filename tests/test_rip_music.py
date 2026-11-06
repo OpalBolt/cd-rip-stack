@@ -955,9 +955,8 @@ def test_cyanrip_track_heading_and_footer_plain(monkeypatch, capsys):
 
 
 def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
-    """With a seam view set at -v: surfaced lines land tool-prefixed in
-    scrollback, a % line feeds the footer's progress, the track counter parses, and the
-    album name stays '-' before the header pair names the run."""
+    """With a seam view set at -v on a TTY: a % line feeds the footer's
+    progress but stays out of scrollback, and other lines keep their tier."""
     from skive import ui
 
     monkeypatch.setattr(common, "VERBOSITY", 1)
@@ -976,7 +975,7 @@ def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
     assert rc == 0
     rendered = view.render()
     err = capsys.readouterr().err
-    assert "cyanrip  Ripping... 45%" in err
+    assert "Ripping... 45%" not in err  # TTY progress never enters scrollback
     assert "cyanrip  Track 1 ripped and encoded successfully!" not in err  # tier unchanged
     assert "100%" in rendered
 
@@ -1161,3 +1160,136 @@ def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "fail  interrupted · 0 ok" in err
     assert "track" in err  # interrupted runs still leave a summary
+
+
+# --- Fix round: real stream shapes, live headings, opener, interrupt rows ----
+
+
+def _fixture_track_title_lines(count):
+    """The first `count` indented title lines of the real cyanrip report."""
+    path = Path(__file__).parent / "fixtures" / "cyanrip" / "summertime-blues.log"
+    return [line for line in path.read_text(encoding="utf-8").splitlines(keepends=True)
+            if line.strip().startswith("title:")][:count]
+
+
+def test_indented_real_titles_head_every_track(monkeypatch, capsys):
+    """The real report indents each track's title; every completed track gets
+    its own heading (a pending track is not overwritten by the next one)."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    titles = _fixture_track_title_lines(3)
+    stream = ["Disc tracks: 19\n"]
+    for number, title_line in enumerate(titles, start=1):
+        stream += [f"Track {number} ripped and encoded successfully!\n", title_line]
+    view = ui.RunView(tty=False, live=False)
+    ui.set_view(view)
+    process = Mock(stdout=iter(stream))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    err = capsys.readouterr().err
+    assert "info  1/19  Damn Right, I've Got the Blues" in err
+    assert "info  2/19  The Healer" in err
+    assert "info  3/19  The Thrill Is Gone" in err
+    assert "1/19  track 1" not in err
+
+
+def test_progress_stream_drives_heading_and_footer_at_default_verbosity(monkeypatch, capsys):
+    """The track being ripped is headed and footed from cyanrip's progress
+    line at default verbosity, and the percent never enters scrollback."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    process = Mock(stdout=iter([
+        "Disc tracks: 4\n",
+        "Ripping and encoding track 2, progress - 50.00%, ETA - 30s\n",
+    ]))
+    process.wait.return_value = 1
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+        footer = view.render()
+        err = capsys.readouterr().err
+    finally:
+        ui.clear_view()
+
+    assert "▸ 2/4  track 2" in err
+    assert "progress - 50.00%" not in err  # not in scrollback, nor in the failure replay
+    assert "track 2/4" in footer
+    assert "offset +6" in footer
+    assert "38%" in footer  # (1 + 0.5) / 4 of the disc
+
+
+def test_album_without_artist_opens_before_track_work(monkeypatch, capsys):
+    """An album-only header emits its opener at the "Tracks:" line, before the
+    first heading — and survives an interrupt mid-track."""
+    from skive import ui
+
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace", lambda proc: None)
+
+    def gen():
+        yield "Disc tracks: 2\n"
+        yield "Album:          Lonely Album\n"
+        yield "Tracks:\n"
+        yield "Ripping and encoding track 1, progress - 10.00%\n"
+        raise KeyboardInterrupt
+
+    view = ui.RunView(tty=False, live=False)
+    ui.set_view(view)
+    header = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=Mock(stdout=gen())):
+            with pytest.raises(KeyboardInterrupt):
+                _cyanrip_run("+6", [], Path(tmpdir), None, header)
+    finally:
+        ui.clear_view()
+
+    err = capsys.readouterr().err
+    opener = "skive rip music · Lonely Album · offset +6"
+    assert opener in err
+    assert err.index(opener) < err.index("1/2  track 1")
+    assert header["_opener_emitted"]
+
+
+def test_interrupt_summary_keeps_track_outcomes_and_truthful_note(monkeypatch, capsys):
+    """Ctrl+C in track 2: the summary lists track 1 ok and track 2
+    interrupted, and says nothing was deleted."""
+    from skive import ui
+
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace", lambda proc: None)
+
+    def gen():
+        yield "Disc tracks: 3\n"
+        yield "Ripping and encoding track 1, progress - 100.00%\n"
+        yield "Track 1 ripped and encoded successfully!\n"
+        yield "Ripping and encoding track 2, progress - 20.00%\n"
+        raise KeyboardInterrupt
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("subprocess.Popen", return_value=Mock(stdout=gen())):
+            with pytest.raises(SystemExit) as e:
+                rip_music(FakeArgs(offset="100", cyanrip_flags=["-N"]))
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 130
+    err = capsys.readouterr().err
+    rows = [line.split() for line in err.splitlines()]
+    assert ["1", "?", "ok"] in rows
+    assert ["2", "?", "interrupted"] in rows
+    assert "fail  interrupted · 1 ok" in err
+    assert "partial deleted" not in err
+    assert "nothing deleted" in err

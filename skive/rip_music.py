@@ -56,6 +56,7 @@ def rip_music(args) -> None:
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
     summary_tracks: list[dict] = []
+    header: dict = {}  # filled mid-rip by the stream watch; survives an interrupt
     try:
         # Log the total on every exit — success, Ctrl-C, or failure — so the raw
         # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
@@ -73,7 +74,6 @@ def rip_music(args) -> None:
             # Run cyanrip with tee-like capture. The stream watch fills `header`
             # with the album header pair mid-rip and names the run as soon as the
             # pair is complete.
-            header: dict = {}
             rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header)
 
             # Handle "Multiple releases found" — suspended: the prompt prints
@@ -148,8 +148,13 @@ def rip_music(args) -> None:
                     for i, t in enumerate(summary_tracks)]
             interrupt_note = None
         else:
-            rows = []
-            interrupt_note = "partial deleted" if rc == 130 else None
+            # An interrupted rip keeps what the stream saw: finished tracks ok,
+            # the one in flight interrupted. Nothing is deleted — cyanrip's
+            # files stay in staging.
+            rows = [(str(number), "?", result)
+                    for number, result in sorted(header.get("_tracks", {}).items())
+                    ] if rc == 130 else []
+            interrupt_note = "nothing deleted \u2014 staged files left in place" if rc == 130 else None
         n_ok = sum(row[2] == "ok" for row in rows)
         n_failed = sum(row[2] == "failed" for row in rows)
         ui.run_summary(rows, n_ok, n_failed or (1 if rc not in (0, 130) else 0),
@@ -256,15 +261,19 @@ def _staged_tracks(folder: Path, parsed_tracks: list[dict]) -> list[dict]:
 
 
 def _progress_line(line: str) -> bool:
-    """cyanrip progress heuristic for -v: its percent updates carry a literal
-    '%'. The exact line shapes were never pinned down; anything misclassified
-    still shows at -vv or is replayed verbatim on failure, so a miss is
-    benign. Verify against a real rip on first run."""
+    """cyanrip progress heuristic: its percent updates carry a literal '%'
+    (the live line is "Ripping and encoding track N, progress - X%, ETA - ...").
+    A TTY run feeds these to the footer only; off a TTY they show at -v."""
     return "%" in line
 
 
 _TRACK_DONE = re.compile(r"^Track (\d+) ripped and encoded successfully")
-_TRACK_TITLE = re.compile(r"^title:\s*(.+)$", re.IGNORECASE)
+# cyanrip prints each track's metadata block (indented) after the track
+# finishes, e.g. "    title:                         The Healer".
+_TRACK_TITLE = re.compile(r"^\s*title:\s*(.+)$", re.IGNORECASE)
+# The live progress line: "Ripping and encoding track 3, progress - 41.50%, ETA - 2m"
+_TRACK_PROGRESS = re.compile(
+    r"^Ripping(?: and encoding)? track (\d+), progress - (\d+(?:\.\d+)?)%")
 _PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
 
@@ -277,7 +286,9 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
 
     When header is a dict, the stream watch fills it with the Album /
     Album artist header pair as those lines print mid-rip, setting log.name
-    the moment the pair is complete. A -R re-run gets a fresh dict from its
+    the moment the pair is complete, and records each track's outcome under
+    header["_tracks"] ({number: "ok" | "interrupted"}) for the interrupt
+    summary. A -R re-run gets a fresh dict from its
     caller, so the re-run's own header names the run."""
     cmd = ["cyanrip", "-s", offset] + flags
     process = subprocess.Popen(
@@ -292,46 +303,85 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     captured = []
     hidden = []  # console-suppressed lines, replayed on failure
     view = ui.view()  # None in the direct-call tests: plain prints, as before
-    track_no = None
+    on_tty = view is not None and view.tty
     track_total = None
-    pending_track = None
+    pending_track = None  # completed, its title line not seen yet
     headed_tracks: set[int] = set()
+    outcomes = header.setdefault("_tracks", {}) if header is not None else {}
+
+    def emit_opener() -> None:
+        """The run opener, once, from whatever header has streamed (an album
+        with no Album artist line is named by the album alone)."""
+        if header is None or header.get("_opener_emitted"):
+            return
+        header_name = album_header_name(header)
+        if header_name:
+            ui.opener(f"skive rip music \u00b7 {header_name} \u00b7 offset {offset}")
+            header["_opener_emitted"] = True
+
+    def set_footer(number: int, title: str, pct: float) -> None:
+        if on_tty:
+            position = track_total or number
+            view.footer(f"track {number}/{position}", title, f"offset {offset}")
+            view.progress(pct, None)
+
+    def show_track(number: int, title: str, pct: float) -> None:
+        emit_opener()
+        ui.item(number, track_total or number, title)
+        headed_tracks.add(number)
+        set_footer(number, title, pct)
+
+    def track_pct(number: int, fraction: float = 1.0) -> float:
+        position = track_total or number
+        return min(100.0, (number - 1 + fraction) * 100 / position)
+
     try:
         if process.stdout is not None:
             verbose = common.VERBOSITY
             for line in process.stdout:
                 stripped = line.rstrip()
-                surfaced = verbose >= 2 or (verbose >= 1 and _progress_line(stripped))
-                if surfaced:
+                # cyanrip's percent updates feed the footer on a TTY and never
+                # reach scrollback (the raw log keeps them); off a TTY they
+                # follow the verbosity tiers like any other line.
+                if on_tty and _progress_line(stripped):
+                    pass
+                elif verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
                     if view is not None:
                         view.tool("cyanrip", stripped)
                     else:
                         print(line, end="", flush=True)
-                    pct = _PCT.search(stripped)
-                    if view is not None and pct:
-                        view.progress(float(pct.group(1)), None)
                 elif stripped:
                     hidden.append(stripped)
                 if log is not None:
                     log.raw("cyanrip", stripped)
-                done = _TRACK_DONE.match(stripped)
                 if stripped.startswith("Disc tracks:"):
                     try:
                         track_total = int(stripped.split(":", 1)[1].strip())
                     except ValueError:
                         track_total = None
+                if stripped == "Tracks:":
+                    emit_opener()  # before any track work begins
+                progress = _TRACK_PROGRESS.match(stripped)
+                if progress:
+                    number = int(progress.group(1))
+                    fraction = float(progress.group(2)) / 100
+                    outcomes.setdefault(number, "interrupted")  # in flight
+                    if number not in headed_tracks:
+                        show_track(number, f"track {number}", track_pct(number, fraction))
+                    elif on_tty:
+                        view.progress(track_pct(number, fraction), None)
+                elif on_tty:
+                    pct = _PCT.search(stripped)
+                    if pct:
+                        view.progress(float(pct.group(1)), None)
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
-                    if pending_track not in headed_tracks:
-                        position = track_total or pending_track
-                        ui.item(pending_track, position, title)
-                        if view is not None and view.tty:
-                            view.footer(f"track {pending_track}/{position}", title,
-                                        f"offset {offset}")
-                            view.progress(pending_track * 100 / position, None)
-                        headed_tracks.add(pending_track)
-                renamed = False
+                    if pending_track in headed_tracks:
+                        set_footer(pending_track, title, track_pct(pending_track))
+                    else:
+                        show_track(pending_track, title, track_pct(pending_track))
+                    pending_track = None
                 if header is not None:
                     field = album_header_field(stripped)
                     if field is not None:
@@ -341,32 +391,23 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         if header_name:
                             if log is not None:
                                 log.name = header_name
-                            if (header.get("album_artist")
-                                    and not header.get("_opener_emitted")):
-                                ui.opener(f"skive rip music · {header_name} · offset {offset}")
-                                header["_opener_emitted"] = True
-                            renamed = True
+                            if header.get("album_artist"):
+                                emit_opener()
+                done = _TRACK_DONE.match(stripped)
                 if done:
-                    track_no = int(done.group(1))
-                    pending_track = track_no
-                    if track_total is not None and view is not None and view.tty:
-                        view.progress(track_no * 100 / track_total, None)
+                    if pending_track is not None and pending_track not in headed_tracks:
+                        show_track(pending_track, f"track {pending_track}",
+                                   track_pct(pending_track))
+                    pending_track = int(done.group(1))
+                    outcomes[pending_track] = "ok"
+                    if on_tty:
+                        view.progress(track_pct(pending_track), None)
                 captured.append(line)
 
         rc = process.wait()
-        if (header is not None and not header.get("_opener_emitted")
-                and album_header_name(header)):
-            ui.opener(f"skive rip music · {album_header_name(header)} · offset {offset}")
-            header["_opener_emitted"] = True
+        emit_opener()
         if pending_track is not None and pending_track not in headed_tracks:
-            position = track_total or pending_track
-            title = f"track {pending_track}"
-            ui.item(pending_track, position, title)
-            if view is not None and view.tty:
-                view.footer(f"track {pending_track}/{position}", title,
-                            f"offset {offset}")
-                view.progress(pending_track * 100 / position, None)
-            headed_tracks.add(pending_track)
+            show_track(pending_track, f"track {pending_track}", track_pct(pending_track))
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: forward to the child, grace window, then kill,
         # and let the interrupt rip_music's handler log status=interrupted.
