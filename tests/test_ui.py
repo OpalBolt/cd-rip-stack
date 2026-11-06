@@ -1,3 +1,5 @@
+import os
+import pytest
 import threading
 
 from skive import ui
@@ -665,3 +667,15 @@ def test_ask_ends_the_marker_line_on_piped_input(monkeypatch, capsys):
     assert ui.ask("Pick") == "3"
     ui.info("next")
     assert "› \n" in capsys.readouterr().err
+
+
+def test_out_exits_quietly_on_a_closed_pipe(monkeypatch):
+    class Closed:
+        def write(self, _): raise BrokenPipeError
+        def flush(self): raise BrokenPipeError
+        def fileno(self): return os.open(os.devnull, os.O_WRONLY)
+    monkeypatch.setattr(ui.sys, "stdout", Closed())
+    monkeypatch.setattr(ui.os, "dup2", lambda *a: None)
+    with pytest.raises(SystemExit) as e:
+        ui.out("hit")
+    assert e.value.code == 0

@@ -17,6 +17,7 @@ the console layer only.
 """
 
 import contextlib
+import os
 import io
 import re
 import sys
@@ -114,7 +115,12 @@ def out(text: str) -> None:
     """A data answer on stdout (piped search hits, --json): the bare text,
     no symbol, no style."""
     with _print_lock:
-        print(text)
+        try:
+            print(text)
+            sys.stdout.flush()
+        except BrokenPipeError:  # `| head`: stop quietly, no traceback at exit
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            raise SystemExit(0)
 
 
 class RunView:
