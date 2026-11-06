@@ -391,11 +391,18 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
     styled = _styled()
     elapsed = see = None
     if log is not None:
-        if log._start is not None:
-            elapsed = int((log._now() - log._start).total_seconds())
-        see = f"see {log._run_log} (run {log.run})"
-        if log._raw_log.exists():
-            see += f", raw {log._raw_log}"
+        try:
+            if log._start is not None:
+                elapsed = int((log._now() - log._start).total_seconds())
+        except (AttributeError, TypeError):
+            # Test seams may provide a lightweight log mock without clock data.
+            elapsed = None
+        run_log = getattr(log, "_run_log", None)
+        if isinstance(run_log, (str, Path)):
+            see = f"see {run_log} (run {log.run})"
+            raw_log = getattr(log, "_raw_log", None)
+            if raw_log is not None and raw_log.exists():
+                see += f", raw {raw_log}"
     kind, result = _result_text(n_ok, n_failed, elapsed, interrupt_note, see, failed)
     with _print_lock:
         for line in replay:

@@ -28,15 +28,33 @@ def _hms(secs: int) -> str:
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
 
 
-def _interrupted(log, stage_dirs: list[Path], view) -> None:
-    """Close a movie run with its summary after Ctrl+C."""
+def _interrupted(log, stage_dirs: list[Path], view,
+                 preexisting: set[Path] | None = None) -> None:
+    """Close a movie run with its summary after Ctrl+C.
+
+    Files left by this run with final names are completed rows; files that
+    predated it are kept on disk but do not count toward this run's result.
+    Junk-labelled in-flight files are purged before the rows are collected.
+    """
+    preexisting = preexisting or set()
     purge_junk(stage_dirs, quiet=True)
     kept = sum(1 for directory in stage_dirs for path in directory.glob("*.mkv"))
+    rows = []
+    for directory in stage_dirs:
+        for path in sorted(directory.glob("*.mkv")):
+            if path in preexisting:
+                continue
+            try:
+                size = hsize(path.stat().st_size)
+            except OSError:
+                size = "?"
+            rows.append((path.stem, "?", size, "ok"))
     replay = view.replay_lines()
     view.close()
     log.interrupted()
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
-    ui.run_summary([], 0, 0, replay=replay, interrupt_note="partial deleted")
+    ui.run_summary(rows, len(rows), 0, columns=("Title", "duration", "size", "result"),
+                   replay=replay, interrupt_note="partial deleted", log=log)
     sys.exit(130)
 
 
@@ -317,6 +335,7 @@ def rip_movie(args) -> None:
         SystemExit: On any error, user abort, or interrupt (exit 130)
     """
     preamble = None
+    run_preexisting: set[Path] = set()
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
     try:
@@ -356,8 +375,13 @@ def rip_movie(args) -> None:
             infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
 
         ui.opener(f"skive rip movie · {display} · disc {preamble.disc} · {preamble.device}")
-        for position, title in enumerate(infos, 1):
-            ui.item(position, len(infos), f"title {title.number}")
+        started_titles = 0
+
+        def title_started(number: int) -> None:
+            nonlocal started_titles
+            started_titles += 1
+            ui.item(started_titles, len(infos), f"title {number}")
+
         if view.tty:
             view.footer(f"title 1/{len(infos)}", display, "rip")
             estimated = sum(title.size for title in infos)
@@ -375,7 +399,8 @@ def rip_movie(args) -> None:
         summary_rows: list[tuple] = []
         try:
             # Rip phase
-            preexisting = set(title_dir.glob("*.mkv"))
+            run_preexisting = set(title_dir.glob("*.mkv"))
+            preexisting = run_preexisting
             log.phase("rip")
             if preamble.fast_scan:
                 # Fast scan (ADR 0002): durations only, so rip all in one call —
@@ -387,10 +412,12 @@ def rip_movie(args) -> None:
                 # fast path's two-line header instead of rip_header's 0.0 B / ?.
                 header = fast_scan_header(display, len(titles_full))
                 worst_rc = rip_titles(None, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                      total=len(titles_full), infos=titles_full, header=header, log=log)
+                                      total=len(titles_full), infos=titles_full, header=header, log=log,
+                                      device=preamble.device, on_title_start=title_started)
             else:
                 worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                      total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log)
+                                      total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log,
+                                      device=preamble.device, on_title_start=title_started)
 
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
@@ -425,7 +452,7 @@ def rip_movie(args) -> None:
             # unlinks the temp profile, and finish() stays silent because
             # interrupted() already wrote this run's total line. It closes the
             # view before printing the interrupt summary.
-            _interrupted(log, [title_dir, stage_movie], view)
+            _interrupted(log, [title_dir, stage_movie], view, preexisting=run_preexisting)
         finally:
             # Clean up temp profile
             profile_path.unlink(missing_ok=True)
@@ -443,10 +470,21 @@ def rip_movie(args) -> None:
                 size = "?"
             summary_rows.append((f.stem, _hms(r["dur_s"]) if r["dur_s"] is not None else "?",
                                  size, "ok" if worst_rc == 0 else "FAILED"))
+        # Extras are renamed by their descriptive name rather than _tNN, so
+        # they intentionally do not appear in validation titles. They are
+        # still this run's completed items and belong in the rip summary.
+        for f in sorted(title_dir.glob("* - Extra *.mkv")):
+            if f in preexisting:
+                continue
+            try:
+                size = hsize(f.stat().st_size)
+            except OSError:
+                size = "?"
+            summary_rows.append((f.stem, "?", size, "ok" if worst_rc == 0 else "FAILED"))
         n_ok = sum(1 for r in summary_rows if r[3] == "ok")
         ui.run_summary(summary_rows, n_ok, len(summary_rows) - n_ok,
                        columns=("Title", "duration", "size", "result"),
-                       replay=view.replay_lines(), failed=worst_rc != 0)
+                       replay=view.replay_lines(), log=log, failed=worst_rc != 0)
         sys.exit(worst_rc)
     except KeyboardInterrupt:
         # Interrupt outside the rip try (TMDB prompt via rip_preamble, scan,
@@ -455,7 +493,8 @@ def rip_movie(args) -> None:
         # the full interrupt exit still apply. main's fallback prints the
         # one line for the not-yet-started window.
         if preamble is not None:
-            _interrupted(preamble.log, [preamble.title_dir, preamble.stage], view)
+            _interrupted(preamble.log, [preamble.title_dir, preamble.stage], view,
+                          preexisting=run_preexisting)
         raise
     finally:
         view.close()

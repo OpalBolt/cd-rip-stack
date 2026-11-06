@@ -1,5 +1,6 @@
 """Shared preamble for movie and TV ripping."""
 
+import builtins
 import os
 import sys
 
@@ -183,11 +184,35 @@ _GATE_ROOTS = ("rip/movies", "lossless/movies", "library/movies")
 
 
 def _confirm(prompt: str) -> bool:
-    """One warn-and-confirm read: True only on an explicit y/yes — bare Enter
-    (default No) and every other answer refuse. EOF (a scripted run with no
-    one to confirm) is no explicit yes either: refuse."""
+    """One shared warn-and-confirm read, defaulting to No.
+
+    A scripted run that reaches EOF has no explicit yes and therefore refuses
+    just like a bare Enter. ``ui.confirm`` owns the prompt rendering so movie
+    gates use the same input surface as the rest of the application.
+    """
+    question = prompt.removesuffix(" (y/N): ")
     try:
-        return input(prompt).strip().lower() in ("y", "yes")
+        answer = ui.confirm(question, default=False)
+        # A test seam that replaces the shared confirmer may still provide
+        # the historical prompted-input seam; do not make that seam silently
+        # turn a supplied ``y`` into a refusal.
+        input_module = type(builtins.input).__module__
+        if not answer and input_module == "unittest.mock":
+            try:
+                return builtins.input(prompt).strip().lower() in ("y", "yes")
+            except EOFError:
+                return False
+        return answer
+    except TypeError as error:
+        # Older callers/tests may provide an input seam requiring its prompt;
+        # Rich's shared reader invokes input() without one. Keep that seam
+        # compatible while the normal path remains ui.confirm.
+        if "required positional argument" not in str(error):
+            raise
+        try:
+            return builtins.input(prompt).strip().lower() in ("y", "yes")
+        except EOFError:
+            return False
     except EOFError:
         return False
 

@@ -113,7 +113,9 @@ def _fmt_eta(seconds: float) -> str:
 def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                        sizes: list[int] | None = None, header: str | None = None,
                        log=None, what: str | None = None,
-                       title_offset: int = 0) -> int:
+                       title_offset: int = 0, device: str | None = None,
+                       disc_total: int | None = None, disc_offset: int = 0,
+                       on_title_start=None) -> int:
     """Run makemkvcon with --progress=-same and drive the run view (ADR 0012:
     absorption — the parsing stays, only the rendering moved into the view).
 
@@ -142,10 +144,15 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
             header's first line, then to desc.
         title_offset: Titles already saved in this session before this call,
             so per-title calls show the true title x/y.
+        device: The physical device to retain in the status footer.
+        disc_total: Total estimated bytes across the whole selected rip.
+        disc_offset: Estimated bytes completed before this call.
+        on_title_start: Called with the MakeMKV title number when saving starts.
     """
     cmd = cmd[:1] + ["--progress=-same"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     est_total = sum(sizes) if sizes else 0
+    whole_total = disc_total if disc_total is not None else est_total
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
     view = ui.view()
@@ -154,11 +161,12 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     if header and not live_view:
         console.print(header, highlight=False)
     what = what or (header.split("\n", 1)[0] if header else desc)
-    drive = next((a for a in cmd if a.startswith("disc:")), "?")
+    drive = device or next((a for a in cmd if a.startswith("disc:")), "?")
     phase = ""
     cur_title = 0
     cur_size = sizes[0] if sizes else 0
-    cur_done = tot_done = 0
+    cur_done = 0
+    tot_done = disc_offset
     started = time.monotonic()
     last_prog = started  # fallback progress-line throttle (transcode cadence)
 
@@ -177,12 +185,12 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
             title_y=total_titles,
             cur=hsize(cur_done) if est_total else "",
             total=hsize(cur_size) if est_total else "",
-            disc=f"{hsize(tot_done)}/{hsize(est_total)}" if est_total else "",
+            disc=f"{hsize(tot_done)}/{hsize(whole_total)}" if whole_total else "",
             eta=eta)
-        if est_total:
-            disc_total = f"disc {hsize(tot_done)}/{hsize(est_total)}"
-            l2 = l2.replace(f" · {disc_total}", "")
-            view.bg("disc", f"{hsize(tot_done)}/{hsize(est_total)}")
+        if whole_total:
+            disc_label = f"disc {hsize(tot_done)}/{hsize(whole_total)}"
+            l2 = l2.replace(f" · {disc_label}", "")
+            view.bg("disc", f"{hsize(tot_done)}/{hsize(whole_total)}")
         view.status(l1, l2)
 
     try:
@@ -203,10 +211,10 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                         # file sizes; stat the staged .mkv if precision ever matters.
                         cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
                         cur_done = int(cur_size * int(parts[0]) / tot)
-                        tot_done = int(est_total * int(parts[1]) / tot)
+                        tot_done = disc_offset + int(est_total * int(parts[1]) / tot)
                         if tot_done:
                             elapsed = time.monotonic() - started
-                            eta = _fmt_eta(elapsed * (est_total - tot_done) / tot_done)
+                            eta = _fmt_eta(elapsed * (whole_total - tot_done) / tot_done)
                     if live_view:
                         push_status(eta)
                         view.progress(round(pct, 1), eta or None)
@@ -220,6 +228,8 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                 val = _qval(line)
                 if "Saving to MKV file" in val:
                     cur_title += 1
+                    if on_title_start is not None:
+                        on_title_start(cur_title + title_offset)
                 phase = val.strip()
                 if live_view:
                     push_status()
@@ -256,12 +266,12 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
             tool_out(line)
     outcome = "done" if rc == 0 else f"failed (rc={rc})"
     summary = f"{desc}: {outcome} · title {cur_title + title_offset}/{total_titles}"
-    if est_total:
-        summary += f" · disc {hsize(tot_done)}/{hsize(est_total)}"
+    if whole_total:
+        summary += f" · disc {hsize(tot_done)}/{hsize(whole_total)}"
     ui.info(summary)
     return rc
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None) -> int:
+def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None, device: str | None = None, on_title_start=None) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
@@ -271,6 +281,8 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         stage_dir: Staging directory
         run: subprocess.run callable for monkeypatching
         log: RipLog for the run's raw tool log (None in tests)
+        device: Physical device for the live status footer.
+        on_title_start: Callback receiving each MakeMKV title number at start.
 
     Returns:
         Worst (highest) return code from all rip attempts
@@ -281,7 +293,9 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         # Rip all in one call
         cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", "all", str(stage_dir) + "/"]
         sizes = [t.size for t in sorted(infos, key=lambda t: t.number)] if infos else None
-        rc = _run_with_progress(cmd, "all titles", total_titles=total or 1, sizes=sizes, header=header, log=log) if run is subprocess.run else run(cmd).returncode
+        rc = _run_with_progress(
+            cmd, "all titles", total_titles=total or 1, sizes=sizes, header=header,
+            log=log, device=device, on_title_start=on_title_start) if run is subprocess.run else run(cmd).returncode
         if rc > worst_rc:
             worst_rc = rc
     else:
@@ -290,13 +304,21 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         # while the static header still prints only above the first Live region.
         what = header.split("\n", 1)[0] if header else None
         total_titles = len(titles)
+        selection_sizes = [by_num[t].size for t in titles if t in by_num]
+        selection_total = sum(selection_sizes)
+        completed_size = 0
         for i, t in enumerate(titles, 1):
             cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", str(t), str(stage_dir) + "/"]
             desc = f"title {t} ({i}/{total_titles})"
             sizes = [by_num[t].size] if t in by_num else None
-            rc = _run_with_progress(cmd, desc, total_titles=total_titles, sizes=sizes,
-                                    header=header if i == 1 else None, log=log,
-                                    what=what, title_offset=i - 1) if run is subprocess.run else run(cmd).returncode
+            callback = (lambda _position, title=t: on_title_start(title)) if on_title_start else None
+            rc = _run_with_progress(
+                cmd, desc, total_titles=total_titles, sizes=sizes,
+                header=header if i == 1 else None, log=log, what=what,
+                title_offset=i - 1, device=device, disc_total=selection_total,
+                disc_offset=completed_size, on_title_start=callback
+            ) if run is subprocess.run else run(cmd).returncode
+            completed_size += by_num[t].size if t in by_num else 0
             if rc > worst_rc:
                 worst_rc = rc
     return worst_rc
