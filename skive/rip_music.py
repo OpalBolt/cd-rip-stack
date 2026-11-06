@@ -10,7 +10,7 @@ from pathlib import Path
 
 from rich.prompt import Prompt
 
-from skive import common
+from skive import common, ui
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
 from skive.cyanrip_log import (
     album_header_field,
@@ -38,9 +38,9 @@ def rip_music(args) -> None:
     """
     # Validate offset
     if args.offset is None:
-        print("usage: skive rip music <offset> [cyanrip_flags...]", file=sys.stderr)
-        print("  offset       drive sample offset (see drive table in README)", file=sys.stderr)
-        print("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)", file=sys.stderr)
+        ui.fail("usage: skive rip music <offset> [cyanrip_flags...]")
+        ui.fail("  offset       drive sample offset (see drive table in README)")
+        ui.fail("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)")
         sys.exit(2)
 
     # Environment
@@ -55,92 +55,127 @@ def rip_music(args) -> None:
     # RipLog
     log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-", root=music_mnt)
     log.start()
-
-    # Log the total on every exit — success, Ctrl-C, or failure — so the raw
-    # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
-    rc = 0
+    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
+    ui.set_view(view)
+    summary_tracks: list[dict] = []
     try:
-        # Online gate: skip if -N in cyanrip_flags
-        flags = args.cyanrip_flags or []
-        skip_online = "-N" in flags
+        # Log the total on every exit — success, Ctrl-C, or failure — so the raw
+        # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
+        rc = 0
+        try:
+            # Online gate: skip if -N in cyanrip_flags
+            flags = args.cyanrip_flags or []
+            skip_online = "-N" in flags
 
-        if not skip_online:
-            require_online()
+            if not skip_online:
+                require_online()
 
-        log.phase("rip")
+            log.phase("rip")
 
-        # Run cyanrip with tee-like capture. The stream watch fills `header`
-        # with the album header pair mid-rip and names the run as soon as the
-        # pair is complete.
-        header: dict = {}
-        rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header)
+            # Run cyanrip with tee-like capture. The stream watch fills `header`
+            # with the album header pair mid-rip and names the run as soon as the
+            # pair is complete.
+            header: dict = {}
+            rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header)
 
-        # Handle "Multiple releases found"
-        if rc != 0 and "Multiple releases found" in cap_text:
-            choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
-            if choice:
-                log.note("rip", f"release pick: {choice}")
-                # Re-run with -R <choice>; a fresh header, so the re-run's
-                # own header re-print renames the run.
-                header = {}
-                rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log, header)
-            else:
-                print("skive: aborting", file=sys.stderr)
-                rc = 1
+            # Handle "Multiple releases found" — suspended: the prompt prints
+            # normally (scrollback), the view redraws after the answer.
+            if rc != 0 and "Multiple releases found" in cap_text:
+                with ui.suspend():
+                    choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
+                if choice:
+                    log.note("rip", f"release pick: {choice}")
+                    # Re-run with -R <choice>; a fresh header, so the re-run's
+                    # own header re-print renames the run.
+                    header = {}
+                    rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log, header)
+                else:
+                    ui.info("aborting")
+                    rc = 1
 
-        # cyanrip found no MusicBrainz release for this TOC — hand the user
-        # the attach URL it printed so the disc can be submitted.
-        if rc != 0 and "Unable to find release info" in cap_text:
-            attach = re.search(r"https://musicbrainz\.org/cdtoc/attach\?\S+", cap_text)
-            if attach:
-                log.note("rip", f"no MusicBrainz release: submit this disc — {attach.group(0)}")
+            # cyanrip found no MusicBrainz release for this TOC — hand the user
+            # the attach URL it printed so the disc can be submitted.
+            if rc != 0 and "Unable to find release info" in cap_text:
+                attach = re.search(r"https://musicbrainz\.org/cdtoc/attach\?\S+", cap_text)
+                if attach:
+                    note = f"no MusicBrainz release: submit this disc — {attach.group(0)}"
+                    ui.warn(note)
+                    log.note("rip", note)
 
-        # Name before phase_end so the rip ok line already carries it. The
-        # album-artist header pair wins over the staging scan (a Various
-        # Artists disc is not named after whichever track artist encoded
-        # last); on success everything else falls back to the FLAC tag scan,
-        # which also yields the staging folder. A failed run never scans
-        # staging — its name is the header's (pair, or album alone) or '-'.
-        # An interrupt keeps whatever the stream set mid-rip (no header: '-').
-        name, rel_folder = "-", "-"
-        if rc == 0:
-            name, rel_folder = _newest_flac_album(rip_dir)
-        header_name = album_header_name(header)
-        if header_name and header.get("album_artist"):
-            name = header_name
-        elif rc != 0:
-            name = header_name or "-"
-        log.name = name
-        log.phase_end()
-        log.note("rip", f"folder: {rel_folder}")
-        if rc == 0:
-            _write_cd_record(rip_dir, rel_folder, args.offset, log)
-    except KeyboardInterrupt:
-        # CONTEXT.md Interrupt: _cyanrip_run already stopped the child (SIGINT,
-        # grace window, kill). Music staging has no junk labels — cyanrip writes
-        # its final-named FLACs straight into rip/ — so there is no partial of
-        # ours to purge; record status=interrupted (finish() below stays
-        # silent), one line, exit 130.
-        rc = 130
-        log.interrupted()
-        print("skive: interrupted", file=sys.stderr)
-    except SystemExit as e:
-        rc = e.code if isinstance(e.code, int) else 1
+            # Name before phase_end so the rip ok line already carries it. The
+            # album-artist header pair wins over the staging scan (a Various
+            # Artists disc is not named after whichever track artist encoded
+            # last); on success everything else falls back to the FLAC tag scan,
+            # which also yields the staging folder. A failed run never scans
+            # staging — its name is the header's (pair, or album alone) or '-'.
+            # An interrupt keeps whatever the stream set mid-rip (no header: '-').
+            name, rel_folder = "-", "-"
+            if rc == 0:
+                name, rel_folder = _newest_flac_album(rip_dir)
+            header_name = album_header_name(header)
+            if header_name and header.get("album_artist"):
+                name = header_name
+            elif rc != 0:
+                name = header_name or "-"
+            log.name = name
+            log.phase_end()
+            log.note("rip", f"folder: {rel_folder}")
+            if rc == 0:
+                summary_tracks = _write_cd_record(rip_dir, rel_folder, args.offset, log)
+        except KeyboardInterrupt:
+            # CONTEXT.md Interrupt: _cyanrip_run already stopped the child (SIGINT,
+            # grace window, kill). Music staging has no junk labels — cyanrip writes
+            # its final-named FLACs straight into rip/ — so there is no partial of
+            # ours to purge; record status=interrupted (finish() below stays
+            # silent), one line, exit 130. The view closes first so its Live
+            # never garbles the fail line.
+            view.close()
+            rc = 130
+            log.interrupted()
+            ui.fail("interrupted")
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 1
+        finally:
+            log.finish(rc)
+        # Close the view before the summary prints (its Live redraw would
+        # garble it); the outer close is idempotent. No summary on interrupt —
+        # rip_movie/rip_tv precedent.
+        view.close()
+        if rc != 130:
+            # The run summary: per-track rows (track, duration, result) with the
+            # count. Rows exist only for a clean rip's parsed report; a failed
+            # run never scans staging and has no per-track truth, so its count
+            # line reports the run itself (1 failed) instead of phantom rows.
+            rows = [(str(i + 1),
+                     _summary_hms(t["dur_s"]) if t["dur_s"] is not None else "?",
+                     "ok")
+                    for i, t in enumerate(summary_tracks)]
+            ui.run_summary(rows, len(rows), 0 if rc == 0 else 1,
+                           columns=("track", "duration", "result"),
+                           replay=view.replay_lines())
     finally:
-        log.finish(rc)
+        view.close()
+        ui.clear_view()
 
     sys.exit(rc)
 
 
+def _summary_hms(secs: int) -> str:
+    """Duration as H:MM:SS (the TV/movie summary format)."""
+    return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+
+
 def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
-                     log: RipLog) -> None:
-    """Write the CD provenance record without making parsing a failure gate."""
+                     log: RipLog) -> list[dict]:
+    """Write the CD provenance record without making parsing a failure gate.
+    Returns the record's track list (empty when no album folder) for the run
+    summary."""
     if rel_folder in {"", "-"}:
-        return
+        return []
     folder = rip_dir / rel_folder
     if not folder.is_dir():
         log.note("rip", f"artifacts missing in {folder}: folder does not exist")
-        return
+        return []
     files = sorted(path.name for path in folder.iterdir())
     log_files = [path for path in folder.glob("*.log") if path.is_file()]
     cue_files = [path for path in folder.glob("*.cue") if path.is_file()]
@@ -193,6 +228,7 @@ def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
         if partial:
             note += f", {partial} partial"
         log.note("rip", note)
+    return tracks
 
 
 _TRACK_FILE_NUMBER = re.compile(r"^(\d+)\s*-\s")
@@ -223,6 +259,21 @@ def _progress_line(line: str) -> bool:
     return "%" in line
 
 
+_TRACK_DONE = re.compile(r"^Track (\d+) ripped and encoded successfully")
+_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+
+def _panel_status(view, header: dict | None, offset: str, track: int | None) -> None:
+    """Status panel: the album name ('-' until the header pair names the run,
+    mirroring the log.name rule), the offset, and the track position once
+    cyanrip reports one."""
+    name = album_header_name(header) if header else ""
+    lines = [f"ripping {name or '-'}", f"offset {offset}"]
+    if track is not None:
+        lines.append(f"track {track}")
+    view.status(*lines)
+
+
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                  header: dict | None = None) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
@@ -246,26 +297,45 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
 
     captured = []
     hidden = []  # console-suppressed lines, replayed on failure
+    view = ui.view()  # None in the direct-call tests: plain prints, as before
+    track_no = None
+    if view is not None:
+        _panel_status(view, header, offset, None)
     try:
         if process.stdout is not None:
             verbose = common.VERBOSITY
             for line in process.stdout:
                 stripped = line.rstrip()
-                if verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
-                    print(line, end="", flush=True)
+                surfaced = verbose >= 2 or (verbose >= 1 and _progress_line(stripped))
+                if surfaced:
+                    if view is not None:
+                        view.tool("cyanrip", stripped)
+                    else:
+                        print(line, end="", flush=True)
+                    pct = _PCT.search(stripped)
+                    if view is not None and pct:
+                        view.progress(float(pct.group(1)), None)
                 elif stripped:
                     hidden.append(stripped)
                 if log is not None:
                     log.raw("cyanrip", stripped)
+                done = _TRACK_DONE.match(stripped)
+                renamed = False
                 if header is not None:
                     field = album_header_field(stripped)
                     if field is not None:
                         key, value = field
                         header[key] = value
-                        if log is not None and header.get("album_artist"):
+                        if header.get("album_artist"):
                             header_name = album_header_name(header)
                             if header_name:
-                                log.name = header_name
+                                if log is not None:
+                                    log.name = header_name
+                                renamed = True
+                if done:
+                    track_no = int(done.group(1))
+                if view is not None and (done or renamed):
+                    _panel_status(view, header, offset, track_no)
                 captured.append(line)
 
         rc = process.wait()
@@ -276,7 +346,10 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         raise
     if rc != 0:
         for line in hidden:
-            print(line, flush=True)
+            if view is not None:
+                view.tool("cyanrip", line)
+            else:
+                print(line, flush=True)
     return rc, "".join(captured)
 
 
@@ -340,5 +413,5 @@ def require_online() -> None:
     except urllib.error.HTTPError as e:
         e.close()
     except (urllib.error.URLError, TimeoutError, OSError):
-        print("skive: MusicBrainz is unreachable", file=sys.stderr)
+        ui.fail("MusicBrainz is unreachable")
         sys.exit(1)

@@ -164,7 +164,7 @@ def test_require_online_exits_on_network_failure(capsys):
             require_online()
 
     assert exc.value.code == 1
-    assert capsys.readouterr().err == "skive: MusicBrainz is unreachable\n"
+    assert capsys.readouterr().err == "fail  MusicBrainz is unreachable\n"
 
 
 def test_online_gate_skipped_with_minus_N():
@@ -655,8 +655,8 @@ def test_rip_music_interrupt_records_interrupted_and_exits_130(tmp_path, monkeyp
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert [line["status"] for line in lines] == ["started", "interrupted"]
     err = capsys.readouterr().err
-    assert "skive: interrupted" in err
-    assert err.count("skive: interrupted") == 1
+    assert "fail  interrupted" in err
+    assert err.count("fail  interrupted") == 1
 
 
 def test_clean_rip_writes_cd_record_from_cyanrip_log(tmp_path):
@@ -919,3 +919,177 @@ def test_rerip_record_rebuilds_from_newest_log(tmp_path):
 
     doc = json.loads((folder / "validation.json").read_text(encoding="utf-8"))
     assert doc["discs"]["1"]["accuraterip"][0]["crc32"] == "BBBBBBBB"
+
+
+# --- Run view wiring (slice 08: status panel, tool lines, summary) ------------
+
+
+def test_cyanrip_run_tool_lines_and_panel_at_v1(monkeypatch):
+    """With a seam view set at -v: surfaced lines land tool-prefixed in the
+    log panel, a % line feeds progress, the track counter parses, and the
+    album name stays '-' before the header pair names the run."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 1)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        process = Mock(stdout=iter(["Track 1 of 12\n", "Ripping... 45%\n",
+                                    "Track 1 ripped and encoded successfully!\n"]))
+        process.wait.return_value = 0
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    assert rc == 0
+    rendered = view.render()
+    assert "cyanrip  Ripping... 45%" in rendered
+    assert "cyanrip  Track 1 ripped and encoded successfully!" not in rendered  # tier unchanged
+    assert "ripping -" in rendered
+    assert "offset 100" in rendered
+    assert "track 1" in rendered
+    assert "45%" in rendered
+
+
+def test_album_name_lands_in_status_via_header_watch(tmp_path):
+    """The header pair renames the status panel mid-rip: 'ripping -' before,
+    the real name once Album + Album artist have both streamed."""
+    from skive import ui
+
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    process = Mock(stdout=iter(SUMMERTIME_HEADER))
+    process.wait.return_value = 0
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("subprocess.Popen", return_value=process):
+            with pytest.raises(SystemExit) as exc:
+                rip_music(args)
+    finally:
+        ui.clear_view()
+
+    assert exc.value.code == 0
+    rendered = view.render()
+    assert "ripping Various Artists - Summertime Blues" in rendered
+
+
+def test_hidden_replay_lands_tool_prefixed_under_a_view(monkeypatch, capsys):
+    """Quiet failure under a view: the hidden replay set is unchanged and
+    replays through the tool prefix."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        process = Mock(stdout=iter(["Ripping track 1\n", "Read error\n"]))
+        process.wait.return_value = 1
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            rc, _ = _cyanrip_run("100", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    assert rc == 1
+    assert "cyanrip  Ripping track 1" in view.render()
+    assert "cyanrip  Read error" in view.render()
+
+
+def test_multiple_releases_prompt_prints_under_a_seam_view(tmp_path, capsys):
+    """The Multiple-releases prompt prints to stdout (scrollback) while a
+    seam view is set — the prompt suspends the view — and the run completes."""
+    from skive import ui
+
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+
+    def ask_then_print(prompt, default=""):
+        print(prompt, end="")
+        return "2"
+
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("skive.rip_music.RipLog"), \
+                patch("skive.rip_music._newest_flac_album", return_value=("-", "-")), \
+                patch("skive.rip_music.Prompt.ask", side_effect=ask_then_print), \
+                patch("skive.rip_music._cyanrip_run", side_effect=[
+                    (1, "Multiple releases found\n"), (0, "Rip complete\n")]):
+            with pytest.raises(SystemExit) as exc:
+                rip_music(args)
+    finally:
+        ui.clear_view()
+
+    assert exc.value.code == 0
+    assert "Multiple MusicBrainz releases" in capsys.readouterr().out
+
+
+def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
+    """The run summary: per-track rows (track, duration, result) plus the
+    19-track count, printed after the view closed."""
+    from skive import ui
+
+    folder_name = "Summertime Blues [FLAC]"
+    album = tmp_path / "rip" / "cd" / folder_name
+    album.mkdir(parents=True)
+    report = _fixture_report()
+    (album / "Summertime Blues.log").write_text(report, encoding="utf-8")
+    (album / "Summertime Blues.cue").write_text("FILE image.flac\n", encoding="utf-8")
+    for name in [Path(line.strip()).name for line in report.splitlines()
+                 if line.strip().endswith(".flac")]:
+        (album / name).touch()
+
+    args = FakeArgs(offset="6", cyanrip_flags=["-N"])
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    seen = []
+    real = ui.run_summary
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(ui, "run_summary",
+                   lambda *a, **k: seen.append(view._closed) or real(*a, **k))
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+                patch("skive.rip_music._newest_flac_album",
+                      return_value=("Various Artists - Summertime Blues", folder_name)):
+            with pytest.raises(SystemExit) as exc:
+                rip_music(args)
+    finally:
+        monkey.undo()
+        ui.clear_view()
+
+    assert exc.value.code == 0
+    assert seen == [True]  # closed before the summary printed
+    err = capsys.readouterr().err
+    for col in ("track", "duration", "result"):
+        assert col in err
+    assert any(l.strip().startswith("1") and "0:04:29" in l and "ok" in l
+               for l in err.splitlines())
+    assert "19 ok, 0 failed" in err
+
+
+def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):
+    """Ctrl+C mid-rip under a seam view: the view closes before the fail
+    line, one fail line, exit 130, no summary."""
+    from skive import ui
+
+    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt):
+            with pytest.raises(SystemExit) as e:
+                rip_music(args)
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 130
+    assert view._closed
+    err = capsys.readouterr().err
+    assert err.count("fail  interrupted") == 1
+    assert "ok, " not in err  # no summary on interrupt
