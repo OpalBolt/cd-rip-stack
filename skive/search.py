@@ -6,17 +6,16 @@ import difflib
 import io
 import os
 import re
+import sys
 from contextlib import redirect_stderr
 from pathlib import Path
 from typing import NamedTuple
 
-from rich.console import Console
+from rich.text import Text
 
 from skive.common import ensure_mounted
 from skive import ui
 from skive.tag import SOURCES
-
-console = Console()
 
 STATES: tuple[tuple[str, str], ...] = (
     ("staging", "rip"),
@@ -209,20 +208,45 @@ def run_search(args) -> None:
             searched_any = True
             hits.extend(find_music_hits(args.query, Path(music_mnt)))
             near.extend(music_suggestions(args.query, Path(music_mnt)))
+    # a terminal reads headings and symbols; a pipe gets plain data lines
+    pretty = sys.stdout.isatty() and ui.console.is_terminal
     if not hits:
         if not searched_any:
             return
         unique_near = list(dict.fromkeys(near))
-        console.print("no hits" + (f" — did you mean: {', '.join(unique_near)}?"
-                                    if unique_near else ""))
+        line = "no hits" + (f" — did you mean: {', '.join(unique_near)}?"
+                             if unique_near else "")
+        if pretty:
+            ui.console.print(ui.mark("info", line), soft_wrap=True)
+        else:
+            ui.out(line)
         return
     for hit in hits:
-        console.print(f"[bold]{hit.name}[/bold] — {hit.kind}")
-        if isinstance(hit, AlbumHit):
-            for state in hit.states:
-                console.print(f"  {state}")
+        rows = ([(state, "") for state in hit.states] if isinstance(hit, AlbumHit)
+                else [(state, fmt_seasons(seasons) if hit.kind == "tv" else "")
+                      for state, seasons in hit.states])
+        if pretty:
+            ui.console.print(Text.assemble((hit.name, "item"),
+                                           (f" · {hit.kind}", "dim")), soft_wrap=True)
+            for state, seasons in rows:
+                kind, label = _state_mark(state)
+                row = Text("  ").append_text(ui.mark(kind, label))
+                if seasons:
+                    row.append(f"   {seasons}")
+                ui.console.print(row, soft_wrap=True)
         else:
-            for state, seasons in hit.states:
-                label = (f"{state}   {fmt_seasons(seasons)}"
-                         if hit.kind == "tv" and seasons else state)
-                console.print(f"  {label}")
+            ui.out(f"{hit.name} — {hit.kind}")
+            for state, seasons in rows:
+                ui.out(f"  {state}   {seasons}" if seasons else f"  {state}")
+
+
+def _state_mark(state: str) -> tuple[str, str]:
+    """A hit state as (event kind, words) for the terminal view: filed reads
+    ✓, a quarantined source !, staged and kept-lossless copies ·."""
+    if state == "library":
+        return "ok", "in library"
+    if state == "issues":
+        return "warn", "in issues"
+    if state.startswith("staging"):
+        return "info", "staged" + state[len("staging"):]
+    return "info", state

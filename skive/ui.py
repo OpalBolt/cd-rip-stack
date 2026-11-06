@@ -104,6 +104,19 @@ def _plain_event(kind: str, text: str) -> str:
     return f"{kind:<4}  {text}"
 
 
+def mark(kind: str, text: str) -> Text:
+    """`✓ text`: the kind's symbol in its style, for a table cell or an
+    indented row outside the event stream (search states, validate checks)."""
+    return Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]), f" {text}")
+
+
+def out(text: str) -> None:
+    """A data answer on stdout (piped search hits, --json): the bare text,
+    no symbol, no style."""
+    with _print_lock:
+        print(text)
+
+
 class RunView:
     """One instance per run. TTY mode: event, heading and tool lines print
     to scrollback through the shared console and a rich Live (transient, no

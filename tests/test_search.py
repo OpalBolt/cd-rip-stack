@@ -125,3 +125,61 @@ def test_search_scope_is_required_and_limited():
     assert parser.parse_args(["search", "music", "query"]).scope == "music"
     with pytest.raises(SystemExit):
         parser.parse_args(["search", "podcasts", "query"])
+
+
+def _video_share(tmp_path, monkeypatch):
+    base = "Andor (2022)"
+    _mkv(tmp_path / f"library/tv/{base}/Season 01/{base}_S01E01.mkv")
+    _mkv(tmp_path / f"rip/tv/{base}/{base}_S02E01.mkv")
+    _mkv(tmp_path / "lossless/movies/Andor Rising (2020)/Andor Rising (2020).mkv")
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    monkeypatch.setattr("skive.search.ensure_mounted", lambda *_args: None)
+
+
+def test_search_piped_prints_plain_data_lines_on_stdout(tmp_path, monkeypatch, capsys):
+    """Piped (pytest's stdout is no TTY): today's plain lines, stdout only,
+    no symbols and no escape codes."""
+    _video_share(tmp_path, monkeypatch)
+
+    run_search(SimpleNamespace(scope="video", query="andor"))
+
+    captured = capsys.readouterr()
+    assert captured.out == ("Andor (2022) — tv\n"
+                            "  staging   S02\n"
+                            "  library   S01\n"
+                            "Andor Rising (2020) — movie\n"
+                            "  lossless\n")
+    assert captured.err == ""
+
+    run_search(SimpleNamespace(scope="video", query="zzz"))
+    assert capsys.readouterr().out == "no hits\n"
+
+
+def test_search_tty_shows_hit_headings_and_state_symbols(tmp_path, monkeypatch):
+    """On a terminal: a bold heading per hit, indented state rows with
+    symbols (✓ filed, · staged/lossless); nothing on stdout."""
+    import io
+    from rich.console import Console
+    from skive import ui
+
+    class _Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    _video_share(tmp_path, monkeypatch)
+    screen, stdout = io.StringIO(), _Tty()
+    monkeypatch.setattr(ui, "console", Console(file=screen, force_terminal=True,
+                                               theme=ui.THEME, color_system=None,
+                                               width=80))
+    monkeypatch.setattr("sys.stdout", stdout)
+
+    run_search(SimpleNamespace(scope="video", query="andor"))
+
+    assert stdout.getvalue() == ""
+    assert screen.getvalue().splitlines() == [
+        "Andor (2022) · tv",
+        "  · staged   S02",
+        "  ✓ in library   S01",
+        "Andor Rising (2020) · movie",
+        "  · lossless",
+    ]

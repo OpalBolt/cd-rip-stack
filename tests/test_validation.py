@@ -1058,14 +1058,14 @@ def test_print_findings_renders_the_one_table(capsys):
                 Finding("movies/Up (2009)", "staging name", "extras/Up (2009)_t21.mkv",
                         path="extras/Up (2009)_t21.mkv")]
     print_findings(findings, Path("/mnt/videos"))
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "Library validation" in out
     assert "ratio" in out and "staging name" in out
     assert "-0.15" in out
     assert "Up (2009)" in out
 
     print_findings([], Path("/mnt/videos"))
-    assert "no findings" in capsys.readouterr().out
+    assert "no findings" in capsys.readouterr().err
 
 
 # The severity tiers, the issues view, the action plan, and JSON
@@ -1156,7 +1156,7 @@ def test_print_issues_collapses_staging_and_prints_the_plan(capsys):
                 path="extras/A (2000)_t02.mkv"),
     ]
     print_issues(findings, Path("/mnt/videos"))
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "issues only" in out
     assert "2 files" in out and "_tNN names" in out
     assert "A (2000).mkv  0.95" not in out        # the green main stays out
@@ -1164,7 +1164,7 @@ def test_print_issues_collapses_staging_and_prints_the_plan(capsys):
     assert "two-candidates" in out
 
     print_issues([], Path("/mnt/videos"))
-    assert "no issues" in capsys.readouterr().out
+    assert "no issues" in capsys.readouterr().err
 
 
 def test_json_report_shape_counts_and_issues_filter():
@@ -1260,3 +1260,78 @@ def test_run_validate_fix_applies_then_reports_clean(tmp_path, capsys, monkeypat
          "to": "movies/Up (2009)/extras/Up (2009) - Extra 01.mkv"}]
     assert report["summary"]["other"].get("staging name") is None
     assert (ex / "Up (2009) - Extra 01.mkv").exists()
+
+
+def test_validate_result_line_counts_issues_per_folder(capsys):
+    """The closing line: `warn  N issues in K folders` (staging names count
+    once per folder), `ok    no issues` when every row is green, and
+    `ok    no findings` for an empty walk — the last line of the report."""
+    findings = [
+        Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.77", "red",
+                "Up (2009).mkv", 0.77, -0.15),
+        Finding("movies/Up (2009)", "staging name", "extras/a_t01.mkv",
+                path="extras/a_t01.mkv"),
+        Finding("movies/Up (2009)", "staging name", "extras/a_t02.mkv",
+                path="extras/a_t02.mkv"),
+        Finding("tv/S (2019)", "missing episodes", "Season 01: E03"),
+        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
+                "A (2000).mkv", 0.95, 0.03),
+    ]
+    print_findings(findings, Path("/mnt/videos"))
+    assert capsys.readouterr().err.splitlines()[-1] == "warn  3 issues in 2 folders"
+
+    print_issues(findings, Path("/mnt/videos"))
+    err = capsys.readouterr().err
+    assert err.splitlines()[-1] == "warn  3 issues in 2 folders"
+    assert "  movies/Up (2009) — red" in err      # plain plan heading
+    assert "\x1b" not in err
+
+    print_findings(findings[-1:], Path("/mnt/videos"))
+    assert capsys.readouterr().err.splitlines()[-1] == "ok    no issues"
+
+    print_findings([], Path("/mnt/videos"))
+    assert capsys.readouterr().err.splitlines()[-1] == "ok    no findings"
+
+
+def test_validate_check_column_carries_severity_symbols(monkeypatch):
+    """On a terminal the check column leads with `✗` for an issue, `!` for
+    an off-norm ratio, `✓` for a green main; the plan entries are `▸`
+    headings."""
+    import io
+    from rich.console import Console
+    from skive import ui
+
+    screen = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(file=screen, force_terminal=True,
+                                               theme=ui.THEME, color_system=None,
+                                               width=120))
+    findings = [
+        Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.90", "yellow",
+                "Up (2009).mkv", 0.90, -0.02),
+        Finding("tv/S (2019)", "missing episodes", "Season 01: E03"),
+        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
+                "A (2000).mkv", 0.95, 0.03),
+    ]
+    print_findings(findings, Path("/mnt/videos"))
+    out = screen.getvalue()
+    assert "! ratio" in out and "✗ missing episodes" in out and "✓ ratio" in out
+    assert out.splitlines()[-1] == "! 2 issues in 2 folders"
+
+    screen.truncate(0)
+    screen.seek(0)
+    print_issues(findings, Path("/mnt/videos"))
+    assert "▸ tv/S (2019) — note" in screen.getvalue()
+
+
+def test_run_validate_json_is_the_bare_report_on_stdout(tmp_path, capsys, monkeypatch):
+    """--json: exactly json.dumps(report, indent=2) plus a newline on
+    stdout, nothing on stderr — the data path is untouched by the look."""
+    monkeypatch.setattr("skive.validation.search_first", lambda kind, query: None)
+    (tmp_path / "library" / "movies").mkdir(parents=True)
+
+    run_validate(tmp_path, run=_fake_probe({}), json_=True)
+
+    captured = capsys.readouterr()
+    report = json_report([], tmp_path / "library")
+    assert captured.out == json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    assert captured.err == ""

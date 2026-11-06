@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
@@ -560,8 +559,6 @@ def merge_tv_document(old: dict, doc: dict) -> dict:
 
 
 # --- Library checker (skive validate; map.md decision 7) ---------------------
-
-console = Console()
 
 STAGING_NAME = re.compile(r"_[te]\d+")
 """A leftover staging label in a library file name — the MakeMKV junk tags
@@ -1247,56 +1244,96 @@ def _collapse_staging(issues: list[Finding]) -> list[Finding]:
     return collapsed
 
 
+def _check_cell(f: Finding) -> object:
+    """The check cell: on a terminal led by its severity symbol — `✗` an
+    issue (every non-ratio check, a red ratio), `!` off-norm (a yellow ratio,
+    a graded extra), `✓` a green main, `·` an ungraded row; plain, the bare
+    check name."""
+    if not ui.console.is_terminal:
+        return f.check
+    if f.check != "ratio" or f.band == "red":
+        kind = "fail"
+    elif is_issue(f):
+        kind = "warn"
+    else:
+        kind = "ok" if f.band == "green" else "info"
+    return ui.mark(kind, f.check)
+
+
 def _findings_table(findings: list[Finding]) -> Table:
-    """The shared rich table (repo print_table style): folder, check,
-    detail, and the Δ-from-norm column on graded rows."""
-    table = Table()
-    table.add_column("folder", style="cyan")
-    table.add_column("check", style="yellow", width=17)
-    table.add_column("detail")
-    table.add_column("Δ", width=8)
+    """The shared table look: folder, check (severity symbol), detail, and
+    the Δ-from-norm column on graded rows."""
+    table = ui.table("folder", "check", "detail", "Δ")
     for f in findings:
         detail = Text(f.detail, style=_band_style(f.band)) \
             if f.band else f.detail
-        table.add_row(f.folder, f.check, detail, _delta_cell(f))
+        table.add_row(f.folder, _check_cell(f), detail, _delta_cell(f))
     return table
 
 
+def _heading(text: str) -> None:
+    ui.console.print(Text(text, style="item"), soft_wrap=True)
+
+
+def _result_line(findings: list[Finding]) -> None:
+    """The closing line: `! 7 issues in 4 folders` (staging names counted
+    once per folder, as the issues table shows them), else `✓ no issues`."""
+    issues = _collapse_staging([f for f in findings if is_issue(f)])
+    if not issues:
+        ui.ok("no issues")
+        return
+    n, folders = len(issues), len({f.folder for f in issues})
+    ui.warn(f"{n} issue{'s' if n != 1 else ''} in "
+            f"{folders} folder{'s' if folders != 1 else ''}")
+
+
 def print_findings(findings: list[Finding], root: Path) -> None:
-    """The ONE rich table: every graded ratio, every finding, in walk order.
-    Prints only — nothing here writes or deletes.
+    """The ONE table: every graded ratio, every finding, in walk order, then
+    the result line. Prints only — nothing here writes or deletes.
 
     Args:
         findings: The walk's findings
         root: The share root the walk covered
     """
-    console.print(f"\nLibrary validation — {root}")
+    _heading(f"Library validation — {root}")
     if not findings:
-        console.print("no findings")
+        ui.ok("no findings")
         return
-    console.print(_findings_table(findings))
+    ui.console.print(_findings_table(findings))
+    _result_line(findings)
 
 
 def print_issues(findings: list[Finding], root: Path) -> None:
     """The issues-only view: off-band ratios and every other finding (green
     mains stay out, staging names collapse to one row per folder), then the
-    per-folder action plan. Prints only — nothing here writes or deletes.
+    per-folder action plan and the result line. Prints only — nothing here
+    writes or deletes.
 
     Args:
         findings: The walk's findings (unfiltered — the filter runs here)
         root: The share root the walk covered
     """
     issues = [f for f in findings if is_issue(f)]
-    console.print(f"\nLibrary validation — {root} (issues only)")
+    _heading(f"Library validation — {root} (issues only)")
     if not issues:
-        console.print("no issues")
+        ui.ok("no issues")
         return
-    console.print(_findings_table(_collapse_staging(issues)))
-    console.print("\n[bold]Manual review — action plan[/bold]")
+    ui.console.print(_findings_table(_collapse_staging(issues)))
+    _heading("Manual review — action plan")
+    styled = ui.console.is_terminal
     for entry in recommendations(findings):
-        console.print(f"  [bold]{entry['folder']}[/bold] — {entry['priority']}")
+        if styled:
+            prio = {"red": "fail", "yellow": "warn"}.get(entry["priority"], "dim")
+            ui.console.print(Text.assemble((f"\u25b8 {entry['folder']}", "item"),
+                                           " — ", (entry["priority"], prio)),
+                             soft_wrap=True)
+        else:
+            ui.console.print(f"  {entry['folder']} — {entry['priority']}",
+                             soft_wrap=True, markup=False)
         for action in entry["actions"]:
-            console.print(f"    • {action}")
+            ui.console.print(f"  • {action}" if styled else f"    • {action}",
+                             soft_wrap=True, markup=False)
+    _result_line(findings)
 
 
 def json_report(findings: list[Finding], root: Path, *, issues: bool = False) -> dict:
@@ -1360,8 +1397,8 @@ def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
     if not library.is_dir():
         message = f"no library/ under {share}"
         if json_:
-            print(json.dumps({"root": str(library), "error": message,
-                              "findings": [], "recommendations": []}, indent=2))
+            ui.out(json.dumps({"root": str(library), "error": message,
+                               "findings": [], "recommendations": []}, indent=2))
         else:
             ui.fail(message)
         return
@@ -1373,13 +1410,10 @@ def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
             report["fixed"] = [{"from": str(o.relative_to(library)),
                                 "to": str(n.relative_to(library))}
                                for o, n in renames]
-        print(json.dumps(report, indent=2, ensure_ascii=False))
+        ui.out(json.dumps(report, indent=2, ensure_ascii=False))
         return
-    if renames:
-        console.print(f"\nFixed — {len(renames)} staging label(s) renamed:")
-        for old, new in renames:
-            console.print(f"  {old.relative_to(library)} → "
-                          f"{new.relative_to(library)}")
+    for old, new in renames:
+        ui.ok(f"renamed {old.relative_to(library)} → {new.relative_to(library)}")
     if issues:
         print_issues(findings, library)
     else:

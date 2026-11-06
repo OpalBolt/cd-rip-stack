@@ -89,7 +89,7 @@ def test_validate_clean_library_exits_zero(tmp_path, monkeypatch, capsys):
 
     skive_main.main()
 
-    assert "no findings" in capsys.readouterr().out
+    assert "no findings" in capsys.readouterr().err
 
 
 def test_validate_library_full_of_findings_still_exits_zero(tmp_path, monkeypatch, capsys):
@@ -106,7 +106,7 @@ def test_validate_library_full_of_findings_still_exits_zero(tmp_path, monkeypatc
 
     skive_main.main()
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "ratio" in out and "X (2000)" in out
 
 
@@ -147,6 +147,6 @@ def test_validate_doc_folder_walk_needs_no_network(tmp_path, monkeypatch, capsys
 
     skive_main.main()
 
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "X (2000)" in out
     assert "unreadable" in out
