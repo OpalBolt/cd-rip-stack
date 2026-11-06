@@ -1035,7 +1035,8 @@ def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
     err = capsys.readouterr().err
     opener = "skive rip music · Test Artist - Test Album · offset +6"
     assert opener in err
-    assert err.index(opener) < err.index("▸ 1/2  First song")
+    # spill: the item heading is the frame header rule (console-frames slice 01)
+    assert err.index(opener) < err.index("╭─ 1/2  First song")
     footer = view.render()
     assert "track 2/2" in footer
     assert "Second song" in footer
@@ -1222,7 +1223,7 @@ def test_progress_stream_drives_heading_and_footer_at_default_verbosity(monkeypa
     finally:
         ui.clear_view()
 
-    assert "▸ 2/4  track 2" in err
+    assert "╭─ 2/4  track 2" in err  # spill: frame header rule (console-frames slice 01)
     assert "progress - 50.00%" not in err  # not in scrollback, nor in the failure replay
     assert "track 2/4" in footer
     assert "offset +6" in footer

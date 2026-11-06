@@ -1702,6 +1702,63 @@ def test_session_cap_defers_beyond_limit(env, capsys):
     assert "info  deferred (session cap 1): Bbb (2002)" in capsys.readouterr().err
 
 
+def test_opener_comes_first_skips_under_it_and_counter_counts_the_session(env, capsys):
+    """Nothing of the run prints above the opener: it states the session
+    against the queue and the encoder plus skip count, the junk-label skips
+    follow as warn lines, and the item counter counts this session (1/1)."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
+    mk(vid, "rip/movies/Bbb (2002)/Bbb (2002)_t00.mkv", "BBB")
+    mk(vid, "rip/movies/Baz (2003)/d2/B1_t00.mkv", "JUNK")
+
+    rc = transcode.run_transcode(Args(limit=1))
+
+    assert rc == 0
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == ("info  skive transcode \u00b7 1 of 2 this session (cap 1, "
+                        "~15\u201320 min) \u00b7 1 deferred \u00b7 encoder x265 \u00b7 "
+                        "1 skipped (junk label)")
+    assert lines[1].startswith("warn  skip (junk label -- mid-rip or failed rename): ")
+    assert lines[2] == "info  1/1  Aaa (2001)"
+
+
+def test_interrupt_closes_the_item_frame_before_the_summary_box(env, monkeypatch):
+    """TTY: Ctrl+C mid-item closes the open frame with `✗ interrupted <t>`
+    before the summary box prints; scrollback never ends mid-frame."""
+    import io
+
+    from rich.console import Console
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    buf = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(
+        file=buf, force_terminal=True, color_system=None, width=80, theme=ui.THEME,
+        highlight=False, emoji=False))
+    vid = env / "vid"
+    mk(vid, "rip/movies/Stop (2001)/Stop (2001)_t00.mkv", "STOP")
+
+    def interrupted_copy(src, dst):
+        raise Interrupted()
+
+    monkeypatch.setattr(transcode, "_copy2", interrupted_copy)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        rc = transcode.run_transcode(Args())
+    finally:
+        ui.clear_view()
+
+    assert rc == 130
+    lines = buf.getvalue().splitlines()
+    assert lines[0].startswith("\u256d\u2500 skive transcode")
+    head = next(n for n, l in enumerate(lines) if l.startswith("\u256d\u2500 1/1  Stop (2001)"))
+    close = next(n for n, l in enumerate(lines) if l.startswith("\u2570\u2500 \u2717 interrupted "))
+    summary = next(n for n, l in enumerate(lines) if l.startswith("\u256d\u2500 summary"))
+    assert head < close < summary
+    assert all(l.startswith("\u2502 ") for l in lines[head + 1:close])  # inside the gutter
+    assert len(lines[close]) == 80
+
+
 # -- prefetch lookahead: the next unit's copy overlaps the current encode ---------
 
 def _slow_hb(tmp_path):

@@ -9,11 +9,14 @@ symbol (``✓ · ! ✗``); off a terminal they stay plain tagged lines
 TERM=dumb, non-TTY). A module-level lock guarantees whole lines across
 threads.
 
-A long-running command (transcode, rip) opens a RunView (ADR 0013). On a
-TTY every line still prints to scrollback; only a borderless footer of at
-most two lines redraws beneath it. Off a TTY the view holds no rich Live
-and every line is plain. Verbosity gating stays at the call sites — this is
-the console layer only.
+A long-running command (transcode, rip) opens a RunView (ADR 0014). On a
+TTY the run is framed scrollback: a closed opener box, one right-open item
+frame per item (header rule, `│` gutter, closing rule), and a closed live
+box titled `now` redrawing beneath them; the run summary is a closed box
+too. Every box and rule is min(console width, 100) wide. Off a TTY, under
+NO_COLOR or TERM=dumb, every line is a plain tagged line with no box
+characters. Verbosity gating stays at the call sites — this is the console
+layer only.
 """
 
 import contextlib
@@ -24,15 +27,22 @@ import sys
 import threading
 from pathlib import Path
 
-from rich.box import SIMPLE_HEAD
+from rich.box import ROUNDED, SIMPLE_HEAD
 from rich.console import Console, Group
+from rich.panel import Panel
 from rich.progress_bar import ProgressBar
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
 THEME = Theme({"ok": "green", "warn": "yellow", "fail": "red",
-               "hot": "bold red", "dim": "dim", "item": "bold"})
+               "hot": "bold red", "dim": "dim", "item": "bold",
+               "phase.copy": "blue", "phase.merge": "yellow",
+               "phase.subs": "magenta", "phase.crop": "cyan",
+               "phase.prefetch": "dim blue", "phase.encode": "green",
+               "frame": "dim", "border": "blue", "title": "bold"})
+WIDTH_CAP = 100  # every box, frame rule and table: min(console width, 100)
+PHASE_WIDTH = len("prefetch")  # the phase column pads to its longest name
 
 # The one shared console. stderr=True resolves sys.stderr at write time (a
 # Live's redirect and pytest's capture both see it); no hand-written colour
@@ -44,7 +54,10 @@ _SYMBOL_STYLE = {"ok": "ok", "info": "dim", "warn": "warn", "fail": "fail"}
 
 _print_lock = threading.Lock()
 _view = None  # the run's RunView while one is live (common.VERBOSITY precedent)
-_indent = False  # TTY: lines indent two spaces beneath the last item heading
+# TTY: an item frame is open, so lines print behind its `│` gutter; reset by
+# run_summary so a crashed run never leaks a gutter into the next output
+_frame_open = False
+_scope = ""  # the opener's scope line: the live box's text when it has no lane
 
 
 def set_view(view) -> None:
@@ -53,9 +66,17 @@ def set_view(view) -> None:
 
 
 def clear_view() -> None:
-    global _view, _indent
+    global _view
     _view = None
-    _indent = False
+
+
+def _width() -> int:
+    return min(console.width, WIDTH_CAP)
+
+
+def _plain_env() -> bool:
+    """NO_COLOR or TERM=dumb: plain tagged lines even on a terminal."""
+    return bool(os.environ.get("NO_COLOR")) or os.environ.get("TERM") in ("dumb", "unknown")
 
 
 def view():
@@ -80,7 +101,7 @@ def _styled() -> bool:
     open, the shared console's terminal detection otherwise."""
     if _view is not None and not _view._closed:
         return _view.tty
-    return console.is_terminal
+    return console.is_terminal and not _plain_env()
 
 
 def _emit(text: Text) -> None:
@@ -94,15 +115,49 @@ def _plain(line: str) -> None:
         print(line, file=sys.stderr)
 
 
-def _event_text(kind: str, text: str) -> Text:
-    line = Text("  " if _indent else "")
+def _gutter() -> Text:
+    return Text.assemble(("\u2502 ", "frame")) if _frame_open else Text()
+
+
+def _event_text(kind: str, text: str, phase: str | None = None,
+                elapsed: str | None = None) -> Text:
+    """`│ ✓ copy      3664 MB at 19 MB/s      3m06s`: gutter while a frame
+    is open, symbol, the phase in its colour, detail, elapsed right-aligned
+    at the frame width."""
+    line = _gutter()
     line.append(SYMBOLS[kind], style=_SYMBOL_STYLE[kind])
+    if phase:
+        line.append(f" {phase:<{PHASE_WIDTH}} ", style=f"phase.{phase}")
     line.append(f" {text}")
+    if elapsed:
+        line.append(" " * max(_width() - line.cell_len - len(elapsed), 2))
+        line.append(elapsed, style="dim")
     return line
+
+
+def _plain_text(text: str, phase: str | None = None, elapsed: str | None = None) -> str:
+    """Plain form of a phase line: the phase leads the detail, the elapsed
+    trails it (`copy 3664 MB at 19 MB/s 3m06s`)."""
+    return " ".join(x for x in (phase, text, elapsed) if x)
 
 
 def _plain_event(kind: str, text: str) -> str:
     return f"{kind:<4}  {text}"
+
+
+def _rule(line: Text, width: int) -> Text:
+    """line truncated to fit, then padded with ` ───` to exactly width."""
+    line.truncate(width - 2, overflow="ellipsis")
+    line.append(" " + "\u2500" * (width - line.cell_len - 1))
+    return line
+
+
+def _neutral_close() -> None:
+    """Close an open frame with a plain dim rule (no outcome known)."""
+    global _frame_open
+    if _frame_open and _styled():
+        _emit(Text("\u2570" + "\u2500" * (_width() - 1), style="frame"))
+    _frame_open = False
 
 
 def mark(kind: str, text: str) -> Text:
@@ -126,10 +181,10 @@ def out(text: str) -> None:
 class RunView:
     """One instance per run. TTY mode: event, heading and tool lines print
     to scrollback through the shared console and a rich Live (transient, no
-    alternate screen) redraws only the footer beneath them. Fallback mode
-    (stderr not a TTY, including pytest): no Live; every line is a plain
-    tagged line. render() returns the footer as text without a terminal —
-    the test seam."""
+    alternate screen) redraws only the live box (`now`) beneath them.
+    Fallback mode (stderr not a TTY, NO_COLOR, TERM=dumb, including pytest):
+    no Live; every line is a plain tagged line. render() returns the live box
+    as text without a terminal — the test seam."""
 
     BAR_WIDTH = 20
 
@@ -142,12 +197,14 @@ class RunView:
         if tty is None:
             stream = sys.stderr
             try:
-                tty = bool(stream is not None and stream.isatty())
+                tty = bool(stream is not None and stream.isatty()) and not _plain_env()
             except ValueError:  # closed stream
                 tty = False
         self.tty = tty
         self._closed = False
-        self._label = Text()  # footer line 1, left part: position · item · phase
+        self._pos = ""  # lane 1's position (`2/4`): never truncates away
+        self._label = Text()  # lane 1, left part: position · item · phase
+        self._step = ""  # lane 1's step text (copying…, OCR track n)
         self._pct: float | None = None
         self._eta: str | None = None
         self._perf = None  # (text, hot segment strings)
@@ -171,59 +228,87 @@ class RunView:
         self._live.start()
 
     def __rich_console__(self, console, options):
-        yield self._footer(options.max_width)
+        width = min(options.max_width, WIDTH_CAP)
+        yield Panel(self._footer(width - 4), box=ROUNDED, width=width,
+                    title=Text("now", style="title"), title_align="left",
+                    border_style="border")
 
     def _footer(self, width: int) -> Group:
-        """Footer line 1 (position · item · phase, bar, percent, ETA) and an
-        optional line 2 (background activity, perf line). The left part
-        truncates with `…` so bar, percent and ETA always fit."""
-        lines = []
-        label, pct, eta = self._label, self._pct, self._eta
-        if label or pct is not None or eta:
-            right: list = []
-            if pct is not None:
-                right.append((ProgressBar(total=100, completed=pct,
-                                          width=self.BAR_WIDTH), self.BAR_WIDTH))
-                right.append((Text(f"{pct:.0f}%"), len(f"{pct:.0f}%")))
-            if eta:
-                right.append((Text(f"ETA {eta}"), len(f"ETA {eta}")))
-            room = max(width - sum(w + 2 for _, w in right), 1)
-            label = label.copy()
-            label.truncate(room, overflow="ellipsis")
-            row = Table.grid(padding=(0, 2, 0, 0))
-            row.add_column(no_wrap=True, width=label.cell_len)
-            for _, w in right:
-                row.add_column(no_wrap=True, width=w)
-            row.add_row(label, *(r for r, _ in right))
-            lines.append(row)
+        """The live box's lanes at `width` inner columns: the item lane
+        (position, item · phase step, bar, percent, ETA), one lane per
+        background activity, the perf lane. Narrow widths drop the perf lane,
+        then the background lanes, then shrink the bar to 10, then truncate
+        the name with `…`; position, percent and ETA never drop. With no lane
+        left the box shows the opener's scope, so it is never empty."""
+        lanes: list = []
+        lane1 = self._item_lane(width)
+        if lane1 is not None:
+            lanes.append(lane1)
         bg, perf = self._bg, self._perf
-        if bg or perf:
-            line2 = Text("      ", no_wrap=True, overflow="crop")  # one row: footer stays ≤ 2 lines
-            line2.append("  ".join(f"{k} {bg[k]}" for k in sorted(bg)), style="dim")
-            if perf:
-                text, hot = perf
-                if bg:
-                    line2.append("      ")
-                for i, seg in enumerate(text.split(" \u00b7 ")):
-                    if i:
-                        line2.append(" \u00b7 ", style="dim")
-                    line2.append(seg, style="hot" if seg in hot else "dim")
-            lines.append(line2)
-        return Group(*lines)
+        if bg and width >= 50:
+            lanes += [Text(f"{k} {bg[k]}", style="dim", no_wrap=True, overflow="ellipsis")
+                      for k in sorted(bg)]
+        if perf and width >= 60:
+            text, hot = perf
+            line = Text(no_wrap=True, overflow="ellipsis")
+            for i, seg in enumerate(text.split(" \u00b7 ")):
+                if i:
+                    line.append(" \u00b7 ", style="dim")
+                line.append(seg, style="hot" if seg in hot else "dim")
+            lanes.append(line)
+        if not lanes:
+            lanes.append(Text(_scope or "skive", style="dim", no_wrap=True,
+                              overflow="ellipsis"))
+        return Group(*lanes)
+
+    def _item_lane(self, width: int) -> Table | None:
+        label, pct, eta = self._label, self._pct, self._eta
+        if not label and pct is None and not eta:
+            return None
+        label = label.copy()
+        if self._step:
+            label.append(f" {self._step}", style="dim")
+        right = [s for s in (None if pct is None else f"{pct:.0f}%",
+                             f"ETA {eta}" if eta else None) if s]
+        fixed = sum(len(s) + 2 for s in right)
+        bar = 0 if pct is None else self.BAR_WIDTH if width >= 44 else 10
+        room = width - fixed - (bar + 2 if bar else 0)
+        keep = len(self._pos) + 2  # the position plus `…`
+        if bar and room < keep:  # still too narrow: the bar gives way
+            bar = max(bar - (keep - room), 0)
+            room = width - fixed - (bar + 2 if bar else 0)
+        label.truncate(max(room, 1), overflow="ellipsis")
+        row = Table.grid(padding=(0, 2, 0, 0))
+        row.add_column(no_wrap=True, width=label.cell_len)
+        cells: list = [label]
+        if bar:
+            row.add_column(no_wrap=True, width=bar)
+            cells.append(ProgressBar(total=100, completed=pct, width=bar))
+        for s in right:
+            row.add_column(no_wrap=True, width=len(s))
+            cells.append(Text(s))
+        row.add_row(*cells)
+        return row
 
     def footer(self, pos: str, name: str, phase: str = "") -> None:
-        """Footer line 1's left part: ` 2/4  Name · phase`; a new phase
-        starts without a bar until its first progress update."""
-        label = Text(f" {pos}  " if pos else " ")
+        """The item lane's left part: `2/4 Name · phase`; a new phase
+        starts without a bar or step until its first update."""
+        label = Text(f"{pos} " if pos else "")
         label.append(name, style="item")
         if phase:
             label.append(f" \u00b7 {phase}")
-        self._label = label
+        self._pos, self._label, self._step = pos, label, ""
         self._pct = self._eta = None
 
     def status(self, *lines: str) -> None:
-        """Footer line 1's left part as free text, parts joined by ` · `."""
-        self._label = Text(" " + " \u00b7 ".join(str(x) for x in lines))
+        """The item lane's left part as free text, parts joined by ` · `."""
+        self._pos, self._step = "", ""
+        self._label = Text(" \u00b7 ".join(str(x) for x in lines))
+
+    def step(self, text: str) -> None:
+        """The current step (copying…, OCR track n) beside the phase in the
+        item lane; the next footer() clears it."""
+        self._step = str(text)
 
     def progress(self, pct, eta) -> None:
         """Progress for the footer bar; a None arg omits that field."""
@@ -231,7 +316,7 @@ class RunView:
         self._eta = eta
 
     def perf(self, text: str, hot=set()) -> None:
-        """Footer line 2's perf part (transcode only). No-op in fallback;
+        """The perf lane (transcode only). No-op in fallback;
         an empty text drops it."""
         if not self.tty:
             return
@@ -245,28 +330,32 @@ class RunView:
         self._bg = {**self._bg, key: str(text)}
 
     def bg_clear(self, key: str) -> None:
-        """Remove a background entry; no line 2 when nothing remains."""
+        """Remove a background entry and its lane."""
         if not self.tty:
             return
         self._bg = {k: v for k, v in self._bg.items() if k != key}
 
     def tool(self, name: str, line: str) -> None:
         """A tool line (makemkv/handbrake/ffmpeg/mkvmerge style): dimmed and
-        tool-prefixed in scrollback on a TTY, ``{name}  {line}`` plain."""
+        tool-prefixed in scrollback on a TTY (in the frame gutter),
+        ``{name}  {line}`` plain."""
         if self.tty:
-            _emit(Text(("  " if _indent else "") + f"{name}  {line}", style="dim"))
+            text = _gutter()
+            text.append(f"{name}  {line}", style="dim")
+            _emit(text)
         else:
             _plain(f"{name}  {line}")
 
-    def event(self, kind: str, text: str) -> None:
+    def event(self, kind: str, text: str, phase: str | None = None,
+              elapsed: str | None = None) -> None:
         """An ok/info/warn/fail event line; ui._print routes here while the
         view is open."""
         if self.tty:
-            if kind in ("warn", "fail"):
-                self._replay.append(f"{kind}  {text}")  # replayed into the summary
-            _emit(_event_text(kind, text))
+            if kind in ("warn", "fail"):  # replayed into the summary
+                self._replay.append(f"{kind}  {_plain_text(text, phase, elapsed)}")
+            _emit(_event_text(kind, text, phase, elapsed))
         else:
-            _plain(_plain_event(kind, text))
+            _plain(_plain_event(kind, _plain_text(text, phase, elapsed)))
 
     def suspend(self):
         """Pause the Live footer while a prompt prints normally (scrollback);
@@ -300,7 +389,7 @@ class RunView:
         return list(self._replay)
 
     def render(self, width: int = 80) -> str:
-        """The footer as plain text at `width` columns, no terminal
+        """The live box as plain text at `width` columns, no terminal
         (deterministic; colour-free)."""
         out = io.StringIO()
         Console(file=out, width=width, theme=THEME, color_system=None,
@@ -308,32 +397,61 @@ class RunView:
         return out.getvalue()
 
 
-def opener(text: str) -> None:
-    """The run opener: one line stating the run's scope."""
-    global _indent
-    _indent = False
+def _box(body, title: Text | None = None, subtitle: Text | None = None) -> Panel:
+    """The one closed-box look: rounded, blue border, bold title in the top
+    border, at the shared width."""
+    return Panel(body, box=ROUNDED, width=_width(), title=title, title_align="left",
+                 subtitle=subtitle, border_style="border")
+
+
+def opener(title: str, *lines: str) -> None:
+    """The run opener: a closed box with the title in its border and the
+    run's scope lines inside (a lone title is the box's one line). Plain: one
+    info line, the parts joined by ` · `."""
+    global _scope
+    _neutral_close()
+    _scope = lines[0] if lines else title
     if _styled():
-        _emit(Text(text))
+        box = (_box(Text("\n".join(lines)), Text(title, style="title")) if lines
+               else _box(Text(title)))
+        with _print_lock:
+            console.print(box)
     else:
-        _plain(_plain_event("info", text))
+        _plain(_plain_event("info", " \u00b7 ".join((title, *lines))))
 
 
 def unindent() -> None:
-    """Events for an item with no heading must not hang under the last one."""
-    global _indent
-    _indent = False
+    """Events for an item with no heading must not hang in the last frame."""
+    _neutral_close()
 
 
 def item(pos: int, total: int, name: str) -> None:
-    """The item heading `▸ 2/4  Name`; on a TTY later lines indent beneath
-    it until the next heading."""
-    global _indent
+    """The item frame's header rule `╭─ 2/4  Name ───`; on a TTY later lines
+    print behind its `│` gutter until item_end (or the next item, which
+    closes the old frame neutrally first)."""
+    global _frame_open
     if _styled():
-        _indent = False
-        _emit(Text(f"\u25b8 {pos}/{total}  {name}", style="item"))
-        _indent = True
+        _neutral_close()
+        head = Text("\u256d\u2500 ", style="frame")
+        head.append(f"{pos}/{total}", style="dim")
+        head.append("  ")
+        head.append(name, style="item")
+        _emit(_rule(head, _width()))
+        _frame_open = True
     else:
         _plain(_plain_event("info", f"{pos}/{total}  {name}"))
+
+
+def item_end(kind: str, text: str, elapsed: str | None = None) -> None:
+    """The item frame's closing rule `╰─ ✓ done 7m56s ───`, coloured by kind,
+    the elapsed bold. Plain mode has no frames: nothing prints."""
+    global _frame_open
+    if _styled():
+        line = Text(f"\u2570\u2500 {SYMBOLS[kind]} {text}", style=_SYMBOL_STYLE[kind])
+        if elapsed:
+            line.append(f" {elapsed}", style="item")
+        _emit(_rule(line, _width()))
+    _frame_open = False
 
 
 _HMS_RX = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s$")
@@ -401,8 +519,10 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                 replay=(), columns=None, log=None,
                 interrupt_note: str | None = None, failed: bool = False) -> None:
     """End-of-run summary on stderr (after the run view closed): warn/fail
-    lines replayed (TTY only), one borderless table of rows, the --keep
-    banner only when keep_banner is set, then one result line. columns=None
+    lines replayed (TTY only), then on a TTY one closed `summary` box (columns
+    `-` for every row dropped, the result line as its bottom title) with the
+    --keep banner under it; plain: the table, the banner, the result line.
+    The banner prints only when keep_banner is set. columns=None
     keeps the transcode shape (per-phase cells summed into a total; the row's
     third field is ok/failed/interrupted); a columns tuple renders each row
     as ready cells (the rip shape). log (the run's RipLog) adds the run
@@ -426,6 +546,26 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
             if raw_log is not None and raw_log.exists():
                 see += f", raw {raw_log}"
     kind, result = _result_text(n_ok, n_failed, elapsed, interrupt_note, see, failed)
+    _neutral_close()  # a crashed run's open frame never leaks its gutter
+    if columns is None:  # the transcode shape: per-phase cells summed into a total
+        columns = ("Item", "copy", "merge", "subs", "encode", "total", "result")
+        body = []
+        for label, parts, word in rows:
+            cells: dict[str, str] = {}
+            total = 0
+            for part in parts:
+                phase, _, value = part.partition(" ")
+                cells[phase] = value
+                s = _secs(value)
+                if s is not None:
+                    total += s
+            body.append([label, *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
+                         _hms(total), word])
+    else:
+        body = [list(row) for row in rows]
+    keep = range(len(columns))
+    if styled and body:  # the box drops columns that are `-` for every row
+        keep = [c for c in keep if any(str(row[c]) != "-" for row in body)]
     with _print_lock:
         for line in replay:
             rkind, _, text = line.partition("  ")
@@ -434,38 +574,35 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                                             f" {text}"), soft_wrap=True)
             else:
                 print(line, file=sys.stderr)
-        # SIMPLE_HEAD's blank top and bottom edges space the table from the
-        # replay above and the result line below
-        table = Table(box=SIMPLE_HEAD, header_style="dim")
-        if columns is not None:
-            for col in columns:
-                table.add_column(col)
-            for row in rows:
-                table.add_row(*(_result_cell(c, styled) if col == "result" else str(c)
-                                for col, c in zip(columns, row)))
-        else:
-            for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
-                table.add_column(col)
-            for label, parts, word in rows:
-                cells: dict[str, str] = {}
-                total = 0
-                for part in parts:
-                    phase, _, value = part.partition(" ")
-                    cells[phase] = value
-                    s = _secs(value)
-                    if s is not None:
-                        total += s
-                table.add_row(label,
-                              *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
-                              _hms(total), _result_cell(word, styled))
-        console.print(table)
-        if keep_banner is not None:
-            console.print(keep_banner, soft_wrap=True)
-        if styled:
-            console.print(Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]),
-                                        f" {result}"), soft_wrap=True)
-        else:
+        # plain: SIMPLE_HEAD's blank top and bottom edges space the table
+        # from the replay above and the result line below; styled: the box
+        # is the border, the table keeps only its header rule
+        table = (Table(box=SIMPLE_HEAD, header_style="dim", show_edge=False,
+                       expand=True, pad_edge=False) if styled
+                 else Table(box=SIMPLE_HEAD, header_style=""))  # plain: unstyled, even on a NO_COLOR terminal
+        for c in keep:
+            table.add_column(columns[c])
+        for row in body:
+            table.add_row(*(_result_cell(row[c], styled) if columns[c] == "result"
+                            else str(row[c]) for c in keep))
+        if not styled:
+            console.print(table)
+            if keep_banner is not None:
+                console.print(keep_banner, soft_wrap=True)
             print(_plain_event(kind, result), file=sys.stderr)
+            return
+        line = Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]), f" {result}",
+                             style=_SYMBOL_STYLE[kind])
+        fits = line.cell_len <= _width() - 6
+        if not fits:  # the border keeps the counts; the full line prints below
+            head = result.partition(" \u2014 ")[0]
+            line = Text(f"{SYMBOLS[kind]} {head}", style=_SYMBOL_STYLE[kind])
+        console.print(_box(table, Text("summary", style="title"), line))
+        if not fits:
+            console.print(Text(f"{SYMBOLS[kind]} {result}", style=_SYMBOL_STYLE[kind]),
+                          soft_wrap=True)
+        if keep_banner is not None:
+            console.print(Text(keep_banner, style="warn"), soft_wrap=True)
 
 
 def result_line(kind: str, *parts: str, elapsed: int | None = None,
@@ -482,15 +619,16 @@ def result_line(kind: str, *parts: str, elapsed: int | None = None,
         _plain(_plain_event(kind, text))
 
 
-def _print(kind: str, text: str) -> None:
+def _print(kind: str, text: str, phase: str | None = None,
+           elapsed: str | None = None) -> None:
     # the lock must not span the view dispatch: _emit takes it too, and a
     # plain Lock re-acquiring on the same thread deadlocks
     if _view is not None and _view.tty and not _view._closed:
-        _view.event(kind, text)
-    elif console.is_terminal:
-        _emit(_event_text(kind, text))
+        _view.event(kind, text, phase, elapsed)
+    elif _styled():
+        _emit(_event_text(kind, text, phase, elapsed))
     else:
-        _plain(_plain_event(kind, text))
+        _plain(_plain_event(kind, _plain_text(text, phase, elapsed)))
 
 
 def tool(name: str, text: str) -> None:
@@ -502,24 +640,35 @@ def tool(name: str, text: str) -> None:
         _plain(f"{name}  {text}")
 
 
-def ok(text: str) -> None:
-    """An item or step finished."""
-    _print("ok", text)
+def ok(text: str, phase: str | None = None, elapsed: str | None = None) -> None:
+    """An item or phase finished; phase/elapsed make it a phase line."""
+    _print("ok", text, phase, elapsed)
 
 
-def info(text: str) -> None:
+def info(text: str, phase: str | None = None, elapsed: str | None = None) -> None:
     """Routine event, skip, or deferral."""
-    _print("info", text)
+    _print("info", text, phase, elapsed)
 
 
-def warn(text: str) -> None:
+def warn(text: str, phase: str | None = None, elapsed: str | None = None) -> None:
     """The loud note; the run continues."""
-    _print("warn", text)
+    _print("warn", text, phase, elapsed)
 
 
-def fail(text: str) -> None:
+def fail(text: str, phase: str | None = None, elapsed: str | None = None) -> None:
     """Terminal failure."""
-    _print("fail", text)
+    _print("fail", text, phase, elapsed)
+
+
+def step(text: str, verbose: bool = False) -> None:
+    """A step line (copying…, OCR track n, wrote .srt): live-box text on a
+    TTY run view, kept in scrollback too when the caller says verbose (-v);
+    an info line otherwise."""
+    if _view is not None and _view.tty and not _view._closed:
+        _view.step(text)
+        if not verbose:
+            return
+    info(text)
 
 
 # -- prompts and tables: one shape everywhere ----------------------------------

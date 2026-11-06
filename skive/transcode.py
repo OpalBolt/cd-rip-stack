@@ -249,7 +249,8 @@ def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
     return ""
 
 
-def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
+def _scan(input_dir: str, want: list[str],
+          skipped: list[str] | None = None) -> tuple[list[Item], set[str]]:
     """Walk the input tree (rip/ staging; issues/ with --retry) for
     .mkv files; return parsed items + which prefixes hit.
 
@@ -257,7 +258,8 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
     is the type — `tv` (or legacy `TV`) is TV, anything else a movie. Titles
     rest at either depth — promoted at <type>/<Name (Year)>/<file>.mkv or
     fresh in the drive subdir <type>/<Name (Year)>/d{disc}/<file>.mkv — and
-    one rglob finds both.
+    one rglob finds both. skipped, when given, collects the junk-label skip
+    lines instead of printing them (transcode prints them under its opener).
     """
     items: list[Item] = []
     want_hit: set[str] = set()
@@ -291,12 +293,12 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             part = int(m.group("pn")) if m.group("part") else -1
         else:
             if not want or any(w.lower() in str(f).lower() for w in want):
-                ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
+                _skip_junk(f, skipped)
             continue
         # junk guard: no "(YYYY)" tail = rip in progress or failed rename
         if not re.search(r"\(\d{4}\)$", movie):
             if not want or any(w.lower() in str(f).lower() for w in want):
-                ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
+                _skip_junk(f, skipped)
             continue
         if want:
             want_s = {common.sanitize(w): w for w in want}
@@ -311,6 +313,14 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             is_tv=is_tv, sn=sn, en=en, tail=tail,
         ))
     return items, want_hit
+
+
+def _skip_junk(f: Path, skipped: list[str] | None) -> None:
+    line = f"skip (junk label -- mid-rip or failed rename): {f}"
+    if skipped is None:
+        ui.info(line)
+    else:
+        skipped.append(line)
 
 
 def _probe_height(src: str, ffprobe_exe: str) -> int:
@@ -741,15 +751,16 @@ def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
     line (MB/s) goes to the console and the run log's status -- the slippage
     watch reads it (CONTEXT.md: Run log). The caller registers dst in
     inflight BEFORE calling (CONTEXT.md: Interrupt)."""
-    ui.info(f"copying {os.path.basename(src)} to local temp...")
     _phase_status("copy", os.path.basename(src))
+    ui.step(f"copying {os.path.basename(src)} to local temp...",
+            verbose=common.VERBOSITY > 0)
     log.phase("copy")
     t0 = time.monotonic()
     _copy2(src, dst)
     secs = max(int(time.monotonic() - t0), 1)
     mb = os.path.getsize(dst) // (1024 * 1024)
     detail = f"{mb} MB at {mb // secs} MB/s"
-    ui.info(f"copied in {_hms(secs)} ({detail})")
+    ui.ok(detail, phase="copy", elapsed=_hms(secs))
     log.phase_end(detail)
     parts.append(f"copy {_hms(secs)}")
 
@@ -981,6 +992,7 @@ def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
     barren = sum(1 for n in res.notes if n.startswith("barren"))
     detail = f"{len(res.sidecars)} sidecar(s)" + (f", {barren} barren" if barren else "")
     log.phase_end(detail if res.ok else f"FAIL: {detail}")
+    (ui.ok if res.ok else ui.fail)(detail, phase="subs", elapsed=_hms(secs))
     parts.append(f"subs {_hms(secs)}")
     return side_dir, res
 
@@ -997,8 +1009,7 @@ def _detect_part(local_src: str, ffprobe_exe: str, log: common.RipLog,
     crop, note = _detect_crop(local_src, ffprobe_exe)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end(note)
-    if crop is None:
-        ui.info(note)  # loud refusals on console; the phase line is the record
+    (ui.info if crop is None else ui.ok)(note, phase="crop", elapsed=_hms(secs))
     parts.append(f"detect {_hms(secs)}")
     return crop, note
 
@@ -1014,9 +1025,10 @@ def _encode_part(local_src: str, local_out: str, encoder: str, hb_exe: str,
     ok = _encode(local_src, local_out, encoder, hb_exe, ffprobe_exe,
                  no_subs=no_subs, log=log, speed=speed, crop=crop)
     secs = max(int(time.monotonic() - t0), 1)
-    detail = (f"ok, {os.path.getsize(local_out) // (1024 * 1024)} MB"
-              if ok else "FAIL")
-    log.phase_end(detail)
+    size = f"{os.path.getsize(local_out) // (1024 * 1024)} MB" if ok else ""
+    log.phase_end(f"ok, {size}" if ok else "FAIL")
+    (ui.ok if ok else ui.fail)(f"{encoder}, {size}" if ok else f"{encoder} FAIL",
+                               phase="encode", elapsed=_hms(secs))
     parts.append(f"encode {_hms(secs)}")
     return ok
 
@@ -1030,6 +1042,9 @@ def _merge_part(dst: str, local_parts: list[str], mkv_exe: str,
     mrc = _merge(dst, local_parts, mkv_exe, log=log)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end("ok" if mrc <= 1 else f"FAIL({mrc})")
+    (ui.ok if mrc <= 1 else ui.fail)(
+        f"{len(local_parts)} parts" if mrc <= 1 else f"mkvmerge FAIL({mrc})",
+        phase="merge", elapsed=_hms(secs))
     parts.append(f"merge {_hms(secs)}")
     return mrc
 
@@ -1097,12 +1112,15 @@ def run_transcode(args) -> int:
     # encoder resolution happens once here (vainfo probing per file would be
     # noise); the three _encode_part call sites read args.encoder, so the
     # resolved value is written back onto args
+    encoder_line = args.encoder  # the opener's encoder; notes print under it, never above
     if args.encoder in ("auto", "vaapi"):
         vcn = _vcn_probe()
         if vcn:
             args.encoder = "vaapi"
+            encoder_line = ("VCN hevc_vaapi CQP 24"
+                            + (" (low-power entrypoint)" if vcn["low_power"] else ""))
             log.note("encode", "VCN hardware hevc_vaapi CQP 24"
-                     + (" (low-power entrypoint)" if vcn["low_power"] else ""))
+                     + (" (low-power entrypoint)" if vcn["low_power"] else ""), echo=False)
         elif args.encoder == "vaapi":
             ui.fail("-e vaapi but this box has no VA-API HEVC encode "
                     "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
@@ -1110,12 +1128,17 @@ def run_transcode(args) -> int:
             return 1
         else:
             args.encoder = "x265-fast"
-            log.note("encode", "no VCN (vainfo) -- auto fell back to x265 (fast preset)")
-    items, want_hit = _scan(input_dir, args.prefixes)
+            encoder_line = "x265 fast preset (no VCN -- auto fell back)"
+            log.note("encode", "no VCN (vainfo) -- auto fell back to x265 (fast preset)",
+                     echo=False)
+    skipped: list[str] = []
+    items, want_hit = _scan(input_dir, args.prefixes, skipped)
     for w in args.prefixes:
         if w not in want_hit:
             ui.warn(f"no staged MKVs match: {w}")
     if not items:
+        for line in skipped:
+            ui.warn(line)
         if args.prefixes:
             ui.warn("no matching MKVs to transcode")
             return 1
@@ -1174,14 +1197,11 @@ def run_transcode(args) -> int:
     # the very vague session estimate (CONTEXT.md: Session cap): ~15–20
     # min per main on the laptop's VCN is a DVD-to-Blu-ray blur, stated
     # once, never per title
-    session = ""
+    deferred = 0
     if args.limit:
         n_staged = len(main_num)
         n_run = min(args.limit, n_staged)
         deferred = n_staged - n_run
-        if deferred:  # nothing deferred: the cap changes nothing, say nothing
-            session = (f" \u00b7 {n_run} main(s) this session (cap {args.limit}, "
-                       f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred")
 
     failed = 0
     parked = 0  # sources actually parked in lossless/ (--keep banner honesty)
@@ -1200,17 +1220,27 @@ def run_transcode(args) -> int:
     inflight_side: str | None = None  # this item's sidecar temp dir, once the pass starts
     current: str | None = None  # the in-flight unit's summary label until _item_done
     parts: list[str] = []  # the in-flight unit's phase cells (reset per item)
-    def _item_done(label: str, parts: list[str], ok: bool) -> None:
-        """Per-item console summary line; keeps the batch ok/failed counts
-        and one row for the end-of-run summary table."""
+    item_t0 = time.monotonic()  # the in-flight item frame's start
+
+    def _item_done(label: str, parts: list[str], ok: bool, why: str = "") -> None:
+        """Per-item close: the frame's closing rule on a TTY (`✓ done 7m56s`,
+        `✗ failed: <why>`), the summary line plain; keeps the batch ok/failed
+        counts and one row for the end-of-run summary table."""
         nonlocal n_ok, n_failed, current
         current = None
         rows.append((label, list(parts), "ok" if ok else "failed"))
-        if ok:
-            n_ok += 1
+        n_ok += ok
+        n_failed += not ok
+        v = ui.view()
+        if v is not None and v.tty:
+            took = _hms(int(time.monotonic() - item_t0))
+            if ok:
+                ui.item_end("ok", "done", took)
+            else:
+                ui.item_end("fail", f"failed: {why}", took)
+        elif ok:
             ui.ok(f"{label}: {' + '.join(parts)}")
         else:
-            n_failed += 1
             ui.fail(f"{label}: {' + '.join(parts)} -- FAILED")
 
     # Prefetch lookahead (slice 03): while one unit encodes, the next unit's
@@ -1219,7 +1249,14 @@ def run_transcode(args) -> int:
     # prefetch artifact at thread START so the interrupt path drops partial
     # and complete-but-unconsumed copies alike (CONTEXT.md: Interrupt).
     units = _units(items, main_num, rec_missing, extras_mark, args.limit)
-    ui.opener(f"skive transcode \u00b7 {len(units)} to encode{session}")
+    # the item counter counts these session units; the queue adds the deferred
+    scope = (f"{len(units)} of {len(units) + deferred} this session (cap {args.limit}, "
+             f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred" if deferred
+             else f"{len(units)} to encode")  # nothing deferred: the cap changes nothing, say nothing
+    ui.opener("skive transcode", scope, f"encoder {encoder_line}"
+              + (f" \u00b7 {len(skipped)} skipped (junk label)" if skipped else ""))
+    for line in skipped:
+        ui.warn(line)
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
     pf_ready: dict[str, str] = {}  # staged src -> local dst, filled on completion
@@ -1243,6 +1280,7 @@ def run_transcode(args) -> int:
             return None
         log.phase("copy")
         log.phase_end("prefetched — overlapped with the previous encode")
+        ui.ok(f"{os.path.basename(dst)} prefetched (overlapped)", phase="copy")
         parts.append("copy prefetched")
         return dst
 
@@ -1269,7 +1307,9 @@ def run_transcode(args) -> int:
             ui.warn(msg)
             log.note("prefetch", msg)
             return
-        log.note("prefetch", f"copying {names} for {nxt_unit[0].movie} in the background")
+        note = f"copying {names} for {nxt_unit[0].movie} in the background"
+        log.note("prefetch", note, echo=False)
+        ui.step(f"prefetch: {note}", verbose=common.VERBOSITY > 0)
         for x in nxt_unit:
             pf_files.append(os.path.join(tmp_dir, x.name))  # at thread START, before any bytes
 
@@ -1313,6 +1353,7 @@ def run_transcode(args) -> int:
                 _POS, _ITEM = f"{u + 1}/{len(units)}", i.movie if main else i.base
                 current = i.movie if main else i.name
                 ui.item(u + 1, len(units), _ITEM)
+                item_t0 = time.monotonic()
                 view.footer(_POS, _ITEM)
             else:
                 current = None
@@ -1384,7 +1425,7 @@ def run_transcode(args) -> int:
                         _fail_quarantine(log, [i], issues_root, i.name, res.notes)
                         failed = 1
                     handled.add(i.path)
-                    _item_done(i.name, parts, res is None or res.ok)
+                    _item_done(i.name, parts, res is None or res.ok, "subs (subtitle pass)")
                 else:
                     if side_dir is not None:
                         shutil.rmtree(side_dir, ignore_errors=True)
@@ -1393,7 +1434,7 @@ def run_transcode(args) -> int:
                     log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                     handled.add(i.path)
                     failed = 1
-                    _item_done(i.name, parts, False)
+                    _item_done(i.name, parts, False, f"encode ({args.encoder})")
                 continue
 
             # -- recorded main with no staged title: loud skip, never a
@@ -1452,7 +1493,7 @@ def run_transcode(args) -> int:
                         # first) are unconsumed now -- drop, never leak
                         _pf_drop(os.path.join(tmp_dir, s.name) for s in siblings)
                         failed = 1
-                        _item_done(i.movie, parts, False)
+                        _item_done(i.movie, parts, False, "guard (tracks differ)")
                         continue
                     os.makedirs(dest_dir, exist_ok=True)
                     local_parts = []
@@ -1477,7 +1518,7 @@ def run_transcode(args) -> int:
                         for s in siblings:
                             handled.add(s.path)
                         failed = 1
-                        _item_done(i.movie, parts, False)
+                        _item_done(i.movie, parts, False, f"merge (mkvmerge {mrc})")
                         continue
                 else:
                     os.makedirs(dest_dir, exist_ok=True)
@@ -1542,7 +1583,7 @@ def run_transcode(args) -> int:
                         handled.add(s.path)
                     if not res.ok:
                         failed = 1
-                    _item_done(names, parts, res.ok)
+                    _item_done(names, parts, res.ok, "subs (subtitle pass)")
                 else:
                     shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
@@ -1558,7 +1599,8 @@ def run_transcode(args) -> int:
                     for s in siblings:
                         handled.add(s.path)
                     failed = 1
-                    _item_done(names if len(siblings) > 1 else i.name, parts, False)
+                    _item_done(names if len(siblings) > 1 else i.name, parts, False,
+                               f"encode ({args.encoder})")
                 continue
 
             # -- extras (non-main _t title, or an extras-disc title): the
@@ -1613,7 +1655,7 @@ def run_transcode(args) -> int:
                 log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
                 handled.add(i.path)
                 failed = 1
-                _item_done(i.name, parts, False)
+                _item_done(i.name, parts, False, f"encode ({args.encoder})")
 
         # leftover sweep (slice 03): prefetched files for units the live loop
         # never consumed (cap deferral, guard quarantine, normal end) drop
@@ -1639,6 +1681,7 @@ def run_transcode(args) -> int:
             shutil.rmtree(inflight_side, ignore_errors=True)
         if current is not None:
             rows.append((current, list(parts), "interrupted"))
+            ui.item_end("fail", "interrupted", _hms(int(time.monotonic() - item_t0)))
         log.interrupted()
         interrupted = True
     except Exception as e:
@@ -1647,6 +1690,8 @@ def run_transcode(args) -> int:
             rows.append((current, list(parts), "failed"))
             n_failed += 1
         ui.fail(f"FATAL: {e}")
+        if current is not None:
+            ui.item_end("fail", "failed: FATAL", _hms(int(time.monotonic() - item_t0)))
         log.note("run", f"FATAL: {e}")
         log.fail_open_phase("FAIL")
     finally:

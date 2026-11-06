@@ -180,8 +180,9 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
     tracks = inventory(mkv, ffprobe_exe, log=log, verbose=verbose)
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
-    ui.info(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
-            f"{os.path.basename(mkv)}")
+    # spill: step lines live in the run view's live box (console-frames slice 01)
+    ui.step(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
+            f"{os.path.basename(mkv)}", verbose=verbose > 0)
     if not keeps:
         return PassResult(True, [], notes)
 
@@ -192,8 +193,8 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         os.makedirs(out_dir, exist_ok=True)
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
         for k in keeps:
-            ui.info(f"OCR {k.track.lang} track {k.track.index}"
-                    f"{' (forced)' if k.track.forced else ''}...")
+            ui.step(f"OCR {k.track.lang} track {k.track.index}"
+                    f"{' (forced)' if k.track.forced else ''}...", verbose=verbose > 0)
             srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
             if srt == BARREN:
                 # CONTEXT.md: Barren track -- zero cues is a property of the
@@ -232,7 +233,7 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
             shutil.move(srt, dest)
             sidecars.append(os.path.basename(dest))
         for name in sidecars:
-            ui.info(f"wrote {name}")
+            ui.step(f"wrote {name}", verbose=verbose > 0)
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
     return PassResult(ok, sidecars, notes)
