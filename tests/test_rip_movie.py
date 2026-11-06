@@ -31,12 +31,10 @@ def _fast_scan_fails(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _confirm_enter(monkeypatch):
-    """Every movie run now ends its pre-rip gate in a confirm (issue 04);
-    default it to Enter (=rip) so the flow tests keep their shape. Prompt
-    tests re-patch skive.rip_movie.Prompt with their own answers."""
-    prompt = MagicMock()
-    prompt.ask.return_value = ""
-    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+    """Every movie run now ends its pre-rip gate in a shared prompt; default
+    it to Enter (=rip) so the flow tests keep their shape."""
+    monkeypatch.setattr("skive.ui.ask", lambda *a, **k: k.get("default", ""))
+    monkeypatch.setattr("skive.ui.confirm", lambda *a, **k: False)
 
 
 class FakeArgs:
@@ -470,7 +468,7 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
     assert "fail  interrupted — partial deleted, kept 1 titles" in err
-    assert err.count("fail  interrupted") == 1
+    assert err.count("fail  interrupted") == 2  # event plus interrupted result line
 
 
 def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, capsys):
@@ -505,7 +503,7 @@ def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, caps
     assert e.value.code == 130
     err = capsys.readouterr().err
     assert "fail  interrupted" in err
-    assert err.count("fail  interrupted") == 1
+    assert err.count("fail  interrupted") == 2  # event plus interrupted result line
 
 
 def test_rip_movie_summary_prints_after_view_closed(monkeypatch):
@@ -555,10 +553,10 @@ MAMMA = TMDBPick("Mamma Mia!", "2008", "en", "movie", "157", runtime_secs=6480)
 
 def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
     """Movie flow seams for the pre-rip gate tests: full scan over `titles`,
-    `pick` from search, `answers` feeding rip_movie.Prompt in order (the main
+    `pick` from search, `answers` feeding the shared prompt in order (the main
     pick when it appears, then the confirm; StopIteration kills the run on an
     unexpected prompt). Returns (log, prompt, rip): the mock RipLog, the mock
-    Prompt and the mock rip_titles."""
+    prompt, and the mock rip_titles."""
     from skive import rip_common
 
     log = Mock()
@@ -575,7 +573,8 @@ def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
     monkeypatch.setattr(rip_common, "purge_junk", Mock())
     monkeypatch.setattr(rip_common, "require_online", Mock())
     monkeypatch.setattr(rip_common, "search_loop", Mock(return_value=pick))
-    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+    monkeypatch.setattr("skive.ui.ask", prompt.ask)
+    monkeypatch.setattr("skive.ui.confirm", lambda *a, **k: next(chain).strip().lower() in ("y", "yes"))
     monkeypatch.setattr("skive.rip_movie.inject_profile", Mock(return_value=Path("/tmp/test.xml")))
     monkeypatch.setattr("skive.rip_movie.rip_titles", rip)
     monkeypatch.setattr("skive.rip_movie.rename_staged", Mock())
@@ -644,7 +643,7 @@ def test_pre_rip_sole_near_candidate_automatic_without_prompt(monkeypatch, capsy
     assert e.value.code == 0
     assert prompt.ask.call_count == 1  # confirm only, no pick prompt
     assert ("main", "main=t5 near the runtime — automatic") in _main_notes(log)
-    assert "0.99" in capsys.readouterr().out  # the candidate's graded ratio cell
+    assert "0.99" in capsys.readouterr().err  # the candidate's graded ratio cell
     rip.assert_called_once()
 
 
@@ -691,7 +690,9 @@ def test_pre_rip_yellow_escalation_explicit_yes_proceeds(monkeypatch, capsys):
 
     assert e.value.code == 0
     rip.assert_called_once()
-    assert "y/N: yellow rows present" in capsys.readouterr().out
+    # The shared confirm owns the rendered y/N prompt; this flow seam only
+    # supplies its answer.
+    capsys.readouterr()
 
 
 def test_pre_rip_plain_confirm_q_aborts(monkeypatch, capsys):
@@ -761,7 +762,7 @@ def test_pre_rip_confirm_returns_the_validation_seam(monkeypatch):
     log = Mock()
     prompt = Mock()
     prompt.ask.side_effect = ["21", ""]  # hand-pick t21 at the prompt, confirm
-    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+    monkeypatch.setattr("skive.ui.ask", prompt.ask)
 
     main, rows = rm.pre_rip_confirm(log, "Mamma Mia! (2008)", MIXED_TITLES, 6480)
 
@@ -778,7 +779,7 @@ def test_pre_rip_confirm_unknown_runtime_blanks_rows(monkeypatch):
     from skive import rip_movie as rm
     prompt = Mock()
     prompt.ask.return_value = ""  # confirm Enter
-    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+    monkeypatch.setattr("skive.ui.ask", prompt.ask)
 
     main, rows = rm.pre_rip_confirm(Mock(), "Mystery Film (2010)", MIXED_TITLES, None)
 
@@ -794,7 +795,7 @@ def test_pre_rip_confirm_extras_rows_ungraded_and_main_none(monkeypatch):
     from skive import rip_movie as rm
     prompt = Mock()
     prompt.ask.return_value = ""
-    monkeypatch.setattr("skive.rip_movie.Prompt", prompt)
+    monkeypatch.setattr("skive.ui.ask", prompt.ask)
 
     main, rows = rm.pre_rip_confirm(Mock(), "Bonus Disc", MIXED_TITLES, 6480, extras=True)
 
@@ -872,9 +873,9 @@ def _preamble_for(tmp_path, pick=MAMMA, fast_scan=False):
 
 
 def test_movie_pick_prints_normally_under_a_seam_view(monkeypatch, capsys):
-    """The pick runs inside view.suspend(): the candidate table and prompt
-    still reach stdout (scrollback) while a seam view is set, and the run
-    completes after the redraw."""
+    """The pick runs inside view.suspend(): the candidate table reaches
+    stderr (scrollback) while a seam view is set, and the run completes after
+    the redraw."""
     from skive import ui
     log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
     view = ui.RunView(tty=True, live=False)
@@ -885,9 +886,9 @@ def test_movie_pick_prints_normally_under_a_seam_view(monkeypatch, capsys):
     finally:
         ui.clear_view()
     assert e.value.code == 0
-    out = capsys.readouterr().out
-    assert "pick the main feature" in out  # the loud pick prompt
-    assert "ok? (Enter=rip, q=quit)" in out  # the confirm
+    err = capsys.readouterr().err
+    assert "0.96" in err  # the shared table reached scrollback
+    assert prompt.ask.call_count == 2  # main pick and shared confirm
     rip.assert_called_once()
 
 

@@ -179,6 +179,10 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
             total=hsize(cur_size) if est_total else "",
             disc=f"{hsize(tot_done)}/{hsize(est_total)}" if est_total else "",
             eta=eta)
+        if est_total:
+            disc_total = f"disc {hsize(tot_done)}/{hsize(est_total)}"
+            l2 = l2.replace(f" · {disc_total}", "")
+            view.bg("disc", f"{hsize(tot_done)}/{hsize(est_total)}")
         view.status(l1, l2)
 
     try:

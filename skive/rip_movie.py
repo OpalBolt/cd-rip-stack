@@ -6,17 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from rich.console import Console
-from rich.prompt import Prompt
-from rich.table import Table
 from rich.text import Text
 
 from skive import ui
 from skive.makemkv import (
-    build_selection, hsize, inject_profile, promote_staged, rename_staged,
-    rip_header, subtitle_note, rip_titles,
+    build_selection, hsize, inject_profile, promote_staged, purge_junk,
+    rename_staged, rip_header, subtitle_note, rip_titles,
 )
-from skive.rip_common import fast_scan_header, interrupted_exit, rip_preamble
+from skive.rip_common import fast_scan_header, rip_preamble
 from skive.scan import TitleInfo, resolve_titles
 from skive.validation import (
     MAIN_FLOOR_S, arbitrate_main, grade_main, main_candidates,
@@ -24,12 +21,23 @@ from skive.validation import (
     VALIDATION_FILENAME, load_validation, write_validation,
 )
 
-console = Console()
 
 
 def _hms(secs: int) -> str:
     """Duration as H:MM:SS (the TV table's format)."""
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+
+
+def _interrupted(log, stage_dirs: list[Path], view) -> None:
+    """Close a movie run with its summary after Ctrl+C."""
+    purge_junk(stage_dirs, quiet=True)
+    kept = sum(1 for directory in stage_dirs for path in directory.glob("*.mkv"))
+    replay = view.replay_lines()
+    view.close()
+    log.interrupted()
+    ui.fail(f"interrupted — partial deleted, kept {kept} titles")
+    ui.run_summary([], 0, 0, replay=replay, interrupt_note="partial deleted")
+    sys.exit(130)
 
 
 _FINAL_T = re.compile(r'_t(\d+)(?:\.p\d+)?$')
@@ -165,14 +173,12 @@ def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
         runtime_s: TMDB runtime in seconds, None when unknown
         extras: -E run — no ratio column
     """
-    console.print(f"\n{display}")
+    ui.console.print(f"\n{display}")
 
-    table = Table()
-    table.add_column("title", style="cyan", width=6)
-    table.add_column("duration", style="white", width=9)
-    table.add_column("size", style="dim", width=9)
+    columns = ["title", "duration", "size"]
     if not extras:
-        table.add_column("ratio", width=6)
+        columns.append("ratio")
+    table = ui.table(*columns)
 
     for t in sorted(titles, key=lambda x: x.number):
         cell = ""
@@ -180,12 +186,13 @@ def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
             graded = grade_main(t.seconds, runtime_s)
             if graded is not None:
                 cell = Text(f"{graded[0]:.2f}", style=graded[1])
-        row = [str(t.number), _hms(t.seconds), hsize(t.size) if t.size else ""]
+        row = [Text(str(t.number), style="bold"), _hms(t.seconds),
+               hsize(t.size) if t.size else ""]
         if not extras:
             row.append(cell)
         table.add_row(*row)
 
-    console.print(table)
+    ui.console.print(table)
 
 
 def _quit_nothing_ripped() -> None:
@@ -205,21 +212,20 @@ def _ask_main(near: list[tuple[int, int, float]], default_number: int) -> int:
     Returns:
         The picked title number
     """
-    console.print(f"[bold red]{len(near)} titles near the TMDB runtime — "
-                  f"pick the main feature[/bold red]")
-    for number, secs, ratio in near:
-        console.print(f"  t{number}  {_hms(secs)}  {ratio:.2f}")
+    ui.warn(f"{len(near)} titles near the TMDB runtime — pick the main feature")
+    choices = " · ".join(f"t{number} {_hms(secs)} ({ratio:.2f})"
+                         for number, secs, ratio in near)
     while True:
-        console.print(f"main? (Enter=t{default_number}, number=that title, q=quit): ", end="")
-        ans = (Prompt.ask("") or "").strip().lower()
-        if not ans:
+        ans = ui.ask("Main feature", choices=f"{choices} · q quit",
+                      default=f"t{default_number}").strip().lower()
+        if not ans or ans == f"t{default_number}":
             return default_number
         if ans == "q":
             _quit_nothing_ripped()
         digits = ans[1:] if ans.startswith("t") else ans
         if digits.isdigit() and any(n == int(digits) for n, _, _ in near):
             return int(digits)
-        console.print(f"pick one of: {', '.join(f't{n}' for n, _, _ in near)}")
+        ui.warn(f"pick one of: {', '.join(f't{n}' for n, _, _ in near)}")
 
 
 def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
@@ -286,15 +292,14 @@ def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
 
     if any(r["band"] == "yellow" for r in rows):
         while True:
-            console.print("ok? (y/N: yellow rows present, q=quit): ", end="")
-            if (Prompt.ask("") or "").strip().lower() == "y":
+            if ui.confirm("Rip with yellow ratio rows?", default=False):
                 break
             _quit_nothing_ripped()
     else:
         while True:
-            console.print("ok? (Enter=rip, q=quit): ", end="")
-            ans = (Prompt.ask("") or "").strip().lower()
-            if not ans:
+            ans = ui.ask("Rip with this map?", choices="rip · q quit",
+                         default="Enter").strip().lower()
+            if ans in ("", "enter", "rip"):
                 break
             if ans == "q":
                 _quit_nothing_ripped()
@@ -340,6 +345,25 @@ def rip_movie(args) -> None:
             chosen_main, graded_rows = pre_rip_confirm(
                 log, display, titles_full, pick.runtime_secs, extras=args.extras)
 
+        # Resolve any title menu after the interactive identity gate. The run
+        # opener must wait until this final scope is known.
+        if preamble.fast_scan:
+            titles = None
+            infos = titles_full
+        else:
+            with view.suspend():
+                titles = resolve_titles(args.titles, titles_full, preamble.media)
+            infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
+
+        ui.opener(f"skive rip movie · {display} · disc {preamble.disc} · {preamble.device}")
+        for position, title in enumerate(infos, 1):
+            ui.item(position, len(infos), f"title {title.number}")
+        if view.tty:
+            view.footer(f"title 1/{len(infos)}", display, "rip")
+            estimated = sum(title.size for title in infos)
+            if estimated:
+                view.bg("disc", f"{hsize(0)}/{hsize(estimated)}")
+
         # Build selection string
         keep = preamble.keep
         sel = build_selection(keep)
@@ -365,11 +389,6 @@ def rip_movie(args) -> None:
                 worst_rc = rip_titles(None, profile_path, minlength, stage_movie, disc=preamble.disc,
                                       total=len(titles_full), infos=titles_full, header=header, log=log)
             else:
-                # Bare -T opens the menu over the gate scan; no -T rips all titles
-                # (Blu-ray: scrambled decoy titles are skipped by default)
-                titles = resolve_titles(args.titles, titles_full, preamble.media)
-
-                infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
                 worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
                                       total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log)
 
@@ -402,19 +421,18 @@ def rip_movie(args) -> None:
         except KeyboardInterrupt:
             # CONTEXT.md Interrupt: delete the in-flight partial (junk-labeled
             # staged files), keep completed renames, log status=interrupted,
-            # exit 130. interrupted_exit never returns; the finally below still
+            # exit 130. _interrupted never returns; the finally below still
             # unlinks the temp profile, and finish() stays silent because
-            # interrupted() already wrote this run's total line. The view
-            # closes first so its Live never garbles the summary prints.
-            view.close()
-            interrupted_exit(log, [title_dir, stage_movie])
+            # interrupted() already wrote this run's total line. It closes the
+            # view before printing the interrupt summary.
+            _interrupted(log, [title_dir, stage_movie], view)
         finally:
             # Clean up temp profile
             profile_path.unlink(missing_ok=True)
             log.finish(rc)
         # Close the view before the summary prints (its Live redraw would
         # garble them); replay works after close, and the outer close is
-        # idempotent. No summary on interrupt — transcode precedent.
+        # idempotent.
         view.close()
         # The run summary: per-title rows × duration × size × result.
         for r in probed:
@@ -437,8 +455,7 @@ def rip_movie(args) -> None:
         # the full interrupt exit still apply. main's fallback prints the
         # one line for the not-yet-started window.
         if preamble is not None:
-            view.close()
-            interrupted_exit(preamble.log, [preamble.title_dir, preamble.stage])
+            _interrupted(preamble.log, [preamble.title_dir, preamble.stage], view)
         raise
     finally:
         view.close()
