@@ -403,6 +403,10 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                     outcomes.setdefault(number, "interrupted")  # in flight
                     track_t0.setdefault(number, time.monotonic())
                     if number not in headed_tracks:
+                        if pending_track is not None and pending_track not in headed_tracks:
+                            # its frame first: it must not close this track's frame
+                            show_track(pending_track, f"track {pending_track}", 100.0)
+                            pending_track = None
                         show_track(number, f"track {number}", pct)
                     elif on_tty:
                         view.progress(pct, eta)

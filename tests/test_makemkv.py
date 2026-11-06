@@ -575,8 +575,9 @@ def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
 def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosity, capsys, rc, last, phase):
     """Each title the caller framed (on_title_start opens ui.item) closes
     neutrally when the next title starts (its outcome is never reported, so a
-    title that failed partway must not read done) and at the end with the
-    call's outcome; the last frame carries the timed rip phase line."""
+    title that failed partway must not read done) after a timed neutral rip
+    phase line, and at the end with the call's outcome; the last frame
+    carries the timed ✓/✗ rip phase line."""
     from skive import ui
     verbosity(0)
     ui.set_view(ui.RunView(tty=True, live=False))
@@ -595,9 +596,11 @@ def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosit
     assert frames[2].startswith("\u256d\u2500 2/2  title 2")
     assert frames[3].startswith(last) and len(frames) == 4
     phase_lines = [line for line in lines if line.startswith("\u2502 ") and " rip " in line]
-    assert len(phase_lines) == 1 and phase_lines[0].startswith(phase)
-    assert phase_lines[0].endswith(" 0s")
-    assert lines.index(phase_lines[0]) == lines.index(frames[3]) - 1  # inside the last frame
+    assert len(phase_lines) == 2 and phase_lines[1].startswith(phase)
+    assert phase_lines[0].startswith("\u2502 \u00b7 rip       title 1/2: saved")
+    assert all(line.endswith(" 0s") for line in phase_lines)
+    assert lines.index(phase_lines[0]) == lines.index(frames[1]) - 1  # inside the first frame
+    assert lines.index(phase_lines[1]) == lines.index(frames[3]) - 1  # inside the last frame
 
 
 def test_run_with_progress_plain_keeps_summary_without_phase_line(verbosity, capsys):

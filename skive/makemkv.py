@@ -229,8 +229,12 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                 if "Saving to MKV file" in val:
                     if cur_title:
                         # the next title started; this one's outcome is not reported
+                        now = time.monotonic()
+                        if on_title_start is not None and live_view:
+                            ui.info(f"title {cur_title + title_offset}/{total_titles}: saved",
+                                    phase="rip", elapsed=ui._hms(int(now - title_t0)))
                         ui.unindent()
-                        title_t0 = time.monotonic()
+                        title_t0 = now
                     cur_title += 1
                     if names and cur_title + title_offset <= len(names):
                         what = names[cur_title + title_offset - 1]

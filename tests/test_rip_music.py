@@ -1287,6 +1287,38 @@ def test_track_frame_carries_timed_rip_phase_line(monkeypatch, capsys):
     assert lines[phase + 1].startswith("╰─ ✓ done 1m12s ─")
 
 
+def test_untitled_pending_track_closes_before_next_tracks_frame(monkeypatch, capsys):
+    """Track 1 completes with no title line; track 2's progress flushes it
+    first, so track 2's frame holds its own success line and done rule."""
+    from skive import ui
+
+    monkeypatch.setattr("skive.rip_music.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    ui.set_view(ui.RunView(tty=True, live=False))
+    process = Mock(stdout=iter([
+        "Disc tracks: 2\n",
+        "Track 1 ripped and encoded successfully!\n",
+        "Ripping and encoding track 2, progress - 10.00%, ETA - 30s\n",
+        "Track 2 ripped and encoded successfully!\n",
+    ]))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    lines = capsys.readouterr().err.splitlines()
+    frames = [line for line in lines if line[:1] in "╭╰"]
+    assert frames[0].startswith("╭─ 1/2  track 1")
+    assert frames[1].startswith("╰─ ✓ done ─")
+    assert frames[2].startswith("╭─ 2/2  track 2")
+    assert frames[3].startswith("╰─ ✓ done 0s ─") and len(frames) == 4
+    phase = next(n for n, line in enumerate(lines) if line.startswith("│ ✓ rip       track 2"))
+    assert lines.index(frames[2]) < phase == lines.index(frames[3]) - 1
+
+
 def test_track_frame_plain_has_no_rip_phase_line(capsys):
     """Plain mode keeps today's track output: the heading, no phase line."""
     process = Mock(stdout=iter([
