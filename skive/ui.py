@@ -671,6 +671,64 @@ def result_line(kind: str, *parts: str, elapsed: int | None = None,
         _plain(_plain_event(kind, text))
 
 
+def musicbrainz_miss(info: dict, rerun: str) -> None:
+    """A MusicBrainz miss (CONTEXT.md) from cyanrip_log.parse_musicbrainz_miss:
+    on a TTY a yellow closed box — not found / stub: DiscID · tracks · length,
+    the instruction and the URL as a link; multiple: the candidates (albums
+    linked to their release pages), the disc page and `rerun` (the -R command)
+    — then the full URL unwrapped for copying. Plain: warn lines."""
+    url, discid = info["url"], info["discid"]
+    multiple = info["case"] == "multiple"
+    if multiple:
+        title = "several MusicBrainz releases"
+        rows = []
+        for c in info["candidates"]:
+            details = [c["disambiguation"], c["country"],
+                       f"{c['cds']} CDs" if c["cds"] else None, c["date"]]
+            rows.append((str(c["index"]), c["album"], " · ".join(d for d in details if d),
+                         f"https://musicbrainz.org/release/{c['mbid']}"))
+        lines = [f"Detach wrong releases: {url}",
+                 f"Re-run with the right one: {rerun}"]
+    else:
+        title = "not on MusicBrainz"
+        facts = [f"DiscID {discid}" if discid else None,
+                 f"{info['tracks']} tracks" if info["tracks"] else None, info["length"]]
+        lines = [" · ".join(f for f in facts if f),
+                 "Open the link, attach this disc to its release, then re-run."]
+    if not _styled():
+        _plain(_plain_event("warn", f"{title}: DiscID {discid}" if multiple
+                            else f"{title}: {lines[0]}"))
+        if multiple:
+            for index, album, details, link in rows:
+                _plain(_plain_event("warn", f"  {index}  {album}"
+                                    + (f" · {details}" if details else "") + f" · {link}"))
+            for line in lines:
+                _plain(_plain_event("warn", line))
+        else:
+            _plain(_plain_event("warn", lines[1]))
+            _plain(_plain_event("warn", url))
+        return
+    body: list = []
+    if multiple:
+        table = Table(box=SIMPLE_HEAD, header_style="dim", show_edge=False,
+                      expand=True, pad_edge=False)
+        for column in ("#", "album", "details"):
+            table.add_column(column)
+        for index, album, details, link in rows:
+            table.add_row(Text(index, style="bold"), Text(album, style=f"link {link}"),
+                          details)
+        body += [table, Text.assemble("Detach wrong releases: ", (url, f"link {url}")),
+                 Text(f"Re-run with the right one: {rerun}")]
+    else:
+        body += [Text(line) for line in lines]
+        body.append(Text(url, style=f"link {url}", no_wrap=True, overflow="ellipsis"))
+    with _print_lock:
+        console.print(Panel(Group(*body), box=ROUNDED, width=_width(),
+                            title=Text(f"{SYMBOLS['warn']} {title}", style="warn"),
+                            title_align="left", border_style="warn"))
+        console.print(Text(url), soft_wrap=True)  # unwrapped, for copying
+
+
 def _print(kind: str, text: str, phase: str | None = None,
            elapsed: str | None = None) -> None:
     # the lock must not span the view dispatch: _emit takes it too, and a

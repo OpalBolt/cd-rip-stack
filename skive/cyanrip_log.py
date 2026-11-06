@@ -63,6 +63,78 @@ def album_header_name(header: dict) -> str | None:
     return album or None
 
 
+_MB_URL = re.compile(r"https://musicbrainz\.org/\S+")
+_URL_DISCID = re.compile(r"[?&]id=([^&\s]+)")
+_URL_TRACKS = re.compile(r"[?&]tracks=(\d+)")
+_URL_TOC = re.compile(r"[?&]toc=(\d+)\+(\d+)\+(\d+)\+(\d+)")
+_DISC_TRACKS = re.compile(r"^Disc tracks:\s*(\d+)", re.MULTILINE)
+_MULTIPLE = re.compile(r"^Multiple releases found in database for DiscID (\S+?):?\s*$",
+                       re.MULTILINE)
+# cyanrip 0.9.3: "    <n> (ID: <mbid>): <album> (<disambiguation>) (<country>) (<n> CDs) (<date>)",
+# each parenthesised field optional.
+# shortcut: an album title ending in "(…)" reads as disambiguation; upgrade if a real transcript shows it.
+_CANDIDATE = re.compile(r"^\s+(\d+) \(ID: ([^)\s]+)\): (.*?)((?: \([^()]*\))*)\s*$")
+_FIELD = re.compile(r"\(([^()]*)\)")
+
+
+def parse_musicbrainz_miss(text: str) -> dict | None:
+    """The MusicBrainz miss (CONTEXT.md) in cyanrip's output, or None.
+
+    Returns {case, discid, url, tracks, length, candidates}: case is
+    not_found, stub or multiple; url is the attach (or stub) URL cyanrip
+    printed, or the disc's cdtoc page for multiple; tracks and length
+    (m:ss) come from a ``Disc tracks:`` line or the attach URL's TOC, None
+    when neither printed; candidates (multiple only) are dicts of index,
+    mbid, album, disambiguation, country, cds, date.
+    """
+    text = text or ""
+    multiple = _MULTIPLE.search(text)
+    if multiple:
+        case = "multiple"
+    elif "Unable to find release info" in text:
+        case = "not_found"
+    # shortcut: stub wording unverified (no real transcript); upgrade on the first real one.
+    elif re.search(r"\bstub\b", text, re.IGNORECASE) and _MB_URL.search(text):
+        case = "stub"
+    else:
+        return None
+    url_match = _MB_URL.search(text)
+    url = url_match.group(0) if url_match else None
+    discid_match = _URL_DISCID.search(url or "")
+    discid = multiple.group(1) if multiple else (
+        discid_match.group(1) if discid_match else None)
+    if multiple:
+        url = f"https://musicbrainz.org/cdtoc/{discid}"
+    tracks_match = _DISC_TRACKS.search(text) or _URL_TRACKS.search(url or "")
+    toc = _URL_TOC.search(url or "")
+    length = None
+    if toc:  # toc=first+last+leadout+offset1…, in 1/75 s sectors
+        secs = (int(toc.group(3)) - int(toc.group(4))) // 75
+        length = f"{secs // 60}:{secs % 60:02d}"
+    candidates = []
+    if multiple:
+        for line in text[multiple.end():].splitlines():
+            candidate = _CANDIDATE.match(line)
+            if not candidate:
+                continue
+            entry = {"index": int(candidate.group(1)), "mbid": candidate.group(2),
+                     "album": candidate.group(3), "disambiguation": None,
+                     "country": None, "cds": None, "date": None}
+            for field in _FIELD.findall(candidate.group(4)):
+                if re.fullmatch(r"\d+ CDs?", field):
+                    entry["cds"] = int(field.split()[0])
+                elif re.fullmatch(r"\d{4}(?:-\d{2}){0,2}", field):
+                    entry["date"] = field
+                elif re.fullmatch(r"[A-Z]{2}", field):
+                    entry["country"] = field
+                elif entry["disambiguation"] is None:
+                    entry["disambiguation"] = field
+            candidates.append(entry)
+    return {"case": case, "discid": discid, "url": url,
+            "tracks": int(tracks_match.group(1)) if tracks_match else None,
+            "length": length, "candidates": candidates}
+
+
 def parse_cyanrip_log(text: str) -> dict:
     """Parse header facts and per-track results from a cyanrip log.
 

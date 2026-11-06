@@ -1,9 +1,10 @@
-"""Music rip orchestration: cyanrip wrapper, Multiple releases prompt, rip name from tags."""
+"""Music rip orchestration: cyanrip wrapper, MusicBrainz miss box, rip name from tags."""
 
 import os
 import re
 import sys
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -15,6 +16,7 @@ from skive.cyanrip_log import (
     album_header_name,
     disc_number_from_log,
     parse_cyanrip_log,
+    parse_musicbrainz_miss,
 )
 from skive.validation import (
     VALIDATION_FILENAME,
@@ -57,6 +59,7 @@ def rip_music(args) -> None:
     ui.set_view(view)
     summary_tracks: list[dict] = []
     header: dict = {}  # filled mid-rip by the stream watch; survives an interrupt
+    miss = None  # the MusicBrainz miss (CONTEXT.md): a box, no summary table
     try:
         # Log the total on every exit — success, Ctrl-C, or failure — so the raw
         # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
@@ -76,31 +79,15 @@ def rip_music(args) -> None:
             # pair is complete.
             rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header)
 
-            # Handle "Multiple releases found" — suspended: the prompt prints
-            # normally (scrollback), the view redraws after the answer.
-            if rc != 0 and "Multiple releases found" in cap_text:
-                choice = ui.ask("Multiple MusicBrainz releases — pick one",
-                                choices="Enter abort", default="")
-                if choice:
-                    log.note("rip", f"release pick: {choice}")
-                    # Re-run with -R <choice>; clear streamed fields but retain
-                    # the opener state so the run has exactly one opener.
-                    opener_state = header.get("_opener_emitted", False)
-                    header = {"_opener_emitted": opener_state}
-                    rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags,
-                                          rip_dir, log, header)
-                else:
-                    ui.info("aborting")
-                    rc = 1
-
-            # cyanrip found no MusicBrainz release for this TOC — hand the user
-            # the attach URL it printed so the disc can be submitted.
-            if rc != 0 and "Unable to find release info" in cap_text:
-                attach = re.search(r"https://musicbrainz\.org/cdtoc/attach\?\S+", cap_text)
-                if attach:
-                    note = f"no MusicBrainz release: submit this disc — {attach.group(0)}"
-                    ui.warn(note)
-                    log.note("rip", note)
+            # A MusicBrainz miss never prompts: the run fails and the box
+            # (after the view closes) tells the operator what to fix.
+            miss = parse_musicbrainz_miss(cap_text) if rc != 0 else None
+            if miss and miss["case"] == "multiple":
+                log.note("rip", f"several MusicBrainz releases: re-run with -R <n> — {miss['url']}",
+                         echo=False)
+            elif miss:
+                log.note("rip", f"no MusicBrainz release: submit this disc — {miss['url']}",
+                         echo=False)
 
             # Name before phase_end so the rip ok line already carries it. The
             # album-artist header pair wins over the staging scan (a Various
@@ -118,8 +105,14 @@ def rip_music(args) -> None:
             elif rc != 0:
                 name = header_name or "-"
             log.name = name
-            log.phase_end()
-            log.note("rip", f"folder: {rel_folder}")
+            if rc == 0:
+                log.phase_end()
+            elif miss:
+                log.fail_open_phase("FAIL: " + _miss_result(miss))
+            else:
+                log.fail_open_phase(f"FAIL({rc})")
+            if rel_folder != "-":  # nothing ripped: no folder to name
+                log.note("rip", f"folder: {rel_folder}")
             if rc == 0:
                 summary_tracks = _write_cd_record(rip_dir, rel_folder, args.offset, log)
         except KeyboardInterrupt:
@@ -157,16 +150,29 @@ def rip_music(args) -> None:
             interrupt_note = "nothing deleted \u2014 staged files left in place" if rc == 130 else None
         n_ok = sum(row[2] == "ok" for row in rows)
         n_failed = sum(row[2] == "failed" for row in rows)
-        ui.run_summary(rows, n_ok, n_failed or (1 if rc not in (0, 130) else 0),
-                       columns=("track", "duration", "result"),
-                       replay=view.replay_lines(), log=log,
-                       interrupt_note=interrupt_note,
-                       failed=rc not in (0, 130))
+        if miss:
+            ui.musicbrainz_miss(miss, " ".join(
+                ["skive rip music", args.offset, "--", *(args.cyanrip_flags or []),
+                 "-R", "<n>"]))
+            ui.result_line("fail", _miss_result(miss),
+                           elapsed=int((log._now() - log._start).total_seconds()))
+        else:
+            ui.run_summary(rows, n_ok, n_failed or (1 if rc not in (0, 130) else 0),
+                           columns=("track", "duration", "result"),
+                           replay=view.replay_lines(), log=log,
+                           interrupt_note=interrupt_note,
+                           failed=rc not in (0, 130))
     finally:
         view.close()
         ui.clear_view()
 
     sys.exit(rc)
+
+
+def _miss_result(miss: dict) -> str:
+    """The miss's result phrase (screen result line and run-log FAIL)."""
+    return ("several MusicBrainz releases" if miss["case"] == "multiple"
+            else "not on MusicBrainz")
 
 
 def _summary_hms(secs: int) -> str:
@@ -260,36 +266,35 @@ def _staged_tracks(folder: Path, parsed_tracks: list[dict]) -> list[dict]:
     return tracks
 
 
-def _progress_line(line: str) -> bool:
-    """cyanrip progress heuristic: its percent updates carry a literal '%'
-    (the live line is "Ripping and encoding track N, progress - X%, ETA - ...").
-    A TTY run feeds these to the footer only; off a TTY they show at -v."""
-    return "%" in line
-
-
 _TRACK_DONE = re.compile(r"^Track (\d+) ripped and encoded successfully")
 # cyanrip prints each track's metadata block (indented) after the track
 # finishes, e.g. "    title:                         The Healer".
 _TRACK_TITLE = re.compile(r"^\s*title:\s*(.+)$", re.IGNORECASE)
-# The live progress line: "Ripping and encoding track 3, progress - 41.50%, ETA - 2m"
+# The live progress line, matched whole: "Ripping and encoding track 3,
+# progress - 41.50%, ETA - 1h 2m" (the disc ETA: "27m", "45s", or absent).
 _TRACK_PROGRESS = re.compile(
-    r"^Ripping(?: and encoding)? track (\d+), progress - (\d+(?:\.\d+)?)%")
-_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+    r"Ripping(?: and encoding)? track (\d+), progress - (\d+(?:\.\d+)?)%"
+    r"(?:, ETA - ((?:\d+h )?\d+[hms]))?")
+# libmusicbrainz parser chatter ("Unrecognised disc element: 'offset-list'")
+_UNRECOGNISED = re.compile(r"Unrecognised .*(?:element|attribute): '")
+# cyanrip's QR code of the attach URL: rows of block characters only.
+_QR_ROW = re.compile(r"[ \u2580\u2584\u2588]*[\u2580\u2584\u2588][ \u2580\u2584\u2588]*")
+_RAW_PROGRESS_SECS = 5  # a progress line reaches the raw log at least this often
 
 
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                  header: dict | None = None) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
     verbosity tiers (quiet by default, progress lines at -v, everything at
-    -vv; a failed run replays what was hidden, story 7), and written verbatim
-    to the run's raw log (log is None in tests).
+    -vv; a failed run replays what was hidden, story 7, except a MusicBrainz
+    miss), and written to the run's raw log (log is None in tests) with
+    progress lines throttled and libmusicbrainz chatter dropped.
 
     When header is a dict, the stream watch fills it with the Album /
     Album artist header pair as those lines print mid-rip, setting log.name
     the moment the pair is complete, and records each track's outcome under
     header["_tracks"] ({number: "ok" | "interrupted"}) for the interrupt
-    summary. A -R re-run gets a fresh dict from its
-    caller, so the re-run's own header names the run."""
+    summary."""
     cmd = ["cyanrip", "-s", offset] + flags
     process = subprocess.Popen(
         cmd,
@@ -305,6 +310,9 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     view = ui.view()  # None in the direct-call tests: plain prints, as before
     on_tty = view is not None and view.tty
     track_total = None
+    eta = None  # cyanrip's disc ETA from the last progress line
+    raw_kept = (None, -1, 0.0)  # (track, whole percent, monotonic time) last raw-logged
+    raw_held = None  # (track, line): the newest progress line not raw-logged yet
     pending_track = None  # completed, its title line not seen yet
     headed_tracks: set[int] = set()
     outcomes = header.setdefault("_tracks", {}) if header is not None else {}
@@ -323,7 +331,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         if on_tty:
             position = track_total or number
             view.footer(f"track {number}/{position}", title, f"offset {offset}")
-            view.progress(pct, None)
+            view.progress(pct, eta)
 
     def show_track(number: int, title: str, pct: float) -> None:
         emit_opener()
@@ -340,17 +348,37 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
             verbose = common.VERBOSITY
             for line in process.stdout:
                 stripped = line.rstrip()
-                # cyanrip's percent updates feed the footer on a TTY and never
-                # reach scrollback (the raw log keeps them); off a TTY they
-                # follow the verbosity tiers like any other line.
-                if on_tty and _progress_line(stripped):
+                if _UNRECOGNISED.match(stripped):
+                    continue  # libmusicbrainz chatter: neither screen nor raw log
+                progress = _TRACK_PROGRESS.fullmatch(stripped)
+                # cyanrip's progress lines feed the footer on a TTY and never
+                # reach scrollback; off a TTY they follow the verbosity tiers
+                # (any '%' line at -v). QR rows never reach the screen.
+                if (on_tty and progress) or _QR_ROW.fullmatch(stripped):
                     pass
-                elif verbose >= 2 or (verbose >= 1 and _progress_line(stripped)):
+                elif verbose >= 2 or (verbose >= 1 and "%" in stripped):
                     ui.tool("cyanrip", stripped)
                 elif stripped:
                     hidden.append(stripped)
                 if log is not None:
-                    log.raw("cyanrip", stripped)
+                    # Progress reaches the raw log once per whole percent per
+                    # track or every few seconds; each track's last line is kept.
+                    if progress:
+                        number, now = int(progress.group(1)), time.monotonic()
+                        whole = int(float(progress.group(2)))
+                        if raw_held is not None and raw_held[0] != number:
+                            log.raw("cyanrip", raw_held[1])
+                        if ((number, whole) != raw_kept[:2]
+                                or now - raw_kept[2] >= _RAW_PROGRESS_SECS):
+                            log.raw("cyanrip", stripped)
+                            raw_kept, raw_held = (number, whole, now), None
+                        else:
+                            raw_held = (number, stripped)
+                    else:
+                        if raw_held is not None:
+                            log.raw("cyanrip", raw_held[1])
+                            raw_held = None
+                        log.raw("cyanrip", stripped)
                 if stripped.startswith("Disc tracks:"):
                     try:
                         track_total = int(stripped.split(":", 1)[1].strip())
@@ -358,19 +386,15 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         track_total = None
                 if stripped == "Tracks:":
                     emit_opener()  # before any track work begins
-                progress = _TRACK_PROGRESS.match(stripped)
                 if progress:
                     number = int(progress.group(1))
                     fraction = float(progress.group(2)) / 100
+                    eta = progress.group(3)
                     outcomes.setdefault(number, "interrupted")  # in flight
                     if number not in headed_tracks:
                         show_track(number, f"track {number}", track_pct(number, fraction))
                     elif on_tty:
-                        view.progress(track_pct(number, fraction), None)
-                elif on_tty:
-                    pct = _PCT.search(stripped)
-                    if pct:
-                        view.progress(float(pct.group(1)), None)
+                        view.progress(track_pct(number, fraction), eta)
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
@@ -398,7 +422,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                     pending_track = int(done.group(1))
                     outcomes[pending_track] = "ok"
                     if on_tty:
-                        view.progress(track_pct(pending_track), None)
+                        view.progress(track_pct(pending_track), eta)
                 captured.append(line)
 
         rc = process.wait()
@@ -410,7 +434,11 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         # and let the interrupt rip_music's handler log status=interrupted.
         kill_child_after_grace(process)
         raise
-    if rc != 0:
+    finally:
+        if log is not None and raw_held is not None:
+            log.raw("cyanrip", raw_held[1])
+    # A MusicBrainz miss gets its own box (rip_music); no replay of the chatter.
+    if rc != 0 and parse_musicbrainz_miss("".join(captured)) is None:
         for line in hidden:
             ui.tool("cyanrip", line)
     return rc, "".join(captured)

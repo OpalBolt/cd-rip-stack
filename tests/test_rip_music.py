@@ -109,33 +109,6 @@ def test_cyanrip_run_failure_replays_captured(capsys, monkeypatch):
         assert capsys.readouterr().err == "cyanrip  Ripping track 1\ncyanrip  Read error\n"
 
 
-def test_multiple_releases_prompts(tmp_path):
-    """Test 'Multiple releases found' prompts and re-runs with -R."""
-    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
-
-    with patch("skive.rip_music.ensure_mounted"), \
-            patch("skive.rip_music.RipLog") as MockLog, \
-            patch("skive.rip_music._newest_flac_album", return_value=("-", "-")), \
-            patch("skive.rip_music.ui.ask", return_value="2") as ask, \
-            patch("skive.rip_music._cyanrip_run", side_effect=[
-                (1, "Multiple releases found\n"),
-                (0, "Rip complete\n"),
-            ]) as mock_run:
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
-
-    assert exc.value.code == 0
-    ask.assert_called_once_with("Multiple MusicBrainz releases — pick one",
-                                choices="Enter abort", default="")
-    rip_dir = tmp_path / "rip" / "cd"
-    log = MockLog.return_value  # the raw log rides along to _cyanrip_run
-    assert mock_run.call_args_list == [
-        (("100", ["-N"], rip_dir, log, {}),),
-        (("100", ["-R", "2", "-N"], rip_dir, log,
-          {"_opener_emitted": False}),),
-    ]
-
-
 def test_require_online_uses_stdlib_head_probe():
     """Test MusicBrainz connectivity uses urllib with a five-second timeout."""
     response = MagicMock()
@@ -539,37 +512,9 @@ def test_failed_run_without_header_inherits_nothing_from_staging(tmp_path):
     assert all(line["name"] == "-" for line in lines)
     folder_notes = [line["status"] for line in lines
                     if line["status"].startswith("folder:")]
-    assert folder_notes == ["folder: -"]
-
-
-def test_release_pick_note_logged_before_rerun(tmp_path):
-    """Answering the Multiple-releases prompt with 3 logs 'release pick: 3'
-    before the -R re-run starts, and exactly once."""
-    import json
-
-    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
-    rip_jsonl = tmp_path / "logs" / "rip.jsonl"
-    runs = []
-
-    def fake_run(offset, flags, rip_dir, log, header):
-        runs.append((list(flags),
-                     rip_jsonl.read_text() if rip_jsonl.exists() else ""))
-        if len(runs) == 1:
-            return 1, "Multiple releases found\n"
-        return 0, "Rip complete\n"
-
-    with patch("skive.rip_music.ensure_mounted"), \
-            patch("skive.rip_music.ui.ask", return_value="3"), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
-
-    assert exc.value.code == 0
-    assert [flags for flags, _ in runs] == [["-N"], ["-R", "3", "-N"]]
-    assert "release pick: 3" not in runs[0][1]
-    assert "release pick: 3" in runs[1][1]
-    lines = [json.loads(line) for line in rip_jsonl.read_text().splitlines()]
-    assert [line["status"] for line in lines].count("release pick: 3") == 1
+    assert folder_notes == []  # nothing ripped: no folder note
+    rip = [line["status"] for line in lines if line["phase"] == "rip"]
+    assert rip == ["FAIL(1)"]  # never a false ok
 
 
 def test_no_release_failure_notes_submit_url(tmp_path):
@@ -595,6 +540,117 @@ def test_no_release_failure_notes_submit_url(tmp_path):
              if "no MusicBrainz release" in line["status"]]
     assert notes == [f"no MusicBrainz release: submit this disc — {url}"]
     assert all(line["name"] == "-" for line in lines)
+
+
+MULTIPLE_RELEASES = [
+    "Opening drive...\n",
+    "Multiple releases found in database for DiscID aBcD-:\n",
+    "    1 (ID: 11111111-aaaa-bbbb-cccc-000000000001): Blue (GB) (1999-03-01)\n",
+    "    2 (ID: 11111111-aaaa-bbbb-cccc-000000000002): Blue (remaster) (US) (2 CDs) (2004)\n",
+    "Please specify which release to use by adding the -R argument with an index or ID.\n",
+]
+
+
+def _no_release_lines():
+    fixture = Path(__file__).parent / "fixtures" / "cyanrip" / "no-release.txt"
+    return [line + "\n" for line in fixture.read_text().splitlines()]
+
+
+def test_not_found_miss_never_prompts_and_logs_rip_fail(tmp_path, capsys):
+    """A not-found miss: no prompt, warn lines (plain) and the result line,
+    no summary table, no replay of cyanrip's chatter, and the run log's rip
+    phase ends FAIL: not on MusicBrainz — never ok, no folder note."""
+    args = FakeArgs(offset="6")
+    process = Mock(stdout=iter(_no_release_lines()))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music.ui.ask") as ask, \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+
+    assert exc.value.code == 1
+    ask.assert_not_called()
+    err = capsys.readouterr().err
+    assert ("warn  not on MusicBrainz: DiscID bOpGMzWaoGKqV7OC6onCHgXytfE- · 19 tracks"
+            in err)
+    assert "warn  Open the link, attach this disc to its release, then re-run." in err
+    assert "warn  https://musicbrainz.org/cdtoc/attach?toc=1+19+354705" in err
+    assert "fail  not on MusicBrainz · " in err
+    assert "duration" not in err  # no summary table
+    assert "cyanrip  Opening drive" not in err  # no replay
+    rip = [line["status"] for line in _rip_jsonl(tmp_path) if line["phase"] == "rip"]
+    assert rip[-1] == "FAIL: not on MusicBrainz"
+    assert "ok" not in rip
+    assert not any(status.startswith("folder:") for status in rip)
+
+
+def test_not_found_miss_prints_box_and_full_url_on_a_tty(tmp_path, monkeypatch):
+    """On a terminal the miss is a yellow rounded box titled `! not on
+    MusicBrainz`, then the full URL unwrapped on its own line, then the
+    `✗ not on MusicBrainz · <t>` result line."""
+    import io
+    from rich.console import Console
+    from skive import ui
+
+    buf = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(
+        file=buf, force_terminal=True, color_system=None, width=80, theme=ui.THEME))
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm")
+    lines = _no_release_lines()
+    url = next(line for line in lines if line.startswith("https://")).strip()
+    process = Mock(stdout=iter(lines))
+    process.wait.return_value = 1
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("skive.rip_music.require_online"), \
+                patch("skive.rip_music.ui.ask") as ask, \
+                patch("subprocess.Popen", return_value=process):
+            with pytest.raises(SystemExit):
+                rip_music(FakeArgs(offset="6"))
+    finally:
+        ui.clear_view()
+
+    ask.assert_not_called()
+    out = buf.getvalue()
+    assert "╭─ ! not on MusicBrainz " in out
+    assert "│ DiscID bOpGMzWaoGKqV7OC6onCHgXytfE- · 19 tracks · " in out
+    assert "│ Open the link, attach this disc to its release, then re-run." in out
+    assert f"\n{url}\n" in out  # full and unwrapped
+    assert "✗ not on MusicBrainz · " in out
+    assert "summary" not in out
+    assert out.index("╰") < out.index(f"\n{url}\n") < out.index("✗ not on MusicBrainz")
+
+
+def test_multiple_releases_miss_lists_candidates_and_rerun_command(tmp_path, capsys):
+    """Several releases: no prompt, the candidates, the disc page and the
+    exact -R re-run command; the run log's rip phase ends FAIL."""
+    process = Mock(stdout=iter(MULTIPLE_RELEASES))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music.ui.ask") as ask, \
+            patch("subprocess.Popen", return_value=process):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6"))
+
+    assert exc.value.code == 1
+    ask.assert_not_called()
+    err = capsys.readouterr().err
+    assert ("warn    2  Blue · remaster · US · 2 CDs · 2004 · "
+            "https://musicbrainz.org/release/11111111-aaaa-bbbb-cccc-000000000002") in err
+    assert "https://musicbrainz.org/cdtoc/aBcD-" in err
+    assert "skive rip music 6 -- -R <n>" in err
+    assert "fail  several MusicBrainz releases · " in err
+    rip = [line["status"] for line in _rip_jsonl(tmp_path) if line["phase"] == "rip"]
+    assert rip[-1] == "FAIL: several MusicBrainz releases"
+    assert "ok" not in rip
 
 
 def test_repo_sweep_no_local_paths():
@@ -955,7 +1011,7 @@ def test_cyanrip_track_heading_and_footer_plain(monkeypatch, capsys):
 
 
 def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
-    """With a seam view set at -v on a TTY: a % line feeds the footer's
+    """With a seam view set at -v on a TTY: a progress line feeds the footer's
     progress but stays out of scrollback, and other lines keep their tier."""
     from skive import ui
 
@@ -963,7 +1019,8 @@ def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        process = Mock(stdout=iter(["Track 1 of 12\n", "Ripping... 45%\n",
+        process = Mock(stdout=iter(["Track 1 of 12\n",
+                                    "Ripping and encoding track 1, progress - 45.00%\n",
                                     "Track 1 ripped and encoded successfully!\n"]))
         process.wait.return_value = 0
         with tempfile.TemporaryDirectory() as tmpdir, \
@@ -975,7 +1032,7 @@ def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
     assert rc == 0
     rendered = view.render()
     err = capsys.readouterr().err
-    assert "Ripping... 45%" not in err  # TTY progress never enters scrollback
+    assert "progress - 45.00%" not in err  # TTY progress never enters scrollback
     assert "cyanrip  Track 1 ripped and encoded successfully!" not in err  # tier unchanged
     assert "100%" in rendered
 
@@ -1065,35 +1122,6 @@ def test_hidden_replay_lands_tool_prefixed_under_a_view(monkeypatch, capsys):
     err = capsys.readouterr().err  # tool lines print to scrollback
     assert "cyanrip  Ripping track 1" in err
     assert "cyanrip  Read error" in err
-
-
-def test_multiple_releases_prompt_prints_under_a_seam_view(tmp_path, capsys):
-    """The Multiple-releases prompt prints to stdout (scrollback) while a
-    seam view is set — the prompt suspends the view — and the run completes."""
-    from skive import ui
-
-    args = FakeArgs(offset="100", cyanrip_flags=["-N"])
-
-    def ask_then_print(prompt, choices="", default=""):
-        print(prompt, end="")
-        return "2"
-
-    view = ui.RunView(tty=True, live=False)
-    ui.set_view(view)
-    try:
-        with patch("skive.rip_music.ensure_mounted"), \
-                patch("skive.rip_music.RipLog"), \
-                patch("skive.rip_music._newest_flac_album", return_value=("-", "-")), \
-                patch("skive.rip_music.ui.ask", side_effect=ask_then_print), \
-                patch("skive.rip_music._cyanrip_run", side_effect=[
-                    (1, "Multiple releases found\n"), (0, "Rip complete\n")]):
-            with pytest.raises(SystemExit) as exc:
-                rip_music(args)
-    finally:
-        ui.clear_view()
-
-    assert exc.value.code == 0
-    assert "Multiple MusicBrainz releases" in capsys.readouterr().out
 
 
 def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
@@ -1294,3 +1322,81 @@ def test_interrupt_summary_keeps_track_outcomes_and_truthful_note(monkeypatch, c
     assert "fail  interrupted · 1 ok" in err
     assert "partial deleted" not in err
     assert "nothing deleted" in err
+
+
+@pytest.mark.parametrize("line, eta", [
+    ("Ripping and encoding track 1, progress - 0.01%, ETA - 303h 2m", "303h 2m"),
+    ("Ripping and encoding track 1, progress - 41.50%, ETA - 1h 2m", "1h 2m"),
+    ("Ripping and encoding track 1, progress - 41.50%, ETA - 27m", "27m"),
+    ("Ripping and encoding track 1, progress - 41.50%, ETA - 45s", "45s"),
+    ("Ripping and encoding track 1, progress - 41.50%", None),
+])
+def test_progress_regex_parses_disc_eta(line, eta):
+    from skive.rip_music import _TRACK_PROGRESS
+
+    match = _TRACK_PROGRESS.fullmatch(line)
+    assert match and match.group(1) == "1" and match.group(3) == eta
+
+
+def test_disc_eta_reaches_the_footer(monkeypatch, capsys):
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    process = Mock(stdout=iter([
+        "Disc tracks: 16\n",
+        "Ripping and encoding track 3, progress - 63.00%, ETA - 27m\n",
+    ]))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+        footer = view.render()
+    finally:
+        ui.clear_view()
+
+    assert "ETA 27m" in footer
+
+
+def test_percent_line_that_is_not_progress_shows_on_a_tty_at_v1(monkeypatch, capsys):
+    """Only whole progress lines are hidden on a TTY; another '%' line (a
+    title with a percent sign) shows as a tool line at -v."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 1)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    process = Mock(stdout=iter(["    title:     100% Pure Love\n"]))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("+6", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    assert "cyanrip      title:     100% Pure Love" in capsys.readouterr().err
+
+
+def test_raw_log_throttles_progress_and_drops_unrecognised(monkeypatch):
+    """13,000 progress lines for one track reach the raw log about once per
+    whole percent, the track's last line kept; libmusicbrainz Unrecognised
+    lines never reach it."""
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    progress = [f"Ripping and encoding track 1, progress - {i * 99.99 / 12999:.2f}%, ETA - 1m\n"
+                for i in range(13000)]
+    unrecognised = ["Unrecognised disc element: 'offset-list'\n",
+                    "Unrecognised artist attribute: 'type-id'\n"]
+    process = Mock(stdout=iter(unrecognised + progress))
+    process.wait.return_value = 0
+    log = Mock()
+    with tempfile.TemporaryDirectory() as tmpdir, \
+            patch("subprocess.Popen", return_value=process):
+        _cyanrip_run("+6", [], Path(tmpdir), log)
+
+    raw = [call.args[1] for call in log.raw.call_args_list]
+    assert len(raw) <= 102
+    assert raw[-1] == progress[-1].rstrip()  # 99.99%: same whole percent, still kept
+    assert not any(line.startswith("Unrecognised") for line in raw)
