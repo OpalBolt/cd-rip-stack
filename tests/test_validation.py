@@ -1117,6 +1117,32 @@ def test_is_issue_off_band_extras_and_every_other_check():
     assert is_issue(green_extra) and is_issue(red) and is_issue(staging)
 
 
+def test_ungraded_extra_is_not_an_issue_and_renders_as_ungraded(monkeypatch):
+    """An extras/ ratio row against an unknown TMDB runtime (band None) is
+    ungraded: not an issue, `·` in the check column, out of the result-line
+    count, and the JSON report no longer crashes on it."""
+    import io
+    from rich.console import Console
+    from skive import ui
+
+    ungraded = Finding("movies/A (2000)", "ratio", "extras/A (2000) - Extra 01.mkv",
+                       path="extras/A (2000) - Extra 01.mkv")
+    assert not is_issue(ungraded)
+    report = json_report([ungraded], Path("/mnt/videos/library"))
+    assert report["findings"][0]["recommendation"] is None
+    assert report["summary"]["ratio"]["blank"] == 1
+    assert report["recommendations"] == []
+
+    screen = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(file=screen, force_terminal=True,
+                                               theme=ui.THEME, color_system=None,
+                                               width=120))
+    print_findings([ungraded], Path("/mnt/videos"))
+    out = screen.getvalue()
+    assert "· ratio" in out and "! ratio" not in out
+    assert out.splitlines()[-1] == "✓ no issues"
+
+
 def test_recommendations_worst_first_with_action_wording():
     """Red folders lead, staging-only folders trail; the lines name the
     file, the reading, and what to do."""
@@ -1278,7 +1304,8 @@ def test_validate_result_line_counts_issues_per_folder(capsys):
                 "A (2000).mkv", 0.95, 0.03),
     ]
     print_findings(findings, Path("/mnt/videos"))
-    assert capsys.readouterr().err.splitlines()[-1] == "warn  3 issues in 2 folders"
+    # the full table shows each staging file as its own row: 4 issue rows
+    assert capsys.readouterr().err.splitlines()[-1] == "warn  4 issues in 2 folders"
 
     print_issues(findings, Path("/mnt/videos"))
     err = capsys.readouterr().err
@@ -1291,6 +1318,29 @@ def test_validate_result_line_counts_issues_per_folder(capsys):
 
     print_findings([], Path("/mnt/videos"))
     assert capsys.readouterr().err.splitlines()[-1] == "ok    no findings"
+
+
+def test_validate_plain_check_column_carries_severity_words(capsys):
+    """Plain (non-TTY) output keeps the severity per row: the plain event
+    word (`fail`, `warn`, `ok`, `info`) leads the check name."""
+    findings = [
+        Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.90", "yellow",
+                "Up (2009).mkv", 0.90, -0.02),
+        Finding("tv/S (2019)", "missing episodes", "Season 01: E03"),
+        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
+                "A (2000).mkv", 0.95, 0.03),
+        Finding("movies/B (2001)", "ratio", "extras/B (2001) - Extra 01.mkv",
+                path="extras/B (2001) - Extra 01.mkv"),
+    ]
+    print_findings(findings, Path("/mnt/videos"))
+    err = capsys.readouterr().err
+    rows = {line.split()[0]: line for line in err.splitlines()
+            if line.strip().startswith(("movies/", "tv/"))}
+    assert "warn  ratio" in rows["movies/Up"]
+    assert "fail  missing episodes" in rows["tv/S"]
+    assert "ok    ratio" in rows["movies/A"]
+    assert "info  ratio" in rows["movies/B"]
+    assert "\x1b" not in err
 
 
 def test_validate_check_column_carries_severity_symbols(monkeypatch):

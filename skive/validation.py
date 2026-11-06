@@ -1091,7 +1091,8 @@ def is_issue(finding: Finding) -> bool:
     """The issues-only filter: every non-ratio check is an issue; a ratio
     row is an issue when off-band (yellow/red) or when it is a graded
     `extras/` file — a full-length extra beside the main, the two-
-    candidates lead, even when its own grade reads green.
+    candidates lead, even when its own grade reads green. An ungraded ratio
+    row (band None — the TMDB runtime is unknown) is never an issue.
 
     Args:
         finding: One report row
@@ -1101,7 +1102,9 @@ def is_issue(finding: Finding) -> bool:
     """
     if finding.check != "ratio":
         return True
-    if finding.band not in ("green", None):
+    if finding.band is None:
+        return False
+    if finding.band != "green":
         return True
     return bool(finding.path and finding.path.startswith("extras/"))
 
@@ -1247,16 +1250,17 @@ def _collapse_staging(issues: list[Finding]) -> list[Finding]:
 def _check_cell(f: Finding) -> object:
     """The check cell: on a terminal led by its severity symbol — `✗` an
     issue (every non-ratio check, a red ratio), `!` off-norm (a yellow ratio,
-    a graded extra), `✓` a green main, `·` an ungraded row; plain, the bare
-    check name."""
-    if not ui.console.is_terminal:
-        return f.check
+    a graded extra), `✓` a green main, `·` an ungraded row; plain, the
+    severity word (`fail`/`warn`/`ok`/`info`, the plain event words) before
+    the check name."""
     if f.check != "ratio" or f.band == "red":
         kind = "fail"
     elif is_issue(f):
         kind = "warn"
     else:
         kind = "ok" if f.band == "green" else "info"
+    if not ui.console.is_terminal:
+        return f"{kind:<4}  {f.check}"
     return ui.mark(kind, f.check)
 
 
@@ -1275,10 +1279,14 @@ def _heading(text: str) -> None:
     ui.console.print(Text(text, style="item"), soft_wrap=True)
 
 
-def _result_line(findings: list[Finding]) -> None:
-    """The closing line: `! 7 issues in 4 folders` (staging names counted
-    once per folder, as the issues table shows them), else `✓ no issues`."""
-    issues = _collapse_staging([f for f in findings if is_issue(f)])
+def _result_line(findings: list[Finding], *, collapsed: bool) -> None:
+    """The closing line: `! 7 issues in 4 folders`, counting the issue rows
+    the table above shows — staging names once per folder when the table
+    collapsed them (the issues view), per file otherwise — else `✓ no
+    issues`."""
+    issues = [f for f in findings if is_issue(f)]
+    if collapsed:
+        issues = _collapse_staging(issues)
     if not issues:
         ui.ok("no issues")
         return
@@ -1300,7 +1308,7 @@ def print_findings(findings: list[Finding], root: Path) -> None:
         ui.ok("no findings")
         return
     ui.console.print(_findings_table(findings))
-    _result_line(findings)
+    _result_line(findings, collapsed=False)
 
 
 def print_issues(findings: list[Finding], root: Path) -> None:
@@ -1333,7 +1341,7 @@ def print_issues(findings: list[Finding], root: Path) -> None:
         for action in entry["actions"]:
             ui.console.print(f"  • {action}" if styled else f"    • {action}",
                              soft_wrap=True, markup=False)
-    _result_line(findings)
+    _result_line(findings, collapsed=True)
 
 
 def json_report(findings: list[Finding], root: Path, *, issues: bool = False) -> dict:
