@@ -115,7 +115,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                        log=None, what: str | None = None,
                        title_offset: int = 0, device: str | None = None,
                        disc_total: int | None = None, disc_offset: int = 0,
-                       on_title_start=None) -> int:
+                       on_title_start=None, names: list[str] | None = None) -> int:
     """Run makemkvcon with --progress=-same and drive the run view (ADR 0012:
     absorption — the parsing stays, only the rendering moved into the view).
 
@@ -148,6 +148,8 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         disc_total: Total estimated bytes across the whole selected rip.
         disc_offset: Estimated bytes completed before this call.
         on_title_start: Called with the MakeMKV title number when saving starts.
+        names: Footer name per rip position (1-based position - 1); when the
+            title at that position starts saving it replaces what.
     """
     cmd = cmd[:1] + ["--progress=-same"] + cmd[1:]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -228,6 +230,8 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                 val = _qval(line)
                 if "Saving to MKV file" in val:
                     cur_title += 1
+                    if names and cur_title + title_offset <= len(names):
+                        what = names[cur_title + title_offset - 1]
                     if on_title_start is not None:
                         on_title_start(cur_title + title_offset)
                 phase = val.strip()
@@ -271,7 +275,7 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     ui.info(summary)
     return rc
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None, device: str | None = None, on_title_start=None) -> int:
+def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None, device: str | None = None, on_title_start=None, names: list[str] | None = None, outcomes: dict[int, int] | None = None) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
@@ -283,6 +287,10 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         log: RipLog for the run's raw tool log (None in tests)
         device: Physical device for the live status footer.
         on_title_start: Callback receiving each MakeMKV title number at start.
+        names: Footer name per rip position (see _run_with_progress).
+        outcomes: Filled with title number -> rc on a selected-title rip
+            (one makemkvcon call per title); an all-titles rip has one rc and
+            records nothing.
 
     Returns:
         Worst (highest) return code from all rip attempts
@@ -295,7 +303,7 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         sizes = [t.size for t in sorted(infos, key=lambda t: t.number)] if infos else None
         rc = _run_with_progress(
             cmd, "all titles", total_titles=total or 1, sizes=sizes, header=header,
-            log=log, device=device, on_title_start=on_title_start) if run is subprocess.run else run(cmd).returncode
+            log=log, device=device, on_title_start=on_title_start, names=names) if run is subprocess.run else run(cmd).returncode
         if rc > worst_rc:
             worst_rc = rc
     else:
@@ -316,8 +324,10 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
                 cmd, desc, total_titles=total_titles, sizes=sizes,
                 header=header if i == 1 else None, log=log, what=what,
                 title_offset=i - 1, device=device, disc_total=selection_total,
-                disc_offset=completed_size, on_title_start=callback
+                disc_offset=completed_size, on_title_start=callback, names=names
             ) if run is subprocess.run else run(cmd).returncode
+            if outcomes is not None:
+                outcomes[t] = rc
             completed_size += by_num[t].size if t in by_num else 0
             if rc > worst_rc:
                 worst_rc = rc

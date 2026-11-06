@@ -10,15 +10,13 @@ import re
 import subprocess
 from pathlib import Path
 
-from rich.console import Console
-from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
 from skive import ui
 from skive.tv_match import audit_cell
 
-console = Console()
+console = ui.console  # the shared console; a module name tests can swap
 
 
 BOUNDARY_WINDOW = 120
@@ -204,12 +202,7 @@ def boundary_table(season: int, lo: int, spans: list[tuple[int, int]],
     Returns:
         The rich Table, ready to print
     """
-    table = Table()
-    table.add_column("episode", style="cyan", width=8)
-    table.add_column("chapters", style="white", width=9)
-    table.add_column("start", style="white", width=9)
-    table.add_column("duration", style="white", width=9)
-    table.add_column("ratio", width=6)
+    table = ui.table("episode", "chapters", "start", "duration", "ratio")
     for i, (start_ch, end_ch) in enumerate(spans):
         e = lo + i
         start_s = chapter_starts[start_ch - 1]
@@ -304,10 +297,10 @@ def boundary_loop(season: int, lo: int, hi: int, spans: list[tuple[int, int]],
                 console.print(note)
             console.print(boundary_table(season, lo, spans_from_starts(start_chs, n),
                                          chapter_starts, duration_s, ep_runtimes))
-            console.print("split? (Enter=cut at these boundaries, fixes like 2=14, "
-                          "q=keep combined): ", end="")
-            ans = (Prompt.ask("") or "").strip()
-            if not ans:
+            ans = ui.ask("Split at these boundaries?",
+                         choices="cut · 2=14 fix row · q keep combined",
+                         default="Enter").strip()
+            if ans.lower() in ("", "enter", "cut"):
                 return spans_from_starts(start_chs, n)
             if ans.lower() == "q":
                 return None

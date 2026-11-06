@@ -543,3 +543,36 @@ def test_run_with_progress_wait_interrupt_also_kills_child(verbosity, monkeypatc
         with pytest.raises(common.Interrupted):
             _run_with_progress(["makemkvcon", "mkv"], "test")
     kill.assert_called_once_with(proc)
+
+
+def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
+    """names: when the title at a rip position starts saving, the footer
+    names it (rip tv: the episode) and keeps the drive."""
+    from skive import ui
+    verbosity(0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
+                'PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:100,65536,65536"])):
+            _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 5 (3/6)",
+                               total_titles=6, what="Andor (2022)", title_offset=2,
+                               device="/dev/sr0",
+                               names=["a", "b", "Andor (2022) S01E04"])
+    finally:
+        ui.clear_view()
+    out = view.render(width=160)
+    assert "Andor (2022) S01E04 — /dev/sr0" in out
+    assert "title 3/6" in out
+
+
+def test_rip_titles_records_each_selected_titles_rc(tmp_path):
+    """outcomes: a selected-title rip records every title's own rc beside
+    the worst rc it returns."""
+    rcs = iter([0, 2, 0])
+    run = Mock(side_effect=lambda cmd: Mock(returncode=next(rcs)))
+    outcomes = {}
+    worst = rip_titles([3, 5, 7], tmp_path / "p.xml", 600, tmp_path, run=run,
+                       outcomes=outcomes)
+    assert worst == 2
+    assert outcomes == {3: 0, 5: 2, 7: 0}

@@ -194,12 +194,18 @@ def _cells(table) -> list[tuple[str, str]]:
 
 
 def _stage(monkeypatch, answers):
-    """Record console + scripted Prompt for the boundary UI."""
+    """Record console + scripted ui.ask for the boundary UI: the question
+    prints to the recording console, an empty answer takes the default."""
     con = Console(record=True, width=120)
     monkeypatch.setattr(chapter_split, "console", con)
     p = MagicMock()
     p.ask.side_effect = list(answers)
-    monkeypatch.setattr(chapter_split, "Prompt", p)
+
+    def ask(question, choices="", default=""):
+        con.print(f"{question} [{default}] {choices}")
+        return p.ask(question).strip() or default
+
+    monkeypatch.setattr(chapter_split.ui, "ask", ask)
     return con, p
 
 
@@ -265,7 +271,7 @@ def test_boundary_loop_enter_confirms_suggested_spans(monkeypatch):
     spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
                           DOWNTON_DURATION, DOWNTON_RUNTIMES)
     assert spans == SUGGESTED
-    assert "split?" in con.export_text()
+    assert "Split at these boundaries?" in con.export_text()
 
 
 def test_boundary_loop_q_declines(monkeypatch):
@@ -281,7 +287,7 @@ def test_boundary_loop_fix_moves_start_and_rerenders(monkeypatch):
                           DOWNTON_DURATION, DOWNTON_RUNTIMES)
     assert spans == [(1, 13), (14, 14), (15, 21)]
     text = con.export_text()
-    assert text.count("split?") == 2        # fix, then re-render, then Enter
+    assert text.count("Split at these boundaries?") == 2        # fix, then re-render, then Enter
     assert text.count("14-14") == 1         # the fixed span on the re-render
 
 
@@ -293,7 +299,7 @@ def test_boundary_loop_reregrades_flags_after_fix(monkeypatch):
                           DOWNTON_DURATION, DOWNTON_RUNTIMES)
     assert spans == [(1, 7), (8, 19), (20, 21)]
     text = con.export_text()
-    first_prompt = text.index("split?")
+    first_prompt = text.index("Split at these boundaries?")
     assert "boundary suggestion outside" not in text[:first_prompt]
     note_line = next(ln for ln in text[first_prompt:].splitlines()
                      if "boundary suggestion outside" in ln)
@@ -416,7 +422,7 @@ def test_split_combined_enter_cuts_all_pieces_and_deletes_combined(
 
 def test_split_combined_unreadable_probe_declines_without_table(
         tmp_path, monkeypatch):
-    _stage(monkeypatch, [])
+    _con, p = _stage(monkeypatch, [])
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -426,14 +432,14 @@ def test_split_combined_unreadable_probe_declines_without_table(
     split_combined(combined, targets, 1, 1, 3, DOWNTON_RUNTIMES, log, run=run)
 
     assert combined.exists()
-    chapter_split.Prompt.ask.assert_not_called()   # no table, no prompt
-    assert "split?" not in chapter_split.console.export_text()
+    p.ask.assert_not_called()   # no table, no prompt
+    assert "Split at these boundaries?" not in chapter_split.console.export_text()
     notes = _split_notes(log)
     assert len(notes) == 1 and "probe unreadable" in notes[0]
 
 
 def test_split_combined_missing_runtime_declines(tmp_path, monkeypatch):
-    _stage(monkeypatch, [])
+    _con, p = _stage(monkeypatch, [])
     combined, targets = _split_paths(tmp_path)
     log = Mock()
     runtimes = {1: 3240, 2: 3240, 3: 0}
@@ -442,13 +448,13 @@ def test_split_combined_missing_runtime_declines(tmp_path, monkeypatch):
                    run=_split_run(DOWNTON_STARTS, DOWNTON_DURATION))
 
     assert combined.exists()
-    chapter_split.Prompt.ask.assert_not_called()
+    p.ask.assert_not_called()
     notes = _split_notes(log)
     assert len(notes) == 1 and "no TMDB runtime for E03" in notes[0]
 
 
 def test_split_combined_fewer_chapters_declines(tmp_path, monkeypatch):
-    _stage(monkeypatch, [])
+    _con, p = _stage(monkeypatch, [])
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -456,7 +462,7 @@ def test_split_combined_fewer_chapters_declines(tmp_path, monkeypatch):
                    run=_split_run([0.0, 468.0], 9410.0))
 
     assert combined.exists()
-    chapter_split.Prompt.ask.assert_not_called()
+    p.ask.assert_not_called()
     notes = _split_notes(log)
     assert len(notes) == 1 and "2 chapters but 3 episodes" in notes[0]
 
@@ -480,8 +486,8 @@ def test_split_combined_interrupt_at_prompt_keeps_combined_and_continues(
         tmp_path, monkeypatch):
     """Ctrl+C at the boundary table: contained — nothing cut, combined kept,
     one interrupted note, and the phase returns so the run goes on."""
-    _stage(monkeypatch, [])
-    chapter_split.Prompt.ask.side_effect = KeyboardInterrupt
+    _con, p = _stage(monkeypatch, [])
+    p.ask.side_effect = KeyboardInterrupt
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -647,5 +653,5 @@ def test_boundary_loop_prints_under_a_seam_view(monkeypatch):
         ui.clear_view()
     assert spans == SUGGESTED
     text = con.export_text()
-    assert "split?" in text
+    assert "Split at these boundaries?" in text
     assert "S01E01" in text

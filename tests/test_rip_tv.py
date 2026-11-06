@@ -1,6 +1,8 @@
 """Tests for the TV rip flow: prompts, confirm table, renames, staging."""
 
+import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 from dataclasses import dataclass
@@ -63,6 +65,23 @@ def test_staged_sets_read_the_title_folder_after_promotion(tmp_path):
     assert not list(disc_dir.glob("*.mkv"))
 
 
+@contextmanager
+def _prompts(prompt=None):
+    """Script ui.ask / ui.confirm from prompt.ask's answers; an empty answer
+    takes the prompt's default, as the real helpers do."""
+    prompt = prompt or MagicMock()
+
+    def ask(question, choices="", default=""):
+        return prompt.ask(question, default=default).strip() or default
+
+    def confirm(question, default=False):
+        ans = prompt.ask(question).strip().lower()
+        return ans in ("y", "yes") if ans else default
+
+    with patch("skive.ui.ask", ask), patch("skive.ui.confirm", confirm):
+        yield prompt
+
+
 def _gk_titles():
     """Generation Kill disc 1 shape: three episodes and a play-all (t3)."""
     return [TitleInfo(0, 3932, 1, "dan", "", False),
@@ -112,13 +131,14 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=TMDBPick(
                             title="Show", year="2000", original_language="en", type="tv", id="5")):
-                        with patch("skive.rip_tv.Prompt", prompt):
+                        with _prompts(prompt):
                             with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
                                 with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")):
                                     with patch("skive.rip_tv.rip_titles", return_value=0):
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_tv.console") as mock_console:
+                                                    mock_console.prompt = prompt  # for prompt-shape asserts
                                                     # The split phase's probe/cut subprocesses stay
                                                     # fake here too: flow tests assert prompts and
                                                     # tables, and an armed caption run must never
@@ -190,9 +210,9 @@ def test_overview_before_range_prompt_guess_prefill(tmp_path, monkeypatch):
     assert "play-all, not ripped" in overview
     extra_row = next(ln for ln in overview.splitlines() if "1:06:40" in ln)
     assert "→ extra" in extra_row
-    labels = [str(c.args[0]) for c in console.print.call_args_list
-              if c.args and "episodes on this disc" in str(c.args[0])]
-    assert labels == ["episodes on this disc [1-3]: "]
+    asks = [c.kwargs["default"] for c in console.prompt.ask.call_args_list
+            if c.args[0] == "Episodes on this disc"]
+    assert asks == ["1-3"]
     assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3),
                                                 3: (0, 0), 4: (0, 0)}
 
@@ -229,9 +249,9 @@ def test_no_runtimes_prefill_falls_back_to_count(tmp_path, monkeypatch):
         ["0", "", ""])  # season 0, accept prefill, Enter=rip
 
     assert rc == 0
-    labels = [str(c.args[0]) for c in console.print.call_args_list
-              if c.args and "episodes on this disc" in str(c.args[0])]
-    assert labels == ["episodes on this disc [1-3]: "]
+    asks = [c.kwargs["default"] for c in console.prompt.ask.call_args_list
+            if c.args[0] == "Episodes on this disc"]
+    assert asks == ["1-3"]
     assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
 
 
@@ -483,7 +503,7 @@ def test_rip_only_requested_titles_that_survived_scan():
                                                     mock_log = MagicMock()
                                                     mock_log.run = "run-1"  # the validation document's run identity
                                                     mock_log_class.return_value = mock_log
-                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                    with _prompts() as mock_prompt:
                                                         # season, then Enter for the range, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "", ""]
                                                         try:
@@ -566,7 +586,7 @@ def _clear_staged_flow(tmp_path, monkeypatch, answers):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=TMDBPick(
                             title="Show", year="2000", original_language="en", type="tv", id="5")):
-                        with patch("skive.rip_tv.Prompt", prompt):
+                        with _prompts(prompt):
                             with patch("skive.rip_tv.fetch_season", return_value=episodes):
                                 with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")):
                                     with patch("skive.rip_tv.rip_titles", return_value=0):
@@ -632,7 +652,7 @@ def test_floor_drops_short_titles_before_rip():
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_common.RipLog") as MockLog:
                                                     MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                    with _prompts() as mock_prompt:
                                                         # season, Enter for the range, Enter=rip at the table
                                                         mock_prompt.ask.side_effect = ["", "", ""]
                                                         try:
@@ -683,7 +703,7 @@ def test_playall_forced_to_extra():
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_common.RipLog") as MockLog:
                                                     MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                    with _prompts() as mock_prompt:
                                                         # season, then Enter for the range, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "", ""]
                                                         try:
@@ -733,7 +753,7 @@ def test_playall_pin_survives_n_reask():
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_common.RipLog") as MockLog:
                                                     MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                    with _prompts() as mock_prompt:
                                                         # season, range 1-3, n re-ask, Enter for pre-fill, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "1-3", "n", "", ""]
                                                         try:
@@ -784,7 +804,7 @@ def test_fix_row_can_assign_playall_to_episode():
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_common.RipLog") as MockLog:
                                                     MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with patch("skive.rip_tv.Prompt") as mock_prompt:
+                                                    with _prompts() as mock_prompt:
                                                         # season, then Enter for the range, 3=5 at the table, Enter=rip
                                                         mock_prompt.ask.side_effect = ["", "", "3=5", ""]
                                                         try:
@@ -820,9 +840,9 @@ def test_playall_only_caption_arms_on_fix_row(tmp_path, monkeypatch):
     cap_idx = next(i for i, c in enumerate(prints)
                    if "play-all-only disc" in str(c.args[0]))
     tbl_idx = max(i for i, c in enumerate(prints) if isinstance(c.args[0], Table))
-    ok_idx = max(i for i, c in enumerate(prints)
-                 if str(c.args[0]).startswith("ok?"))
-    assert tbl_idx < cap_idx < ok_idx
+    assert tbl_idx < cap_idx
+    asked = [c.args[0] for c in console.prompt.ask.call_args_list]
+    assert asked[-1] == "Rip with this map?"  # the prompt follows the caption
 
 
 def test_playall_only_caption_disarms_on_n_reask(tmp_path, monkeypatch):
@@ -987,7 +1007,7 @@ def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
@@ -1053,7 +1073,7 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
@@ -1125,7 +1145,7 @@ def test_split_hook_fires_on_fast_scan_path(tmp_path, monkeypatch):
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
@@ -1172,9 +1192,6 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
     def fake_probe(path, run=None):
         return (starts, 9410.0)
 
-    split_prompt = MagicMock()
-    split_prompt.ask.side_effect = KeyboardInterrupt
-
     subs_seen = []
 
     def fake_subs(_dir):
@@ -1183,7 +1200,8 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
 
     real_post = post_rip_validation
     prompt = MagicMock()
-    prompt.ask.side_effect = ["", "1", "0=1-3", ""]
+    # season, range, fix row, Enter=rip, then Ctrl+C at the split prompt
+    prompt.ask.side_effect = ["", "1", "0=1-3", "", KeyboardInterrupt]
 
     @dataclass
     class FakeArgs:
@@ -1202,13 +1220,12 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
             patch("skive.rip_tv.rename_tv", side_effect=fake_rename), \
             patch("skive.chapter_split.probe_chapters", side_effect=fake_probe), \
-            patch("skive.chapter_split.Prompt", split_prompt), \
             patch("skive.rip_tv.subtitle_note", side_effect=fake_subs), \
             patch("skive.rip_tv.post_rip_validation",
                   lambda pre, *a, **k: real_post(
@@ -1408,7 +1425,7 @@ def test_fast_scan_rip_rips_all_at_floor_and_joins(tmp_path, monkeypatch):
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
@@ -1465,7 +1482,7 @@ def test_fast_scan_playall_escalates_to_full_scan_and_skips_it(tmp_path, capsys)
             patch("skive.rip_common.RipLog") as mock_log, \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
@@ -1530,7 +1547,7 @@ def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
             patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
             patch("skive.rip_tv.rename_tv"), \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
-            patch("skive.rip_tv.Prompt") as mock_prompt:
+            _prompts() as mock_prompt:
         # season, then Enter for the range, Enter=rip
         mock_prompt.ask.side_effect = ["", "", ""]
         try:
@@ -1576,7 +1593,7 @@ def test_fix_row_rescued_playall_rips():
             patch("skive.rip_tv.rename_tv"), \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
             patch("skive.rip_tv.console") as mock_console, \
-            patch("skive.rip_tv.Prompt") as mock_prompt:
+            _prompts() as mock_prompt:
         # season, then Enter for the range, the rescue fix row, Enter=rip
         mock_prompt.ask.side_effect = ["", "", "2=3", ""]
         try:
@@ -1595,7 +1612,7 @@ def test_fix_row_rescued_playall_rips():
     assert "→ S01E03 (ep3)" in texts[2]
 
 
-def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path):
+def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path, capsys):
     """rename_tv_fast returning False: the caller logs the abort, closes the
     log with rc 1, and exits 1 — before the subtitle note. Promotion has
     already moved this disc's rip up, so the joined junk rests in the show
@@ -1626,7 +1643,7 @@ def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path):
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
             patch("skive.rip_common.RipLog") as mock_log, \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
@@ -1646,6 +1663,8 @@ def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path):
     log.finish.assert_called_once_with(1)  # ... with a final total line
     mock_subs.assert_not_called()
     assert sorted(p.name for p in show_dir.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
+    # the run still ends on its summary's failure line
+    assert "fail  failed · 0 ok" in capsys.readouterr().err.splitlines()[-1]
 
 
 # -- Interrupt (Ctrl+C) at the prompts (CONTEXT.md: Interrupt) -----------------
@@ -1678,7 +1697,7 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt):
+            _prompts(prompt):
         with pytest.raises(SystemExit) as e:
             rip_tv(FakeArgs())
 
@@ -1689,7 +1708,7 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
     assert "fail  interrupted — partial deleted, kept 1 titles" in err
-    assert err.count("fail  interrupted") == 1
+    assert err.count("fail  interrupted") == 2  # event plus interrupted result line
 
 
 def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
@@ -1719,7 +1738,7 @@ def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=[(e, f"ep{e}", 3600) for e in range(1, 5)]):
         with pytest.raises(SystemExit) as e:
             rip_tv(FakeArgs())
@@ -2017,7 +2036,7 @@ def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
             patch("skive.rip_common.RipLog") as mock_log, \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
@@ -2083,7 +2102,7 @@ def test_fast_scan_flow_rows_record_t_none(tmp_path):
             patch("skive.rip_common.RipLog") as mock_log, \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
             patch("skive.rip_tv.rip_titles", return_value=0), \
@@ -2131,7 +2150,7 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=tmp_path / "absent-profile.xml"), \
             patch("skive.rip_tv.rip_titles", side_effect=rip_a_partial_then_interrupt):
@@ -2148,14 +2167,14 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
     assert lines[-1]["phase"] == "total" and lines[-1]["status"] == "interrupted"
     err = capsys.readouterr().err
     assert "fail  interrupted — partial deleted, kept 0 titles" in err
-    assert err.count("fail  interrupted") == 1
+    assert err.count("fail  interrupted") == 2  # event plus interrupted result line
 
 
 # --- Run view wiring (slice 07: suspend + per-episode run summary) ----------
 
 
 def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
-               rename=None, rip_rc=0):
+               rename=None, rip_rc=0, rip=None):
     """Drive rip_tv over a full-scan disc with the REAL console (capsys
     captures what a user sees) and a seam run view set by the caller.
     Returns the SystemExit code."""
@@ -2196,10 +2215,10 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_tv.Prompt", prompt), \
+            _prompts(prompt), \
             patch("skive.rip_tv.fetch_season", return_value=episodes), \
             patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=rip_rc), \
+            patch("skive.rip_tv.rip_titles", return_value=rip_rc, side_effect=rip), \
             patch("skive.rip_tv.rename_tv", side_effect=rename or fake_rename), \
             patch("skive.rip_tv.split_combined"), \
             patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
@@ -2223,10 +2242,9 @@ def test_rip_tv_prompts_print_under_a_seam_view(tmp_path, monkeypatch, capsys):
     finally:
         ui.clear_view()
     assert code == 0
-    out = capsys.readouterr().out
-    assert "season [1] (0 = specials)" in out
-    assert "episodes on this disc" in out
-    assert "ok? (Enter=rip, fixes like 3=7" in out
+    err = capsys.readouterr().err
+    assert "Show (2000) — season 01" in err  # overview and confirm table
+    assert err.count("assignment") == 2
 
 
 def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, capsys):
@@ -2251,7 +2269,7 @@ def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, ca
         assert col in err
     assert any("S01E01" in l and "1:05:30" in l and "ok" in l
                for l in err.splitlines())
-    assert "ok    3 ok\n" in err
+    assert "ok    3 ok · " in err
 
 
 def test_rip_tv_failed_rip_with_no_rows_ends_on_a_failure_line(tmp_path, monkeypatch, capsys):
@@ -2260,7 +2278,8 @@ def test_rip_tv_failed_rip_with_no_rows_ends_on_a_failure_line(tmp_path, monkeyp
     code = _view_flow(tmp_path, monkeypatch, ["", "", ""],
                       rename=lambda *a: None, rip_rc=2)
     assert code == 2
-    assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
+    last = capsys.readouterr().err.splitlines()[-1]
+    assert last.startswith("fail  failed · 0 ok · ") and "see " in last
 
 
 def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeypatch, capsys):
@@ -2299,7 +2318,7 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
                 patch("skive.rip_common.require_online"), \
                 patch("skive.rip_common.search_loop", return_value=TMDBPick(
                     title="Show", year="2000", original_language="en", type="tv", id="5")), \
-                patch("skive.rip_tv.Prompt", prompt), \
+                _prompts(prompt), \
                 patch("skive.rip_tv.fetch_season",
                       return_value=[(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]), \
                 patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent.xml")), \
@@ -2313,7 +2332,7 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
     assert view._closed
     err = capsys.readouterr().err
     assert "fail  interrupted" in err
-    assert err.count("fail  interrupted") == 1
+    assert err.count("fail  interrupted") == 2  # event plus interrupted result line
 
 
 def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
@@ -2348,7 +2367,7 @@ def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
                 patch("skive.rip_common.require_online"), \
                 patch("skive.rip_common.search_loop", return_value=TMDBPick(
                     title="Show", year="2000", original_language="en", type="tv", id="5")), \
-                patch("skive.rip_tv.Prompt", prompt):
+                _prompts(prompt):
             with pytest.raises(SystemExit) as e:
                 rip_tv(FakeArgs())
     finally:
@@ -2357,4 +2376,128 @@ def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
     assert e.value.code == 130
     assert view._closed
     err = capsys.readouterr().err
-    assert err.count("fail  interrupted") == 1
+    assert err.count("fail  interrupted") == 2  # event plus interrupted result line
+
+
+# --- rip tv on the new look (console-polish slice 07) -----------------------
+
+
+def test_print_table_uses_the_shared_borderless_look(mock_console):
+    """The episode map is a SIMPLE_HEAD table: no box verticals, plain text
+    renders every column; the audit cell keeps its band colour."""
+    titles = [(0, 3932, 1), (1, 3897, 1)]
+    print_table("Show (2000)", 1, titles, {0: (1, 1), 1: (0, 0)},
+                {1: "ep1"}, {1: 4140})
+    table = next(c.args[0] for c in mock_console.print.call_args_list
+                 if c.args and isinstance(c.args[0], Table))
+    plain = Console(record=True, width=100)
+    plain.print(table)
+    text = plain.export_text()
+    assert "│" not in text and "┃" not in text
+    for col in ("title", "duration", "size", "audit", "assignment"):
+        assert col in text
+    assert "→ S01E01 (ep1)" in text and "→ extra" in text
+    audit = table.columns[3]._cells[0]
+    assert str(audit.style) == "green"
+
+
+def test_rip_tv_opener_after_map_and_headings_as_titles_start(tmp_path, monkeypatch, capsys):
+    """The run opener prints after the confirmed map, before the rip; each
+    title's item heading prints when that title starts (between rip
+    events), named by its episode; rip_titles gets the footer names and the
+    drive."""
+    seen = {}
+
+    def rip(*a, **k):
+        seen.update(k)
+        for number in (0, 1, 2):
+            k["on_title_start"](number)
+            print(f"ripping {number}", file=sys.stderr)
+        return 0
+
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], rip=rip)
+    assert code == 0
+    err = capsys.readouterr().err
+    assert seen["names"] == ["Show (2000) S01E01", "Show (2000) S01E02",
+                             "Show (2000) S01E03"]
+    assert "device" in seen
+    opener = err.index("info  skive rip tv · Show (2000) · season 1 · disc 0")
+    assert err.rindex("assignment") < opener  # after the confirm table
+    h1 = err.index("info  1/3  Show (2000) S01E01")
+    h2 = err.index("info  2/3  Show (2000) S01E02")
+    assert opener < h1 < err.index("ripping 0") < h2 < err.index("ripping 1")
+    assert "info  3/3  Show (2000) S01E03" in err
+
+
+def test_rip_tv_summary_marks_only_the_failed_title(tmp_path, monkeypatch, capsys):
+    """A selected-title rip reports each title's own rc: only the episode
+    whose title failed reads failed; the run still ends on a failure line
+    with the run log location."""
+    titles = [TitleInfo(0, 3932, 1, "dan", "", False),
+              TitleInfo(1, 3897, 1, "dan", "", False),
+              TitleInfo(2, 3653, 1, "dan", "", False)]
+
+    def rip(*a, **k):
+        k["outcomes"].update({0: 0, 1: 2, 2: 0})
+        return 2
+
+    # no play-all: the full-scan rip is "all"; -T forces the per-title path
+    monkeypatch.setattr("skive.rip_tv.resolve_titles", lambda *a: [0, 1, 2])
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=titles, rip=rip)
+    assert code == 2
+    err = capsys.readouterr().err
+    rows = {l.split()[0]: l for l in err.splitlines() if l.strip().startswith("S01E0")
+            and "KiB" in l}
+    assert rows["S01E01"].rstrip().endswith("ok")
+    assert rows["S01E02"].rstrip().endswith("failed")
+    assert rows["S01E03"].rstrip().endswith("ok")
+    last = err.splitlines()[-1]
+    assert last.startswith("fail  1 failed · 2 ok · ") and "see " in last
+
+
+def test_rip_tv_summary_includes_this_runs_extras_not_old_files(tmp_path, monkeypatch, capsys):
+    """Summary rows are this run's items: its episodes and extras, never a
+    file that predates the run."""
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+
+    def rename(_display, _dir, _season, _assignment):
+        for name in ("Show (2000)_S01E01.mkv", "Show (2000) - Extra 01.mkv"):
+            (show_dir / name).write_bytes(b"x" * 1024)
+
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], rename=rename)
+    assert code == 0
+    err = capsys.readouterr().err
+    assert any("Show (2000) - Extra 01" in l and "ok" in l for l in err.splitlines())
+    assert "ok    2 ok · " in err
+
+
+def test_rip_tv_interrupt_summary_marks_inflight_title_interrupted(tmp_path, monkeypatch, capsys):
+    """Ctrl+C while a title rips: the summary lists that title interrupted
+    and the result line says the partial was deleted; exit 130."""
+    def rip(*a, **k):
+        k["on_title_start"](0)
+        raise KeyboardInterrupt
+
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], rip=rip)
+    assert code == 130
+    err = capsys.readouterr().err
+    assert any("Show (2000) S01E01" in l and l.rstrip().endswith("interrupted")
+               for l in err.splitlines())
+    assert err.splitlines()[-1].startswith("fail  interrupted · 0 ok · ")
+    assert err.splitlines()[-1].endswith("— partial deleted")
+
+
+def test_clear_staged_enter_defaults_to_no(tmp_path, monkeypatch):
+    """The clear-staged confirm defaults to No: a bare Enter keeps staging."""
+    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
+                                      ["1", "", "c", "", "q"])  # season, range, clear, Enter, quit
+    assert poisoned.exists()
+    assert rc == 1
+
+
+def test_clear_staged_eof_refuses(tmp_path, monkeypatch):
+    """No answer at all (EOF) at the clear-staged confirm is a refusal."""
+    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
+                                      ["1", "", "c", EOFError, "q"])
+    assert poisoned.exists()
+    assert rc == 1
