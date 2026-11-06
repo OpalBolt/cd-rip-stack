@@ -18,7 +18,6 @@ from skive.rip_music import (
     require_online,
     rip_music,
 )
-from rich.prompt import Prompt
 
 
 @pytest.fixture(autouse=True)
@@ -117,7 +116,7 @@ def test_multiple_releases_prompts(tmp_path):
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.RipLog") as MockLog, \
             patch("skive.rip_music._newest_flac_album", return_value=("-", "-")), \
-            patch("skive.rip_music.Prompt.ask", return_value="2"), \
+            patch("skive.rip_music.ui.ask", return_value="2") as ask, \
             patch("skive.rip_music._cyanrip_run", side_effect=[
                 (1, "Multiple releases found\n"),
                 (0, "Rip complete\n"),
@@ -126,11 +125,14 @@ def test_multiple_releases_prompts(tmp_path):
             rip_music(args)
 
     assert exc.value.code == 0
+    ask.assert_called_once_with("Multiple MusicBrainz releases — pick one",
+                                choices="Enter abort", default="")
     rip_dir = tmp_path / "rip" / "cd"
     log = MockLog.return_value  # the raw log rides along to _cyanrip_run
     assert mock_run.call_args_list == [
         (("100", ["-N"], rip_dir, log, {}),),
-        (("100", ["-R", "2", "-N"], rip_dir, log, {}),),
+        (("100", ["-R", "2", "-N"], rip_dir, log,
+          {"_opener_emitted": False}),),
     ]
 
 
@@ -557,7 +559,7 @@ def test_release_pick_note_logged_before_rerun(tmp_path):
         return 0, "Rip complete\n"
 
     with patch("skive.rip_music.ensure_mounted"), \
-            patch("skive.rip_music.Prompt.ask", return_value="3"), \
+            patch("skive.rip_music.ui.ask", return_value="3"), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
@@ -655,8 +657,7 @@ def test_rip_music_interrupt_records_interrupted_and_exits_130(tmp_path, monkeyp
              for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert [line["status"] for line in lines] == ["started", "interrupted"]
     err = capsys.readouterr().err
-    assert "fail  interrupted" in err
-    assert err.count("fail  interrupted") == 1
+    assert "fail  interrupted · 0 ok" in err
 
 
 def test_clean_rip_writes_cd_record_from_cyanrip_log(tmp_path):
@@ -921,10 +922,39 @@ def test_rerip_record_rebuilds_from_newest_log(tmp_path):
     assert doc["discs"]["1"]["accuraterip"][0]["crc32"] == "BBBBBBBB"
 
 
-# --- Run view wiring (slice 08: status panel, tool lines, summary) ------------
+# --- Run view wiring (slice 08: opener, headings, footer, summary) ------------
 
 
-def test_cyanrip_run_tool_lines_and_panel_at_v1(monkeypatch, capsys):
+def test_cyanrip_track_heading_and_footer_plain(monkeypatch, capsys):
+    """The shared run view keeps music track headings readable when piped."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    view = ui.RunView(tty=False, live=False)
+    ui.set_view(view)
+    process = Mock(stdout=iter([
+        "Disc tracks: 2\n",
+        "Track 1 ripped and encoded successfully!\n",
+        "title: First song\n",
+        "Track 2 ripped and encoded successfully!\n",
+        "title: Second song\n",
+    ]))
+    process.wait.return_value = 0
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("subprocess.Popen", return_value=process):
+            rc, _ = _cyanrip_run("+6", [], Path(tmpdir))
+    finally:
+        ui.clear_view()
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "info  1/2  First song" in err
+    assert "info  2/2  Second song" in err
+    assert "\\x1b" not in err
+
+
+def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
     """With a seam view set at -v: surfaced lines land tool-prefixed in
     scrollback, a % line feeds the footer's progress, the track counter parses, and the
     album name stays '-' before the header pair names the run."""
@@ -948,10 +978,7 @@ def test_cyanrip_run_tool_lines_and_panel_at_v1(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "cyanrip  Ripping... 45%" in err
     assert "cyanrip  Track 1 ripped and encoded successfully!" not in err  # tier unchanged
-    assert "ripping -" in rendered
-    assert "offset 100" in rendered
-    assert "track 1" in rendered
-    assert "45%" in rendered
+    assert "100%" in rendered
 
 
 def test_album_name_lands_in_status_via_header_watch(tmp_path):
@@ -975,7 +1002,46 @@ def test_album_name_lands_in_status_via_header_watch(tmp_path):
 
     assert exc.value.code == 0
     rendered = view.render()
-    assert "ripping Various Artists - Summertime Blues" in rendered
+    assert "track 1/1" in rendered
+
+
+def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
+    """A named album opens the run before track headings, and the footer
+    carries the track position, title, offset, bar, and percent."""
+    from skive import ui
+
+    args = FakeArgs(offset="+6", cyanrip_flags=["-N"])
+    process = Mock(stdout=iter([
+        "Disc tracks: 2\n",
+        "Album:          Test Album\n",
+        "Album artist:   Test Artist\n",
+        "Track 1 ripped and encoded successfully!\n",
+        "title: First song\n",
+        "Track 2 ripped and encoded successfully!\n",
+        "title: Second song\n",
+    ]))
+    process.wait.return_value = 0
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        with patch("skive.rip_music.ensure_mounted"), \
+                patch("subprocess.Popen", return_value=process), \
+                patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+            with pytest.raises(SystemExit) as exc:
+                rip_music(args)
+    finally:
+        ui.clear_view()
+
+    assert exc.value.code == 0
+    err = capsys.readouterr().err
+    opener = "skive rip music · Test Artist - Test Album · offset +6"
+    assert opener in err
+    assert err.index(opener) < err.index("▸ 1/2  First song")
+    footer = view.render()
+    assert "track 2/2" in footer
+    assert "Second song" in footer
+    assert "offset +6" in footer
+    assert "100%" in footer
 
 
 def test_hidden_replay_lands_tool_prefixed_under_a_view(monkeypatch, capsys):
@@ -1008,7 +1074,7 @@ def test_multiple_releases_prompt_prints_under_a_seam_view(tmp_path, capsys):
 
     args = FakeArgs(offset="100", cyanrip_flags=["-N"])
 
-    def ask_then_print(prompt, default=""):
+    def ask_then_print(prompt, choices="", default=""):
         print(prompt, end="")
         return "2"
 
@@ -1018,7 +1084,7 @@ def test_multiple_releases_prompt_prints_under_a_seam_view(tmp_path, capsys):
         with patch("skive.rip_music.ensure_mounted"), \
                 patch("skive.rip_music.RipLog"), \
                 patch("skive.rip_music._newest_flac_album", return_value=("-", "-")), \
-                patch("skive.rip_music.Prompt.ask", side_effect=ask_then_print), \
+                patch("skive.rip_music.ui.ask", side_effect=ask_then_print), \
                 patch("skive.rip_music._cyanrip_run", side_effect=[
                     (1, "Multiple releases found\n"), (0, "Rip complete\n")]):
             with pytest.raises(SystemExit) as exc:
@@ -1071,7 +1137,7 @@ def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
         assert col in err
     assert any(l.strip().startswith("1") and "0:04:29" in l and "ok" in l
                for l in err.splitlines())
-    assert "ok    19 ok\n" in err
+    assert "ok    19 ok · " in err
 
 
 def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):
@@ -1093,5 +1159,5 @@ def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):
     assert e.value.code == 130
     assert view._closed
     err = capsys.readouterr().err
-    assert err.count("fail  interrupted") == 1
-    assert "ok, " not in err  # no summary on interrupt
+    assert "fail  interrupted · 0 ok" in err
+    assert "track" in err  # interrupted runs still leave a summary

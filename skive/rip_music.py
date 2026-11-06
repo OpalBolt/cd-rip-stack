@@ -8,8 +8,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from rich.prompt import Prompt
-
 from skive import common, ui
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
 from skive.cyanrip_log import (
@@ -81,14 +79,16 @@ def rip_music(args) -> None:
             # Handle "Multiple releases found" — suspended: the prompt prints
             # normally (scrollback), the view redraws after the answer.
             if rc != 0 and "Multiple releases found" in cap_text:
-                with ui.suspend():
-                    choice = Prompt.ask("Multiple MusicBrainz releases — pick one (blank to abort): ", default="")
+                choice = ui.ask("Multiple MusicBrainz releases — pick one",
+                                choices="Enter abort", default="")
                 if choice:
                     log.note("rip", f"release pick: {choice}")
-                    # Re-run with -R <choice>; a fresh header, so the re-run's
-                    # own header re-print renames the run.
-                    header = {}
-                    rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags, rip_dir, log, header)
+                    # Re-run with -R <choice>; clear streamed fields but retain
+                    # the opener state so the run has exactly one opener.
+                    opener_state = header.get("_opener_emitted", False)
+                    header = {"_opener_emitted": opener_state}
+                    rc, _ = _cyanrip_run(args.offset, ["-R", choice] + flags,
+                                          rip_dir, log, header)
                 else:
                     ui.info("aborting")
                     rc = 1
@@ -138,21 +138,25 @@ def rip_music(args) -> None:
         finally:
             log.finish(rc)
         # Close the view before the summary prints (its Live redraw would
-        # garble it); the outer close is idempotent. No summary on interrupt —
-        # rip_movie/rip_tv precedent.
+        # garble it); the outer close is idempotent. Every exit path gets a
+        # durable summary, including an interrupted rip.
         view.close()
-        if rc != 130:
-            # The run summary: per-track rows (track, duration, result) with the
-            # count. Rows exist only for a clean rip's parsed report; a failed
-            # run never scans staging and has no per-track truth, so its count
-            # line reports the run itself (1 failed) instead of phantom rows.
+        if rc == 0:
             rows = [(str(i + 1),
                      _summary_hms(t["dur_s"]) if t["dur_s"] is not None else "?",
                      "ok")
                     for i, t in enumerate(summary_tracks)]
-            ui.run_summary(rows, len(rows), 0 if rc == 0 else 1,
-                           columns=("track", "duration", "result"),
-                           replay=view.replay_lines(), failed=rc != 0)
+            interrupt_note = None
+        else:
+            rows = []
+            interrupt_note = "partial deleted" if rc == 130 else None
+        n_ok = sum(row[2] == "ok" for row in rows)
+        n_failed = sum(row[2] == "failed" for row in rows)
+        ui.run_summary(rows, n_ok, n_failed or (1 if rc not in (0, 130) else 0),
+                       columns=("track", "duration", "result"),
+                       replay=view.replay_lines(), log=log,
+                       interrupt_note=interrupt_note,
+                       failed=rc not in (0, 130))
     finally:
         view.close()
         ui.clear_view()
@@ -260,18 +264,8 @@ def _progress_line(line: str) -> bool:
 
 
 _TRACK_DONE = re.compile(r"^Track (\d+) ripped and encoded successfully")
+_TRACK_TITLE = re.compile(r"^title:\s*(.+)$", re.IGNORECASE)
 _PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
-
-
-def _panel_status(view, header: dict | None, offset: str, track: int | None) -> None:
-    """Status panel: the album name ('-' until the header pair names the run,
-    mirroring the log.name rule), the offset, and the track position once
-    cyanrip reports one."""
-    name = album_header_name(header) if header else ""
-    lines = [f"ripping {name or '-'}", f"offset {offset}"]
-    if track is not None:
-        lines.append(f"track {track}")
-    view.status(*lines)
 
 
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
@@ -299,8 +293,9 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     hidden = []  # console-suppressed lines, replayed on failure
     view = ui.view()  # None in the direct-call tests: plain prints, as before
     track_no = None
-    if view is not None:
-        _panel_status(view, header, offset, None)
+    track_total = None
+    pending_track = None
+    headed_tracks: set[int] = set()
     try:
         if process.stdout is not None:
             verbose = common.VERBOSITY
@@ -320,25 +315,58 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                 if log is not None:
                     log.raw("cyanrip", stripped)
                 done = _TRACK_DONE.match(stripped)
+                if stripped.startswith("Disc tracks:"):
+                    try:
+                        track_total = int(stripped.split(":", 1)[1].strip())
+                    except ValueError:
+                        track_total = None
+                title_match = _TRACK_TITLE.match(stripped)
+                if title_match and pending_track is not None:
+                    title = title_match.group(1).strip()
+                    if pending_track not in headed_tracks:
+                        position = track_total or pending_track
+                        ui.item(pending_track, position, title)
+                        if view is not None and view.tty:
+                            view.footer(f"track {pending_track}/{position}", title,
+                                        f"offset {offset}")
+                            view.progress(pending_track * 100 / position, None)
+                        headed_tracks.add(pending_track)
                 renamed = False
                 if header is not None:
                     field = album_header_field(stripped)
                     if field is not None:
                         key, value = field
                         header[key] = value
-                        if header.get("album_artist"):
-                            header_name = album_header_name(header)
-                            if header_name:
-                                if log is not None:
-                                    log.name = header_name
-                                renamed = True
+                        header_name = album_header_name(header)
+                        if header_name:
+                            if log is not None:
+                                log.name = header_name
+                            if (header.get("album_artist")
+                                    and not header.get("_opener_emitted")):
+                                ui.opener(f"skive rip music · {header_name} · offset {offset}")
+                                header["_opener_emitted"] = True
+                            renamed = True
                 if done:
                     track_no = int(done.group(1))
-                if view is not None and (done or renamed):
-                    _panel_status(view, header, offset, track_no)
+                    pending_track = track_no
+                    if track_total is not None and view is not None and view.tty:
+                        view.progress(track_no * 100 / track_total, None)
                 captured.append(line)
 
         rc = process.wait()
+        if (header is not None and not header.get("_opener_emitted")
+                and album_header_name(header)):
+            ui.opener(f"skive rip music · {album_header_name(header)} · offset {offset}")
+            header["_opener_emitted"] = True
+        if pending_track is not None and pending_track not in headed_tracks:
+            position = track_total or pending_track
+            title = f"track {pending_track}"
+            ui.item(pending_track, position, title)
+            if view is not None and view.tty:
+                view.footer(f"track {pending_track}/{position}", title,
+                            f"offset {offset}")
+                view.progress(pending_track * 100 / position, None)
+            headed_tracks.add(pending_track)
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: forward to the child, grace window, then kill,
         # and let the interrupt rip_music's handler log status=interrupted.
