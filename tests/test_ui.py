@@ -690,17 +690,29 @@ def test_live_box_at_40_columns_drops_lanes_but_keeps_position_pct_eta():
     lines = _lanes(view, 40)
     assert len(lines) == 1
     assert lines[0].startswith("2/4") and lines[0].endswith("42%  ETA 00h15m00s")
-    assert "\u2501" in lines[0]  # a shrunk bar still shows
+    assert "\u00b7 encode" in lines[0]  # the bar gave way to the phase
 
 
 def test_live_box_at_40_columns_keeps_the_step_beside_a_long_name():
-    """A name too long for the lane gives way to the step: `copying` stays."""
+    """A name too long for the lane gives way to the phase and the step."""
     view = ui.RunView(tty=True, live=False)
     view.footer("1/4", "A Very Long Movie Title That Will Not Fit (2016)", "copy")
     view.step("copying")
     view.progress(42, None)
     lane = _lanes(view, 40)[0]
-    assert lane.startswith("1/4 A") and "\u2026 copying" in lane and lane.endswith("42%")
+    assert lane.startswith("1/4 \u2026 \u00b7 copy copy") and lane.endswith("42%")
+    assert "\u2501" in lane  # the bar still shows
+
+
+@pytest.mark.parametrize("width", [80, 40])
+def test_long_title_truncates_the_name_and_keeps_the_phase(width):
+    view = ui.RunView(tty=True, live=False)
+    view.footer("2/4", "A Very Long Movie Title That Will Not Fit Anywhere At All (2016)", "encode")
+    view.step("OCR eng track 3...")
+    view.progress(42, "00h15m00s")
+    lane = _lanes(view, width)[0]
+    assert lane.startswith("2/4 ") and "\u2026 \u00b7 encode" in lane
+    assert lane.endswith("42%  ETA 00h15m00s")
 
 
 def test_live_box_is_never_empty_and_caps_at_100_columns():

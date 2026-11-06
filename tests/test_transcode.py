@@ -979,9 +979,10 @@ def test_auto_falls_back_to_x265_fast(env, monkeypatch, capsys):
     line = (env / "hb-calls.log").read_text().strip().splitlines()[0]
     assert "--encoder-preset fast" in line
     assert "--crop" not in line
-    # plain keeps its encoder announcement, under the opener
-    assert capsys.readouterr().err.splitlines()[1] == \
-        "info  encode: no VCN (vainfo) -- auto fell back to x265 (fast preset)"
+    # plain keeps the base order: the encoder announcement, then the opener
+    err = capsys.readouterr().err.splitlines()
+    assert err[0] == "info  encode: no VCN (vainfo) -- auto fell back to x265 (fast preset)"
+    assert err[1] == "info  skive transcode \u00b7 1 to encode"
 
 
 def test_vaapi_required_but_absent(env, monkeypatch):
@@ -1708,11 +1709,11 @@ def test_session_cap_defers_beyond_limit(env, capsys):
     assert "info  deferred (session cap 1): Bbb (2002)" in capsys.readouterr().err
 
 
-def test_opener_comes_first_skips_under_it_and_counter_counts_the_session(env, capsys):
-    """Plain: nothing of the run prints above the opener, which states the
-    session against the queue (no encoder, no skip count: TTY-only); the
-    junk-label skips keep their pre-frame `info` form, and the item counter
-    counts this session (1/1)."""
+def test_plain_skips_precede_the_base_opener_and_counter_counts_the_session(env, capsys):
+    """Plain keeps the pre-frame order and wording: the junk-label skips print
+    as `info` lines during the scan, then the one-line opener with the capped
+    session (no encoder, no skip count: TTY-only); the item counter counts
+    this session (1/1)."""
     vid = env / "vid"
     mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
     mk(vid, "rip/movies/Bbb (2002)/Bbb (2002)_t00.mkv", "BBB")
@@ -1722,10 +1723,20 @@ def test_opener_comes_first_skips_under_it_and_counter_counts_the_session(env, c
 
     assert rc == 0
     lines = capsys.readouterr().err.splitlines()
-    assert lines[0] == ("info  skive transcode \u00b7 1 of 2 this session (cap 1, "
-                        "~15\u201320 min) \u00b7 1 deferred")
-    assert lines[1].startswith("info  skip (junk label -- mid-rip or failed rename): ")
+    assert lines[0].startswith("info  skip (junk label -- mid-rip or failed rename): ")
+    assert lines[1] == ("info  skive transcode \u00b7 1 to encode \u00b7 1 main(s) this session "
+                        "(cap 1, ~15\u201320 min) \u00b7 1 deferred")
     assert lines[2] == "info  1/1  Aaa (2001)"
+
+
+def test_tty_opener_states_zero_skipped(env, monkeypatch):
+    vid = env / "vid"
+    mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
+
+    rc, lines, _ = _tty_run(monkeypatch, Args())
+
+    assert rc == 0
+    assert "encoder x265 \u00b7 0 skipped (junk label)" in lines[2]
 
 
 def test_deferred_count_skips_a_missing_recorded_main(env, capsys):
@@ -1820,6 +1831,19 @@ def test_all_junk_scan_still_opens_tty_and_stays_plain_piped(env, monkeypatch, c
     assert lines[4].startswith("! skip (junk label -- mid-rip or failed rename): ")
     assert lines[5].startswith("\u00b7 no MKVs in ")
     assert ui.view() is None
+
+
+@pytest.mark.parametrize("staged", ["rip/movies/Ocr (2001)/d0/Ocr (2001)_t00.mkv",
+                                    "rip/tv/Ocr (2001)/d0/Ocr (2001)_S01E01.mkv"])
+def test_tty_subs_failure_closes_with_the_failing_track(env, monkeypatch, staged):
+    """Movie and TV-episode paths: the closing rule names the failing track."""
+    mk(env / "vid", staged, "SUBS-FAIL")
+
+    rc, lines, _ = _tty_run(monkeypatch, Args())
+
+    assert rc == 1
+    assert any(l.startswith("\u2570\u2500 \u2717 failed: subs (eng (track 2): seconv failed) ")
+               for l in lines)
 
 
 def test_tty_encode_failure_closes_with_phase_and_reason(env, monkeypatch):

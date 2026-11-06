@@ -1090,6 +1090,11 @@ def _fail_quarantine(log: common.RipLog, items: list[Item], issues_root: str,
         _quarantine(item.path, item, issues_root, log)
 
 
+def _subs_why(notes: list[str]) -> str:
+    """A failed pass's closing-rule reason: `subs (eng (track 4): seconv failed)`."""
+    return "subs (" + "; ".join(n.removeprefix("FAIL ") for n in notes if n.startswith("FAIL")) + ")"
+
+
 def _title_dir_of(path: str) -> str:
     """The movie's title folder for a staged file: its own dir, or the parent
     when it sits in a d<disc> staging subdir (validation.json lives at the
@@ -1162,25 +1167,25 @@ def run_transcode(args) -> int:
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)  # before the opener: the warnings under it reach the replay
 
-    def _open(scope: str) -> None:
-        """The run opener with the run's warnings under it, never above. TTY:
-        encoder and skip count in the box, each skip a `!` line straight
-        under it. Plain keeps its pre-frame lines: the `encode:` note and
-        `info` skips (and no opener for an empty scan)."""
+    def _open(scope: str, plain_scope: str = "") -> None:
+        """The run opener. TTY: encoder and skip count in the box, the run's
+        warnings under it, never above (each skip a `!` line). Plain keeps
+        the pre-frame order: the `encode:` note, `info` skips, the warnings,
+        then the one-line opener (none for an empty scan)."""
         if view.tty:
             ui.opener("skive transcode", scope, f"encoder {encoder_line}"
-                      + (f" \u00b7 {len(skipped)} skipped (junk label)" if skipped else ""))
+                      f" \u00b7 {len(skipped)} skipped (junk label)")
             for line in skipped:
                 ui.warn(line)
         else:
-            if items:
-                ui.opener("skive transcode", scope)
             if encoder_note:
                 ui.info(f"encode: {encoder_note}")
             for line in skipped:
                 ui.info(line)
         for line in notes:
             ui.warn(line)
+        if plain_scope and not view.tty:
+            ui.opener("skive transcode", plain_scope)
 
     if not items:
         _open("0 to encode")
@@ -1300,7 +1305,9 @@ def run_transcode(args) -> int:
     scope = (f"{len(units)} of {len(units) + deferred} this session (cap {args.limit}, "
              f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred" if deferred
              else f"{len(units)} to encode")  # nothing deferred: the cap changes nothing, say nothing
-    _open(scope)
+    session = (f" \u00b7 {n_run} main(s) this session (cap {args.limit}, "
+               f"~{n_run * 15}\u2013{n_run * 20} min) \u00b7 {deferred} deferred" if deferred else "")
+    _open(scope, f"{len(units)} to encode{session}")
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
     pf_ready: dict[str, str] = {}  # staged src -> local dst, filled on completion
@@ -1467,7 +1474,8 @@ def run_transcode(args) -> int:
                         _fail_quarantine(log, [i], issues_root, i.name, res.notes)
                         failed = 1
                     handled.add(i.path)
-                    _item_done(i.name, parts, res is None or res.ok, "subs (subtitle pass)")
+                    _item_done(i.name, parts, res is None or res.ok,
+                               "" if res is None else _subs_why(res.notes))
                 else:
                     if side_dir is not None:
                         shutil.rmtree(side_dir, ignore_errors=True)
@@ -1628,7 +1636,7 @@ def run_transcode(args) -> int:
                         handled.add(s.path)
                     if not res.ok:
                         failed = 1
-                    _item_done(names, parts, res.ok, "subs (subtitle pass)")
+                    _item_done(names, parts, res.ok, _subs_why(res.notes))
                 else:
                     shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:

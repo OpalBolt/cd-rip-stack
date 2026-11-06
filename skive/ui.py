@@ -210,6 +210,7 @@ class RunView:
         self._pos = ""  # lane 1's position (`2/4`): never truncates away
         self._label = Text()  # lane 1, left part: position · item · phase
         self._step = ""  # lane 1's step text (copying…, OCR track n)
+        self._phase_len = 0  # the label's ` · phase` tail: never truncates
         self._pct: float | None = None
         self._eta: str | None = None
         self._perf = None  # (text, hot segment strings)
@@ -243,7 +244,7 @@ class RunView:
         (position, item · phase step, bar, percent, ETA), one lane per
         background activity, the perf lane. Narrow widths drop the perf lane,
         then the background lanes, then shrink the bar to 10, then truncate
-        the name with `…`; position, percent and ETA never drop. With no lane
+        the name with `…` (the `· phase` stays, the bar gives way first); position, percent and ETA never drop. With no lane
         left the box shows the opener's scope, so it is never empty."""
         lanes: list = []
         lane1 = self._item_lane(width)
@@ -271,17 +272,28 @@ class RunView:
         if not label and pct is None and not eta:
             return None
         label = label.copy()
+        phase = Text()
+        if self._phase_len:
+            label, phase = label.divide([len(label.plain) - self._phase_len])
         step = Text(f" {self._step}" if self._step else "", style="dim")
         right = [s for s in (None if pct is None else f"{pct:.0f}%",
                              f"ETA {eta}" if eta else None) if s]
         fixed = sum(len(s) + 2 for s in right)
         bar = 0 if pct is None else self.BAR_WIDTH if width >= 44 else 10
         room = width - fixed - (bar + 2 if bar else 0)
-        keep = len(self._pos) + 2  # the position plus `…`
+        keep = len(self._pos) + 2 + phase.cell_len  # the position, `…` and the phase
         if bar and room < keep:  # still too narrow: the bar gives way
             bar = max(bar - (keep - room), 0)
             room = width - fixed - (bar + 2 if bar else 0)
-        label.truncate(max(room - step.cell_len, keep, 1), overflow="ellipsis")  # the name gives way to the step
+        # the name gives way to the phase and the step; the step to the phase
+        label.truncate(max(room - phase.cell_len - step.cell_len, len(self._pos) + 2, 1),
+                       overflow="ellipsis")
+        left = room - label.cell_len - phase.cell_len
+        if left < 3:  # no room for even ` x…`
+            step = Text()
+        else:
+            step.truncate(left, overflow="ellipsis")
+        label.append_text(phase)
         label.append_text(step)
         label.truncate(max(room, 1), overflow="ellipsis")
         row = Table.grid(padding=(0, 2, 0, 0))
@@ -304,11 +316,12 @@ class RunView:
         if phase:
             label.append(f" \u00b7 {phase}")
         self._pos, self._label, self._step = pos, label, ""
+        self._phase_len = len(phase) + 3 if phase else 0
         self._pct = self._eta = None
 
     def status(self, *lines: str) -> None:
         """The item lane's left part as free text, parts joined by ` · `."""
-        self._pos, self._step = "", ""
+        self._pos, self._step, self._phase_len = "", "", 0
         self._label = Text(" \u00b7 ".join(str(x) for x in lines))
 
     def step(self, text: str) -> None:
