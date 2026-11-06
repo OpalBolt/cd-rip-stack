@@ -27,7 +27,7 @@ import sys
 import threading
 from pathlib import Path
 
-from rich.box import ROUNDED, SIMPLE_HEAD
+from rich.box import ROUNDED, SIMPLE_HEAD, Box
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress_bar import ProgressBar
@@ -42,6 +42,7 @@ THEME = Theme({"ok": "green", "warn": "yellow", "fail": "red",
                "phase.prefetch": "dim blue", "phase.encode": "green",
                "frame": "dim", "border": "blue", "title": "bold"})
 WIDTH_CAP = 100  # every box, frame rule and table: min(console width, 100)
+PLAIN_HEAD = Box(str(SIMPLE_HEAD).replace("\u2500", "-"), ascii=True)  # piped tables: no box characters
 PHASE_WIDTH = len("prefetch")  # the phase column pads to its longest name
 
 # The one shared console. stderr=True resolves sys.stderr at write time (a
@@ -128,7 +129,10 @@ def _event_text(kind: str, text: str, phase: str | None = None,
     line.append(SYMBOLS[kind], style=_SYMBOL_STYLE[kind])
     if phase:
         line.append(f" {phase:<{PHASE_WIDTH}} ", style=f"phase.{phase}")
-    line.append(f" {text}")
+    detail = Text(f" {text}")
+    if elapsed:  # the detail gives way so the time stays right-aligned on one row
+        detail.truncate(max(_width() - line.cell_len - len(elapsed) - 2, 2), overflow="ellipsis")
+    line.append_text(detail)
     if elapsed:
         line.append(" " * max(_width() - line.cell_len - len(elapsed), 2))
         line.append(elapsed, style="dim")
@@ -266,8 +270,7 @@ class RunView:
         if not label and pct is None and not eta:
             return None
         label = label.copy()
-        if self._step:
-            label.append(f" {self._step}", style="dim")
+        step = Text(f" {self._step}" if self._step else "", style="dim")
         right = [s for s in (None if pct is None else f"{pct:.0f}%",
                              f"ETA {eta}" if eta else None) if s]
         fixed = sum(len(s) + 2 for s in right)
@@ -277,6 +280,8 @@ class RunView:
         if bar and room < keep:  # still too narrow: the bar gives way
             bar = max(bar - (keep - room), 0)
             room = width - fixed - (bar + 2 if bar else 0)
+        label.truncate(max(room - step.cell_len, keep, 1), overflow="ellipsis")  # the name gives way to the step
+        label.append_text(step)
         label.truncate(max(room, 1), overflow="ellipsis")
         row = Table.grid(padding=(0, 2, 0, 0))
         row.add_column(no_wrap=True, width=label.cell_len)
@@ -574,12 +579,12 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                                             f" {text}"), soft_wrap=True)
             else:
                 print(line, file=sys.stderr)
-        # plain: SIMPLE_HEAD's blank top and bottom edges space the table
+        # plain: PLAIN_HEAD's blank top and bottom edges space the table
         # from the replay above and the result line below; styled: the box
         # is the border, the table keeps only its header rule
         table = (Table(box=SIMPLE_HEAD, header_style="dim", show_edge=False,
                        expand=True, pad_edge=False) if styled
-                 else Table(box=SIMPLE_HEAD, header_style=""))  # plain: unstyled, even on a NO_COLOR terminal
+                 else Table(box=PLAIN_HEAD, header_style=""))  # plain: unstyled, even on a NO_COLOR terminal
         for c in keep:
             table.add_column(columns[c])
         for row in body:

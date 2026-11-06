@@ -120,11 +120,11 @@ def test_no_color_on_a_terminal_is_the_plain_fallback(monkeypatch, capsys):
         ui.item_end("ok", "done", "3m06s")
         ui.run_summary([("X (2001)", ["copy 3m06s"], "ok")], 1, 0)
         err = capsys.readouterr().err
-        assert not any(c in buf.getvalue() for c in "\u256d\u2502\u2570\x1b")  # the plain table
+        assert not any(c in buf.getvalue() for c in "\u256d\u2502\u2570\u2500\x1b")  # the plain table
         assert err.startswith("info  skive transcode \u00b7 1 to encode\n"
                               "info  1/1  X (2001)\n"
                               "ok    copy 3664 MB at 19 MB/s 3m06s\n")
-        assert not any(c in err for c in "\u256d\u2502\u2570\x1b")
+        assert not any(c in err for c in "\u256d\u2502\u2570\u2500\x1b")
         assert err.endswith("ok    1 ok\n")
         monkeypatch.delenv(env)
 
@@ -368,6 +368,18 @@ def test_item_frame_rules_and_phase_line_reach_the_frame_width(monkeypatch, widt
     assert lines[3].startswith("\u2570\u2500 \u2713 done 7m56s \u2500")
     assert [len(lines[i]) for i in (0, 1, 3)] == [frame] * 3
     assert not ui._frame_open
+
+
+def test_phase_line_at_40_columns_fits_the_detail_before_the_elapsed(monkeypatch):
+    """A long detail is cut with `…` so the elapsed stays right-aligned on
+    one frame-wide row."""
+    con, buf = _tty(40)
+    monkeypatch.setattr(ui, "console", con)
+    ui.item(1, 1, "X (2001)")
+    ui.info("none (letterbox 1920x800 under the 16 px floor)", phase="crop", elapsed="12s")
+    line = buf.getvalue().splitlines()[1]
+    assert line.startswith("\u2502 \u00b7 crop      none") and "\u2026" in line
+    assert line.endswith(" 12s") and len(line) == 40
 
 
 def test_frame_gutter_carries_tool_lines_at_verbose(monkeypatch):
@@ -678,6 +690,16 @@ def test_live_box_at_40_columns_drops_lanes_but_keeps_position_pct_eta():
     assert len(lines) == 1
     assert lines[0].startswith("2/4") and lines[0].endswith("42%  ETA 00h15m00s")
     assert "\u2501" in lines[0]  # a shrunk bar still shows
+
+
+def test_live_box_at_40_columns_keeps_the_step_beside_a_long_name():
+    """A name too long for the lane gives way to the step: `copying` stays."""
+    view = ui.RunView(tty=True, live=False)
+    view.footer("1/4", "A Very Long Movie Title That Will Not Fit (2016)", "copy")
+    view.step("copying")
+    view.progress(42, None)
+    lane = _lanes(view, 40)[0]
+    assert lane.startswith("1/4 A") and "\u2026 copying" in lane and lane.endswith("42%")
 
 
 def test_live_box_is_never_empty_and_caps_at_100_columns():

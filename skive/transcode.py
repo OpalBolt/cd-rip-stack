@@ -746,6 +746,17 @@ def _hms(secs: int) -> str:
     return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
 
 
+def _phase_line(say, detail: str, phase: str, secs: int | None,
+                plain: str | None = None) -> None:
+    """A finished phase: the framed phase line on a TTY run view; plain mode
+    keeps its pre-frame line (plain), or prints nothing (plain=None)."""
+    v = ui.view()
+    if v is not None and v.tty:
+        say(detail, phase=phase, elapsed=None if secs is None else _hms(secs))
+    elif plain is not None:
+        ui.info(plain)
+
+
 def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
     """Copy one file to local temp as the run's 'copy' phase. The throughput
     line (MB/s) goes to the console and the run log's status -- the slippage
@@ -760,7 +771,7 @@ def _copy_in(src: str, dst: str, log: common.RipLog, parts: list[str]) -> None:
     secs = max(int(time.monotonic() - t0), 1)
     mb = os.path.getsize(dst) // (1024 * 1024)
     detail = f"{mb} MB at {mb // secs} MB/s"
-    ui.ok(detail, phase="copy", elapsed=_hms(secs))
+    _phase_line(ui.ok, detail, "copy", secs, f"copied in {_hms(secs)} ({detail})")
     log.phase_end(detail)
     parts.append(f"copy {_hms(secs)}")
 
@@ -992,7 +1003,7 @@ def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
     barren = sum(1 for n in res.notes if n.startswith("barren"))
     detail = f"{len(res.sidecars)} sidecar(s)" + (f", {barren} barren" if barren else "")
     log.phase_end(detail if res.ok else f"FAIL: {detail}")
-    (ui.ok if res.ok else ui.fail)(detail, phase="subs", elapsed=_hms(secs))
+    _phase_line(ui.ok if res.ok else ui.fail, detail, "subs", secs)
     parts.append(f"subs {_hms(secs)}")
     return side_dir, res
 
@@ -1009,7 +1020,8 @@ def _detect_part(local_src: str, ffprobe_exe: str, log: common.RipLog,
     crop, note = _detect_crop(local_src, ffprobe_exe)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end(note)
-    (ui.info if crop is None else ui.ok)(note, phase="crop", elapsed=_hms(secs))
+    _phase_line(ui.info if crop is None else ui.ok, note, "crop", secs,
+                note if crop is None else None)  # plain: loud refusals only
     parts.append(f"detect {_hms(secs)}")
     return crop, note
 
@@ -1027,8 +1039,8 @@ def _encode_part(local_src: str, local_out: str, encoder: str, hb_exe: str,
     secs = max(int(time.monotonic() - t0), 1)
     size = f"{os.path.getsize(local_out) // (1024 * 1024)} MB" if ok else ""
     log.phase_end(f"ok, {size}" if ok else "FAIL")
-    (ui.ok if ok else ui.fail)(f"{encoder}, {size}" if ok else f"{encoder} FAIL",
-                               phase="encode", elapsed=_hms(secs))
+    _phase_line(ui.ok if ok else ui.fail, f"{encoder}, {size}" if ok else f"{encoder} FAIL",
+                "encode", secs)
     parts.append(f"encode {_hms(secs)}")
     return ok
 
@@ -1042,9 +1054,9 @@ def _merge_part(dst: str, local_parts: list[str], mkv_exe: str,
     mrc = _merge(dst, local_parts, mkv_exe, log=log)
     secs = max(int(time.monotonic() - t0), 1)
     log.phase_end("ok" if mrc <= 1 else f"FAIL({mrc})")
-    (ui.ok if mrc <= 1 else ui.fail)(
-        f"{len(local_parts)} parts" if mrc <= 1 else f"mkvmerge FAIL({mrc})",
-        phase="merge", elapsed=_hms(secs))
+    _phase_line(ui.ok if mrc <= 1 else ui.fail,
+                f"{len(local_parts)} parts" if mrc <= 1 else f"mkvmerge FAIL({mrc})",
+                "merge", secs)
     parts.append(f"merge {_hms(secs)}")
     return mrc
 
@@ -1133,11 +1145,10 @@ def run_transcode(args) -> int:
                      echo=False)
     skipped: list[str] = []
     items, want_hit = _scan(input_dir, args.prefixes, skipped)
-    for w in args.prefixes:
-        if w not in want_hit:
-            ui.warn(f"no staged MKVs match: {w}")
+    # run warnings print under the opener (and replay), never above it
+    notes = [f"no staged MKVs match: {w}" for w in args.prefixes if w not in want_hit]
     if not items:
-        for line in skipped:
+        for line in notes + skipped:
             ui.warn(line)
         if args.prefixes:
             ui.warn("no matching MKVs to transcode")
@@ -1186,7 +1197,7 @@ def run_transcode(args) -> int:
         if rec is None:
             continue  # the record says no candidate main existed: bytes fallback
         if not isinstance(rec, str) or not _RX_MAIN.match(rec):
-            ui.warn(f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback")
+            notes.append(f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback")
             continue
         num = int(rec[1:])
         if any(i.num == num for i in items if i.movie == movie and i.sfx == "t"):
@@ -1199,7 +1210,7 @@ def run_transcode(args) -> int:
     # once, never per title
     deferred = 0
     if args.limit:
-        n_staged = len(main_num)
+        n_staged = len(main_num.keys() - rec_missing)  # as _units: a missing recorded main never encodes
         n_run = min(args.limit, n_staged)
         deferred = n_staged - n_run
 
@@ -1253,9 +1264,11 @@ def run_transcode(args) -> int:
     scope = (f"{len(units)} of {len(units) + deferred} this session (cap {args.limit}, "
              f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred" if deferred
              else f"{len(units)} to encode")  # nothing deferred: the cap changes nothing, say nothing
+    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
+    ui.set_view(view)  # before the opener: the warnings under it reach the replay
     ui.opener("skive transcode", scope, f"encoder {encoder_line}"
               + (f" \u00b7 {len(skipped)} skipped (junk label)" if skipped else ""))
-    for line in skipped:
+    for line in notes + skipped:
         ui.warn(line)
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
@@ -1280,7 +1293,7 @@ def run_transcode(args) -> int:
             return None
         log.phase("copy")
         log.phase_end("prefetched — overlapped with the previous encode")
-        ui.ok(f"{os.path.basename(dst)} prefetched (overlapped)", phase="copy")
+        _phase_line(ui.ok, f"{os.path.basename(dst)} prefetched (overlapped)", "copy", None)
         parts.append("copy prefetched")
         return dst
 
@@ -1335,8 +1348,6 @@ def run_transcode(args) -> int:
         for p in paths:
             _rmf(p)
 
-    view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
-    ui.set_view(view)
     global _POS, _ITEM
     _POS = _ITEM = ""
     interrupted = False

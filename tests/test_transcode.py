@@ -1463,6 +1463,9 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert re.search(
         r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+\n", cap.err)
     assert re.search(r"ok    1 ok · \d+s\n$", cap.err)  # the result line
+    # plain keeps its pre-frame forms: the phase lines are TTY-only
+    assert re.search(r"\ninfo  copied in \S+ \(\d+ MB at \d+ MB/s\)\n", cap.err)
+    assert not re.search(r"^\S+ +(copy|subs|crop|encode) ", cap.err, re.M)
 
 
 def test_keep_banner_prints_only_when_something_parked(env, capsys):
@@ -1720,6 +1723,55 @@ def test_opener_comes_first_skips_under_it_and_counter_counts_the_session(env, c
                         "1 skipped (junk label)")
     assert lines[1].startswith("warn  skip (junk label -- mid-rip or failed rename): ")
     assert lines[2] == "info  1/1  Aaa (2001)"
+
+
+def test_deferred_count_skips_a_missing_recorded_main(env, capsys):
+    """A movie whose recorded main is not staged never encodes, so it is not
+    queued: one valid movie under cap 1 defers nothing."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
+    mk(vid, "rip/movies/Bbb (2002)/Bbb (2002)_t00.mkv", "BBB")
+    mk(vid, "rip/movies/Bbb (2002)/validation.json", _movie_doc("t99"))
+
+    rc = transcode.run_transcode(Args(limit=1))
+
+    assert rc == 0
+    first = capsys.readouterr().err.splitlines()[0]
+    assert first.startswith("info  skive transcode \u00b7 1 to encode \u00b7 ")
+    assert "deferred" not in first
+
+
+def test_tty_run_warnings_print_under_the_opener_and_replay(env, monkeypatch):
+    """TTY: an unmatched prefix and an unreadable recorded main warn under
+    the opener box, never above it, and reach the summary's replay."""
+    import io
+
+    from rich.console import Console
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    buf = io.StringIO()
+    monkeypatch.setattr(ui, "console", Console(
+        file=buf, force_terminal=True, color_system=None, width=200, theme=ui.THEME,
+        highlight=False, emoji=False))
+    vid = env / "vid"
+    mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
+    mk(vid, "rip/movies/Aaa (2001)/validation.json", _movie_doc(42))
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        rc = transcode.run_transcode(Args(prefixes=["Aaa (2001)", "Nope (2999)"]))
+    finally:
+        ui.clear_view()
+
+    assert rc == 0
+    lines = buf.getvalue().splitlines()
+    assert lines[0].startswith("\u256d\u2500 skive transcode")
+    box_end = next(n for n, l in enumerate(lines) if l.startswith("\u2570"))
+    assert lines[box_end + 1] == "! no staged MKVs match: Nope (2999)"
+    assert lines[box_end + 2].startswith("! validation: ") and "unreadable main 42" in lines[box_end + 2]
+    replay = view.replay_lines()
+    assert replay[0] == "warn  no staged MKVs match: Nope (2999)"
+    assert "unreadable main 42" in replay[1]
 
 
 def test_interrupt_closes_the_item_frame_before_the_summary_box(env, monkeypatch):
