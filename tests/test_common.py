@@ -427,3 +427,11 @@ class TestInterruptedRunLog:
         lines = _read_jsonl(tmp_path / "logs" / "rip.jsonl")
         assert [line["status"] for line in lines] == ["started", "interrupted"]
         assert (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").exists()
+
+
+def test_note_echo_false_logs_without_the_stderr_tee(tmp_path, capsys):
+    log = skive.common.RipLog("skive tag", "beets", root=tmp_path)
+    log.start()
+    log.note("cd", "filed", echo=False)
+    assert capsys.readouterr().err == ""
+    assert "filed" in (tmp_path / "logs" / "rip.jsonl").read_text()

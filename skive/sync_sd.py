@@ -13,11 +13,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-from rich.prompt import Prompt
+from rich.text import Text
 
-from skive.common import RipLog, ensure_mounted
+from skive.common import RipLog, ensure_mounted, kill_child_after_grace
 from skive import ui
 
 
@@ -91,9 +92,19 @@ def disk_info(disk: str, run=subprocess.run) -> tuple[str, str]:
     return size, model
 
 
-def _pick(count: int) -> int | None:
-    """Ask for a 1-based choice; return the 0-based index, or None on abort."""
-    choice = Prompt.ask("choice (blank to abort): ", default="")
+def _pick(title: str, rows: list[tuple[str, ...]], columns: tuple[str, ...]) -> int | None:
+    """List the candidates in the shared table and ask for a 1-based choice.
+    Returns the 0-based index, or None on abort (blank, invalid, or no stdin)."""
+    ui.info(title)
+    table = ui.table("#", *columns)
+    for i, row in enumerate(rows, 1):
+        table.add_row(Text(str(i), style="bold"), *row)
+    ui.console.print(table)
+    try:
+        choice = ui.ask("Pick one", choices="number \u00b7 Enter abort")
+    except EOFError:
+        return None
+    count = len(rows)
     if choice.isdigit() and 1 <= int(choice) <= count:
         return int(choice) - 1
     return None
@@ -132,13 +143,94 @@ def unmount_card(mnt: Path, run=subprocess.run) -> None:
         pass
 
 
-def rsync_library(src: Path, card: str, run=subprocess.run) -> int:
-    """Copy the library onto the card (source kept). Trailing slashes matter."""
-    return run([
+_RSYNC_PROGRESS_RX = re.compile(
+    r"^\s*([\d,]+)\s+(\d+)%\s+(\S+/s)\s+(\d+):(\d{2}):(\d{2})")
+
+
+def parse_rsync_progress(line: str) -> tuple[int, int, str, str] | None:
+    """(bytes done, percent, rate, ETA) from an `--info=progress2` line such as
+    `  1,234,567  61%  1.20GB/s  0:03:21 (xfr#3, to-chk=10/50)`; None for any
+    other line. The ETA drops a zero hour: `3:21`, `1:02:03`."""
+    m = _RSYNC_PROGRESS_RX.match(line)
+    if m is None:
+        return None
+    done, pct, rate, h, mm, ss = m.groups()
+    eta = f"{int(h)}:{mm}:{ss}" if int(h) else f"{int(mm)}:{ss}"
+    return int(done.replace(",", "")), int(pct), rate, eta
+
+
+def format_bytes(n: int) -> str:
+    """`4.1 GB`: decimal units, one decimal above bytes."""
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1000 or unit == "GB":
+            return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1000
+
+
+def rsync_library(src: Path, card: str, popen=subprocess.Popen) -> tuple[int, int]:
+    """Copy the library onto the card (source kept). Trailing slashes matter.
+
+    rsync's overall progress drives the run view's footer (bar, percent, rate,
+    ETA) on a TTY; off a TTY a plain `info` line prints every 10%. Any other
+    rsync output is a problem report and shows as a warning. Returns
+    (exit code, bytes copied so far).
+    """
+    proc = popen([
         "rsync", "-r", "--size-only", "--info=progress2",
         "--exclude=validation.json", "--exclude=*.log", "--exclude=*.cue",
         f"{src}/", f"{card}/",
-    ]).returncode
+    ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    view = ui.view()
+    on_tty = view is not None and view.tty
+    name = Path(card).name or str(card)
+    done = last_step = 0
+
+    def handle(raw: bytes) -> None:
+        nonlocal done, last_step
+        line = raw.decode(errors="replace").strip()
+        if not line:
+            return
+        progress = parse_rsync_progress(line)
+        if progress is None:
+            ui.warn(f"rsync: {line}")
+            return
+        done, pct, rate, eta = progress
+        if on_tty:
+            view.footer("", f"syncing to {name}", rate)
+            view.progress(pct, eta)
+        elif pct // 10 != last_step or pct == 100:
+            last_step = pct // 10
+            ui.info(f"{pct}%  {rate}  ETA {eta}")
+
+    try:
+        pending = b""
+        for chunk in iter(lambda: proc.stdout.read(4096), b""):
+            *lines, pending = re.split(rb"[\r\n]", pending + chunk)
+            for raw in lines:
+                handle(raw)
+        handle(pending)
+        return proc.wait(), done
+    except KeyboardInterrupt:
+        kill_child_after_grace(proc)
+        raise
+
+
+def _result_line(rc: int, synced: int | None, elapsed: int, run: str) -> None:
+    """The run's closing line, from the real exit state: `✓ synced 4.1 GB ·
+    2m10s`, or a failure naming the next step."""
+    if rc == 0:
+        ui.result_line("ok", "up to date" if not synced else f"synced {format_bytes(synced)}",
+                       elapsed=elapsed)
+    elif rc == 130:
+        ui.result_line("fail", "interrupted", elapsed=elapsed,
+                       note="re-run to resume")
+    else:
+        parts = [f"rsync failed (exit {rc})"]
+        if synced:
+            parts.append(f"{format_bytes(synced)} copied")
+        ui.result_line("fail", *parts, elapsed=elapsed,
+                       note=f"re-run to resume (run {run})")
 
 
 def sync_sd(args) -> None:
@@ -162,10 +254,8 @@ def sync_sd(args) -> None:
         if len(mounted) == 1:
             card = mounted[0]
         elif len(mounted) > 1:
-            print("sync-sd: several removable devices mounted — pick one:", file=sys.stderr)
-            for i, mp in enumerate(mounted, 1):
-                print(f"  {i}) {mp}", file=sys.stderr)
-            idx = _pick(len(mounted))
+            idx = _pick("Several removable devices mounted — pick one",
+                        [(mp,) for mp in mounted], ("mountpoint",))
             if idx is None:
                 ui.fail("no valid choice — aborting")
                 sys.exit(1)
@@ -175,11 +265,10 @@ def sync_sd(args) -> None:
             if not disks:
                 ui.fail("no SD card found (mounted or unmounted) — insert one and re-run")
                 sys.exit(1)
-            print("sync-sd: no card mounted — pick a device to mount:", file=sys.stderr)
-            for i, d in enumerate(disks, 1):
-                size, model = disk_info(d)
-                print(f"  {i}) {d}  {size}{'  ' + model if model else ''}", file=sys.stderr)
-            idx = _pick(len(disks))
+            infos = [disk_info(d) for d in disks]
+            idx = _pick("No card mounted — pick a device to mount",
+                        [(d, size, model) for d, (size, model) in zip(disks, infos)],
+                        ("device", "size", "model"))
             if idx is None:
                 ui.fail("no valid choice — aborting")
                 sys.exit(1)
@@ -193,6 +282,9 @@ def sync_sd(args) -> None:
     we_mounted = False
     card_mnt = None
     rc = 0
+    synced = None  # bytes copied once rsync has run; None before that
+    sync_started = False
+    started = time.monotonic()
     try:
         if pending_disk:
             part = resolve_partition(pending_disk)
@@ -220,7 +312,15 @@ def sync_sd(args) -> None:
             sys.exit(1)
 
         log.phase("sync")
-        rc = rsync_library(src, card)
+        started = time.monotonic()
+        sync_started = True
+        view = ui.view() or ui.RunView()
+        ui.set_view(view)
+        try:
+            rc, synced = rsync_library(src, card)
+        finally:
+            view.close()
+            ui.clear_view()
         if rc == 0:
             log.phase_end()
     except KeyboardInterrupt:
@@ -232,4 +332,6 @@ def sync_sd(args) -> None:
         if we_mounted and card_mnt is not None:
             unmount_card(card_mnt)
 
+    if sync_started:
+        _result_line(rc, synced, int(time.monotonic() - started), log.run)
     sys.exit(rc)

@@ -227,7 +227,7 @@ def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
             assert e.code == 0
 
     assert not mock_run.called
-    assert "info  nothing to import" in capsys.readouterr().err
+    assert "ok    nothing to import" in capsys.readouterr().err
 
 
 def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
@@ -355,3 +355,62 @@ def test_tag_argparse_unknown_source():
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["tag", "vinyl"])
+
+def _tag_stderr(tmp_path, monkeypatch, capsys, fake_run):
+    """Run tag over a temporary share; return (exit code, stderr lines)."""
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setenv("NFS_MUSIC", "")
+    code = 0
+    with patch("skive.tag.ensure_mounted"):
+        try:
+            tag_cmd(FakeArgs(), run=fake_run)
+        except SystemExit as exc:
+            code = exc.code
+    return code, capsys.readouterr().err.splitlines()
+
+
+def test_tag_prints_one_symbol_line_per_album_and_a_clean_result(tmp_path, monkeypatch, capsys):
+    album = tmp_path / "rip" / "cd" / "Artist - Album"
+    album.mkdir(parents=True)
+
+    def fake_run(cmd):
+        album.rmdir()
+        return Mock(returncode=0)
+
+    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, fake_run)
+    assert code == 0
+    assert err[0] == "ok    filed Artist - Album"
+    assert len(err) == 2 and err[-1].startswith("ok    1 filed \u00b7 ")
+    # the screen line replaces the run-log tee
+    assert not any(line.startswith("skive:") for line in err)
+
+
+def test_tag_left_album_warns_and_result_line_is_a_warning(tmp_path, monkeypatch, capsys):
+    left = tmp_path / "rip" / "cd" / "Artist - Album"
+    left.mkdir(parents=True)
+    (left / "track.flac").write_bytes(b"audio")
+
+    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, lambda cmd: Mock(returncode=0))
+    assert code == 0
+    assert err[0] == "warn  left Artist - Album: still in rip/cd"
+    assert err[-1].startswith("warn  0 filed \u00b7 1 left \u00b7 ")
+    assert "see " in err[-1] and "rip.jsonl (run " in err[-1]
+
+
+def test_tag_beets_failure_result_line_carries_exit_code(tmp_path, monkeypatch, capsys):
+    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
+    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, lambda cmd: Mock(returncode=42))
+    assert code == 42
+    assert err[-1].startswith("fail  beets failed (exit 42) \u00b7 1 filed \u00b7 ")
+    assert "rip.jsonl (run " in err[-1]
+
+
+def test_tag_interrupt_result_line_counts_albums(tmp_path, monkeypatch, capsys):
+    (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
+
+    def fake_run(cmd):
+        raise KeyboardInterrupt
+
+    code, err = _tag_stderr(tmp_path, monkeypatch, capsys, fake_run)
+    assert code == 130
+    assert err[-1].startswith("fail  interrupted \u00b7 1 filed \u00b7 ")

@@ -6,6 +6,7 @@ import os
 import selectors
 import subprocess
 import sys
+import time
 import pty
 from pathlib import Path
 
@@ -46,19 +47,24 @@ def _has_audio(folder: Path) -> bool:
 
 
 def _log_album_outcomes(log: RipLog, source: str, source_dir: Path,
-                        folders: list[Path]) -> bool:
-    """List the source again and record filed/left for prior album folders."""
+                        folders: list[Path]) -> tuple[int, int]:
+    """List the source again, record filed/left for prior album folders in the
+    run log and print one symbol line per album. Returns (filed, left)."""
     after = {folder.name: folder for folder in _album_folders(source_dir)}
-    any_left = False
+    filed = left = 0
     for folder in folders:
         remaining = after.get(folder.name)
         status = "filed" if remaining is None or not _has_audio(remaining) else "left"
-        if status == "left":
-            any_left = True
         # RipLog's name field identifies the album for this note.
         log.name = folder.name
-        log.note(source, status)
-    return any_left
+        log.note(source, status, echo=False)
+        if status == "filed":
+            filed += 1
+            ui.ok(f"filed {folder.name}")
+        else:
+            left += 1
+            ui.warn(f"left {folder.name}: still in rip/{source}")
+    return filed, left
 
 
 def _record_output(log: RipLog, output, tool: str = "beets") -> None:
@@ -192,7 +198,7 @@ def tag(args, run=None) -> None:
                       if not _is_empty_dir(rip_dir / source)]
 
     if not active_sources:
-        ui.info("nothing to import")
+        ui.result_line("ok", "nothing to import")
         # An empty but mounted share is still a tag run and gets a run marker.
         # The is_dir guard keeps the command's empty-source behavior useful in
         # setup/tests where the configured mountpoint does not exist.
@@ -205,7 +211,8 @@ def tag(args, run=None) -> None:
     log = RipLog("skive tag", "beets", root=music_mnt)
     log.start()
     rc = 0
-    any_left = False
+    n_filed = n_left = 0
+    started = time.monotonic()
     old_tag_run = os.environ.get("SKIVE_TAG_RUN")
     old_tag_mode = os.environ.get("SKIVE_TAG_MODE")
     os.environ["SKIVE_TAG_RUN"] = log.run
@@ -231,10 +238,12 @@ def tag(args, run=None) -> None:
             try:
                 source_rc = _run_beets(cmd, log, run=run, env=beets_env)
             except KeyboardInterrupt:
-                any_left = _log_album_outcomes(log, source, source_dir, before) or any_left
+                filed, left = _log_album_outcomes(log, source, source_dir, before)
+                n_filed, n_left = n_filed + filed, n_left + left
                 raise
 
-            any_left = _log_album_outcomes(log, source, source_dir, before) or any_left
+            filed, left = _log_album_outcomes(log, source, source_dir, before)
+            n_filed, n_left = n_filed + filed, n_left + left
             log.phase_end()
             if source_rc != 0:
                 rc = source_rc
@@ -242,7 +251,6 @@ def tag(args, run=None) -> None:
     except KeyboardInterrupt:
         rc = 130
         log.interrupted()
-        ui.fail("interrupted")
     finally:
         if old_tag_run is None:
             os.environ.pop("SKIVE_TAG_RUN", None)
@@ -252,9 +260,26 @@ def tag(args, run=None) -> None:
             os.environ.pop("SKIVE_TAG_MODE", None)
         else:
             os.environ["SKIVE_TAG_MODE"] = old_tag_mode
-        if any_left:
+        if n_left:
             log.keep_raw()
         log.finish(rc)
 
+    _result_line(rc, n_filed, n_left, int(time.monotonic() - started),
+                 f"see {Path(music_mnt) / 'logs' / 'rip.jsonl'} (run {log.run})")
     if rc != 0:
         sys.exit(rc)
+
+
+def _result_line(rc: int, filed: int, left: int, elapsed: int, see: str) -> None:
+    """The run's closing line, from the real exit state: `✓ 3 filed · 12s`,
+    `! 3 filed · 1 left · 12s — see …`, or a failure naming where to look."""
+    counts = [f"{filed} filed", *([f"{left} left"] if left else [])]
+    if rc == 130:
+        ui.result_line("fail", "interrupted", *counts, elapsed=elapsed, note=see)
+    elif rc != 0:
+        ui.result_line("fail", f"beets failed (exit {rc})", *counts,
+                       elapsed=elapsed, note=see)
+    elif left:
+        ui.result_line("warn", *counts, elapsed=elapsed, note=see)
+    else:
+        ui.result_line("ok", *counts, elapsed=elapsed)

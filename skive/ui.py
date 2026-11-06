@@ -465,6 +465,20 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
             print(_plain_event(kind, result), file=sys.stderr)
 
 
+def result_line(kind: str, *parts: str, elapsed: int | None = None,
+                note: str | None = None) -> None:
+    """A command's closing result line without a table: `✓ synced 4.1 GB ·
+    2m10s` — parts joined by ` · `, the run length, then `— note` (the next
+    step after a failure). kind is ok, warn or fail."""
+    text = " \u00b7 ".join([*parts, *([_span(elapsed)] if elapsed is not None else [])])
+    if note:
+        text += f" \u2014 {note}"
+    if _styled():
+        _emit(_event_text(kind, text))
+    else:
+        _plain(_plain_event(kind, text))
+
+
 def _print(kind: str, text: str) -> None:
     # the lock must not span the view dispatch: _emit takes it too, and a
     # plain Lock re-acquiring on the same thread deadlocks

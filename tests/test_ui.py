@@ -679,3 +679,16 @@ def test_out_exits_quietly_on_a_closed_pipe(monkeypatch):
     with pytest.raises(SystemExit) as e:
         ui.out("hit")
     assert e.value.code == 0
+
+
+def test_result_line_plain_joins_parts_elapsed_and_note(capsys):
+    ui.result_line("fail", "rsync failed (exit 23)", "2.0 MB copied", elapsed=130,
+                   note="re-run to resume")
+    assert capsys.readouterr().err == (
+        "fail  rsync failed (exit 23) \u00b7 2.0 MB copied \u00b7 2m10s \u2014 re-run to resume\n")
+
+
+def test_result_line_on_a_terminal_leads_with_the_symbol(monkeypatch):
+    buf = _terminal_console(monkeypatch, color_system=None)
+    ui.result_line("ok", "synced 4.1 GB", elapsed=130)
+    assert buf.getvalue() == "\u2713 synced 4.1 GB \u00b7 2m10s\n"
