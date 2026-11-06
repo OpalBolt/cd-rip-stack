@@ -1211,7 +1211,7 @@ def recommendations(findings: list[Finding]) -> list[dict]:
 
 def _band_style(band: str | None) -> str | None:
     """The rich style for a band: red reads bold — the alarm tier."""
-    return "bold red" if band == "red" else band
+    return {"green": "ok", "yellow": "warn", "red": "hot"}.get(band) if band else None
 
 
 def _delta_cell(f: Finding) -> object:
@@ -1222,7 +1222,7 @@ def _delta_cell(f: Finding) -> object:
         return ""
     if f.band != "green":
         return Text(f"{f.delta:+.2f}", style=_band_style(f.band))
-    return Text(f"in {f.delta:.2f}", style="green")
+    return Text(f"in {f.delta:.2f}", style="ok")
 
 
 def _collapse_staging(issues: list[Finding]) -> list[Finding]:

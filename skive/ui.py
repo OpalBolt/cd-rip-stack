@@ -10,9 +10,10 @@ TERM=dumb, non-TTY). A module-level lock guarantees whole lines across
 threads.
 
 A long-running command (transcode, rip) opens a RunView (ADR 0014). On a
-TTY the run is framed scrollback: a closed opener box, one right-open item
-frame per item (header rule, `│` gutter, closing rule), and a closed live
-box titled `now` redrawing beneath them; the run summary is a closed box
+TTY the run is framed scrollback: a closed opener box, one item frame
+per item (header rule, `│ … │` sides, closing rule, streamed line by line),
+and a closed live box titled `now` redrawing beneath them, its top teed
+into an open frame; the run summary is a closed box
 too. Every box and rule is min(console width, 100) wide. Off a TTY, under
 NO_COLOR or TERM=dumb, every line is a plain tagged line with no box
 characters. Verbosity gating stays at the call sites — this is the console
@@ -36,14 +37,20 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-THEME = Theme({"ok": "green", "warn": "yellow", "fail": "red",
-               "hot": "bold red", "dim": "dim", "item": "bold",
-               "phase.copy": "blue", "phase.merge": "yellow",
-               "phase.subs": "magenta", "phase.crop": "cyan",
-               "phase.prefetch": "dim blue", "phase.encode": "green",
-               "phase.rip": "green",
-               "frame": "dim", "border": "blue", "title": "bold"})
+# Kanagawa (wave) palette: github.com/rebelot/kanagawa.nvim
+THEME = Theme({"ok": "#98BB6C", "warn": "#FF9E3B", "fail": "#E82424",
+               "hot": "bold #E82424", "dim": "#727169", "item": "bold #DCD7BA",
+               "phase.copy": "#7E9CD8", "phase.merge": "#E6C384",
+               "phase.subs": "#957FB8", "phase.crop": "#7AA89F",
+               "phase.prefetch": "#658594", "phase.encode": "#98BB6C",
+               "phase.rip": "#98BB6C",
+               # frame and border match: the live box's top joins an open frame
+               "frame": "#7E9CD8", "border": "#7E9CD8", "title": "bold #DCD7BA",
+               # ratio bands are style names too (tv_match.audit_cell, grade_main)
+               "green": "#98BB6C", "yellow": "#FF9E3B", "red": "#E82424"})
 WIDTH_CAP = 100  # every box, frame rule and table: min(console width, 100)
+# the live box's top while an item frame is open: tees join the frame's sides
+JOINED = Box("\u251c\u2500\u252c\u2524" + str(ROUNDED)[4:])
 PLAIN_HEAD = Box(str(SIMPLE_HEAD).replace("\u2500", "-"), ascii=True)  # piped tables: no box characters
 PHASE_WIDTH = len("prefetch")  # the phase column pads to its longest name
 
@@ -120,8 +127,17 @@ def _plain(line: str) -> None:
         print(line, file=sys.stderr)
 
 
-def _gutter() -> Text:
-    return Text.assemble(("\u2502 ", "frame")) if _frame_open else Text()
+def _inner() -> int:
+    """Columns for a line's content: inside `│ … │` while a frame is open."""
+    return _width() - 4 if _frame_open else _width()
+
+
+def _framed(line: Text) -> Text:
+    """line behind the open frame's `│` sides, truncated and padded to fit."""
+    if not _frame_open:
+        return line
+    line.truncate(_inner(), overflow="ellipsis", pad=True)
+    return Text.assemble(("\u2502 ", "frame"), line, (" \u2502", "frame"))
 
 
 def _event_text(kind: str, text: str, phase: str | None = None,
@@ -129,18 +145,19 @@ def _event_text(kind: str, text: str, phase: str | None = None,
     """`│ ✓ copy      3664 MB at 19 MB/s      3m06s`: gutter while a frame
     is open, symbol, the phase in its colour, detail, elapsed right-aligned
     at the frame width."""
-    line = _gutter()
+    width = _inner()
+    line = Text()
     line.append(SYMBOLS[kind], style=_SYMBOL_STYLE[kind])
     if phase:
         line.append(f" {phase:<{PHASE_WIDTH}} ", style=f"phase.{phase}")
     detail = Text(f" {text}")
     if elapsed:  # the detail gives way so the time stays right-aligned on one row
-        detail.truncate(max(_width() - line.cell_len - len(elapsed) - 2, 2), overflow="ellipsis")
+        detail.truncate(max(width - line.cell_len - len(elapsed) - 2, 2), overflow="ellipsis")
     line.append_text(detail)
     if elapsed:
-        line.append(" " * max(_width() - line.cell_len - len(elapsed), 2))
+        line.append(" " * max(width - line.cell_len - len(elapsed), 2))
         line.append(elapsed, style="dim")
-    return line
+    return _framed(line)
 
 
 def _plain_text(text: str, phase: str | None = None, elapsed: str | None = None) -> str:
@@ -153,10 +170,11 @@ def _plain_event(kind: str, text: str) -> str:
     return f"{kind:<4}  {text}"
 
 
-def _rule(line: Text, width: int) -> Text:
-    """line truncated to fit, then padded with ` ───` to exactly width."""
-    line.truncate(width - 2, overflow="ellipsis")
-    line.append(" " + "\u2500" * (width - line.cell_len - 1))
+def _rule(line: Text, width: int, corner: str) -> Text:
+    """line truncated to fit, then padded with ` ───` and the corner to
+    exactly width."""
+    line.truncate(width - 3, overflow="ellipsis")
+    line.append(" " + "\u2500" * (width - line.cell_len - 2) + corner, style="frame")
     return line
 
 
@@ -164,7 +182,7 @@ def _neutral_close() -> None:
     """Close an open frame with a plain dim rule (no outcome known)."""
     global _frame_open
     if _frame_open and _styled():
-        _emit(Text("\u2570" + "\u2500" * (_width() - 1), style="frame"))
+        _emit(Text("\u2570" + "\u2500" * (_width() - 2) + "\u256f", style="frame"))
     _frame_open = False
 
 
@@ -238,7 +256,8 @@ class RunView:
 
     def __rich_console__(self, console, options):
         width = min(options.max_width, WIDTH_CAP)
-        yield Panel(self._footer(width - 4), box=ROUNDED, width=width,
+        yield Panel(self._footer(width - 4), box=JOINED if _frame_open else ROUNDED,
+                    width=width,
                     title=Text("now", style="title"), title_align="left",
                     border_style="border")
 
@@ -395,9 +414,7 @@ class RunView:
         tool-prefixed in scrollback on a TTY (in the frame gutter),
         ``{name}  {line}`` plain."""
         if self.tty:
-            text = _gutter()
-            text.append(f"{name}  {line}", style="dim")
-            _emit(text)
+            _emit(_framed(Text(f"{name}  {line}", style="dim")))
         else:
             _plain(f"{name}  {line}")
 
@@ -492,7 +509,7 @@ def item(pos: int, total: int, name: str) -> None:
         head.append(f"{pos}/{total}", style="dim")
         head.append("  ")
         head.append(name, style="item")
-        _emit(_rule(head, _width()))
+        _emit(_rule(head, _width(), "\u256e"))
         _frame_open = True
     else:
         _plain(_plain_event("info", f"{pos}/{total}  {name}"))
@@ -510,7 +527,7 @@ def item_end(kind: str, text: str, elapsed: str | None = None) -> None:
         line = Text(f"\u2570\u2500 {SYMBOLS[kind]} {text}", style=_SYMBOL_STYLE[kind])
         if elapsed:
             line.append(f" {elapsed}", style="item")
-        _emit(_rule(line, _width()))
+        _emit(_rule(line, _width(), "\u256f"))
     _frame_open = False
 
 
@@ -842,7 +859,7 @@ def table(*columns: str, title: str | None = None) -> Table:
     most min(console, 100) wide; plain (pipe, NO_COLOR, TERM=dumb) the ASCII
     PLAIN_HEAD. No column colours (callers style only cells that mean
     something, e.g. a bold pick number)."""
-    t = (_CappedTable(box=ROUNDED, header_style="bold blue", title=title) if _styled()
+    t = (_CappedTable(box=ROUNDED, header_style="bold #7E9CD8", title=title) if _styled()
          else Table(box=PLAIN_HEAD, header_style="", title=title))
     for col in columns:
         t.add_column(col)

@@ -592,14 +592,14 @@ def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosit
     lines = capsys.readouterr().err.splitlines()
     frames = [line for line in lines if line[:1] in "\u256d\u2570"]
     assert frames[0].startswith("\u256d\u2500 1/2  title 1")
-    assert frames[1] == "\u2570" + "\u2500" * (len(frames[1]) - 1)  # neutral: no result
+    assert frames[1] == "\u2570" + "\u2500" * (len(frames[1]) - 2) + "\u256f"  # neutral: no result
     assert frames[2].startswith("\u256d\u2500 2/2  title 2")
     assert frames[3].startswith(last) and len(frames) == 4
     phase_lines = [line for line in lines if line.startswith("\u2502 ") and " rip " in line]
     assert len(phase_lines) == 2 and phase_lines[1].startswith(phase)
     assert phase_lines[0].startswith("\u2502 \u00b7 rip       title 1/2 ")  # no outcome claimed
     assert "saved" not in phase_lines[0]
-    assert all(line.endswith(" 0s") for line in phase_lines)
+    assert all(line.endswith(" 0s \u2502") for line in phase_lines)
     assert lines.index(phase_lines[0]) == lines.index(frames[1]) - 1  # inside the first frame
     assert lines.index(phase_lines[1]) == lines.index(frames[3]) - 1  # inside the last frame
 

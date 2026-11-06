@@ -1,4 +1,5 @@
 import os
+import re
 import pytest
 import threading
 
@@ -85,25 +86,28 @@ def test_tty_lines_carry_symbols_frame_and_gutter(monkeypatch):
     assert lines[0] == "\u256d\u2500 skive transcode " + "\u2500" * 60 + "\u256e"
     assert lines[1] == "\u2502 2 to encode" + " " * 66 + "\u2502"
     assert lines[2] == "\u2570" + "\u2500" * 78 + "\u256f"
-    assert lines[3:] == ["\u256d\u2500 2/2  Arrival (2016) " + "\u2500" * 57,
-                         "\u2502 \u2713 done",
-                         "\u2502 \u00b7 copy 4m12s",
-                         "\u2502 ! subtitle track 3 barren, dropped",
-                         "\u2502 \u2717 encode failed",
-                         "\u2502 handbrake  ERROR x",
-                         "\u2570" + "\u2500" * 79]  # clear_view closes the frame
+    def row(t):  # a line inside the frame: both sides, padded to 80
+        return "\u2502 " + t.ljust(76) + " \u2502"
+    assert lines[3:] == ["\u256d\u2500 2/2  Arrival (2016) " + "\u2500" * 56 + "\u256e",
+                         row("\u2713 done"),
+                         row("\u00b7 copy 4m12s"),
+                         row("! subtitle track 3 barren, dropped"),
+                         row("\u2717 encode failed"),
+                         row("handbrake  ERROR x"),
+                         "\u2570" + "\u2500" * 78 + "\u256f"]  # clear_view closes the frame
     assert view.replay_lines() == ["warn  subtitle track 3 barren, dropped",
                                    "fail  encode failed"]
 
 
 def test_tty_lines_use_theme_colours(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
-    buf = _terminal_console(monkeypatch, color_system="standard")
+    buf = _terminal_console(monkeypatch, color_system="truecolor")
     ui.ok("a")
     ui.warn("b")
     ui.fail("c")
     out = buf.getvalue()
-    assert "\x1b[32m\u2713" in out and "\x1b[33m!" in out and "\x1b[31m\u2717" in out
+    assert "\x1b[38;2;152;187;108m\u2713" in out  # Kanagawa springGreen
+    assert "\x1b[38;2;255;158;59m!" in out and "\x1b[38;2;232;36;36m\u2717" in out
 
 
 def test_no_color_on_a_terminal_is_the_plain_fallback(monkeypatch, capsys):
@@ -363,11 +367,12 @@ def test_item_frame_rules_and_phase_line_reach_the_frame_width(monkeypatch, widt
     ui.item_end("ok", "done", "7m56s")
     lines = buf.getvalue().splitlines()
     assert lines[0].startswith("\u256d\u2500 1/4  Bad Boys (1995) \u2500")
-    assert lines[1].startswith("\u2502 \u2713 copy      3664 MB at 19 MB/s ")
-    assert lines[1].endswith(" 3m06s")
-    assert lines[2] == "\u2502 \u00b7 crop      none (no bar >= 16 px)"
+    assert lines[1].startswith("\u2502 \u2713 copy      3664 MB at 19 MB")  # 40 cols cut /s
+    assert lines[1].endswith(" 3m06s \u2502")
+    assert lines[2].startswith("\u2502 \u00b7 crop      none (no bar >= 16 px)")
     assert lines[3].startswith("\u2570\u2500 \u2713 done 7m56s \u2500")
-    assert [len(lines[i]) for i in (0, 1, 3)] == [frame] * 3
+    assert [lines[i][-1] for i in (0, 1, 2, 3)] == ["\u256e", "\u2502", "\u2502", "\u256f"]
+    assert [len(lines[i]) for i in (0, 1, 2, 3)] == [frame] * 4
     assert not ui._frame_open
 
 
@@ -380,7 +385,7 @@ def test_phase_line_at_40_columns_fits_the_detail_before_the_elapsed(monkeypatch
     ui.info("none (letterbox 1920x800 under the 16 px floor)", phase="crop", elapsed="12s")
     line = buf.getvalue().splitlines()[1]
     assert line.startswith("\u2502 \u00b7 crop      none") and "\u2026" in line
-    assert line.endswith(" 12s") and len(line) == 40
+    assert line.endswith(" 12s \u2502") and len(line) == 40
 
 
 def test_frame_gutter_carries_tool_lines_at_verbose(monkeypatch):
@@ -393,7 +398,7 @@ def test_frame_gutter_carries_tool_lines_at_verbose(monkeypatch):
         ui.tool("ffmpeg", "frame= 10")
     finally:
         ui.clear_view()
-    assert buf.getvalue().splitlines()[1] == "\u2502 ffmpeg  frame= 10"
+    assert buf.getvalue().splitlines()[1] == "\u2502 " + "ffmpeg  frame= 10".ljust(76) + " \u2502"
 
 
 def test_new_item_closes_the_open_frame_neutrally(monkeypatch):
@@ -402,7 +407,7 @@ def test_new_item_closes_the_open_frame_neutrally(monkeypatch):
     ui.item(1, 2, "A (2001)")
     ui.item(2, 2, "B (2002)")
     lines = buf.getvalue().splitlines()
-    assert lines[1] == "\u2570" + "\u2500" * 39
+    assert lines[1] == "\u2570" + "\u2500" * 38 + "\u256f"
     assert lines[2].startswith("\u256d\u2500 2/2  B (2002)")
 
 
@@ -416,7 +421,7 @@ def test_run_summary_resets_frame_state_so_no_gutter_leaks(monkeypatch):
     assert not ui._frame_open
     ui.info("next command")
     lines = buf.getvalue().splitlines()
-    assert lines[1] == "\u2570" + "\u2500" * 79  # the open frame closed first
+    assert lines[1] == "\u2570" + "\u2500" * 78 + "\u256f"  # the open frame closed first
     assert lines[-1] == "\u00b7 next command"
 
 
@@ -820,10 +825,11 @@ def test_ask_returns_the_default_on_an_empty_answer(monkeypatch):
 
 def test_ask_dims_the_choices(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
-    buf = _terminal_console(monkeypatch, color_system="standard")
+    buf = _terminal_console(monkeypatch, color_system="truecolor")
     monkeypatch.setattr(ui.console, "input", lambda p="": "")
     ui.ask("Q", choices="q quit")
-    assert "\x1b[2m q quit" in buf.getvalue()
+    # Kanagawa fujiGray, at whatever depth rich cached on the shared THEME style
+    assert re.search(r"\x1b\[(90|38;2;114;113;105)m q quit", buf.getvalue())
 
 
 def test_confirm_defaults_to_no_on_an_empty_answer(monkeypatch):
@@ -884,15 +890,15 @@ def test_table_tty_is_rounded_bold_blue_header_capped_keeps_cell_styles(monkeypa
     from rich.box import ROUNDED
     from rich.text import Text
 
-    buf = _terminal_console(monkeypatch, color_system="standard")
+    buf = _terminal_console(monkeypatch, color_system="truecolor")
     monkeypatch.setattr(ui.console, "_width", width)
     t = ui.table("#", "Title", "audit")
-    assert t.box is ROUNDED and t.header_style == "bold blue"
+    assert t.box is ROUNDED and t.header_style == "bold #7E9CD8"
     t.add_row(Text("1", style="bold"), "x" * 150, Text("ok", style="green"))
     ui.console.print(t)
     out = buf.getvalue()
-    assert "\x1b[1;34m#" in out  # bold blue header
-    assert "\x1b[1m1\x1b[0m" in out and "\x1b[32mok" in out
+    assert "\x1b[1;38;2;126;156;216m#" in out  # bold Kanagawa crystalBlue header
+    assert "\x1b[1m1\x1b[0m" in out and "\x1b[38;2;152;187;108mok" in out
     import re
     lines = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in out.splitlines()]
     assert lines[0].startswith("\u256d") and max(map(len, lines)) == min(width, 100)
@@ -963,5 +969,20 @@ def test_clear_view_closes_an_open_frame_so_no_gutter_leaks(monkeypatch):
     assert not ui._frame_open
     ui.info("next command")
     lines = buf.getvalue().splitlines()
-    assert lines[1] == "\u2570" + "\u2500" * 79
+    assert lines[1] == "\u2570" + "\u2500" * 78 + "\u256f"
     assert lines[-1] == "\u00b7 next command"
+
+
+def test_live_box_top_joins_an_open_frame(monkeypatch):
+    """While an item frame is open the live box's top tees into the frame's
+    `│` sides; with no frame it is the plain rounded top."""
+    con, _ = _tty(80)
+    monkeypatch.setattr(ui, "console", con)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        assert view.render(80).splitlines()[0][::79] == "\u256d\u256e"
+        ui.item(1, 1, "X (2001)")
+        assert view.render(80).splitlines()[0][::79] == "\u251c\u2524"
+    finally:
+        ui.clear_view()

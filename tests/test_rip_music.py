@@ -1116,10 +1116,10 @@ def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
     # no progress line timed these tracks: each frame closes with its result
     # and an untimed rip phase line, never an invented 0s
     first = err[err.index("╭─ 1/2  First song"):err.index("╭─ 2/2  Second song")]
-    assert "│ ✓ rip       track 1\n" in first
+    assert "│ ✓ rip       track 1 " in first and "track 1 \u2026" not in first
     assert "╰─ ✓ done ─" in first
     second = err[err.index("╭─ 2/2  Second song"):]
-    assert "│ ✓ rip       track 2\n" in second
+    assert "│ ✓ rip       track 2 " in second
     assert "╰─ ✓ done ─" in second
     assert "done 0s" not in err
     footer = view.render()
@@ -1283,7 +1283,7 @@ def test_track_frame_carries_timed_rip_phase_line(monkeypatch, capsys):
 
     lines = capsys.readouterr().err.splitlines()
     phase = next(n for n, line in enumerate(lines) if line.startswith("│ ✓ rip       track 1"))
-    assert lines[phase].endswith(" 1m12s")
+    assert lines[phase].endswith(" 1m12s │")
     assert lines[phase + 1].startswith("╰─ ✓ done 1m12s ─")
 
 
