@@ -290,11 +290,13 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             num = int(num_str)
             part = int(m.group("pn")) if m.group("part") else -1
         else:
-            ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
+            if not want or any(w.lower() in str(f).lower() for w in want):
+                ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
             continue
         # junk guard: no "(YYYY)" tail = rip in progress or failed rename
         if not re.search(r"\(\d{4}\)$", movie):
-            ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
+            if not want or any(w.lower() in str(f).lower() for w in want):
+                ui.info(f"skip (junk label -- mid-rip or failed rename): {f}")
             continue
         if want:
             want_s = {common.sanitize(w): w for w in want}
@@ -1099,7 +1101,7 @@ def run_transcode(args) -> int:
         vcn = _vcn_probe()
         if vcn:
             args.encoder = "vaapi"
-            log.note("encode", "encoder: VCN hardware hevc_vaapi CQP 24"
+            log.note("encode", "VCN hardware hevc_vaapi CQP 24"
                      + (" (low-power entrypoint)" if vcn["low_power"] else ""))
         elif args.encoder == "vaapi":
             ui.fail("-e vaapi but this box has no VA-API HEVC encode "
@@ -1176,8 +1178,10 @@ def run_transcode(args) -> int:
     if args.limit:
         n_staged = len(main_num)
         n_run = min(args.limit, n_staged)
-        session = (f" \u00b7 {n_run} main(s) this session (cap {args.limit}, "
-                   f"~{n_run * 15}–{n_run * 20} min) \u00b7 {n_staged - n_run} deferred")
+        deferred = n_staged - n_run
+        if deferred:  # nothing deferred: the cap changes nothing, say nothing
+            session = (f" \u00b7 {n_run} main(s) this session (cap {args.limit}, "
+                       f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred")
 
     failed = 0
     parked = 0  # sources actually parked in lossless/ (--keep banner honesty)
