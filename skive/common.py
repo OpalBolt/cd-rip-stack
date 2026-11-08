@@ -219,6 +219,13 @@ class RipLog:
         self._emit(now, name, status, elapsed)
         return elapsed
 
+    def timed(self, phase, status, elapsed_s):
+        """Log a phase timed by the caller: transcode's concurrent subtitle
+        pass runs in a thread, and only the main thread owns the phase slot —
+        it emits the record at join with the pass's own elapsed."""
+        self._phases += 1
+        self._emit(self._now(), phase, status, int(elapsed_s))
+
     def fail_open_phase(self, status="FAIL"):
         """Close a phase left open by an exception (transcode's FATAL and
         interrupt arms): emit its elapsed under the given status (FAIL, or

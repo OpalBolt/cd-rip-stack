@@ -92,12 +92,15 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
 ### The inline subtitle pass
 
 Mains and TV episodes ship with zero subtitle tracks — bitmap PGS/VobSub
-makes Jellyfin transcode every subtitled play — so before the encode,
+makes Jellyfin transcode every subtitled play — so
 every eng/dan bitmap track is extracted and OCR'd (seconv → tesseract) into
 SRT sidecars beside the encode: `<base>.<eng|dan>[.forced|.sdh].srt`.
 Per language, the full track with the most OCR'd cues wins; a runner-up
 holding ≥30% of that count ships as the SDH duplicate; weaker dupes are
-dropped. Forced tracks always ship, flagged `.forced`. The encode itself
+dropped. Forced tracks always ship, flagged `.forced`. On software
+encoders the pass runs before the encode; on `vaapi` it overlaps the
+encode (the GPU leaves the CPU idle for OCR) and settles right after it,
+before anything ships. The encode itself
 selects zero subtitle tracks via a language list no track can match.
 A failed pass still ships the (subless) encode, but the source quarantines
 below — rerun it with `--retry` to get the sidecars.

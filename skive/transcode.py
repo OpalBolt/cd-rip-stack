@@ -1008,6 +1008,13 @@ def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
     return side_dir, res
 
 
+def _subs_detail(res) -> str:
+    """The subs phase's status detail: sidecar count plus barren drops
+    (CONTEXT.md: Barren track)."""
+    barren = sum(1 for n in res.notes if n.startswith("barren"))
+    return f"{len(res.sidecars)} sidecar(s)" + (f", {barren} barren" if barren else "")
+
+
 def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
                ffprobe_exe: str, log: common.RipLog, parts: list[str]):
     """The subtitle pass as the run's 'subs' phase; status carries the
@@ -1017,12 +1024,62 @@ def _subs_part(local_src: str, side_dir: str, base: str, seconv_exe: str,
     _phase_status("subs", base)
     side_dir, res = _sub_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe, log=log)
     secs = max(int(time.monotonic() - t0), 1)
-    barren = sum(1 for n in res.notes if n.startswith("barren"))
-    detail = f"{len(res.sidecars)} sidecar(s)" + (f", {barren} barren" if barren else "")
+    detail = _subs_detail(res)
     log.phase_end(detail if res.ok else f"FAIL: {detail}")
     _phase_line(ui.ok if res.ok else ui.fail, detail, "subs", secs)
     parts.append(f"subs {_hms(secs)}")
     return side_dir, res
+
+
+def _subs_begin(local_src: str, side_dir: str, base: str, seconv_exe: str,
+                ffprobe_exe: str, log: common.RipLog, parts: list[str],
+                concurrent: bool):
+    """Start the subtitle pass. Sequential (software encoders: x265 already
+    saturates every core, overlap buys nothing): the 'subs' phase runs now,
+    exactly as before. Concurrent (vaapi: the GPU encode leaves the CPU
+    idle, so OCR overlaps detect+encode): subs.run_pass runs in a daemon
+    thread — from the thread it writes only log.raw (append-per-line, safe
+    for concurrent writers) and lock-guarded ui lines (the prefetch thread's
+    precedent); the notes, phase record (log.timed — the RipLog phase slot
+    stays main-thread-owned) and summary line are emitted at join with the
+    pass's own elapsed, so the overlapped encode never inflates it.
+
+    Returns (join, thread): join() -> (side_dir, PassResult) blocks until
+    the pass is done — call it right after the encode, before shipping or
+    any side_dir cleanup (the thread writes into side_dir); thread is None
+    when sequential (the interrupt/FATAL arms join a live one before
+    dropping side_dir)."""
+    if not concurrent:
+        done = _subs_part(local_src, side_dir, base, seconv_exe, ffprobe_exe,
+                          log, parts)
+        return (lambda: done), None
+    box: dict = {}
+
+    def _run():
+        t0 = time.monotonic()
+        try:
+            box["res"] = subs.run_pass(local_src, side_dir, base, seconv_exe,
+                                       ffprobe_exe, log=log, verbose=common.VERBOSITY)
+        except Exception as e:  # a crashed pass fails the pass, never the encode
+            box["res"] = subs.PassResult(False, [], [f"FAIL subtitle pass: {e}"])
+        finally:
+            box["secs"] = max(int(time.monotonic() - t0), 1)
+
+    th = threading.Thread(target=_run, name="subs-pass", daemon=True)
+    th.start()
+
+    def _join():
+        th.join()
+        res, secs = box["res"], box["secs"]
+        for n in res.notes:
+            ui.info(n)
+        detail = _subs_detail(res)
+        log.timed("subs", detail if res.ok else f"FAIL: {detail}", secs)
+        _phase_line(ui.ok if res.ok else ui.fail, detail, "subs", secs)
+        parts.append(f"subs {_hms(secs)}")
+        return side_dir, res
+
+    return _join, th
 
 
 def _detect_part(local_src: str, ffprobe_exe: str, log: common.RipLog,
@@ -1277,6 +1334,7 @@ def run_transcode(args) -> int:
     # harmless (the files are already gone and _rmf tolerates that).
     inflight: list[str] = []
     inflight_side: str | None = None  # this item's sidecar temp dir, once the pass starts
+    inflight_subs: threading.Thread | None = None  # a live concurrent subtitle pass (vaapi)
     current: str | None = None  # the in-flight unit's summary label until _item_done
     parts: list[str] = []  # the in-flight unit's phase cells (reset per item)
     item_t0 = time.monotonic()  # the in-flight item frame's start
@@ -1517,6 +1575,7 @@ def run_transcode(args) -> int:
                 ui.unindent()
             inflight = []
             inflight_side = None
+            inflight_subs = None
             parts = []
             log.name = i.movie
             safe = common.sanitize(i.movie)
@@ -1551,23 +1610,30 @@ def run_transcode(args) -> int:
                 _pf_start(unit_of[i.path], log)
                 cleanup.append(local_src)
                 side_dir = res = None  # extras: no pass, embedded subs stay
+                subs_join = None
                 if episode:
                     # the sidecar dir is created up front and registered as
                     # this item's temp BEFORE the pass runs, so an interrupt
                     # mid-pass drops it too (CONTEXT.md: Interrupt); the
                     # sidecar base name carries the episode label, not the
-                    # bare show name
+                    # bare show name. On vaapi the pass overlaps detect+encode
+                    # (joined right after the encode).
                     side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                     inflight_side = side_dir
-                    side_dir, res = _subs_part(local_src, side_dir,
-                                               f"{safe} - S{i.sn}E{i.en}{i.tail}",
-                                               seconv_exe, ffprobe_exe, log, parts)
+                    subs_join, inflight_subs = _subs_begin(
+                        local_src, side_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}",
+                        seconv_exe, ffprobe_exe, log, parts,
+                        concurrent=args.encoder == "vaapi")
                 local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
                 inflight = cleanup + [local_out]
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
-                if _encode_part(local_src, local_out, args.encoder, hb_exe,
-                                ffprobe_exe, no_subs=episode, log=log, parts=parts,
-                                crop=crop):
+                enc_ok = _encode_part(local_src, local_out, args.encoder, hb_exe,
+                                      ffprobe_exe, no_subs=episode, log=log, parts=parts,
+                                      crop=crop)
+                if subs_join is not None:
+                    side_dir, res = subs_join()
+                    inflight_subs = None
+                if enc_ok:
                     _pf_join()
                     shutil.move(local_out, dest)
                     if side_dir is not None:
@@ -1694,20 +1760,26 @@ def run_transcode(args) -> int:
                     _pf_start(unit_of[i.path], log)
 
                 # the inline subtitle pass runs on the merged (or single) local
-                # copy BEFORE the encode (the main encodes zero-track
-                # meanwhile); the sidecar dir is this item's temp from
-                # creation, so an interrupt mid-pass drops it too (CONTEXT.md:
-                # Interrupt)
+                # copy, never per part (the main encodes zero-track meanwhile);
+                # sequential encoders run it BEFORE the encode, vaapi overlaps
+                # it with detect+encode (the GPU encode leaves the CPU idle)
+                # and joins right after; the sidecar dir is this item's temp
+                # from creation, so an interrupt mid-pass drops it too
+                # (CONTEXT.md: Interrupt)
                 side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                 inflight_side = side_dir
-                side_dir, res = _subs_part(local_src, side_dir, safe,
-                                           seconv_exe, ffprobe_exe, log, parts)
+                subs_join, inflight_subs = _subs_begin(
+                    local_src, side_dir, safe, seconv_exe, ffprobe_exe, log, parts,
+                    concurrent=args.encoder == "vaapi")
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = cleanup + [local_out]
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
-                if _encode_part(local_src, local_out, args.encoder, hb_exe,
-                                ffprobe_exe, no_subs=True, log=log, parts=parts,
-                                crop=crop):
+                enc_ok = _encode_part(local_src, local_out, args.encoder, hb_exe,
+                                      ffprobe_exe, no_subs=True, log=log, parts=parts,
+                                      crop=crop)
+                side_dir, res = subs_join()
+                inflight_subs = None
+                if enc_ok:
                     _pf_join()
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
@@ -1839,6 +1911,13 @@ def run_transcode(args) -> int:
         log.fail_open_phase("interrupted")
         view.close()  # before any print, so the Live region never garbles them
         _pf_cancel_and_drop(log)
+        if inflight_subs is not None:
+            # seconv has no cancel hook: wait it out (a second Ctrl+C still
+            # kills instantly), then the sidecar dir can drop safely
+            if inflight_subs.is_alive():
+                ui.info("waiting for the in-flight subtitle OCR "
+                        "(Ctrl+C again kills instantly)...")
+            inflight_subs.join()
         for p in inflight:
             _rmf(p)
         if inflight_side is not None:
@@ -1851,6 +1930,8 @@ def run_transcode(args) -> int:
     except Exception as e:
         failed = 1
         _pf_cancel_and_drop(log)
+        if inflight_subs is not None:
+            inflight_subs.join()  # the thread writes into inflight_side
         for p in inflight:
             _rmf(p)
         if inflight_side is not None:

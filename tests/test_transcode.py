@@ -880,12 +880,14 @@ def test_vaapi_letterboxed_main_encodes_cropped(env):
     align = vf.index("crop=floor(iw/64)*64:ih")
     assert bar < align  # the bar crop rides BEFORE the 64-px alignment crop
     assert "bwdif=mode=send_frame:parity=auto:deint=interlaced," in vf
-    # run log: copy -> detect -> encode, and the detect line carries the crop
+    # run log: copy -> detect -> encode, and the detect line carries the crop;
+    # the vaapi subs pass overlaps the encode, so its record lands at join,
+    # after the encode line
     lines = run_log(env)
     order = [l.get("phase") for l in lines]
     # a run-start note reuses phase "encode", so compare the item's tail
-    assert order.index("copy") < order.index("subs") \
-        < order.index("detect") < len(order) - order[::-1].index("encode") - 1
+    assert order.index("copy") < order.index("detect") \
+        < len(order) - order[::-1].index("encode") - 1 < order.index("subs")
     det = [l for l in lines if l.get("phase") == "detect"]
     assert "crop 0/72/0/72 -> 720x432" in det[0]["status"]
     # the validation encodes entry carries the applied crop and the geometry
@@ -895,6 +897,49 @@ def test_vaapi_letterboxed_main_encodes_cropped(env):
     assert entry["crop"] == "0/72/0/72"
     assert entry["size"] == "720x576"
     assert entry["src"] == "t0"  # f"t{num}", the pre-existing record shape
+
+
+def test_vaapi_subs_pass_overlaps_the_encode(env, monkeypatch):
+    """vaapi runs the subtitle pass concurrently with the encode (the GPU
+    leaves the CPU idle for OCR): the pass starts before the encode, is still
+    live while ffmpeg runs, the sidecars ship beside the encode, and the subs
+    record lands at join — after the encode's line in the run log."""
+    vid = env / "vid"
+    _mk_main(vid, "Twin (2001)", "SUBS-ENG-DAN")
+
+    from skive import subs as subs_mod
+    started = threading.Event()   # the pass's thread is running
+    in_encode = threading.Event()  # the encode is running
+    real_run_pass = subs_mod.run_pass
+
+    def overlapped_run_pass(*a, **k):
+        started.set()
+        # overlap proven: the pass only proceeds once the encode runs; a
+        # sequential (pre-encode) pass would time out here
+        assert in_encode.wait(timeout=10)
+        return real_run_pass(*a, **k)
+
+    real_encode = transcode._encode
+
+    def encode_during_subs(*a, **k):
+        assert started.wait(timeout=10)  # the pass launched before the encode
+        in_encode.set()
+        return real_encode(*a, **k)
+
+    monkeypatch.setattr(transcode.subs, "run_pass", overlapped_run_pass)
+    monkeypatch.setattr(transcode, "_encode", encode_during_subs)
+
+    rc = transcode.run_transcode(Args(encoder="vaapi"))
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Twin (2001)"
+    assert (L / "Twin (2001).mkv").read_text() == "SUBS-ENG-DAN"
+    assert (L / "Twin (2001).dan.forced.srt").exists()
+    assert (L / "Twin (2001).eng.srt").exists()
+    log = run_log(env)
+    order = [l["phase"] for l in log]
+    assert order.index("subs") > len(order) - order[::-1].index("encode") - 1
+    assert next(l for l in log if l["phase"] == "subs")["status"] == "2 sidecar(s)"
 
 
 def test_vaapi_unstable_bars_refuse_and_ship_uncropped(env):
