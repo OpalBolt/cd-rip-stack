@@ -34,7 +34,7 @@ from skive.common import Interrupted
 
 class Args:
     def __init__(self, prefixes=None, keep=False, encoder="x265", workdir=None, verbose=0, retry=False,
-                 limit=4):
+                 limit=0):
         self.prefixes = prefixes or []
         self.keep = keep
         self.encoder = encoder
@@ -1755,6 +1755,22 @@ def test_session_cap_defers_beyond_limit(env, capsys):
     assert "info  deferred (session cap 1): Bbb (2002)" in capsys.readouterr().err
 
 
+def test_plain_default_encodes_all_mains_no_cap(env, capsys):
+    """The default is unlimited: with more than 4 mains staged, a plain run
+    encodes all of them and defers nothing."""
+    vid = env / "vid"
+    for n, name in enumerate(["Aaa (2001)", "Bbb (2002)", "Ccc (2003)", "Ddd (2004)", "Eee (2005)"]):
+        mk(vid, f"rip/movies/{name}/{name}_t00.mkv", name[:3])
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    L = vid / "library" / "movies"
+    for name in ["Aaa (2001)", "Bbb (2002)", "Ccc (2003)", "Ddd (2004)", "Eee (2005)"]:
+        assert (L / name / f"{name}.mkv").exists()
+    assert "deferred" not in capsys.readouterr().err
+
+
 def test_plain_skips_precede_the_base_opener_and_counter_counts_the_session(env, capsys):
     """Plain keeps the pre-frame order and wording: the junk-label skips print
     as `info` lines during the scan, then the one-line opener with the capped
@@ -1771,7 +1787,7 @@ def test_plain_skips_precede_the_base_opener_and_counter_counts_the_session(env,
     lines = capsys.readouterr().err.splitlines()
     assert lines[0].startswith("info  skip (junk label -- mid-rip or failed rename): ")
     assert lines[1] == ("info  skive transcode \u00b7 1 to encode \u00b7 1 main(s) this session "
-                        "(cap 1, ~15\u201320 min) \u00b7 1 deferred")
+                        "(cap 1, ~2\u201310 min) \u00b7 1 deferred")
     assert lines[2] == "info  1/1  Aaa (2001)"
 
 

@@ -129,9 +129,9 @@ def build_parser() -> argparse.ArgumentParser:
                                        "vaapi requires VCN and fails fast without it")
     transcode_parser.add_argument("-w", "--workdir", metavar="DIR",
                                   help="local temp work dir (default: ~/.cache/skive)")
-    transcode_parser.add_argument("-n", "--limit", type=int, default=4, metavar="N",
-                                  help="main features per session (default 4; 0 = unlimited) — a workday slice, "
-                                       "the rest stays staged for the next run")
+    transcode_parser.add_argument("-n", "--limit", type=int, default=0, metavar="N",
+                                  help="main features per session (default 0 = unlimited); a passed N "
+                                       "takes a deliberate workday slice, the rest stays staged for the next run")
     transcode_parser.add_argument("prefixes", nargs="*", metavar="NAME",
                                   help="transcode only movies whose staged filename starts with this prefix")
     transcode_parser.set_defaults(func=cmd_transcode)

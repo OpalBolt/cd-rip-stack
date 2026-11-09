@@ -92,7 +92,7 @@ The validation.json `extras` key (`include`, `quality`) that decides a movie's e
 _Avoid_: extras flag, keep flag
 
 **Session cap**:
-The default slice of work one `skive transcode` run takes: at most 4 main features (`-n` overrides, 0 = unlimited). The rest stays in staging, deferred loudly with a count. Stated once with a deliberately vague estimate (~1 h per main) — never per title.
+One `skive transcode` run by default encodes every staged main feature — unlimited is the default (`-n N` takes a deliberate slice; the rest stays in staging, deferred loudly with a count). Stated once with a deliberately vague estimate (2–10 min per main on the transcode box) — never per title.
 _Avoid_: batch size, throttle
 
 **Junk label**:

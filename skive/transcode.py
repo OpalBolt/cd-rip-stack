@@ -1310,9 +1310,9 @@ def run_transcode(args) -> int:
         else:
             rec_missing[movie] = rec
 
-    # the very vague session estimate (CONTEXT.md: Session cap): ~15–20
-    # min per main on the laptop's VCN is a DVD-to-Blu-ray blur, stated
-    # once, never per title
+    # the very vague session estimate (CONTEXT.md: Session cap): ~2–10
+    # min per main on the transcode box (VCN via vaapi), stated once,
+    # never per title
     deferred = 0
     if args.limit:
         n_staged = len(main_num.keys() - rec_missing)  # as _units: a missing recorded main never encodes
@@ -1370,10 +1370,10 @@ def run_transcode(args) -> int:
     units = _units(items, main_num, rec_missing, extras_mark, args.limit)
     # the item counter counts these session units; the queue adds the deferred
     scope = (f"{len(units)} of {len(units) + deferred} this session (cap {args.limit}, "
-             f"~{n_run * 15}–{n_run * 20} min) \u00b7 {deferred} deferred" if deferred
+             f"~{n_run * 2}–{n_run * 10} min) \u00b7 {deferred} deferred" if deferred
              else f"{len(units)} to encode")  # nothing deferred: the cap changes nothing, say nothing
     session = (f" \u00b7 {n_run} main(s) this session (cap {args.limit}, "
-               f"~{n_run * 15}\u2013{n_run * 20} min) \u00b7 {deferred} deferred" if deferred else "")
+               f"~{n_run * 2}\u2013{n_run * 10} min) \u00b7 {deferred} deferred" if deferred else "")
     _open(scope, f"{len(units)} to encode{session}")
     unit_of = {x.path: n for n, u in enumerate(units) for x in u}
     pf_files: list[str] = []
