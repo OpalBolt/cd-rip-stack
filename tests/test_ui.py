@@ -162,7 +162,7 @@ def _lanes(view, width=80):
     stripped (each rendered row is exactly the box width)."""
     rows = view.render(width).rstrip("\n").split("\n")
     assert rows[0].startswith("\u256d\u2500 now \u2500") and rows[-1].startswith("\u2570")
-    assert {len(r) for r in rows} == {min(width, 100)}
+    assert {len(r) for r in rows} == {width}
     return [r[2:-2].rstrip() for r in rows[1:-1]]
 
 
@@ -356,10 +356,10 @@ def _tty(width):
 @pytest.mark.parametrize("width", [80, 40, 120])
 def test_item_frame_rules_and_phase_line_reach_the_frame_width(monkeypatch, width):
     """Header rule, gutter phase line (elapsed right-aligned) and closing rule
-    each end exactly at min(console width, 100)."""
+    each end exactly at the console width."""
     con, buf = _tty(width)
     monkeypatch.setattr(ui, "console", con)
-    frame = min(width, 100)
+    frame = width
     ui.item(1, 4, "Bad Boys (1995)")
     ui.ok("3664 MB at 19 MB/s", phase="copy", elapsed="3m06s")
     ui.info("none (no bar >= 16 px)", phase="crop")
@@ -883,9 +883,9 @@ def test_table_plain_is_ascii_with_no_box_characters(capsys):
 
 
 @pytest.mark.parametrize("width", [80, 120])
-def test_table_tty_is_rounded_bold_blue_header_capped_keeps_cell_styles(monkeypatch, width):
-    """On a TTY: the rounded box from column 0, a bold blue header, at most
-    min(console, 100) wide; a bold pick number and a meaningful cell colour
+def test_table_tty_is_rounded_bold_blue_header_full_width_keeps_cell_styles(monkeypatch, width):
+    """On a TTY: the rounded box from column 0, a bold blue header, the
+    console's full width; a bold pick number and a meaningful cell colour
     survive."""
     from rich.box import ROUNDED
     from rich.text import Text
@@ -901,7 +901,7 @@ def test_table_tty_is_rounded_bold_blue_header_capped_keeps_cell_styles(monkeypa
     assert "\x1b[1m1\x1b[0m" in out and "\x1b[38;2;152;187;108mok" in out
     import re
     lines = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in out.splitlines()]
-    assert lines[0].startswith("\u256d") and max(map(len, lines)) == min(width, 100)
+    assert lines[0].startswith("\u256d") and max(map(len, lines)) == width
 
 
 def test_ask_ends_the_marker_line_on_piped_input(monkeypatch, capsys):

@@ -14,7 +14,7 @@ TTY the run is framed scrollback: a closed opener box, one item frame
 per item (header rule, `│ … │` sides, closing rule, streamed line by line),
 and a closed live box titled `now` redrawing beneath them, its top teed
 into an open frame; the run summary is a closed box
-too. Every box and rule is min(console width, 100) wide. Off a TTY, under
+too. Every box and rule is the console's full width. Off a TTY, under
 NO_COLOR or TERM=dumb, every line is a plain tagged line with no box
 characters. Verbosity gating stays at the call sites — this is the console
 layer only.
@@ -48,7 +48,6 @@ THEME = Theme({"ok": "#98BB6C", "warn": "#FF9E3B", "fail": "#E82424",
                "frame": "#7E9CD8", "border": "#7E9CD8", "title": "bold #DCD7BA",
                # ratio bands are style names too (tv_match.audit_cell, grade_main)
                "green": "#98BB6C", "yellow": "#FF9E3B", "red": "#E82424"})
-WIDTH_CAP = 100  # every box, frame rule and table: min(console width, 100)
 # the live box's top while an item frame is open: tees join the frame's sides
 JOINED = Box("\u251c\u2500\u252c\u2524" + str(ROUNDED)[4:])
 PLAIN_HEAD = Box(str(SIMPLE_HEAD).replace("\u2500", "-"), ascii=True)  # piped tables: no box characters
@@ -83,7 +82,7 @@ def clear_view() -> None:
 
 
 def _width() -> int:
-    return min(console.width, WIDTH_CAP)
+    return console.width
 
 
 def _plain_env() -> bool:
@@ -255,7 +254,7 @@ class RunView:
         self._live.start()
 
     def __rich_console__(self, console, options):
-        width = min(options.max_width, WIDTH_CAP)
+        width = options.max_width
         yield Panel(self._footer(width - 4), box=JOINED if _frame_open else ROUNDED,
                     width=width,
                     title=Text("now", style="title"), title_align="left",
@@ -842,24 +841,12 @@ def confirm(question: str, default: bool = False) -> bool:
     return answer in ("y", "yes")
 
 
-class _CappedTable(Table):
-    """A table no wider than the shared box width (rich has no max width)."""
-
-    def __rich_console__(self, console, options):
-        return super().__rich_console__(console, options.update(
-            max_width=min(options.max_width, WIDTH_CAP)))
-
-    def __rich_measure__(self, console, options):
-        return super().__rich_measure__(console, options.update(
-            max_width=min(options.max_width, WIDTH_CAP)))
-
-
 def table(*columns: str, title: str | None = None) -> Table:
     """The one table look: on a TTY the rounded box with a bold blue header at
-    most min(console, 100) wide; plain (pipe, NO_COLOR, TERM=dumb) the ASCII
+    the console's full width; plain (pipe, NO_COLOR, TERM=dumb) the ASCII
     PLAIN_HEAD. No column colours (callers style only cells that mean
     something, e.g. a bold pick number)."""
-    t = (_CappedTable(box=ROUNDED, header_style="bold #7E9CD8", title=title) if _styled()
+    t = (Table(box=ROUNDED, header_style="bold #7E9CD8", title=title) if _styled()
          else Table(box=PLAIN_HEAD, header_style="", title=title))
     for col in columns:
         t.add_column(col)

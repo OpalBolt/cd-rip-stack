@@ -254,3 +254,29 @@ def test_run_pass_no_eng_dan_tracks(tmp_path, monkeypatch):
                         "seconv.exe", "ffprobe.exe")
     assert res.ok and res.sidecars == []
     assert res.notes == ["skip nor (tracks 9): not eng/dan"]
+
+
+def test_run_pass_each_ocr_track_gets_a_live_lane(tmp_path, monkeypatch):
+    """On a TTY view the fan-out shows one live-box lane per kept track,
+    cleared when the track finishes; plain runs keep the step line."""
+    lanes = []
+
+    class FakeView:
+        tty = True
+
+        def bg(self, key, text, pct=None, rate=None):
+            lanes.append(("set", key))
+
+        def bg_clear(self, key):
+            lanes.append(("clear", key))
+
+    monkeypatch.setattr(subs.ui, "view", lambda: FakeView())
+    dirs = []
+    stub_run(monkeypatch, dirs)
+    res = subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)",
+                        "seconv.exe", "ffprobe.exe")
+    assert res.ok
+    set_ = [k for op, k in lanes if op == "set"]
+    cleared = [k for op, k in lanes if op == "clear"]
+    assert sorted(set_) == ["OCR dan track 2 (forced)", "OCR eng track 3", "OCR eng track 4"]
+    assert sorted(cleared) == sorted(set_)

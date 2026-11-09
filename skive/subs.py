@@ -198,9 +198,18 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
 
         def _ocr(k: Keep) -> str:
-            ui.step(f"OCR {k.track.lang} track {k.track.index}"
-                    f"{' (forced)' if k.track.forced else ''}...", verbose=verbose > 0)
-            return convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
+            label = (f"OCR {k.track.lang} track {k.track.index}"
+                     f"{' (forced)' if k.track.forced else ''}")
+            v = ui.view()  # TTY: one live-box lane per concurrent OCR track
+            if v is not None and v.tty:
+                v.bg(label, "")
+            else:
+                ui.step(label + "...", verbose=verbose > 0)
+            try:
+                return convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
+            finally:
+                if v is not None and v.tty:
+                    v.bg_clear(label)
 
         # fan out OCR over kept tracks; ex.map yields in keeps order, so the
         # classification below (and thus notes order) is identical to sequential

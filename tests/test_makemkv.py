@@ -561,8 +561,8 @@ def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
                                names=["a", "b", "Andor (2022) S01E04"])
     finally:
         ui.clear_view()
-    # spill: the live box caps at 100 columns (console-frames slice 01), so
-    # the full lane text is read from the view, not the truncated render
+    # the full lane text is read from the view (the render may still
+    # ellipsize at the box width)
     out = view._label.plain
     assert "Andor (2022) S01E04 — /dev/sr0" in out
     assert "title 3/6" in out
