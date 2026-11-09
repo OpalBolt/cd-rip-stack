@@ -241,12 +241,12 @@ def test_run_summary_table_cells_result_line_and_banner(capsys):
     ]
     ui.run_summary(rows, 1, 1, None)
     err = capsys.readouterr().err
-    for col in ("Item", "copy", "merge", "subs", "encode", "total", "result"):
+    for col in ("Item", "copy", "merge", "subs", "encode", "ship", "total", "result"):
         assert col in err
     arow = next(l for l in err.splitlines() if l.strip().startswith("A (2001)"))
     assert "1m16s" in arow and arow.rstrip().endswith("ok")  # 1 + 5 + 70 secs, merge/detect absent
     brow = next(l for l in err.splitlines() if l.strip().startswith("B (2002)"))
-    assert "2m55s ⇢" in brow and brow.split()[-3:] == ["1m12s", "1m12s", "failed"]  # ⇢ overlapped before B
+    assert "2m55s ⇢" in brow and brow.split()[-4:] == ["1m12s", "-", "1m12s", "failed"]  # ⇢ overlapped before B
     assert err.endswith("fail  1 failed · 1 ok\n")  # no log: no time, no pointer
     assert "--keep:" not in err  # keep_banner=None: the honesty rule
 

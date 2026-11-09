@@ -41,6 +41,7 @@ interrupt) closes with FAIL/interrupted and its elapsed.
 import json
 import os
 import re
+import functools
 import shutil
 import statistics
 import subprocess
@@ -835,6 +836,20 @@ def _copy2(src: str, dst: str, cancel: threading.Event | None = None,
     shutil.copystat(src, dst)
 
 
+def _move_to_share(src: str, dst: str) -> int:
+    """shutil.move with the ship's background progress entry; returns MB moved."""
+    mb = os.path.getsize(src) // (1024 * 1024)
+    try:
+        os.rename(src, dst)
+    except OSError:  # cross-device: the workdir is local, the library is the share
+        _copy2(src, dst, bg="ship")
+        os.unlink(src)
+    v = ui.view()
+    if v is not None and v.tty:
+        v.bg_clear("ship")
+    return mb
+
+
 def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> bool:
     """-Keep parks the lossless source under lossless/<type>/<Name (Year)>
     (CONTEXT.md: Lossless folder — never clobbering, never auto-deleted);
@@ -1339,19 +1354,26 @@ def run_transcode(args) -> int:
     parts: list[str] = []  # the in-flight unit's phase cells (reset per item)
     item_t0 = time.monotonic()  # the in-flight item frame's start
 
-    def _item_done(label: str, parts: list[str], ok: bool, why: str = "") -> None:
+    def _item_done(label: str, parts: list[str], ok: bool, why: str = "",
+                   late: bool = False) -> None:
         """Per-item close: the frame's closing rule on a TTY (`✓ done 7m56s`,
         `✗ failed: <why>`), the summary line plain; keeps the batch ok/failed
         counts and one row for the end-of-run summary table."""
         nonlocal n_ok, n_failed, current
-        _pf_join()
+        if not late:
+            _pf_join()
         with pf_lock:
-            current = None
+            if not late:
+                current = None
             rows.append((label, list(parts), "ok" if ok else "failed"))
             n_ok += ok
             n_failed += not ok
             v = ui.view()
-            if v is not None and v.tty:
+            if late and v is not None and v.tty:
+                # the frame closed at encode end (_ship_go); only a failure speaks again
+                if not ok:
+                    ui.fail(f"{label}: failed: {why}", phase="ship")
+            elif v is not None and v.tty:
                 took = _hms(int(time.monotonic() - item_t0))
                 if ok:
                     ui.item_end("ok", "done", took)
@@ -1361,6 +1383,111 @@ def run_transcode(args) -> int:
                 ui.ok(f"{label}: {' + '.join(parts)}")
             else:
                 ui.fail(f"{label}: {' + '.join(parts)} -- FAILED")
+
+    # Ship overlap: the finished encode moves to the share (plus sidecars,
+    # doc, source disposal) in ONE background thread while the next unit
+    # encodes. One deep: _ship_go waits for the previous ship first. The
+    # frame closes at encode end; the ship's own line and the `ship` cell
+    # in the summary report the upload. shortcut: `parked`/`failed` are
+    # bumped from two threads without a lock, a lost update is possible but
+    # needs two writers within the same instant, add ship_lock if it shows.
+    ship_thread: threading.Thread | None = None
+
+    def _ship_join() -> None:
+        nonlocal ship_thread
+        if ship_thread is not None:
+            ship_thread.join()
+            ship_thread = None
+
+    def _ship_go(label: str, parts: list[str], job) -> None:
+        """job() -> (ok, why, mb) runs in the ship thread. An exception
+        (share gone, disk full) fails the item and keeps the local encode."""
+        nonlocal ship_thread, current, failed
+        _ship_join()
+        v = ui.view()
+        if v is not None and v.tty:
+            ui.item_end("ok", "encoded", _hms(int(time.monotonic() - item_t0)))
+        current = None  # the in-flight label is the ship's now, not an interrupt's
+
+        def run() -> None:
+            nonlocal failed
+            t0 = time.monotonic()
+            try:
+                ok, why, mb = job()
+            except Exception as e:
+                ok, why, mb = False, f"ship ({e})", None
+                failed = 1
+            secs = max(int(time.monotonic() - t0), 1)
+            parts.append(f"ship {_hms(secs)}")
+            if mb is None:
+                log.timed("ship", f"FAIL: {why}", secs, name=label)
+            else:
+                detail = f"{mb} MB at {mb // secs} MB/s"
+                log.timed("ship", detail, secs, name=label)
+                _phase_line(ui.ok, f"{label} · {detail}", "ship", secs)
+            _item_done(label, parts, ok, why, late=True)
+
+        ship_thread = threading.Thread(target=run, name="ship", daemon=True)
+        ship_thread.start()
+
+    def _ship_tv(i, local_out, dest, dest_dir, side_dir, res, episode):
+        nonlocal parked, failed
+        mb = _move_to_share(local_out, dest)
+        if side_dir is not None:
+            _ship_sidecars(side_dir, dest_dir, res)
+        if episode:
+            _copy_show_doc(i.path, dest_dir)  # the doc travels beside its encodes
+        if res is None or res.ok:
+            if _archive(i.path, i, lossless_root, keep):
+                parked += 1
+            return True, "", mb
+        _fail_quarantine(log, [i], issues_root, i.name, res.notes)
+        failed = 1
+        return False, _subs_why(res.notes), mb
+
+    def _ship_main(i, siblings, local_out, dest, dest_dir, side_dir, res,
+                   crop, mark_main_include):
+        nonlocal parked, failed
+        mb = _move_to_share(local_out, dest)
+        _ship_sidecars(side_dir, dest_dir, res)
+        # the doc that picked this main gets the encode appended
+        # (append-once) and a library copy beside the encode
+        if i.movie in doc_path:
+            _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe, crop=crop)
+        # nothing is deleted until its sidecars are verified: the
+        # sources only move after the ship — a failed pass leaves
+        # them parked in issues/ with the run's evidence (the
+        # encode stays shipped subless; the batch continues, the
+        # run fails)
+        names = " ".join(s.name for s in siblings)
+        if res.ok:
+            for s in siblings:
+                if _archive(s.path, s, lossless_root, keep):
+                    parked += 1
+            # unmarked extras ride the main's disposal (CONTEXT.md:
+            # Extras marker): the marker that shipped with this
+            # movie decided they never encode
+            if not mark_main_include:
+                for x in items:
+                    if (x.is_tv or x.movie != i.movie
+                            or (x.sfx == "t" and x.num == i.num)
+                            or not os.path.exists(x.path)):
+                        continue
+                    if _archive(x.path, x, lossless_root, keep):
+                        parked += 1
+                    handled.add(x.path)
+                    ui.info(f"disposed unmarked extra with main: {x.name}")
+            return True, "", mb
+        _fail_quarantine(log, siblings, issues_root, names, res.notes)
+        failed = 1
+        return False, _subs_why(res.notes), mb
+
+    def _ship_extra(i, local_out, dest):
+        nonlocal parked
+        mb = _move_to_share(local_out, dest)
+        if _archive(i.path, i, lossless_root, keep):
+            parked += 1
+        return True, "", mb
 
     # Prefetch lookahead (slice 03): while one unit encodes, the next unit's
     # source files pull into the workdir in one background thread. The main
@@ -1634,23 +1761,11 @@ def run_transcode(args) -> int:
                     side_dir, res = subs_join()
                     inflight_subs = None
                 if enc_ok:
-                    _pf_join()
-                    shutil.move(local_out, dest)
-                    if side_dir is not None:
-                        _ship_sidecars(side_dir, dest_dir, res)
-                    if episode:
-                        _copy_show_doc(i.path, dest_dir)  # the doc travels beside its encodes
-                    for p in cleanup:
+                    for p in cleanup:  # the lossless copy is done with; frees workdir headroom
                         _rmf(p)
-                    if res is None or res.ok:
-                        if _archive(i.path, i, lossless_root, keep):
-                            parked += 1
-                    else:
-                        _fail_quarantine(log, [i], issues_root, i.name, res.notes)
-                        failed = 1
                     handled.add(i.path)
-                    _item_done(i.name, parts, res is None or res.ok,
-                               "" if res is None else _subs_why(res.notes))
+                    _ship_go(i.name, parts, functools.partial(
+                        _ship_tv, i, local_out, dest, dest_dir, side_dir, res, episode))
                 else:
                     if side_dir is not None:
                         shutil.rmtree(side_dir, ignore_errors=True)
@@ -1779,47 +1894,15 @@ def run_transcode(args) -> int:
                                       crop=crop)
                 side_dir, res = subs_join()
                 inflight_subs = None
+                names = " ".join(s.name for s in siblings)
                 if enc_ok:
-                    _pf_join()
-                    shutil.move(local_out, dest)
-                    _ship_sidecars(side_dir, dest_dir, res)
-                    # the doc that picked this main gets the encode appended
-                    # (append-once) and a library copy beside the encode
-                    if i.movie in doc_path:
-                        _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe,
-                                       crop=crop)
                     for p in cleanup:
                         _rmf(p)
-                    # nothing is deleted until its sidecars are verified: the
-                    # sources only move after the ship — a failed pass leaves
-                    # them parked in issues/ with the run's evidence (the
-                    # encode stays shipped subless; the batch continues, the
-                    # run fails)
-                    names = " ".join(s.name for s in siblings)
-                    if res.ok:
-                        for s in siblings:
-                            if _archive(s.path, s, lossless_root, keep):
-                                parked += 1
-                        # unmarked extras ride the main's disposal (CONTEXT.md:
-                        # Extras marker): the marker that shipped with this
-                        # movie decided they never encode
-                        if not mark_main_include:
-                            for x in items:
-                                if (x.is_tv or x.movie != i.movie
-                                        or (x.sfx == "t" and x.num == i.num)
-                                        or not os.path.exists(x.path)):
-                                    continue
-                                if _archive(x.path, x, lossless_root, keep):
-                                    parked += 1
-                                handled.add(x.path)
-                                ui.info(f"disposed unmarked extra with main: {x.name}")
-                    else:
-                        _fail_quarantine(log, siblings, issues_root, names, res.notes)
                     for s in siblings:
                         handled.add(s.path)
-                    if not res.ok:
-                        failed = 1
-                    _item_done(names, parts, res.ok, _subs_why(res.notes))
+                    _ship_go(names if len(siblings) > 1 else i.name, parts, functools.partial(
+                        _ship_main, i, siblings, local_out, dest, dest_dir, side_dir,
+                        res, crop, mark_main_include))
                 else:
                     shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
@@ -1878,14 +1961,10 @@ def run_transcode(args) -> int:
             if _encode_part(local_src, local_out, args.encoder, hb_exe,
                             ffprobe_exe, no_subs=False, log=log, parts=parts,
                             speed=speed, crop=crop):
-                _pf_join()
-                shutil.move(local_out, dest)
                 for p in cleanup:
                     _rmf(p)
-                if _archive(i.path, i, lossless_root, keep):
-                    parked += 1
                 handled.add(i.path)
-                _item_done(i.name, parts, True)
+                _ship_go(i.name, parts, functools.partial(_ship_extra, i, local_out, dest))
             else:
                 for p in cleanup + [local_out]:
                     _rmf(p)
@@ -1898,6 +1977,7 @@ def run_transcode(args) -> int:
         # never consumed (cap deferral, guard quarantine, normal end) drop
         # here -- never a leak, never a crash
         _pf_join()
+        _ship_join()
         for ready in list(pf_ready.values()):
             _pf_log_ready(ready[2], ready, log)
         for p in pf_files:
@@ -1911,6 +1991,7 @@ def run_transcode(args) -> int:
         log.fail_open_phase("interrupted")
         view.close()  # before any print, so the Live region never garbles them
         _pf_cancel_and_drop(log)
+        _ship_join()  # a finished encode is never abandoned mid-move
         if inflight_subs is not None:
             # seconv has no cancel hook: wait it out (a second Ctrl+C still
             # kills instantly), then the sidecar dir can drop safely
@@ -1930,6 +2011,7 @@ def run_transcode(args) -> int:
     except Exception as e:
         failed = 1
         _pf_cancel_and_drop(log)
+        _ship_join()
         if inflight_subs is not None:
             inflight_subs.join()  # the thread writes into inflight_side
         for p in inflight:

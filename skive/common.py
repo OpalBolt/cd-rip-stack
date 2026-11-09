@@ -157,13 +157,13 @@ class RipLog:
         self._interrupted = False
         self._keep_raw = False
 
-    def _emit(self, now, phase, status, elapsed_s):
+    def _emit(self, now, phase, status, elapsed_s, name=None):
         _append_jsonl(self._run_log, {
             "ts": now.isoformat(timespec="seconds"),
             "run": self.run,
             "script": self._script,
             "software": self._software,
-            "name": self.name,
+            "name": self.name if name is None else name,
             "phase": phase,
             "status": status,
             "elapsed_s": elapsed_s,
@@ -219,12 +219,12 @@ class RipLog:
         self._emit(now, name, status, elapsed)
         return elapsed
 
-    def timed(self, phase, status, elapsed_s):
+    def timed(self, phase, status, elapsed_s, name=None):
         """Log a phase timed by the caller: transcode's concurrent subtitle
         pass runs in a thread, and only the main thread owns the phase slot —
         it emits the record at join with the pass's own elapsed."""
         self._phases += 1
-        self._emit(self._now(), phase, status, int(elapsed_s))
+        self._emit(self._now(), phase, status, int(elapsed_s), name)
 
     def fail_open_phase(self, status="FAIL"):
         """Close a phase left open by an exception (transcode's FATAL and

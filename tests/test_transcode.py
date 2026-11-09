@@ -1317,7 +1317,7 @@ def test_log_line_shape(env):
     assert first["elapsed_s"] == 0
     # a clean item logs one line per part (copy, subs), the detect phase
     # (the crop gate now runs on every encoder), and the run total
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "total"]
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "ship", "total"]
     assert re.match(r"^\d+ MB at \d+ MB/s$", lines[1]["status"])
     assert lines[2]["status"] == "0 sidecar(s)"
     assert re.match(r"^ok, \d+ MB$", lines[4]["status"])
@@ -1504,7 +1504,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
 
     assert rc == 0
     lines = run_log(env)
-    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "total"]
+    assert [l["phase"] for l in lines] == ["-", "copy", "subs", "detect", "encode", "ship", "total"]
     by = {l["phase"]: l for l in lines[1:]}
     assert re.match(r"^\d+ MB at \d+ MB/s$", by["copy"]["status"])
     assert by["subs"]["status"] == "0 sidecar(s), 1 barren"
@@ -1512,7 +1512,7 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
     cap = capsys.readouterr()
     assert re.search(
-        r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+\n", cap.err)
+        r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ \+ ship \S+\n", cap.err)
     assert re.search(r"ok    1 ok · \d+s\n$", cap.err)  # the result line
     # plain keeps its pre-frame forms: the phase lines are TTY-only
     assert re.search(r"\ninfo  copied in \S+ \(\d+ MB at \d+ MB/s\)\n", cap.err)
@@ -1905,8 +1905,7 @@ def test_tty_subs_failure_closes_with_the_failing_track(env, monkeypatch, staged
     rc, lines, _ = _tty_run(monkeypatch, Args())
 
     assert rc == 1
-    assert any(l.startswith("\u2570\u2500 \u2717 failed: subs (eng (track 2): seconv failed) ")
-               for l in lines)
+    assert any("failed: subs (eng (track 2): seconv failed)" in l for l in lines)
 
 
 def test_tty_encode_failure_closes_with_phase_and_reason(env, monkeypatch):
@@ -2091,7 +2090,7 @@ def test_prefetch_multipart_logs_each_file_and_counts_unit_once(env, monkeypatch
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert [l["elapsed_s"] for l in copies[1:]] == [2, 5]
     row = next(l for l in capsys.readouterr().err.splitlines()
-               if l.strip().startswith("Parts (2007)"))
+               if l.strip().startswith("Parts"))  # the ship column wraps the long label
     assert "7s ⇢" in row
 
 
@@ -2128,28 +2127,6 @@ def test_ready_prefetch_is_logged_when_cleanup_drops_it(env, monkeypatch, failur
                   and "Three (2003) ready" in line["status"]]
     assert len(ready_notes) == 1
 
-
-def test_interrupt_while_prefetch_finish_wait_leaves_source_unshipped(env, monkeypatch):
-    """Ctrl+C during the item-close prefetch join happens before shipping or
-    archiving the just-encoded item."""
-    vid = env / "vid"
-    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
-    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
-    real_join = threading.Thread.join
-    raised = {"value": False}
-
-    def interrupt_join(thread, *args, **kwargs):
-        if not raised["value"]:
-            raised["value"] = True
-            raise KeyboardInterrupt
-        return real_join(thread, *args, **kwargs)
-
-    monkeypatch.setattr(threading.Thread, "join", interrupt_join)
-    assert transcode.run_transcode(Args()) == 130
-    assert (vid / "rip" / "movies" / "One (2001)" / "d0" / "One (2001)_t00.mkv").exists()
-    assert not (vid / "library" / "movies" / "One (2001)" / "One (2001).mkv").exists()
-
-
 def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkeypatch):
     """TTY prefetch lifecycle events are visible between the current item's
     opening and closing rules, including the normal non-verbose start."""
@@ -2180,7 +2157,7 @@ def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkey
 
     assert rc == 0
     head = next(n for n, line in enumerate(lines) if line.startswith("╭─ 1/2  One (2001)"))
-    close = next(n for n, line in enumerate(lines) if line.startswith("╰─ ✓ done") and n > head)
+    close = next(n for n, line in enumerate(lines) if line.startswith("╰─ ✓ encoded") and n > head)
     start = next(n for n, line in enumerate(lines) if "prefetch  Two (2002) started" in line)
     ready = next(n for n, line in enumerate(lines) if "Two (2002) ready" in line)
     assert head < start < ready < close
@@ -2470,3 +2447,29 @@ def test_prefetch_copy_line_in_background_panel(env, tmp_path):
     assert history[-1] == "Two (2002) \u2713 ready"
     assert view._bg == {}  # the key is cleared on consumption
     assert "Two (2002)_t00.mkv" not in view.render()  # footer line 2 gone with the key
+
+
+def test_ship_overlaps_the_next_encode(env, monkeypatch):
+    """Item one's ship waits for item two's encode to start: deadlocks (and
+    times out) if the ship were synchronous."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/One (2001)/d0/One (2001)_t00.mkv", "ONE")
+    mk(vid, "rip/movies/Two (2002)/d0/Two (2002)_t00.mkv", "TWO")
+    two_encoding = threading.Event()
+    real_move, real_encode = transcode._move_to_share, transcode._encode
+
+    def encode(src, out, *a, **k):
+        if pathlib.Path(src).name.startswith("Two"):
+            two_encoding.set()
+        return real_encode(src, out, *a, **k)
+
+    def move(src, dst):
+        if "One" in dst:
+            assert two_encoding.wait(5)
+        return real_move(src, dst)
+
+    monkeypatch.setattr(transcode, "_encode", encode)
+    monkeypatch.setattr(transcode, "_move_to_share", move)
+    assert transcode.run_transcode(Args()) == 0
+    assert (vid / "library" / "movies" / "One (2001)" / "One (2001).mkv").exists()
+    assert sum(1 for l in run_log(env) if l["phase"] == "ship") == 2

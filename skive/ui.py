@@ -624,7 +624,7 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
     kind, result = _result_text(n_ok, n_failed, elapsed, interrupt_note, see, failed)
     _neutral_close()  # a crashed run's open frame never leaks its gutter
     if columns is None:  # the transcode shape: per-phase cells summed into a total
-        columns = ("Item", "copy", "merge", "subs", "encode", "total", "result")
+        columns = ("Item", "copy", "merge", "subs", "encode", "ship", "total", "result")
         body = []
         for label, parts, word in rows:
             cells: dict[str, str] = {}
@@ -635,7 +635,7 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                 s = _secs(value)
                 if s is not None and not value.endswith(" ⇢"):
                     total += s
-            body.append([label, *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode")),
+            body.append([label, *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode", "ship")),
                          _hms(total), word])
     else:
         body = [list(row) for row in rows]

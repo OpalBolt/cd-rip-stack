@@ -104,7 +104,7 @@ The machine that runs `skive transcode` over the NAS mount — the Ryzen AI 7 35
 _Avoid_: encoder box, GPU box, BC-250
 
 **Prefetch**:
-The transcode copy overlap: as soon as one unit's own copy finishes, the next unit's source starts pulling from the share into the workdir, overlapping the current unit's subs, crop and encode. One unit of lookahead only — the ship stays synchronous and one encode runs at a time. Its start and its finish (`ready`, with size, rate and time) are event lines in the current item frame. Without workdir headroom for the next source, that item falls back to the sequential copy with a loud note.
+The transcode copy overlap: as soon as one unit's own copy finishes, the next unit's source starts pulling from the share into the workdir, overlapping the current unit's subs, crop and encode. One unit of lookahead only — one encode runs at a time, and the finished encode's ship (move to the library, sidecars, doc, source disposal) runs in one background thread, one deep, overlapping the next unit's encode. A failed ship fails that item, keeps the local encode and leaves the source in staging. The ship's time is its own `ship` phase in the run log and summary. Its start and its finish (`ready`, with size, rate and time) are event lines in the current item frame. Without workdir headroom for the next source, that item falls back to the sequential copy with a loud note.
 _Avoid_: download, upload, double-buffering
 
 **Crop gate**:
