@@ -161,7 +161,7 @@ fi
     )
     (bin_dir / "seconv").write_text(
         f"""#!/bin/sh
-{{ printf 'CALL:'; printf ' %s' "$@"; echo; }} >> "{seconv_log}"
+echo "CALL: $*" >> "{seconv_log}"
 in="$1"
 if grep -q SUBS-BARREN "$in" 2>/dev/null; then
   echo 'No subtitle tracks matched'
