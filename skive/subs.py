@@ -13,6 +13,7 @@ runs on a clean Windows python.exe.
 import json
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -168,6 +169,9 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
     return os.path.join(work, produced[0])
 
 
+_OCR_WORKERS = 4
+
+
 def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
              ffprobe_exe: str, log=None, verbose: int = 0) -> PassResult:
     """The whole pass, orchestration only: inventory -> decide -> OCR each keep
@@ -192,10 +196,17 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
     try:
         os.makedirs(out_dir, exist_ok=True)
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
-        for k in keeps:
+
+        def _ocr(k: Keep) -> str:
             ui.step(f"OCR {k.track.lang} track {k.track.index}"
                     f"{' (forced)' if k.track.forced else ''}...", verbose=verbose > 0)
-            srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
+            return convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
+
+        # fan out OCR over kept tracks; ex.map yields in keeps order, so the
+        # classification below (and thus notes order) is identical to sequential
+        with ThreadPoolExecutor(max_workers=min(len(keeps), _OCR_WORKERS)) as ex:
+            results = list(ex.map(_ocr, keeps))
+        for k, srt in zip(keeps, results):
             if srt == BARREN:
                 # CONTEXT.md: Barren track -- zero cues is a property of the
                 # disc, not a failure; a note, never a quarantine

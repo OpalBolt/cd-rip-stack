@@ -7,6 +7,7 @@ writes SRT files into whatever --output-folder it was given.
 
 import json
 import pathlib
+import threading
 
 import pytest
 
@@ -212,6 +213,36 @@ def test_convert_real_failure_replays_full_output_on_console(tmp_path, monkeypat
     assert "seconv failed: track 4 (eng)" in err
     assert "3 image(s) produced no OCR text and were dropped" in err  # stdout
     assert "boom" in err  # stderr
+
+
+def test_run_pass_ocrs_kept_tracks_concurrently(tmp_path, monkeypatch):
+    """Proof of concurrency: the fake seconv blocks on a barrier sized to the
+    3 kept tracks; sequential OCR would deadlock on the first wait."""
+    barrier = threading.Barrier(3)
+    dirs = []
+
+    def run(cmd, **kw):
+        if pathlib.Path(cmd[0]).name.startswith("ffprobe"):
+            return R(0, json.dumps(INV), "")
+        num = int(next(a.split(":", 1)[1] for a in cmd if a.startswith("--track-number:")))
+        lang = next(a.split(":", 1)[1] for a in cmd if a.startswith("--ocr-language:"))
+        out_dir = next(a.split(":", 1)[1] for a in cmd if a.startswith("--output-folder:"))
+        dirs.append(out_dir)
+        barrier.wait(timeout=15)
+        write_srt(pathlib.Path(out_dir) / f"Movie (2001).{lang}.srt", CUES[num])
+        return R(0, "", "")
+
+    monkeypatch.setattr(subs.subprocess, "run", run)
+    out = tmp_path / "out"
+    res = subs.run_pass(str(tmp_path / "Movie (2001).mkv"), str(out), "Movie (2001)",
+                        "seconv.exe", "ffprobe.exe")
+
+    # reassembly in keeps order: same settlement as the sequential pass
+    assert res.ok
+    assert res.sidecars == [
+        "Movie (2001).dan.forced.srt", "Movie (2001).eng.srt", "Movie (2001).eng.sdh.srt",
+    ]
+    assert len(dirs) == 3 and len(set(dirs)) == 3
 
 
 def test_run_pass_no_eng_dan_tracks(tmp_path, monkeypatch):
