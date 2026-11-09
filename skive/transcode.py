@@ -1399,7 +1399,7 @@ def run_transcode(args) -> int:
             ship_thread.join()
             ship_thread = None
 
-    def _ship_go(label: str, parts: list[str], job) -> None:
+    def _ship_go(label: str, name: str, parts: list[str], job) -> None:
         """job() -> (ok, why, mb) runs in the ship thread. An exception
         (share gone, disk full) fails the item and keeps the local encode."""
         nonlocal ship_thread, current, failed
@@ -1420,11 +1420,11 @@ def run_transcode(args) -> int:
             secs = max(int(time.monotonic() - t0), 1)
             parts.append(f"ship {_hms(secs)}")
             if mb is None:
-                log.timed("ship", f"FAIL: {why}", secs, name=label)
+                log.timed("ship", f"FAIL: {why}", secs, name=name)
             else:
                 detail = f"{mb} MB at {mb // secs} MB/s"
-                log.timed("ship", detail, secs, name=label)
-                _phase_line(ui.ok, f"{label} · {detail}", "ship", secs)
+                log.timed("ship", detail, secs, name=name)
+                _phase_line(ui.ok, f"{name} · {detail}", "ship", secs)
             _item_done(label, parts, ok, why, late=True)
 
         ship_thread = threading.Thread(target=run, name="ship", daemon=True)
@@ -1764,7 +1764,7 @@ def run_transcode(args) -> int:
                     for p in cleanup:  # the lossless copy is done with; frees workdir headroom
                         _rmf(p)
                     handled.add(i.path)
-                    _ship_go(i.name, parts, functools.partial(
+                    _ship_go(i.name, i.base, parts, functools.partial(
                         _ship_tv, i, local_out, dest, dest_dir, side_dir, res, episode))
                 else:
                     if side_dir is not None:
@@ -1900,7 +1900,7 @@ def run_transcode(args) -> int:
                         _rmf(p)
                     for s in siblings:
                         handled.add(s.path)
-                    _ship_go(names if len(siblings) > 1 else i.name, parts, functools.partial(
+                    _ship_go(names if len(siblings) > 1 else i.name, i.movie, parts, functools.partial(
                         _ship_main, i, siblings, local_out, dest, dest_dir, side_dir,
                         res, crop, mark_main_include))
                 else:
@@ -1964,7 +1964,7 @@ def run_transcode(args) -> int:
                 for p in cleanup:
                     _rmf(p)
                 handled.add(i.path)
-                _ship_go(i.name, parts, functools.partial(_ship_extra, i, local_out, dest))
+                _ship_go(i.name, i.base, parts, functools.partial(_ship_extra, i, local_out, dest))
             else:
                 for p in cleanup + [local_out]:
                     _rmf(p)
