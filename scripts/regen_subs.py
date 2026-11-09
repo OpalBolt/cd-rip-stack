@@ -15,6 +15,7 @@ Usage:  python scripts/regen_subs.py [--run] [--jobs N] [--root /mnt/videos] [TI
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -38,11 +39,14 @@ def main() -> int:
                     help="titles OCR'd at once (default: cpus // 4)")
     a = ap.parse_args()
     seconv, ffprobe = shutil.which("seconv"), shutil.which("ffprobe")
-    if not ffprobe or (a.run and not seconv):
-        print("need ffprobe (and seconv with --run) on PATH", file=sys.stderr)
+    mkvmerge = shutil.which("mkvmerge")
+    if not ffprobe or (a.run and not (seconv and mkvmerge)):
+        print("need ffprobe (and seconv, mkvmerge with --run) on PATH", file=sys.stderr)
         return 2
     lib = os.path.join(a.root, "library", "movies")
     src_root = os.path.join(a.root, "lossless", "movies")
+    cache = os.path.expanduser("~/.cache/skive/regen-subs")
+    os.makedirs(cache, exist_ok=True)
     todo = []
     for title in a.titles or sorted(os.listdir(lib)):
         src = os.path.join(src_root, title, f"{title}_t00.mkv")
@@ -61,7 +65,25 @@ def main() -> int:
     def regen(item) -> bool:
         title, src, dest, missing = item
         with tempfile.TemporaryDirectory(prefix="regen-subs-") as tmp:
-            res = subs.run_pass(src, tmp, title, seconv, ffprobe)
+            # one sequential NFS read of the source, then every seconv/ffprobe
+            # read hits the small local copy (was: one full NFS scan per track)
+            local = os.path.join(cache, f"{title}.subs.mkv")
+            try:
+                print(f"  [{title}] extracting subtitle tracks (reads the whole "
+                      f"source over the network, can take minutes)...", flush=True)
+                r = subprocess.run(
+                    [mkvmerge, "-o", local, "--no-video", "--no-audio",
+                     "--no-chapters", "--no-attachments", "--no-global-tags", src],
+                    capture_output=True, text=True)
+                if r.returncode > 1:  # 1 = warnings only
+                    print(f"  [{title}] FAIL mkvmerge extract: {r.stdout.strip()[-200:]}")
+                    return False
+                print(f"  [{title}] extracted {os.path.getsize(local) >> 20} MiB, OCR...",
+                      flush=True)
+                res = subs.run_pass(local, tmp, title, seconv, ffprobe)
+            finally:
+                if os.path.exists(local):
+                    os.remove(local)
             for n in res.notes:
                 print(f"  [{title}] {n}")
             for n in res.sidecars:
