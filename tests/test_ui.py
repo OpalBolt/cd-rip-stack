@@ -744,9 +744,9 @@ def test_long_title_truncates_the_name_and_keeps_the_phase(width):
 def test_live_box_is_never_empty_and_caps_at_100_columns():
     """No lane: the opener's scope line stands in. A 120-column console still
     renders the box 100 wide."""
-    ui.opener("skive transcode", "4 of 63 this session (cap 4, ~60\u201380 min) \u00b7 59 deferred")
+    ui.opener("skive transcode", "4 of 63 this session (cap 4, ~8\u201340 min) \u00b7 59 deferred")
     view = ui.RunView(tty=True, live=False)
-    assert _lanes(view, 80) == ["4 of 63 this session (cap 4, ~60\u201380 min) \u00b7 59 deferred"]
+    assert _lanes(view, 80) == ["4 of 63 this session (cap 4, ~8\u201340 min) \u00b7 59 deferred"]
     assert len(_lanes(view, 120)) == 1  # _lanes asserts the 100-wide rows
 
 

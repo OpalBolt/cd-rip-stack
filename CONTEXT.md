@@ -192,7 +192,7 @@ The console the long-running commands draw while they work — `rip movie`, `rip
 _Avoid_: TUI, dashboard, progress screen
 
 **Run opener**:
-The closed box a run view prints when its work is settled, stating the run's scope — for transcode the session count against the queue (`4 of 63 this session (cap 4, ~60–80 min) · 59 deferred`), the encoder choice and the scan-skip count, with each skipped path as a `!` line right under the box; for rips `Andor (2022) S01 · disc 2 · /dev/sr0`. Nothing of the run prints above it. Rips print it after their interactive phase (search, picks, map), since the scope is unknown before.
+The closed box a run view prints when its work is settled, stating the run's scope — for transcode the session count against the queue (`4 of 63 this session (cap 4, ~8–40 min) · 59 deferred`), the encoder choice and the scan-skip count, with each skipped path as a `!` line right under the box; for rips `Andor (2022) S01 · disc 2 · /dev/sr0`. Nothing of the run prints above it. Rips print it after their interactive phase (search, picks, map), since the scope is unknown before.
 _Avoid_: banner, header
 
 **Item frame**:
