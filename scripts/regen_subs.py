@@ -8,7 +8,7 @@ into a temp dir and copy ONLY the missing sidecars beside the encode. Never
 touches the video or validation.json. Dry-run by default (ffprobe/mkvmerge
 only, no OCR); --run does the OCR -- run it on the transcode box.
 
-Usage:  python scripts/regen_subs.py [--run] [--root /mnt/videos] [TITLE ...]
+Usage:  python scripts/regen_subs.py [--run] [--jobs N] [--root /mnt/videos] [TITLE ...]
         (no TITLE = scan every movie in the library)
 """
 
@@ -17,6 +17,7 @@ import os
 import shutil
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 from skive import subs
 
@@ -33,6 +34,8 @@ def main() -> int:
     ap.add_argument("titles", nargs="*")
     ap.add_argument("--run", action="store_true", help="do the OCR (default: dry-run)")
     ap.add_argument("--root", default=os.environ.get("VIDEOS", "/mnt/videos"))
+    ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 4),
+                    help="titles OCR'd at once (default: cpus // 4)")
     a = ap.parse_args()
     seconv, ffprobe = shutil.which("seconv"), shutil.which("ffprobe")
     if not ffprobe or (a.run and not seconv):
@@ -40,7 +43,7 @@ def main() -> int:
         return 2
     lib = os.path.join(a.root, "library", "movies")
     src_root = os.path.join(a.root, "lossless", "movies")
-    rc = 0
+    todo = []
     for title in a.titles or sorted(os.listdir(lib)):
         src = os.path.join(src_root, title, f"{title}_t00.mkv")
         dest = os.path.join(lib, title)
@@ -49,22 +52,27 @@ def main() -> int:
             continue
         missing = sorted(n for n in expected(src, title, ffprobe)
                          if not os.path.exists(os.path.join(dest, n)))
-        if not missing:
-            continue
-        print(f"{title}: missing {', '.join(missing)}")
-        if not a.run:
-            continue
+        if missing:
+            print(f"{title}: missing {', '.join(missing)}")
+            todo.append((title, src, dest, missing))
+    if not a.run:
+        return 0
+
+    def regen(item) -> bool:
+        title, src, dest, missing = item
         with tempfile.TemporaryDirectory(prefix="regen-subs-") as tmp:
             res = subs.run_pass(src, tmp, title, seconv, ffprobe)
             for n in res.notes:
-                print(f"  {n}")
-            if not res.ok:
-                rc = 1
+                print(f"  [{title}] {n}")
             for n in res.sidecars:
                 if n in missing:
                     shutil.copy2(os.path.join(tmp, n), os.path.join(dest, n))
-                    print(f"  wrote {n}")
-    return rc
+                    print(f"  [{title}] wrote {n}")
+            return res.ok
+
+    # each pass already OCRs up to 4 tracks at once; --jobs adds titles on top
+    with ThreadPoolExecutor(max_workers=a.jobs) as ex:
+        return 0 if all(ex.map(regen, todo)) else 1
 
 
 if __name__ == "__main__":
