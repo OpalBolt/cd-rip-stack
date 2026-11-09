@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Requeue library movies that lack Danish/English sidecars their lossless
+"""Requeue library movies that lack Danish sidecars their lossless
 source can supply (the index+1 track-number bug dropped them), so the normal
 `skive transcode` run encodes them again with the fixed subtitle pass.
 
@@ -32,7 +32,8 @@ VALIDATION = "validation.json"
 
 def expected(src: str, title: str, ffprobe: str) -> set[str]:
     keeps, _ = subs.decide(subs.inventory(src, ffprobe))
-    return {subs.sidecar_name(title, k.track.lang, k.flag) for k in keeps}
+    # Danish is the required language; English is nice to have, never worth a re-encode
+    return {subs.sidecar_name(title, k.track.lang, k.flag) for k in keeps if k.track.lang == "dan"}
 
 
 def requeue(title: str, root: str, ffprobe: str, run: bool, expected_fn=expected) -> str:

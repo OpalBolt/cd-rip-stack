@@ -56,3 +56,10 @@ def test_skips_when_rip_already_staged(tmp_path):
     (root / "rip/movies" / T / f"{T}_t00.mkv").write_text("x")
     assert "already holds" in rq.requeue(T, str(root), "ff", True, want("dan"))
     assert (root / "library/movies" / T / f"{T}.mkv").exists()
+
+
+def test_only_danish_counts_as_missing(monkeypatch):
+    from skive.subs import Track
+    monkeypatch.setattr(rq.subs, "inventory", lambda *a, **k: [
+        Track(0, "eng", "s", False), Track(1, "dan", "s", False), Track(2, "nor", "s", False)])
+    assert rq.expected("src", T, "ff") == {f"{T}.dan.srt"}
