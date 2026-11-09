@@ -1424,7 +1424,7 @@ def run_transcode(args) -> int:
             else:
                 detail = f"{mb} MB at {mb // secs} MB/s"
                 log.timed("ship", detail, secs, name=name)
-                _phase_line(ui.ok, f"{name} · {detail}", "ship", secs)
+                _phase_line(ui.ok, f"\u21b3 {name} · {detail}", "ship", secs)
             _item_done(label, parts, ok, why, late=True)
 
         ship_thread = threading.Thread(target=run, name="ship", daemon=True)
@@ -1595,7 +1595,7 @@ def run_transcode(args) -> int:
         log.note("prefetch", note, echo=False)
         v = ui.view()
         if v is not None and v.tty:
-            ui.info(f"prefetch  {nxt_unit[0].movie} started", phase="prefetch")
+            ui.info(f"\u21b3 {nxt_unit[0].movie} started", phase="prefetch")
         ui.step(f"prefetch: {note}", verbose=common.VERBOSITY > 0)
         for x in nxt_unit:
             pf_files.append(os.path.join(tmp_dir, x.name))  # at thread START, before any bytes
@@ -1628,7 +1628,7 @@ def run_transcode(args) -> int:
                     v = ui.view()
                     if v is not None:
                         v.bg("prefetch", f"{nxt_unit[0].movie} \u2713 ready")
-                    ui.ok(f"{nxt_unit[0].movie} ready \u00b7 {size} MB at {rate} MB/s",
+                    ui.ok(f"\u21b3 {nxt_unit[0].movie} ready \u00b7 {size} MB at {rate} MB/s",
                           phase="prefetch", elapsed=_hms(elapsed))
                     complete = True
             except Exception as e:

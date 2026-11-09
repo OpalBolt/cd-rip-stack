@@ -2158,7 +2158,7 @@ def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkey
     assert rc == 0
     head = next(n for n, line in enumerate(lines) if line.startswith("╭─ 1/2  One (2001)"))
     close = next(n for n, line in enumerate(lines) if line.startswith("╰─ ✓ encoded") and n > head)
-    start = next(n for n, line in enumerate(lines) if "prefetch  Two (2002) started" in line)
+    start = next(n for n, line in enumerate(lines) if "↳ Two (2002) started" in line and "prefetch" in line)
     ready = next(n for n, line in enumerate(lines) if "Two (2002) ready" in line)
     assert head < start < ready < close
 
