@@ -105,6 +105,48 @@ def test_inventory_missing_language_tag_is_und(monkeypatch):
     ]
 
 
+def test_inventory_maps_noncontiguous_track_numbers(monkeypatch):
+    """MakeMKV writes gaps in Matroska TrackNumbers (Corpse Bride: 1..4 then
+    6): the dan track at ffprobe index 4 is TrackNumber 6 — the old index + 1
+    guess asked seconv for track 5, which matched nothing."""
+    canned = {"streams": [
+        {"index": 3, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0},
+         "tags": {"language": "eng"}},
+        {"index": 4, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0},
+         "tags": {"language": "dan"}},
+    ]}
+    numbers = {"tracks": [{"id": 3, "properties": {"number": 4}},
+                          {"id": 4, "properties": {"number": 6}}]}
+
+    def run(cmd, **kw):
+        if pathlib.Path(cmd[0]).name.startswith("mkvmerge"):
+            return R(0, json.dumps(numbers), "")
+        return R(0, json.dumps(canned), "")
+
+    monkeypatch.setattr(subs.shutil, "which", lambda name: "mkvmerge")
+    monkeypatch.setattr(subs.subprocess, "run", run)
+    tracks = subs.inventory("x.mkv", "ffprobe.exe")
+    assert [(t.index, t.number) for t in tracks] == [(3, 4), (4, 6)]
+
+
+def test_convert_selects_real_track_number(tmp_path, monkeypatch):
+    """seconv gets the TrackNumber from the inventory, not index + 1."""
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(next(a for a in cmd if a.startswith("--track-number:")))
+        out = next(a.split(":", 1)[1] for a in cmd if a.startswith("--output-folder:"))
+        write_srt(pathlib.Path(out) / "Movie (2001).dan.srt", 5)
+        return R(0, "", "")
+
+    monkeypatch.setattr(subs.subprocess, "run", run)
+    srt = subs.convert("x.mkv",
+                       subs.Track(4, "dan", "hdmv_pgs_subtitle", False, number=6),
+                       "seconv.exe", str(tmp_path))
+    assert seen == ["--track-number:6"]
+    assert subs.count_events(srt) == 5
+
+
 # -- run_pass (stubbed tools) -----------------------------------------------------
 INV = {"streams": [
     {"index": 2, "codec_name": "dvd_subtitle", "disposition": {"forced": 1},
@@ -116,14 +158,18 @@ INV = {"streams": [
     {"index": 5, "codec_name": "dvd_subtitle", "disposition": {"forced": 0},
      "tags": {"language": "swe"}},
 ]}
-CUES = {3: 6, 4: 100, 5: 40, 6: 9}  # keyed by the TID seconv receives (ffprobe index + 1)
+CUES = {3: 6, 4: 100, 5: 40, 6: 9}  # keyed by the TID seconv receives (contiguous fake: index + 1)
 
 
 def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0, barren_track=0):
-    """Fake ffprobe (canned inventory) + fake seconv writing
+    """Fake mkvmerge + ffprobe (canned inventory) + fake seconv writing
     <stem>.<lang>.srt into its --output-folder — the same name for both eng
     full tracks, so a shared dir would collide and the test would catch it."""
     def run(cmd, **kw):
+        if pathlib.Path(cmd[0]).name.startswith("mkvmerge"):
+            # contiguous TrackNumbers: id i -> number i+1, so CUES keys stay index + 1
+            return R(0, json.dumps({"tracks": [
+                {"id": i, "properties": {"number": i + 1}} for i in range(10)]}), "")
         if pathlib.Path(cmd[0]).name.startswith("ffprobe"):
             return R(0, json.dumps(INV), "")
         num = int(next(a.split(":", 1)[1] for a in cmd if a.startswith("--track-number:")))
@@ -222,6 +268,9 @@ def test_run_pass_ocrs_kept_tracks_concurrently(tmp_path, monkeypatch):
     dirs = []
 
     def run(cmd, **kw):
+        if pathlib.Path(cmd[0]).name.startswith("mkvmerge"):
+            return R(0, json.dumps({"tracks": [
+                {"id": i, "properties": {"number": i + 1}} for i in range(10)]}), "")
         if pathlib.Path(cmd[0]).name.startswith("ffprobe"):
             return R(0, json.dumps(INV), "")
         num = int(next(a.split(":", 1)[1] for a in cmd if a.startswith("--track-number:")))

@@ -27,10 +27,11 @@ _SDH_NUM, _SDH_DEN = 3, 10
 
 @dataclass
 class Track:
-    index: int  # ffprobe stream index (0-based); seconv takes the 1-based Matroska TID = index + 1
+    index: int  # ffprobe stream index (0-based)
     lang: str  # three-letter code as ffprobe reports it ("eng", "dan", "und", ...)
     codec: str  # ffprobe codec_name ("hdmv_pgs_subtitle", "dvd_subtitle", ...)
     forced: bool  # disposition.forced
+    number: int | None = None  # Matroska TrackNumber seconv selects on; None -> index + 1 fallback
 
 
 @dataclass
@@ -108,6 +109,28 @@ def _raw(log, tool: str, text: str, verbose: int = 0) -> None:
             log.raw(tool, line)
 
 
+def _track_numbers(mkv: str, log=None, verbose: int = 0) -> dict[int, int]:
+    """Real Matroska TrackNumbers by ffprobe index (mkvmerge -J tracks[].id is
+    the 0-based stream position). TrackNumbers need not be contiguous -- MakeMKV
+    writes gaps (Corpse Bride: 1..4 then 6), so the old index + 1 guess asked
+    seconv for a track that does not exist and it dropped the dan track as
+    'barren'. Empty dict -> callers fall back to index + 1."""
+    exe = shutil.which("mkvmerge")
+    if not exe:
+        return {}
+    r = subprocess.run([exe, "-J", mkv], capture_output=True, text=True)
+    _raw(log, "mkvmerge", r.stdout + r.stderr, verbose)
+    try:
+        if r.returncode > 1:
+            raise ValueError(f"rc={r.returncode}")
+        return {t["id"]: t["properties"]["number"]
+                for t in json.loads(r.stdout)["tracks"]}
+    except (ValueError, KeyError, TypeError):
+        ui.warn(f"mkvmerge track numbers unavailable for {mkv}; "
+                f"falling back to ffprobe index + 1")
+        return {}
+
+
 def inventory(mkv: str, ffprobe_exe: str, log=None, verbose: int = 0) -> list[Track]:
     """ffprobe the file's subtitle streams: index, codec, language tag, forced.
     verbose: -vv passes the captured ffprobe output through to the console."""
@@ -121,14 +144,17 @@ def inventory(mkv: str, ffprobe_exe: str, log=None, verbose: int = 0) -> list[Tr
     if r.returncode != 0:
         ui.warn(f"ffprobe failed on {mkv}: {r.stderr.strip()}")
         return []
+    streams = json.loads(r.stdout).get("streams", [])
+    numbers = _track_numbers(mkv, log=log, verbose=verbose) if streams else {}
     return [
         Track(
             index=int(s["index"]),
             lang=(s.get("tags") or {}).get("language") or "und",
             codec=s.get("codec_name") or "",
             forced=bool((s.get("disposition") or {}).get("forced")),
+            number=numbers.get(int(s["index"])),
         )
-        for s in json.loads(r.stdout).get("streams", [])
+        for s in streams
     ]
 
 
@@ -150,9 +176,10 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
     verbose: -vv passes the captured seconv output through to the console."""
     work = tempfile.mkdtemp(dir=out_dir, prefix=f"track{track.index}-")
     r = subprocess.run(
-        # seconv --track-number is the 1-based Matroska TID; ffprobe index is 0-based
+        # seconv --track-number selects the Matroska TrackNumber, which
+        # MakeMKV does not keep contiguous -- never guess index + 1
         [seconv_exe, mkv, "subrip",
-         f"--track-number:{track.index + 1}", f"--ocr-language:{track.lang}",
+         f"--track-number:{track.number or track.index + 1}", f"--ocr-language:{track.lang}",
          f"--output-folder:{work}"],
         capture_output=True, text=True,
     )

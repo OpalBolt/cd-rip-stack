@@ -87,6 +87,7 @@ cat "$in" > "$out"
     )
     (bin_dir / "mkvmerge").write_text(
         f"""#!/bin/sh
+[ "$1" = "-J" ] && {{ echo '{{"tracks": []}}'; exit 0; }}
 out="$2"; shift 2
 : > "$out"
 for a in "$@"; do

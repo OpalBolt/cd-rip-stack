@@ -60,6 +60,8 @@ def make_run(calls, *, inv=INV_ENG, seconv_rc=0, mkvmerge_rc=0,
                 return R(0, counts, "")
             return R(0, json.dumps(inv), "")
         if exe == "mkvmerge":
+            if "-J" in cmd:
+                return R(0, '{"tracks": []}', "")
             if mkvmerge_rc == 0:
                 pathlib.Path(cmd[cmd.index("-o") + 1]).write_bytes(b"stripped-mkv")
             return R(mkvmerge_rc, "", "mkvmerge boom" if mkvmerge_rc else "")
@@ -103,7 +105,7 @@ def touch(path, content=b"orig-mkv"):
 
 
 def tool_names(state):
-    return [exe for exe, _cmd in state["calls"]]
+    return [exe for exe, cmd in state["calls"] if "-J" not in cmd]  # -J = track-number lookup, not a merge
 
 
 # -- startup probes ---------------------------------------------------------------
