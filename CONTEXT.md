@@ -32,6 +32,10 @@ _Avoid_: quick scan, pre-scan
 The fallback `makemkvcon info` run, fired when the fast scan fails, finds two titles within ±1s (duplicates/decoy obfuscation), or a movie `-T` menu is requested — and for every default movie rip (ADR 0015: the main-only selection needs MakeMKV title numbers). Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
 _Avoid_: deep scan, makemkv scan
 
+**MakeMKV key**:
+The `app_Key` activation string in `~/.MakeMKV/settings.conf` on the rip box. The free beta key rotates roughly monthly (forum.makemkv.com topic t=1053); a purchased key is permanent. An expired key blocks BD ripping only — DVDs stay free, CDs never touch MakeMKV.
+_Avoid_: license, registration, serial
+
 **Eligible title**:
 A disc title that can become an episode: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment.
 _Avoid_: candidate title

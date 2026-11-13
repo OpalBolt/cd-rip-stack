@@ -277,14 +277,40 @@ def test_render_menu_tty_fits_small_terminal_around_cursor():
 def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
     """A disc with media but zero parseable titles aborts instead of ripping blind."""
     import pytest
+    from skive.common import RipLog
     from skive.scan import scan_disc
 
     output = 'DRV:0,2,999,12,"BD-RE ASUS","ROGUE_ONE","/dev/sr0"\nMSG:3307,0,2,"File 00800.mpls was added as title #1","",""\n'
     monkeypatch.setattr("skive.scan.tempfile.gettempdir", lambda: str(tmp_path))
+    log = RipLog("rip-movie", "makemkv", root=str(tmp_path))
     with pytest.raises(SystemExit):
-        scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
+        scan_disc(120, run=Mock(return_value=Mock(stdout=output)), log=log)
     assert "no titles" in capsys.readouterr().err
     assert (tmp_path / "skive-scan-failed.txt").exists()
+    import json
+    lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert any(l["phase"] == "scan" and "no titles" in l["status"] for l in lines)
+
+
+def test_scan_disc_names_expired_key(tmp_path, monkeypatch, capsys):
+    """Expired MakeMKV key: the refusal names the cause and the fix (ADR 0016),
+    and the run log records it — fed by a real expired-key scan dump."""
+    import json
+    import pytest
+    from skive.common import RipLog
+    from skive.scan import scan_disc
+
+    output = (Path(__file__).parent / "fixtures" / "makemkv-expired-scan.txt").read_text()
+    monkeypatch.setattr("skive.scan.tempfile.gettempdir", lambda: str(tmp_path))
+    log = RipLog("rip-movie", "makemkv", root=str(tmp_path))
+    with pytest.raises(SystemExit):
+        scan_disc(120, run=Mock(return_value=Mock(stdout=output)), log=log)
+    err = capsys.readouterr().err
+    assert "MakeMKV key expired" in err
+    assert "forum.makemkv.com/forum/viewtopic.php?t=1053" in err
+    assert (tmp_path / "skive-scan-failed.txt").exists()
+    lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    assert any(l["phase"] == "scan" and "key expired" in l["status"] for l in lines)
 
 
 def test_disc_n_threads_through_scan_and_rip(tmp_path):

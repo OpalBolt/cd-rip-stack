@@ -273,8 +273,21 @@ def scan_disc(minlength: int, run=subprocess.run, disc: int = 0,
         # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.
         dump = Path(tempfile.gettempdir()) / "skive-scan-failed.txt"
         dump.write_text(out)
-        ui.fail(f"disc scan returned no titles ({media}) — raw output saved to {dump}")
-        ui.info("refusing to rip blind (this is how scrambled duplicates get ripped).")
+        if ("Evaluation period has expired" in out
+                or "shareware functionality unavailable" in out):
+            # ADR 0016: remind, never fetch or write the key ourselves.
+            ui.fail("MakeMKV key expired — BD ripping needs a valid app_Key")
+            ui.info("free key: https://forum.makemkv.com/forum/viewtopic.php?t=1053")
+            ui.info('write app_Key = "…" into ~/.MakeMKV/settings.conf on the rip box, then re-run')
+            ui.info("DVD and CD rips are unaffected")
+            if log is not None:
+                log.note("scan", "makemkv key expired — update app_Key (forum t=1053)",
+                         echo=False)
+        else:
+            ui.fail(f"disc scan returned no titles ({media}) — raw output saved to {dump}")
+            ui.info("refusing to rip blind (this is how scrambled duplicates get ripped).")
+            if log is not None:
+                log.note("scan", f"no titles ({media}) — refusing to rip blind", echo=False)
         sys.exit(1)
     return media, label, titles
 

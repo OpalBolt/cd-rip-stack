@@ -26,7 +26,9 @@ paru -S --needed makemkv cyanrip
 ```
 
 - `makemkv` — needs a MakeMKV key in `~/.MakeMKV/settings.conf` as
-  `app_Key = "..."`; the free beta key rotates every 30 days
+  `app_Key = "..."`; the free beta key rotates every 30 days — an expired key
+  refuses BD rips with the fix instructions (ADR 0016), DVD and CD rips are
+  unaffected
 - `cyanrip` — CD rips (AccurateRip verification)
 - `flac` — provides `metaflac`
 - `lsdvd` — the DVD fast-scan gate; without it every DVD silently falls back
