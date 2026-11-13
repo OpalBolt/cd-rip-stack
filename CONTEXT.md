@@ -37,11 +37,11 @@ The `app_Key` activation string in `~/.MakeMKV/settings.conf` on the rip box. Th
 _Avoid_: license, registration, serial
 
 **Eligible title**:
-A disc title that can become an episode: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment.
+A disc title that can become an episode by default: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment; sub-floor titles still list in the table's bottom section, dropped by default and rescued only by a map row.
 _Avoid_: candidate title
 
 **Play-all title**:
-A disc title whose duration equals the sum of a subset of other eligible titles (±120s) — a compilation, never an episode, never ripped: fast-scan detection escalates to the full scan (ADR 0002) so the rip selects around it, and a fix row assigning it an episode still rips it. The lone title of a play-all-only disc never matches this sum — it is not this term.
+A disc title whose duration equals the sum of a subset of other eligible titles — a compilation, never an episode, never ripped. A tight-window match (±120s) escalates to the full scan (ADR 0002); a wider soft-window match auto-skips without escalation, shown with its evidence as `≈ sum of …` — both overridable: a map row assigning it an episode still rips it. The lone title of a play-all-only disc never matches this sum — it is not this term.
 _Avoid_: compilation, sum title
 
 **Season**:
@@ -61,8 +61,16 @@ The per-title sanity check: disc duration ÷ TMDB runtime. Green when the ratio 
 _Avoid_: duration matching
 
 **Episode map**:
-The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by the range prompt plus position assignment; corrected at the table with fix rows, never hand-authored.
+The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by the range prompt plus position assignment, corrected at the table with map-line rows; a mistake before the rip never restarts the run.
 _Avoid_: mapping string
+
+**Map line**:
+The confirm table's whole-map answer: comma-separated rows (`0=e,1=e,2=1,2-8=1-7`), applied per-row — a bad row is named and skipped, the good rows apply, the table re-renders. The chapter-split boundary table takes the same grammar.
+_Avoid_: fix row, mapping string
+
+**Block row**:
+A map-line row `A-B=X-Y`: the eligible titles numbered A through B, in disc order, take episodes X through Y; non-eligible titles inside the window are named and skipped, and an unfilled episode warns loudly.
+_Avoid_: range rebasing
 
 **Season folder**:
 The library folder holding one season's episodes: `Season 01` under the show's `library/tv/` dir. Season 0's folder is named `Specials`.
@@ -84,8 +92,12 @@ The staged title chosen as the film itself — the candidate main nearest TMDB r
 _Avoid_: main title
 
 **Part**:
-One disc's share of a movie split across discs. Staged `.pN`; a main feature's parts merge into one file at transcode (track sets must match first). Parts holding the same track set in a different order — the Two Towers discs staged their eng/dan subtitles differently — align by stream-copy remux into part 1's order before the merge, the guard re-running on the remuxed files; a different set, or one still mismatched after alignment, quarantines whole. Extras' parts stay split.
+One disc's share of a movie split across discs, declared by `--part N` at rip — disc 1 of a declared set wears `.p1`, not the bare name. Staged `.pN`; a main feature's parts merge into one file at transcode (track sets must match first). Parts holding the same track set in a different order — the Two Towers discs staged their eng/dan subtitles differently — align by stream-copy remux into part 1's order before the merge, the guard re-running on the remuxed files; a different set, or one still mismatched after alignment, quarantines whole. Extras' parts stay split.
 _Avoid_: side, disc file
+
+**Rip-complete**:
+The transcode eligibility gate: a staged main whose rip run has landed (no junk label left) and whose part set is whole. No flag means single disc, complete at rename; `--part 1` declares a set; the `--part N≥2` end-of-run prompt `More discs for <movie>? [y/N]` completes it — bare Enter means no, the count recorded in the validation file. An unconfirmed set, or a legacy `.pN` folder with no record, defers loudly (`! waiting for more discs: …`) — never encoded, never a session-cap slot, never disposed.
+_Avoid_: done marker, rip-DONE, done indicator
 
 **Extras**:
 Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. A default movie run never rips them (ADR 0015) — they stage only from `-i`, `-E` or `-T` runs. An aired special is not an extra — it is a Season 0 episode.
@@ -104,7 +116,7 @@ Transcode never re-encodes what the library holds: a staged main (or TV episode)
 _Avoid_: dup skip, re-rip skip
 
 **Junk label**:
-MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; transcode skips any file still wearing one.
+A staged file still wearing a MakeMKV-chosen name — the bare drive pattern (`B1_t00.mkv`) or one derived from the disc's volume label (`X-Men- Apocalypse_t00.mkv`); neither carries a year. Real iff the base ends `(YYYY)` — the one rule both the rip's rename guard and transcode's skip use. Renamed away after the rip; transcode skips any file still wearing one.
 _Avoid_: label, code
 
 **Transcode box**:
@@ -137,7 +149,7 @@ _Avoid_: failed folder, retry queue
 ### Validation
 
 **Validation file**:
-`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main. A TV show holds one document per show — every season with its episodes (the current actuals) and its disc index (volume label, run, the episodes each rip run staged). Travels staging → transcode → library (TV: into each Season folder beside the encodes); transcode appends its encode results to it. Pre-feature rips get theirs reconstructed by `scripts/backfill_validation.py` (dry-run default, `--apply` writes). An album holds a `kind: "album"` document: music source, release identity (MusicBrainz id or Bandcamp URL), per-track file/duration/format, and a disc index (run, drive offset, per-track AccurateRip status, confidence and CRC32 for `cd`). A CD rip's record is born complete in `rip/cd/<album>/` — cyanrip's report names the release, every track, and each checksum; downloads get theirs at filing. The filing step stamps each disc's filing facts, rebuilds the track list from the filed files, and carries the document into the library album folder together with cyanrip's `.log`/`.cue`. AccurateRip results are proof, never a gate: a disc missing from the database still rips and exits clean, with its not_found tracks named in the run log. Pre-feature albums get a `reconstructed` one (source `unknown`, no AccurateRip).
+`validation.json`, born in the title folder at rip: TMDB id/type/runtime, volume label, per-title durations and check results, plus the chosen main and part-set record. A TV show holds one document per show — every season with its episodes (the current actuals) and its disc index (volume label, run, the episodes each rip run staged). Travels staging → transcode → library (TV: into each Season folder beside the encodes); transcode appends its encode results to it. Pre-feature rips get theirs reconstructed by `scripts/backfill_validation.py` (dry-run default, `--apply` writes). An album holds a `kind: "album"` document: music source, release identity (MusicBrainz id or Bandcamp URL), per-track file/duration/format, and a disc index (run, drive offset, per-track AccurateRip status, confidence and CRC32 for `cd`). A CD rip's record is born complete in `rip/cd/<album>/` — cyanrip's report names the release, every track, and each checksum; downloads get theirs at filing. The filing step stamps each disc's filing facts, rebuilds the track list from the filed files, and carries the document into the library album folder together with cyanrip's `.log`/`.cue`. AccurateRip results are proof, never a gate: a disc missing from the database still rips and exits clean, with its not_found tracks named in the run log. Pre-feature albums get a `reconstructed` one (source `unknown`, no AccurateRip).
 _Avoid_: manifest, metadata file, verification.json
 
 **Candidate main**:
@@ -218,6 +230,10 @@ _Avoid_: system monitor, sensor readout
 **MusicBrainz miss**:
 A `rip music` run that stops before ripping because cyanrip can't resolve the disc's DiscID to one release. There are three cases. **Not found**: the DiscID is on no release. **Stub**: it matches only a CD stub. **Multiple releases**: it is attached to several releases. skive never prompts. It fails the run with a yellow box naming the case, the DiscID, and the way forward: the attach URL (attach the disc to its release on MusicBrainz, then re-run), or for multiple releases, the candidates, the disc's MusicBrainz page to detach wrong releases, and the `-R <n>` re-run command. Once MusicBrainz is fixed, later rips of that disc resolve on their own.
 _Avoid_: lookup error, metadata failure
+
+**Stall guard**:
+The per-track rip budget in `rip music`: a track may not rip and encode longer than `max(10 min, 3× its audio duration)` — durations from a TOC-only pre-pass (`cyanrip -J`), so a legitimately long track never trips. A tripped track kills the cyanrip pass; nothing of a killed pass survives (cyanrip buffers the audio in RAM — its staged files are 0-byte stubs, purged on the spot), so the continuation pass re-rips the disc without that track (`cyanrip -l`), healthy prefix included. The skipped track leaves a hole: the run fails, the summary names the track stalled, the run log carries the hand re-rip command, and the disc index records the stalled numbers. Three stalled tracks end the run — wipe or replace the disc. Never a retry — cd-paranoia already retried; a human wipes the disc and re-rips by hand. Not an Interrupt (no operator, the run continues), and never armed alongside `-Z` (rip-until-checksums-match is slow by design).
+_Avoid_: timeout, watchdog, kill counter
 
 **Run log**:
 The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. A transcode run logs one timed line per part — `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the part's numbers in `status` (`5744 MB at 64 MB/s`), so copy slippage and encode slippage are separable trends; a phase that dies mid-run closes with `FAIL` and its elapsed. Replaces the old 8-column text `rip.log`.
