@@ -1202,6 +1202,109 @@ def test_keep_clobber_refusal(env, capsys):
     assert (done / "Keep (2005)_t00.mkv").read_text() == "EXISTING"
 
 
+# -- already in the library: skip, park in lossless ---------------------------
+
+def test_dup_main_skips_encode_and_parks(env):
+    """A staged main whose library encode already exists never re-encodes:
+    the source parks in lossless/ with no -k, the library copy is untouched,
+    HandBrake never runs, and the run logs the skip with each file's fate."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Dup (2001)/d1/Dup (2001)_t00.mkv", "DUP-MAIN")
+    L = vid / "library" / "movies" / "Dup (2001)"
+    L.mkdir(parents=True)
+    (L / "Dup (2001).mkv").write_text("EXISTING-ENCODE")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (L / "Dup (2001).mkv").read_text() == "EXISTING-ENCODE"
+    assert (vid / "lossless" / "movies" / "Dup (2001)" / "Dup (2001)_t00.mkv").read_text() == "DUP-MAIN"
+    assert not (vid / "rip" / "movies" / "Dup (2001)" / "d1" / "Dup (2001)_t00.mkv").exists()
+    assert not (env / "hb-calls.log").exists()  # never encoded
+    skips = [d for d in run_log(env) if d.get("phase") == "skip"]
+    assert len(skips) == 1 and "Dup (2001)_t00.mkv parked" in skips[0]["status"]
+
+
+def test_dup_main_deleted_when_lossless_holds_it(env):
+    """lossless/ already holding the source makes the staged copy a
+    duplicate: it is deleted, the lossless copy never clobbered."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Dup (2001)/d1/Dup (2001)_t00.mkv", "STAGED-DUP")
+    L = vid / "library" / "movies" / "Dup (2001)"
+    L.mkdir(parents=True)
+    (L / "Dup (2001).mkv").write_text("EXISTING-ENCODE")
+    done = vid / "lossless" / "movies" / "Dup (2001)"
+    done.mkdir(parents=True)
+    (done / "Dup (2001)_t00.mkv").write_text("KEPT-LOSSLESS")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (done / "Dup (2001)_t00.mkv").read_text() == "KEPT-LOSSLESS"
+    assert not (vid / "rip" / "movies" / "Dup (2001)" / "d1" / "Dup (2001)_t00.mkv").exists()
+    assert not (env / "hb-calls.log").exists()
+    assert "deleted" in [d["status"] for d in run_log(env) if d.get("phase") == "skip"][0]
+
+
+def test_dup_split_main_parks_all_parts_and_riding_extras(env):
+    """A split dup main parks every part, and the movie's unmarked extras
+    ride the skip's disposal exactly as they ride a shipped main."""
+    vid = env / "vid"
+    d = vid / "rip" / "movies" / "Dup (2001)" / "d1"
+    d.mkdir(parents=True)
+    (d / "Dup (2001)_t00.p1.mkv").write_text("PART1")
+    (d / "Dup (2001)_t00.p2.mkv").write_text("PART2")
+    (d / "Dup (2001)_t03.mkv").write_text("UNMARKED-EXTRA")
+    L = vid / "library" / "movies" / "Dup (2001)"
+    L.mkdir(parents=True)
+    (L / "Dup (2001).mkv").write_text("EXISTING-ENCODE")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    parked = sorted(p.name for p in (vid / "lossless" / "movies" / "Dup (2001)").iterdir())
+    assert parked == ["Dup (2001)_t00.p1.mkv", "Dup (2001)_t00.p2.mkv", "Dup (2001)_t03.mkv"]
+    assert not list(d.glob("*.mkv"))
+    assert not (env / "hb-calls.log").exists()
+
+
+def test_dup_tv_episode_skips_and_parks(env):
+    """A staged TV episode whose library encode already exists skips: the
+    source parks under lossless/tv/, HandBrake never runs."""
+    vid = env / "vid"
+    mk(vid, "rip/tv/Dup Show (2003)/Dup Show (2003)_S01E01.mkv", "DUP-EP")
+    E = vid / "library" / "tv" / "Dup Show (2003)" / "Season 01"
+    E.mkdir(parents=True)
+    (E / "Dup Show (2003) - S01E01.mkv").write_text("EXISTING-EP")
+
+    rc = transcode.run_transcode(Args())
+
+    assert rc == 0
+    assert (E / "Dup Show (2003) - S01E01.mkv").read_text() == "EXISTING-EP"
+    assert (vid / "lossless" / "tv" / "Dup Show (2003)" /
+            "Dup Show (2003)_S01E01.mkv").read_text() == "DUP-EP"
+    assert not (vid / "rip" / "tv" / "Dup Show (2003)" / "Dup Show (2003)_S01E01.mkv").exists()
+    assert not (env / "hb-calls.log").exists()
+
+
+def test_dup_main_does_not_burn_session_cap(env):
+    """A dup main is not work: with --limit 1 the fresh main still encodes
+    this session (the dup skips without taking the cap slot)."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Dup (2001)/d1/Dup (2001)_t00.mkv", "DUP-MAIN")
+    mk(vid, "rip/movies/Fresh (2002)/d1/Fresh (2002)_t00.mkv", "FRESH-MAIN")
+    L = vid / "library" / "movies" / "Dup (2001)"
+    L.mkdir(parents=True)
+    (L / "Dup (2001).mkv").write_text("EXISTING-ENCODE")
+
+    rc = transcode.run_transcode(Args(limit=1))
+
+    assert rc == 0
+    assert (vid / "library" / "movies" / "Fresh (2002)" / "Fresh (2002).mkv").read_text() == "FRESH-MAIN"
+    assert (vid / "lossless" / "movies" / "Dup (2001)" / "Dup (2001)_t00.mkv").read_text() == "DUP-MAIN"
+    assert not (vid / "rip" / "movies" / "Fresh (2002)" / "d1" / "Fresh (2002)_t00.mkv").exists()
+
+
 def test_retry_success_ships_and_empties_issues(env):
     """Windows test_retry_success_ships_and_empties_issues: --retry scans
     issues/ as its input tree; success ships to the normal library

@@ -92,8 +92,12 @@ The validation.json `extras` key (`include`, `quality`) that decides a movie's e
 _Avoid_: extras flag, keep flag
 
 **Session cap**:
-One `skive transcode` run by default encodes every staged main feature — unlimited is the default (`-n N` takes a deliberate slice; the rest stays in staging, deferred loudly with a count). Stated once with a deliberately vague estimate (2–10 min per main on the transcode box) — never per title.
+One `skive transcode` run by default encodes every staged main feature — unlimited is the default (`-n N` takes a deliberate slice; the rest stays in staging, deferred loudly with a count). Stated once with a deliberately vague estimate (2–10 min per main on the transcode box) — never per title. A main already encoded in the library never counts against the cap.
 _Avoid_: batch size, throttle
+
+**Already-in-library skip**:
+Transcode never re-encodes what the library holds: a staged main (or TV episode) whose library file already exists is skipped before any copy or encode — the staged sources park under `lossless/<type>/<Name (Year)>/`, and a source lossless already holds is a duplicate, deleted. Unmarked extras ride the skip's disposal as they ride a shipped main; the skip logs one note per unit naming every file's fate (parked/deleted) and never burns a session-cap slot. Extras (rolled ` - Extra NN` names) and marked extras are not covered.
+_Avoid_: dup skip, re-rip skip
 
 **Junk label**:
 MakeMKV's throwaway staging name (`B1_t00.mkv`). Renamed away after the rip; transcode skips any file still wearing one.

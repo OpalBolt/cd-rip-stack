@@ -57,6 +57,12 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
   segment under the root decides movie vs TV; titles without a `(Year)`
   tail are skipped as junk (mid-rip or failed rename). A prefix that
   matches nothing is called out on stderr; if nothing matched at all, exit 1.
+- **Already in the library** — a staged main (or TV episode) whose library
+  file already exists never re-encodes: the sources park under
+  `lossless/<type>/<Name (Year)>/` (a source lossless already holds is a
+  duplicate — deleted), unmarked extras ride that disposal, and the skip
+  never burns a `-n` cap slot. One `skip` note per unit in the run log
+  names every file's fate.
 - **Work dir** — `~/.cache/skive` (disk, not tmpfs: the staged source plus
   the encode output need GBs); `-w` overrides. Every file is deleted after
   each item ships, fails, or the run is interrupted.

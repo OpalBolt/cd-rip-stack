@@ -7,6 +7,10 @@ main (the validation file's recorded main, biggest-bytes only as the legacy
 fallback), encodes with HandBrake at native resolution (zero subtitle
 tracks), and ships to library/movies/<Name>/<Name>.mkv with the validation
 document travelling beside the encode and the encode result appended to it.
+A main (or TV episode) whose library encode already exists never
+re-encodes: the staged sources park under lossless/<type>/<Name (Year)>
+(and a source lossless already holds is a duplicate — deleted), never
+burning a session-cap slot.
 The inline subtitle pass (skive.subs, the graduated windows module) OCRs the
 main's eng/dan tracks into sidecars beside the encode — forced tracks always
 kept, per-language full tracks settled by OCR'd cue count into `.sdh`; a
@@ -700,15 +704,15 @@ def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None =
     return rc
 
 
-def _units(items, main_num, rec_missing, extras_mark, limit):
+def _units(items, main_num, rec_missing, extras_mark, limit, lib_dup=frozenset()):
     """The encode units in items order (slice 03 prefetch lookahead): a main
     feature's .pN sibling set is ONE unit (they merge), every extra and every
     episode is its own single-item unit. Mirrors the run loop's own grouping
-    and skip rules (rec_missing mains, unmarked extras, session-cap deferrals
-    -- the first `limit` mains in iteration order encode, the rest defer). If
-    the pre-scan and the live loop ever disagree, the prefetched-but-unused
-    files are dropped, never crash, never leak -- that degradation is the
-    contract."""
+    and skip rules (rec_missing mains, already-in-library mains, unmarked
+    extras, session-cap deferrals -- the first `limit` mains in iteration
+    order encode, the rest defer). If the pre-scan and the live loop ever
+    disagree, the prefetched-but-unused files are dropped, never crash,
+    never leak -- that degradation is the contract."""
     units: list[list[Item]] = []
     taken: set[str] = set()
     mains_started = 0
@@ -720,6 +724,11 @@ def _units(items, main_num, rec_missing, extras_mark, limit):
             taken.add(i.path)
             continue
         if i.sfx == "t" and i.movie in rec_missing:
+            taken.add(i.path)
+            continue
+        # already encoded in the library: never a unit (never encoded, never
+        # prefetch-copied, never a session-cap slot) -- the run loop disposes
+        if i.sfx == "t" and not i.is_tv and i.movie in lib_dup:
             taken.add(i.path)
             continue
         if i.sfx == "t" and i.movie in main_num and main_num[i.movie][0] == i.num:
@@ -867,6 +876,21 @@ def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> bool:
         return False
     shutil.move(src, dest)
     return True
+
+
+def _dispose_dup(src: str, item: Item, lossless_root: str) -> str:
+    """Dispose a staged source whose library encode already exists: park it
+    under lossless/<type>/<Name (Year)> (the encode exists, so the lossless
+    original is the keeper); a lossless copy already there means the staged
+    one is a duplicate -- delete it. Returns 'parked' or 'deleted'."""
+    dest = os.path.join(lossless_root, "tv" if item.is_tv else "movies",
+                        item.movie, os.path.basename(src))
+    if os.path.exists(dest):
+        _rmf(src)
+        return "deleted"
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.move(src, dest)
+    return "parked"
 
 
 def _quarantine(src: str, item: Item, issues_root: str,
@@ -1325,12 +1349,23 @@ def run_transcode(args) -> int:
         else:
             rec_missing[movie] = rec
 
+    # already-encoded mains (CONTEXT.md: Already-in-library skip): the
+    # library copy IS this movie's result -- never re-encode, never a unit,
+    # never a session-cap slot. The staged sources park in lossless/ (a
+    # source lossless already holds is a duplicate: deleted).
+    lib_dup = {
+        movie for movie in main_num.keys() - rec_missing.keys()
+        if os.path.exists(os.path.join(
+            lib_dir, "movies", common.sanitize(movie),
+            common.sanitize(movie) + ".mkv"))
+    }
+
     # the very vague session estimate (CONTEXT.md: Session cap): ~2–10
     # min per main on the transcode box (VCN via vaapi), stated once,
     # never per title
     deferred = 0
     if args.limit:
-        n_staged = len(main_num.keys() - rec_missing)  # as _units: a missing recorded main never encodes
+        n_staged = len(main_num.keys() - rec_missing - lib_dup)  # as _units: dups never encode
         n_run = min(args.limit, n_staged)
         deferred = n_staged - n_run
 
@@ -1464,19 +1499,7 @@ def run_transcode(args) -> int:
             for s in siblings:
                 if _archive(s.path, s, lossless_root, keep):
                     parked += 1
-            # unmarked extras ride the main's disposal (CONTEXT.md:
-            # Extras marker): the marker that shipped with this
-            # movie decided they never encode
-            if not mark_main_include:
-                for x in items:
-                    if (x.is_tv or x.movie != i.movie
-                            or (x.sfx == "t" and x.num == i.num)
-                            or not os.path.exists(x.path)):
-                        continue
-                    if _archive(x.path, x, lossless_root, keep):
-                        parked += 1
-                    handled.add(x.path)
-                    ui.info(f"disposed unmarked extra with main: {x.name}")
+            _ride_dispose(i, mark_main_include, dup=False)
             return True, "", mb
         _fail_quarantine(log, siblings, issues_root, names, res.notes)
         failed = 1
@@ -1489,12 +1512,45 @@ def run_transcode(args) -> int:
             parked += 1
         return True, "", mb
 
+    def _ride_dispose(main_i: Item, mark_include: bool, dup: bool) -> None:
+        """Unmarked extras ride the main's disposal (CONTEXT.md: Extras
+        marker) — after a shipped encode and after the already-in-library
+        skip alike: the marker that shipped with this movie decided they
+        never encode."""
+        nonlocal parked
+        if mark_include:
+            return
+        for x in items:
+            if (x.is_tv or x.movie != main_i.movie
+                    or (x.sfx == "t" and x.num == main_i.num)
+                    or not os.path.exists(x.path)):
+                continue
+            if dup:
+                _dispose_dup(x.path, x, lossless_root)
+            elif _archive(x.path, x, lossless_root, keep):
+                parked += 1
+            handled.add(x.path)
+            ui.info(f"disposed unmarked extra with main: {x.name}")
+
+    def _skip_lib_dup(unit: list[Item], dest: str) -> None:
+        """A unit whose library encode already exists (dest) never
+        re-encodes: every staged source parks in lossless/, and a source
+        lossless already holds is a duplicate — deleted. One note carries
+        every file's fate (the run log is the audit trail for deletions);
+        the caller closes the frame (TV) or never opened one (movies)."""
+        fates = []
+        for s in unit:
+            fates.append(f"{s.name} {_dispose_dup(s.path, s, lossless_root)}")
+            handled.add(s.path)
+        _pf_drop((os.path.join(tmp_dir, s.name) for s in unit), log)
+        log.note("skip", f"already in library: {dest} -- {', '.join(fates)}")
+
     # Prefetch lookahead (slice 03): while one unit encodes, the next unit's
     # source files pull into the workdir in one background thread. The main
     # thread owns RipLog (no lock) — only it logs; pf_files registers every
     # prefetch artifact at thread START so the interrupt path drops partial
     # and complete-but-unconsumed copies alike (CONTEXT.md: Interrupt).
-    units = _units(items, main_num, rec_missing, extras_mark, args.limit)
+    units = _units(items, main_num, rec_missing, extras_mark, args.limit, lib_dup)
     # the item counter counts these session units; the queue adds the deferred
     scope = (f"{len(units)} of {len(units) + deferred} this session (cap {args.limit}, "
              f"~{n_run * 2}–{n_run * 10} min) \u00b7 {deferred} deferred" if deferred
@@ -1723,6 +1779,18 @@ def run_transcode(args) -> int:
                     ext = f".p{i.part}" if i.part >= 0 else ""
                     dest_dir = os.path.join(show_dir, "extras")
                     dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
+                if episode and os.path.exists(dest):
+                    # already encoded in the library: never re-encode; the
+                    # staged source parks in lossless/ (deletes when
+                    # lossless already holds it). The frame opened for this
+                    # unit closes with the skip as its result.
+                    _skip_lib_dup([i], dest)
+                    current = None
+                    v = ui.view()
+                    if v is not None and v.tty:
+                        ui.item_end("ok", "skip (already in library)",
+                                    _hms(int(time.monotonic() - item_t0)))
+                    continue
                 parts: list[str] = []
                 os.makedirs(dest_dir, exist_ok=True)
                 # the local copy is registered in `inflight` AS CREATED so an
@@ -1793,6 +1861,19 @@ def run_transcode(args) -> int:
             # -- main feature: merge its .pN parts (if any), encode as one
             # -- movie.
             if i.sfx == "t" and i.movie in main_num and main_num[i.movie][0] == i.num:
+                # already encoded in the library: never re-encode; the
+                # staged sources park in lossless/ (delete when lossless
+                # already holds them) and unmarked extras ride this disposal
+                # -- the skip never burns a session-cap slot
+                if i.movie in lib_dup:
+                    siblings = sorted(
+                        (s for s in items if s.movie == i.movie and s.sfx == "t" and s.num == i.num),
+                        key=lambda s: s.part,
+                    )
+                    _skip_lib_dup(siblings, os.path.join(lib_dir, "movies", safe, safe + ".mkv"))
+                    _ride_dispose(i, extras_mark.get(
+                        i.movie, {"include": False, "quality": "superfast"})["include"], dup=True)
+                    continue
                 # session cap (CONTEXT.md: Session cap): a workday run takes a
                 # predictable slice; the rest stays in staging for next run
                 if args.limit and mains_started >= args.limit:
