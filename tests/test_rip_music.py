@@ -761,6 +761,35 @@ def test_miss_rerun_command_quotes_flags_for_the_shell(tmp_path, capsys):
                                     "-D", "My Album", "-R", "<n>"]
 
 
+def test_miss_rerun_command_keeps_drive_and_drops_separator(capsys, monkeypatch):
+    """A re-run typed as the habitual `6 -d 2` plus the hint's `-- -R n`:
+    the leftover -- never reaches cyanrip (getopt would read -R n as an image
+    filename, and the release flag is silently ignored — 2026-11-13 raw
+    logs), and the hint itself keeps -d n, without which the re-run would
+    open disc 0, the other drive."""
+    sniffed = {}
+
+    def fake_sniff(disc=0):
+        sniffed["disc"] = disc
+        return ("CD", "", "/dev/sr1")
+
+    monkeypatch.setattr("skive.rip_music.sniff_disc", fake_sniff)
+    process = Mock(stdout=iter(MULTIPLE_RELEASES))
+    process.wait.return_value = 1
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("subprocess.Popen", return_value=process) as mock_popen:
+        with pytest.raises(SystemExit):
+            rip_music(FakeArgs(offset="6", cyanrip_flags=["-d", "2", "--", "-R", "1"]))
+
+    assert sniffed["disc"] == 2
+    assert mock_popen.call_args.args[0] == ["cyanrip", "-s", "6",
+                                             "-d", "/dev/sr1", "-R", "1"]
+    err = capsys.readouterr().err
+    assert "skive rip music -d 2 6 -- -R <n>" in err
+
+
 def test_repo_sweep_no_local_paths():
     """Test no ~/media/audio paths in skive/, config/, windows/ (not lib, not README)."""
     excluded = {".git", ".venv", "uv.lock", "tests/__pycache__", "skive/__pycache__"}

@@ -61,7 +61,10 @@ def rip_music(args) -> None:
             args.disc = int(nxt)
             i += 2
             continue
-        kept.append(tok)
+        # A `--` typed after a trailing -d n survives the REMAINDER; cyanrip's
+        # getopt stops there and reads what follows (-R n) as an image filename.
+        if tok != "--":
+            kept.append(tok)
         i += 1
     args.cyanrip_flags = kept
 
@@ -180,9 +183,18 @@ def rip_music(args) -> None:
         n_ok = sum(row[2] == "ok" for row in rows)
         n_failed = sum(row[2] == "failed" for row in rows)
         if miss:
+            # Keep the drive in the re-run: the claim above moved a trailing
+            # -d n out of cyanrip_flags, and disc 0 is the other drive. Drop a
+            # stale -R pair so the hint ends in exactly one -R <n>.
+            flags = list(args.cyanrip_flags or [])
+            if "-R" in flags:
+                r = flags.index("-R")
+                del flags[r:r + 2]
+            rerun = ["skive", "rip", "music"]
+            if args.disc:
+                rerun += ["-d", str(args.disc)]
             ui.musicbrainz_miss(miss, shlex.join(
-                ["skive", "rip", "music", args.offset, "--", *(args.cyanrip_flags or [])])
-                + " -R <n>")
+                rerun + [args.offset, "--", *flags]) + " -R <n>")
             ui.result_line("fail", _miss_result(miss),
                            elapsed=int((log._now() - log._start).total_seconds()))
         else:
