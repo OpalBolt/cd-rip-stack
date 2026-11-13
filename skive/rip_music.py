@@ -17,8 +17,10 @@ from skive.cyanrip_log import (
     album_header_field,
     album_header_name,
     disc_number_from_log,
+    parse_cue_starts,
     parse_cyanrip_log,
     parse_musicbrainz_miss,
+    total_time_s,
 )
 from skive.validation import (
     VALIDATION_FILENAME,
@@ -104,11 +106,24 @@ def rip_music(args) -> None:
 
             log.phase("rip")
 
+            # Stall guard (ADR 0018): arm per-track budgets from a TOC-only
+            # pre-pass. -Z is slow by design — disarmed. Any pre-pass failure
+            # leaves the guard unarmed and the run proceeds normally.
+            budgets, last_track = None, None
+            if "-Z" not in flags:
+                toc = _toc_durations(args.offset, flags, device)
+                if toc is None:
+                    ui.info("stall guard unarmed: TOC pre-pass failed", phase="rip")
+                else:
+                    durations, last_track = toc
+                    budgets = {n: max(600.0, 3.0 * d) for n, d in durations.items()}
+
             # Run cyanrip with tee-like capture. The stream watch fills `header`
             # with the album header pair mid-rip and names the run as soon as the
             # pair is complete.
             rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header,
-                                         drive=device)
+                                         drive=device, budgets=budgets,
+                                         last_track=last_track)
 
             # A MusicBrainz miss never prompts: the run fails and the box
             # (after the view closes) tells the operator what to fix.
@@ -175,10 +190,11 @@ def rip_music(args) -> None:
         else:
             # An interrupted rip keeps what the stream saw: finished tracks ok,
             # the one in flight interrupted. Nothing is deleted — cyanrip's
-            # files stay in staging.
+            # files stay in staging. A stalled rip builds the same rows: ok
+            # for finished tracks, stalled for the tripped one.
             rows = [(str(number), "?", result)
                     for number, result in sorted(header.get("_tracks", {}).items())
-                    ] if rc == 130 else []
+                    ] if (rc == 130 or header.get("_stalled")) else []
             interrupt_note = "nothing deleted \u2014 staged files left in place" if rc == 130 else None
         n_ok = sum(row[2] == "ok" for row in rows)
         n_failed = sum(row[2] == "failed" for row in rows)
@@ -323,8 +339,31 @@ _QR_ROW = re.compile(r"[ \u2580\u2584\u2588]*[\u2580\u2584\u2588][ \u2580\u2584\
 _RAW_PROGRESS_SECS = 5  # a progress line reaches the raw log at least this often
 
 
+def _toc_durations(offset: str, flags: list[str],
+                   drive: str | None) -> tuple[dict[int, float], tuple[int, float]] | None:
+    """Stall-guard TOC pre-pass: ``cyanrip -J`` with the same offset, drive
+    and release flags as the main run, CUE from stdout. Returns per-track
+    durations (track n = start(n+1) - start(n)) plus the last track's
+    (number, start) — its end is the disc ``Total time:`` the main run
+    prints. None on any failure: guard unarmed."""
+    cmd = ["cyanrip", "-J", "-s", offset] + (["-d", drive] if drive else []) + flags
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                check=False, timeout=300)
+        starts = parse_cue_starts(result.stdout)
+        if result.returncode != 0 or not starts:
+            return None
+    except Exception:  # any failure: OSError, timeout, tests' Popen mocks
+        return None
+    numbers = sorted(starts)
+    durations = {a: starts[b] - starts[a] for a, b in zip(numbers, numbers[1:])}
+    return durations, (numbers[-1], starts[numbers[-1]])
+
+
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
-                 header: dict | None = None, drive: str | None = None) -> tuple[int, str]:
+                 header: dict | None = None, drive: str | None = None,
+                 budgets: dict[int, float] | None = None,
+                 last_track: tuple[int, float] | None = None) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
     verbosity tiers (quiet by default, progress lines at -v, everything at
     -vv; a failed run replays what was hidden, story 7, except a MusicBrainz
@@ -335,7 +374,11 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     Album artist header pair as those lines print mid-rip, setting log.name
     the moment the pair is complete, and records each track's outcome under
     header["_tracks"] ({number: "ok" | "interrupted"}) for the interrupt
-    summary."""
+    summary.
+
+    With budgets (stall guard, ADR 0018), each track may not rip+encode
+    longer than its budget, wall clock from its first progress line; a trip
+    kills the pass (SIGINT, grace, kill) and forces a nonzero rc."""
     cmd = ["cyanrip", "-s", offset] + (["-d", drive] if drive else []) + flags
     process = subprocess.Popen(
         cmd,
@@ -360,6 +403,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     track_t0: dict[int, float] = {}  # first progress line per track
     track_took: dict[int, str] = {}  # rip time per completed track; absent with no progress seen
     outcomes = header.setdefault("_tracks", {}) if header is not None else {}
+    tripped: int | None = None  # the stalled track that killed this pass
 
     def emit_opener() -> None:
         """The run opener, once, from whatever header has streamed (an album
@@ -442,6 +486,12 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         track_total = int(stripped.split(":", 1)[1].strip())
                     except ValueError:
                         track_total = None
+                if budgets is not None and last_track is not None \
+                        and last_track[0] not in budgets:
+                    total = total_time_s(stripped)
+                    if total is not None:  # arms the last track's budget
+                        budgets[last_track[0]] = max(600.0,
+                                                     3.0 * (total - last_track[1]))
                 if stripped == "Tracks:":
                     emit_opener()  # before any track work begins
                 if progress:
@@ -458,6 +508,24 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         show_track(number, f"track {number}", pct)
                     elif on_tty:
                         view.progress(pct, eta)
+                    budget = budgets.get(number) if budgets else None
+                    if (budget is not None and tripped is None
+                            and time.monotonic() - track_t0[number] > budget):
+                        # Stall guard trip: bounded kill of a track that stops
+                        # being readable (ADR 0018). No timer thread — a grind
+                        # emits progress lines constantly, this inline check
+                        # suffices. cyanrip's own ETA is display-only.
+                        tripped = number
+                        ui.warn(f"track {number} stalled: over its "
+                                f"{ui._hms(int(budget))} budget, killing the pass",
+                                phase="rip")
+                        outcomes[number] = "stalled"
+                        if header is not None:
+                            header.setdefault("_stalled", []).append(number)
+                        close_finished()
+                        ui.item_end("fail", "stalled")
+                        kill_child_after_grace(process)
+                        break  # the killed child's stdout EOF ends the loop; break for fakes too
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
@@ -493,6 +561,9 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                 captured.append(line)
 
         rc = process.wait()
+        if tripped is not None and rc == 0:
+            # A SIGINT'd child may still exit cleanly; the trip fails the pass.
+            rc = 1
         emit_opener()
         if pending_track is not None and pending_track not in headed_tracks:
             show_track(pending_track, f"track {pending_track}", 100.0)

@@ -14,6 +14,7 @@ from skive.rip_music import (
     _cyanrip_run,
     _newest_flac_album,
     _metaflac_tag,
+    _toc_durations,
     _write_cd_record,
     require_online,
     rip_music,
@@ -1661,3 +1662,138 @@ def test_raw_log_throttles_progress_and_drops_unrecognised(monkeypatch):
     assert len(raw) <= 102
     assert raw[-1] == progress[-1].rstrip()  # 99.99%: same whole percent, still kept
     assert not any(line.startswith("Unrecognised") for line in raw)
+
+
+# -- Stall guard (ADR 0018) ----------------------------------------------------
+
+def test_toc_durations_parses_prepass_cue(tmp_path):
+    """The cyanrip -J pre-pass runs with the same offset/drive/flags and its
+    CUE yields per-track durations plus the last track's start."""
+    cue = ("FILE \"X.flac\" WAVE\n"
+           "  TRACK 01 AUDIO\n"
+           "    INDEX 01 00:00:00\n"
+           "  TRACK 02 AUDIO\n"
+           "    INDEX 01 03:41:12\n")
+    result = Mock(returncode=0, stdout=cue)
+    with patch("skive.rip_music.subprocess.run", return_value=result) as mock_run:
+        toc = _toc_durations("6", ["-R", "1"], "/dev/sr0")
+    assert mock_run.call_args.args[0] == ["cyanrip", "-J", "-s", "6",
+                                          "-d", "/dev/sr0", "-R", "1"]
+    durations, last = toc
+    assert durations == {1: 221 + 12 / 75}
+    assert last == (2, 221 + 12 / 75)
+
+
+def test_toc_durations_none_on_any_failure(tmp_path):
+    """Nonzero rc, unparseable output or a spawn error all leave the guard
+    unarmed (None)."""
+    with patch("skive.rip_music.subprocess.run",
+               return_value=Mock(returncode=1, stdout="")):
+        assert _toc_durations("6", [], None) is None
+    with patch("skive.rip_music.subprocess.run",
+               return_value=Mock(returncode=0, stdout="no cue here")):
+        assert _toc_durations("6", [], None) is None
+    with patch("skive.rip_music.subprocess.run", side_effect=FileNotFoundError):
+        assert _toc_durations("6", [], None) is None
+
+
+def test_cyanrip_run_budget_trips_and_kills(monkeypatch, capsys):
+    """A track past its tiny injected budget trips once: warn line, stalled
+    outcome, the kill plumbing fires, and the pass fails even though the
+    child exits 0."""
+    import time as time_mod
+
+    killed = []
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace",
+                        lambda proc: killed.append(proc))
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+
+    def gen():
+        yield "Ripping and encoding track 1, progress - 10%\n"
+        time_mod.sleep(0.06)
+        yield "Ripping and encoding track 1, progress - 20%\n"
+
+    process = Mock(stdout=gen())
+    process.wait.return_value = 0
+    header: dict = {}
+    with patch("subprocess.Popen", return_value=process):
+        rc, _ = _cyanrip_run("6", [], Path("/tmp/rip"), header=header,
+                             budgets={1: 0.05})
+
+    assert rc == 1  # the child exited 0; the trip fails the pass
+    assert header["_tracks"] == {1: "stalled"}
+    assert header["_stalled"] == [1]
+    assert killed == [process]
+    assert "track 1 stalled" in capsys.readouterr().err
+
+
+def test_cyanrip_run_total_time_arms_last_track_budget(monkeypatch, capsys):
+    """The last track's budget arms from the Total time header line (total −
+    last start, max(600, 3×)) moments before track 1 begins; the guard stays
+    silent while within budget."""
+    killed = []
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace",
+                        lambda proc: killed.append(proc))
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    process = Mock(stdout=iter([
+        "Total time:     00:10:00.000\n",
+        "Ripping and encoding track 2, progress - 10%\n",
+    ]))
+    process.wait.return_value = 0
+    header: dict = {}
+    budgets = {1: 600.0}
+    with patch("subprocess.Popen", return_value=process):
+        rc, _ = _cyanrip_run("6", [], Path("/tmp/rip"), header=header,
+                             budgets=budgets, last_track=(2, 240.0))
+
+    assert rc == 0
+    assert budgets[2] == 1080.0  # max(600, 3 × (600 − 240))
+    assert header["_tracks"] == {2: "interrupted"}
+    assert killed == []
+
+
+def test_cyanrip_run_without_budgets_never_trips(monkeypatch, capsys):
+    """No budgets (pre-pass failed / -Z): the guard is inert."""
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    process = Mock(stdout=iter(["Ripping track 1, progress - 99%\n"]))
+    process.wait.return_value = 0
+    with patch("subprocess.Popen", return_value=process):
+        rc, _ = _cyanrip_run("6", [], Path("/tmp/rip"))
+    assert rc == 0
+
+
+def test_rip_music_stalled_rows_in_summary(tmp_path, monkeypatch, capsys):
+    """A tripped pass fails the run; the summary shows one row per seen
+    track — ok for finished, stalled for the tripped one."""
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        header["_tracks"] = {1: "ok", 2: "stalled"}
+        header["_stalled"] = [2]
+        header["album"], header["album_artist"] = "Album", "Artist"
+        return 1, ""
+
+    with patch("skive.rip_music.ensure_mounted"), \
+         patch("skive.rip_music.require_online"), \
+         patch("skive.rip_music._toc_durations", return_value=None), \
+         patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "stalled" in out
+
+
+def test_rip_music_disarms_guard_with_z_flag(tmp_path, monkeypatch):
+    """-Z anywhere in the pass-through flags skips the TOC pre-pass."""
+    toc = Mock()
+    with patch("skive.rip_music.ensure_mounted"), \
+         patch("skive.rip_music.require_online"), \
+         patch("skive.rip_music._toc_durations", toc) as mock_toc, \
+         patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=["-Z"]))
+    assert exc.value.code == 0
+    assert mock_toc.call_count == 0

@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-from skive.cyanrip_log import (disc_number_from_log, parse_cyanrip_log,
-                               parse_musicbrainz_miss)
+from skive.cyanrip_log import (disc_number_from_log, parse_cue_starts,
+                               parse_cyanrip_log, parse_musicbrainz_miss,
+                               total_time_s)
 
 
 def test_disc_number_uses_header_then_cd_stem_then_one():
@@ -127,3 +128,25 @@ def test_musicbrainz_miss_stub_and_no_miss():
     assert (stub["case"], stub["discid"], stub["tracks"], stub["length"]) == (
         "stub", "XyZ-", 2, "2:00")
     assert parse_musicbrainz_miss("Read error\n") is None
+
+
+# -- Stall guard: CUE / Total time parsing (ADR 0018) --------------------------
+
+def test_parse_cue_starts_multi_track_fixture():
+    """Track starts from a real cyanrip CUE shape: INDEX 01 at 75 fps,
+    INDEX 00 pregap lines ignored; the last track has no end in the CUE."""
+    text = (Path(__file__).parent / "fixtures" / "cyanrip" / "toc.cue").read_text(
+        encoding="utf-8")
+    starts = parse_cue_starts(text)
+    assert starts == {1: 0.0, 2: 221 + 12 / 75, 3: 442 + 36 / 75}
+
+
+def test_parse_cue_starts_empty_without_audio_tracks():
+    assert parse_cue_starts("") == {}
+    assert parse_cue_starts("TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n") == {}
+
+
+def test_total_time_header_line():
+    assert total_time_s("Total time:     01:18:47.468") == 4727.468
+    assert total_time_s("Total time:     04:48.000") == 288.0
+    assert total_time_s("Disc tracks:    19") is None
