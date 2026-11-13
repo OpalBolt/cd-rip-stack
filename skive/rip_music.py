@@ -187,7 +187,9 @@ def rip_music(args) -> None:
             if rel_folder != "-":  # nothing ripped: no folder to name
                 log.note("rip", f"folder: {rel_folder}")
             if rip_ok:
-                summary_tracks = _write_cd_record(rip_dir, rel_folder, args.offset, log)
+                summary_tracks = _write_cd_record(rip_dir, rel_folder,
+                                                   args.offset, log,
+                                                   header.get("_stalled"))
             if holed:
                 # One note per stalled track: the pre-filled hand re-rip
                 # command (offset, drive, pass-through without any -l, then
@@ -296,7 +298,7 @@ def _summary_hms(secs: int) -> str:
 
 
 def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
-                     log: RipLog) -> list[dict]:
+                     log: RipLog, stalled: list[int] | None = None) -> list[dict]:
     """Write the CD provenance record without making parsing a failure gate.
     Returns the record's track list (empty when no album folder) for the run
     summary."""
@@ -338,6 +340,8 @@ def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
     except (TypeError, ValueError):
         parsed_offset = offset
     disc = {"rip_run": log.run, "offset": parsed_offset}
+    if stalled:
+        disc["stalled"] = sorted(stalled)
     if parsed["tracks"]:
         disc["accuraterip"] = parsed["tracks"]
     tracks = _staged_tracks(folder, parsed["tracks"])

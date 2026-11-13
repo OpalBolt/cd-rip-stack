@@ -289,6 +289,38 @@ def test_cd_record_merges_newest_log_for_each_disc(tmp_path):
     assert doc["discs"]["2"]["offset"] == 20
 
 
+def test_cd_record_stalled_key_and_old_record_round_trip(tmp_path):
+    """A holed run's disc entry carries ``stalled`` with the skipped track
+    numbers; a clean run's entry has no key; a record written before the key
+    existed still loads and merges unchanged."""
+    import json
+
+    folder = tmp_path / "Album"
+    folder.mkdir()
+    (folder / "Album.log").write_text("Offset:         +10 samples\n")
+    (folder / "Album.cue").write_text("cue")
+    log = Mock()
+    log.run = "rip-1"
+
+    _write_cd_record(tmp_path, "Album", "10", log, stalled=[5])
+    doc = json.loads((folder / "validation.json").read_text())
+    assert doc["discs"]["1"]["stalled"] == [5]
+
+    _write_cd_record(tmp_path, "Album", "10", log)
+    doc = json.loads((folder / "validation.json").read_text())
+    assert "stalled" not in doc["discs"]["1"]
+
+    # A record written before the key existed loads and merges unchanged.
+    from skive.validation import (album_document, load_validation,
+                                  merge_album_document, write_validation)
+    old_disc = {"rip_run": "old", "offset": 10}
+    old_doc = album_document("cd", None, [], discs={"2": old_disc})
+    write_validation(folder / "validation.json", old_doc)
+    loaded = load_validation(folder / "validation.json")
+    merged = merge_album_document(loaded, doc)
+    assert merged["discs"]["2"] == {"rip_run": "old", "offset": 10}
+
+
 def test_rip_name_from_tags():
     """Test rip name from newest FLAC's ALBUM/ARTIST tags."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -878,6 +910,44 @@ def test_clean_rip_writes_cd_record_from_cyanrip_log(tmp_path):
     doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
     assert doc["source"] == "cd"
     assert doc["discs"]["1"]["offset"] == 123
+    assert doc["discs"]["1"]["accuraterip"][0]["status"] == "accurate"
+    assert "stalled" not in doc["discs"]["1"]  # a clean run carries no key
+
+
+def test_holed_run_records_stalled_tracks_in_disc_index(tmp_path, monkeypatch):
+    """A stall-then-clean fake run (8 of 9 tracks, say) writes the validation
+    file with the disc entry's ``stalled`` set to the skipped track numbers."""
+    import json
+
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    album = tmp_path / "rip" / "cd" / "Album"
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        album.mkdir(parents=True, exist_ok=True)
+        (album / "Album.log").write_text(
+            "Offset:         +123 samples\n"
+            "  Track 1\n"
+            "    Accurip v1:  1234 (accurately ripped, confidence 7)\n",
+            encoding="utf-8",
+        )
+        (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
+        header["_tracks"] = {1: "ok", 5: "stalled"}
+        header["_stalled"] = [5]
+        header["album"], header["album_artist"] = "Album", "Artist"
+        return 0, ""
+
+    args = FakeArgs(offset="123", cyanrip_flags=[])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
+            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+    assert exc.value.code == 1
+    doc = json.loads((album / "validation.json").read_text(encoding="utf-8"))
+    assert doc["discs"]["1"]["stalled"] == [5]
     assert doc["discs"]["1"]["accuraterip"][0]["status"] == "accurate"
 
 
