@@ -304,12 +304,12 @@ def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick,
                 continue  # a different film under this name — gate (b)'s case
             duplicates.append(folder)
     if duplicates:
-        ui.warn(f'"{display}" is already ripped:')
+        ui.warn(f'"{display}" might already be ripped:')
         for folder in duplicates:
             ui.warn(f"  {folder}")
-        if not _confirm("already ripped — continue? (y/N): "):
-            _refuse(log, f'"{display}" already ripped in '
-                         f"{len(duplicates)} folder(s) — nothing ripped")
+        if not _confirm("might already be ripped — continue? (y/N): "):
+            _refuse(log, f'"{display}" might already be ripped '
+                         f"in {len(duplicates)} folder(s) — nothing ripped")
     title_dir = videos_mnt / "rip" / "movies" / display
     recorded = _recorded_identity(title_dir) if title_dir.is_dir() else None
     if recorded and recorded[0] != pick.id:
@@ -342,11 +342,11 @@ def tv_season_gate(videos_mnt: Path, log: RipLog, display: str, season: int) -> 
         elif seasons:
             ui.info(f"already on disk: {state} {fmt_seasons(seasons)} — this disc is {label}")
     if clashing:
-        ui.warn(f'"{display}" {label} is already ripped:')
+        ui.warn(f'"{display}" {label} might already be ripped:')
         for folder in clashing:
             ui.warn(f"  {folder}")
-        if not _confirm("already ripped — continue? (y/N): "):
-            _refuse(log, f'"{display}" {label} already ripped — nothing ripped')
+        if not _confirm("might already be ripped — continue? (y/N): "):
+            _refuse(log, f'"{display}" {label} might already be ripped — nothing ripped')
 
 
 def interrupted_exit(log, stage_dirs: list[Path]) -> None:

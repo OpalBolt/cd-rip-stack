@@ -676,9 +676,9 @@ def test_duplicate_gate_bare_enter_refuses_before_staging(tmp_path, monkeypatch,
     assert not (existing / "d0").exists()
     rip_common.purge_junk.assert_not_called()
     gate = _gate_notes(log)
-    assert len(gate) == 1 and "already ripped" in gate[0][1]
+    assert len(gate) == 1 and "might already be ripped" in gate[0][1]
     captured = capsys.readouterr()
-    assert prompts == ["already ripped — continue? (y/N): "]  # default No
+    assert prompts == ["might already be ripped — continue? (y/N): "]  # default No
     assert str(existing) in captured.err  # the human sees where
 
 
@@ -730,7 +730,7 @@ def test_gate_refusal_lands_in_the_run_log(tmp_path, monkeypatch):
 
     gates = [line for line in _run_log_lines(tmp_path) if line["phase"] == "gate"]
     assert len(gates) == 1
-    assert "already ripped" in gates[0]["status"]
+    assert "might already be ripped" in gates[0]["status"]
     assert gates[0]["name"] == "Mamma Mia! (2008)"
 
 
@@ -775,7 +775,7 @@ def test_wrong_name_gate_silent_when_folder_records_the_same_id(tmp_path, monkey
 
     assert result.stage == folder / "d0"
     assert result.stage.is_dir()
-    assert prompts == ["already ripped — continue? (y/N): "]
+    assert prompts == ["might already be ripped — continue? (y/N): "]
 
 def test_duplicate_gate_name_match_catches_a_legacy_folder(tmp_path, monkeypatch, capsys):
     """A same-name folder with no validation.json trips the gate on name
@@ -790,7 +790,7 @@ def test_duplicate_gate_name_match_catches_a_legacy_folder(tmp_path, monkeypatch
         rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
 
     assert e.value.code == 1
-    assert prompts == ["already ripped — continue? (y/N): "]
+    assert prompts == ["might already be ripped — continue? (y/N): "]
     assert len(_gate_notes(log)) == 1
     assert str(existing) in capsys.readouterr().err
 
@@ -833,7 +833,7 @@ def test_tv_season_gate_exact_season_escalates_default_no(tmp_path, monkeypatch,
 
     assert e.value.code == 1
     assert log.note.call_args.args == (
-        "gate", '"Show (2020)" S01 already ripped — nothing ripped')
+        "gate", '"Show (2020)" S01 might already be ripped — nothing ripped')
     assert str(show) in capsys.readouterr().err
 
 
