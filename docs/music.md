@@ -21,7 +21,8 @@ is on [setup](setup.md). Without it skive prints usage and exits 2, drive
 untouched. Further arguments pass straight through to cyanrip; `-N` also
 skips skive's online gate, so an offline rip still runs. With two drives
 attached, `-d N` picks the drive — the same makemkv drive number `rip movie`
-and `rip tv` use, so the same `-d 1` means the same physical drive.
+and `rip tv` use, so the same `-d 1` means the same physical drive. It works
+before or after the offset (`skive rip music 6 -d 1` too).
 
 The share mounts on demand and cyanrip runs inside `/mnt/music/rip/cd/`,
 writing each album as final-named FLACs into its own `<album>/` subfolder.

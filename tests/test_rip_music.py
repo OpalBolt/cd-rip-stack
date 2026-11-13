@@ -99,6 +99,45 @@ def test_rip_music_resolves_disc_number_to_device(monkeypatch):
         assert mock_run.call_args.kwargs["drive"] == "/dev/sr1"
 
 
+def test_rip_music_claims_trailing_minus_d(monkeypatch):
+    """A `-d N` typed after the offset (REMAINDER passthrough) is claimed as
+    the drive number instead of reaching cyanrip, which would read the bare
+    number as an image filename (2026-11-13 raw logs)."""
+    sniffed = {}
+
+    def fake_sniff(disc=0):
+        sniffed["disc"] = disc
+        return ("CD", "", "/dev/sr1")
+
+    monkeypatch.setattr("skive.rip_music.sniff_disc", fake_sniff)
+    args = FakeArgs(offset="6", cyanrip_flags=["-d", "1"])
+
+    with patch("skive.rip_music.ensure_mounted"), \
+         patch("skive.rip_music.require_online"), \
+         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
+         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        try:
+            rip_music(args)
+        except SystemExit:
+            pass
+        assert sniffed["disc"] == 1
+        assert mock_run.call_args.args[1] == []          # -d 1 no longer passed through
+        assert mock_run.call_args.kwargs["drive"] == "/dev/sr1"
+
+    # a non-numeric -d value is cyanrip's own (device path) — untouched
+    args = FakeArgs(offset="6", cyanrip_flags=["-d", "/dev/sr0"], disc=1)
+    with patch("skive.rip_music.ensure_mounted"), \
+         patch("skive.rip_music.require_online"), \
+         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
+         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        try:
+            rip_music(args)
+        except SystemExit:
+            pass
+        assert sniffed["disc"] == 1
+        assert mock_run.call_args.args[1] == ["-d", "/dev/sr0"]
+
+
 def test_cyanrip_run_quiet_at_default(capsys, monkeypatch):
     """Level 0: cyanrip output is captured but not streamed on success."""
     monkeypatch.setattr(common, "VERBOSITY", 0)

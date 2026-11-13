@@ -46,6 +46,25 @@ def rip_music(args) -> None:
         ui.fail("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)")
         sys.exit(2)
 
+    # argparse.REMAINDER swallows a `-d N` typed after the offset into the
+    # cyanrip pass-through, where cyanrip reads the bare number as an image
+    # filename ("can't open nrg image file 1"). Claim numeric -d/--disc as
+    # our drive number before it reaches cyanrip; non-numeric values stay
+    # passthrough (cyanrip's own -d takes a device path).
+    flags = args.cyanrip_flags or []
+    kept: list[str] = []
+    i = 0
+    while i < len(flags):
+        tok = flags[i]
+        nxt = flags[i + 1] if i + 1 < len(flags) else None
+        if tok in ("-d", "--disc") and nxt is not None and nxt.isdigit():
+            args.disc = int(nxt)
+            i += 2
+            continue
+        kept.append(tok)
+        i += 1
+    args.cyanrip_flags = kept
+
     # Environment
     nfs_music = os.environ.get("NFS_MUSIC", "")
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
