@@ -923,7 +923,7 @@ def test_holed_run_records_stalled_tracks_in_disc_index(tmp_path, monkeypatch):
     album = tmp_path / "rip" / "cd" / "Album"
 
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         album.mkdir(parents=True, exist_ok=True)
         (album / "Album.log").write_text(
             "Offset:         +123 samples\n"
@@ -1737,22 +1737,25 @@ def test_raw_log_throttles_progress_and_drops_unrecognised(monkeypatch):
 
 # -- Stall guard (ADR 0018) ----------------------------------------------------
 
-def test_toc_durations_parses_prepass_cue(tmp_path):
-    """The cyanrip -J pre-pass runs with the same offset/drive/flags and its
-    CUE yields per-track durations plus the last track's start."""
-    cue = ("FILE \"X.flac\" WAVE\n"
-           "  TRACK 01 AUDIO\n"
-           "    INDEX 01 00:00:00\n"
-           "  TRACK 02 AUDIO\n"
-           "    INDEX 01 03:41:12\n")
-    result = Mock(returncode=0, stdout=cue)
+def test_toc_durations_parses_info_prepass(tmp_path):
+    """The cyanrip -I pre-pass runs with the same offset/drive/flags and its
+    Track n info blocks yield every track's duration, the last included."""
+    info = ("Total time:     00:11:15.120\n"
+            "Tracks:\n"
+            "Track 1 info:\n"
+            "  Preemphasis:   none detected\n\n"
+            "  Properties:\n"
+            "    Duration:    00:02:15.120\n"
+            "    Samples:     5966436\n"
+            "Track 2 info:\n"
+            "  Properties:\n"
+            "    Duration:    00:09:00.000\n")
+    result = Mock(returncode=0, stdout=info)
     with patch("skive.rip_music.subprocess.run", return_value=result) as mock_run:
-        toc = _toc_durations("6", ["-R", "1"], "/dev/sr0")
-    assert mock_run.call_args.args[0] == ["cyanrip", "-J", "-s", "6",
+        durations = _toc_durations("6", ["-R", "1"], "/dev/sr0")
+    assert mock_run.call_args.args[0] == ["cyanrip", "-I", "-s", "6",
                                           "-d", "/dev/sr0", "-R", "1"]
-    durations, last = toc
-    assert durations == {1: 221 + 12 / 75}
-    assert last == (2, 221 + 12 / 75)
+    assert durations == {1: 135.12, 2: 540.0}
 
 
 def test_toc_durations_none_on_any_failure(tmp_path):
@@ -1762,7 +1765,7 @@ def test_toc_durations_none_on_any_failure(tmp_path):
                return_value=Mock(returncode=1, stdout="")):
         assert _toc_durations("6", [], None) is None
     with patch("skive.rip_music.subprocess.run",
-               return_value=Mock(returncode=0, stdout="no cue here")):
+               return_value=Mock(returncode=0, stdout="no track info here")):
         assert _toc_durations("6", [], None) is None
     with patch("skive.rip_music.subprocess.run", side_effect=FileNotFoundError):
         assert _toc_durations("6", [], None) is None
@@ -1825,31 +1828,6 @@ def test_cyanrip_run_footer_shows_stall_countdown_and_count(monkeypatch):
     assert "stall guard" not in view._bg  # the pass's end clears the lane
 
 
-def test_cyanrip_run_total_time_arms_last_track_budget(monkeypatch, capsys):
-    """The last track's budget arms from the Total time header line (total −
-    last start, max(600, 3×)) moments before track 1 begins; the guard stays
-    silent while within budget."""
-    killed = []
-    monkeypatch.setattr("skive.rip_music.kill_child_after_grace",
-                        lambda proc: killed.append(proc))
-    monkeypatch.setattr(common, "VERBOSITY", 0)
-    process = Mock(stdout=iter([
-        "Total time:     00:10:00.000\n",
-        "Ripping and encoding track 2, progress - 10%\n",
-    ]))
-    process.wait.return_value = 0
-    header: dict = {}
-    budgets = {1: 600.0}
-    with patch("subprocess.Popen", return_value=process):
-        rc, _ = _cyanrip_run("6", [], Path("/tmp/rip"), header=header,
-                             budgets=budgets, last_track=(2, 240.0))
-
-    assert rc == 0
-    assert budgets[2] == 1080.0  # max(600, 3 × (600 − 240))
-    assert header["_tracks"] == {2: "interrupted"}
-    assert killed == []
-
-
 def test_cyanrip_run_without_budgets_never_trips(monkeypatch, capsys):
     """No budgets (pre-pass failed / -Z): the guard is inert."""
     monkeypatch.setattr(common, "VERBOSITY", 0)
@@ -1864,7 +1842,7 @@ def test_rip_music_stalled_rows_in_summary(tmp_path, monkeypatch, capsys):
     """A tripped pass fails the run; the summary shows one row per seen
     track — ok for finished, stalled for the tripped one."""
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         header["_tracks"] = {1: "ok", 2: "stalled"}
         header["_stalled"] = [2]
         header["album"], header["album_artist"] = "Album", "Artist"
@@ -1908,7 +1886,7 @@ def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypa
     outcomes_seen = []
 
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         calls.append(list(flags))
         header.setdefault("_tracks", {})[1] = "ok"
         if len(calls) == 1:
@@ -1955,7 +1933,7 @@ def test_rip_music_three_stalls_hit_cap(tmp_path, monkeypatch, capsys):
     calls = []
 
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         calls.append(list(flags))
         stalled = header.setdefault("_stalled", [])
         number = len(stalled) + 1
@@ -1989,7 +1967,7 @@ def test_rip_music_continuation_own_failure_fails_run(tmp_path, monkeypatch, cap
     calls = []
 
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         calls.append(list(flags))
         if len(calls) == 1:
             header["_disc_tracks"] = 2
@@ -2055,7 +2033,7 @@ def test_rip_music_continuation_intersects_operator_l(tmp_path, monkeypatch):
     calls = []
 
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         calls.append(list(flags))
         if len(calls) == 1:
             header["_disc_tracks"] = 4
@@ -2089,7 +2067,7 @@ def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
     calls = []
 
     def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None, last_track=None):
+                 budgets=None):
         calls.append(list(flags))
         stalled = header.setdefault("_stalled", [])
         number = len(stalled) + 1

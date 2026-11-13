@@ -17,10 +17,9 @@ from skive.cyanrip_log import (
     album_header_field,
     album_header_name,
     disc_number_from_log,
-    parse_cue_starts,
     parse_cyanrip_log,
     parse_musicbrainz_miss,
-    total_time_s,
+    parse_track_durations,
 )
 from skive.validation import (
     VALIDATION_FILENAME,
@@ -110,13 +109,12 @@ def rip_music(args) -> None:
             # Stall guard (ADR 0018): arm per-track budgets from a TOC-only
             # pre-pass. -Z is slow by design — disarmed. Any pre-pass failure
             # leaves the guard unarmed and the run proceeds normally.
-            budgets, last_track = None, None
+            budgets = None
             if "-Z" not in flags:
-                toc = _toc_durations(args.offset, flags, device)
-                if toc is None:
+                durations = _toc_durations(args.offset, flags, device)
+                if durations is None:
                     ui.info("stall guard unarmed: TOC pre-pass failed", phase="rip")
                 else:
-                    durations, last_track = toc
                     budgets = {n: max(600.0, 3.0 * d) for n, d in durations.items()}
 
             # Run cyanrip with tee-like capture. The stream watch fills `header`
@@ -131,8 +129,7 @@ def rip_music(args) -> None:
                 stalled_before = set(header.get("_stalled", []))
                 pass_t0 = time.time()
                 rc, cap_text = _cyanrip_run(args.offset, pass_flags, rip_dir, log,
-                                             header, drive=device, budgets=budgets,
-                                             last_track=last_track)
+                                             header, drive=device, budgets=budgets)
                 stalled = header.get("_stalled", [])
                 continuation = None
                 if rc != 0 and set(stalled) > stalled_before:
@@ -403,24 +400,21 @@ STALL_CAP = 3  # stalled tracks per run before the stall guard stops continuing 
 
 
 def _toc_durations(offset: str, flags: list[str],
-                   drive: str | None) -> tuple[dict[int, float], tuple[int, float]] | None:
-    """Stall-guard TOC pre-pass: ``cyanrip -J`` with the same offset, drive
-    and release flags as the main run, CUE from stdout. Returns per-track
-    durations (track n = start(n+1) - start(n)) plus the last track's
-    (number, start) — its end is the disc ``Total time:`` the main run
-    prints. None on any failure: guard unarmed."""
-    cmd = ["cyanrip", "-J", "-s", offset] + (["-d", drive] if drive else []) + flags
+                   drive: str | None) -> dict[int, float] | None:
+    """Stall-guard TOC pre-pass: ``cyanrip -I`` (info only, no audio read)
+    with the same offset, drive and release flags as the main run. Returns
+    per-track durations from its ``Track n info:`` blocks. None on any
+    failure: guard unarmed."""
+    cmd = ["cyanrip", "-I", "-s", offset] + (["-d", drive] if drive else []) + flags
     try:
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 check=False, timeout=300)
-        starts = parse_cue_starts(result.stdout)
-        if result.returncode != 0 or not starts:
+        durations = parse_track_durations(result.stdout)
+        if result.returncode != 0 or not durations:
             return None
     except Exception:  # any failure: OSError, timeout, tests' Popen mocks
         return None
-    numbers = sorted(starts)
-    durations = {a: starts[b] - starts[a] for a, b in zip(numbers, numbers[1:])}
-    return durations, (numbers[-1], starts[numbers[-1]])
+    return durations
 
 
 def _operator_l_tracks(flags: list[str]) -> set[int] | None:
@@ -475,8 +469,7 @@ def _purge_pass_stubs(rip_dir: Path, since: float) -> None:
 
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                  header: dict | None = None, drive: str | None = None,
-                 budgets: dict[int, float] | None = None,
-                 last_track: tuple[int, float] | None = None) -> tuple[int, str]:
+                 budgets: dict[int, float] | None = None) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
     verbosity tiers (quiet by default, progress lines at -v, everything at
     -vv; a failed run replays what was hidden, story 7, except a MusicBrainz
@@ -601,12 +594,6 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         track_total = None
                     if header is not None and track_total is not None:
                         header["_disc_tracks"] = track_total
-                if budgets is not None and last_track is not None \
-                        and last_track[0] not in budgets:
-                    total = total_time_s(stripped)
-                    if total is not None:  # arms the last track's budget
-                        budgets[last_track[0]] = max(600.0,
-                                                     3.0 * (total - last_track[1]))
                 if stripped == "Tracks:":
                     emit_opener()  # before any track work begins
                 if progress:

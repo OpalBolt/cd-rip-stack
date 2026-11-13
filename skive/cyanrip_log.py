@@ -18,13 +18,6 @@ _AR = re.compile(r"^\s*Accurip\s+(v1|v2|450):\s*(.*)$", re.IGNORECASE)
 _DURATION = re.compile(r"^\s*Duration:\s*(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)\s*$",
                        re.IGNORECASE)
 _CRC32 = re.compile(r"^\s*EAC CRC32:\s*([0-9A-F]{8})\s*$", re.IGNORECASE)
-# TOC pre-pass CUE (cyanrip -J): audio tracks and their INDEX 01 starts
-# (75 frames/s absolute); INDEX 00 pregap lines are ignored.
-_CUE_TRACK = re.compile(r"^\s*TRACK\s+(\d+)\s+AUDIO\s*$", re.IGNORECASE)
-_CUE_INDEX01 = re.compile(r"^\s*INDEX\s+01\s+(\d+):(\d{2}):(\d{2})\s*$", re.IGNORECASE)
-# Main-run header: "Total time:     01:18:47.468" (optional hour field).
-_TOTAL_TIME = re.compile(r"^Total time:\s*(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)\s*$",
-                         re.IGNORECASE)
 _DETAIL = re.compile(r"\((.*?)\)")
 _CONFIDENCE = re.compile(r"confidence\s+(\d+)", re.IGNORECASE)
 
@@ -142,35 +135,24 @@ def parse_musicbrainz_miss(text: str) -> dict | None:
             "length": length, "candidates": candidates}
 
 
-def parse_cue_starts(text: str) -> dict[int, float]:
-    """Per-track start seconds from a cyanrip CUE sheet (the ``cyanrip -J``
-    TOC pre-pass prints it to stdout): ``TRACK n AUDIO`` + ``INDEX 01
-    mm:ss:ff`` (75 frames/s, absolute from 00:00:00). Pregap INDEX 00 lines
-    are ignored; tolerant like the rest of this module — empty when no audio
-    track has an INDEX 01."""
-    starts: dict[int, float] = {}
+def parse_track_durations(text: str) -> dict[int, float]:
+    """Per-track audio seconds from ``cyanrip -I`` output (the stall-guard
+    pre-pass): each ``Track n info:`` block carries a ``Duration:`` line,
+    from the TOC. Data tracks have none and are absent; empty when nothing
+    parses."""
+    durations: dict[int, float] = {}
     number = None
     for line in (text or "").splitlines():
-        track_match = _CUE_TRACK.match(line)
+        track_match = _TRACK.match(line)
         if track_match:
             number = int(track_match.group(1))
             continue
-        index_match = _CUE_INDEX01.match(line)
-        if index_match and number is not None:
-            minutes, seconds, frames = index_match.groups()
-            starts[number] = int(minutes) * 60 + int(seconds) + int(frames) / 75.0
+        duration_match = _DURATION.match(line)
+        if duration_match and number is not None:
+            hours, minutes, seconds = duration_match.groups()
+            durations[number] = int(hours or 0) * 3600 + int(minutes) * 60 + float(seconds)
             number = None
-    return starts
-
-
-def total_time_s(text: str) -> float | None:
-    """Disc total seconds from a ``Total time: hh:mm:ss.mmm`` header line
-    (the last track's end, absent from the CUE), None when absent."""
-    match = _TOTAL_TIME.match(text or "")
-    if not match:
-        return None
-    hours, minutes, seconds = match.groups()
-    return int(hours or 0) * 3600 + int(minutes) * 60 + float(seconds)
+    return durations
 
 
 def parse_cyanrip_log(text: str) -> dict:

@@ -2,9 +2,8 @@
 
 from pathlib import Path
 
-from skive.cyanrip_log import (disc_number_from_log, parse_cue_starts,
-                               parse_cyanrip_log, parse_musicbrainz_miss,
-                               total_time_s)
+from skive.cyanrip_log import (disc_number_from_log, parse_cyanrip_log,
+                               parse_musicbrainz_miss, parse_track_durations)
 
 
 def test_disc_number_uses_header_then_cd_stem_then_one():
@@ -130,23 +129,19 @@ def test_musicbrainz_miss_stub_and_no_miss():
     assert parse_musicbrainz_miss("Read error\n") is None
 
 
-# -- Stall guard: CUE / Total time parsing (ADR 0018) --------------------------
+# -- Stall guard: cyanrip -I durations (ADR 0018) ----------------------------
 
-def test_parse_cue_starts_multi_track_fixture():
-    """Track starts from a real cyanrip CUE shape: INDEX 01 at 75 fps,
-    INDEX 00 pregap lines ignored; the last track has no end in the CUE."""
-    text = (Path(__file__).parent / "fixtures" / "cyanrip" / "toc-cue.txt").read_text(
-        encoding="utf-8")
-    starts = parse_cue_starts(text)
-    assert starts == {1: 0.0, 2: 221 + 12 / 75, 3: 442 + 36 / 75}
-
-
-def test_parse_cue_starts_empty_without_audio_tracks():
-    assert parse_cue_starts("") == {}
-    assert parse_cue_starts("TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n") == {}
-
-
-def test_total_time_header_line():
-    assert total_time_s("Total time:     01:18:47.468") == 4727.468
-    assert total_time_s("Total time:     04:48.000") == 288.0
-    assert total_time_s("Disc tracks:    19") is None
+def test_parse_track_durations_from_info_blocks():
+    """Each Track n block's Duration (hour field optional); header lines that
+    merely mention tracks and data tracks without a Duration are skipped."""
+    text = ("Disc tracks:    3\n"
+            "    33 frame pregap in track 1, unmerged\n"
+            "Tracks:\n"
+            "Track 1 info:\n"
+            "    Duration:    00:04:48.000\n"
+            "Track 2 info:\n"
+            "    Data bytes:  1234 (0.00 Mib)\n"
+            "Track 3 info:\n"
+            "    Duration:    01:02:03.500\n")
+    assert parse_track_durations(text) == {1: 288.0, 3: 3723.5}
+    assert parse_track_durations("") == {}
