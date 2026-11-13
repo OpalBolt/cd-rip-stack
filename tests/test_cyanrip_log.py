@@ -135,7 +135,7 @@ def test_musicbrainz_miss_stub_and_no_miss():
 def test_parse_cue_starts_multi_track_fixture():
     """Track starts from a real cyanrip CUE shape: INDEX 01 at 75 fps,
     INDEX 00 pregap lines ignored; the last track has no end in the CUE."""
-    text = (Path(__file__).parent / "fixtures" / "cyanrip" / "toc.cue").read_text(
+    text = (Path(__file__).parent / "fixtures" / "cyanrip" / "toc-cue.txt").read_text(
         encoding="utf-8")
     starts = parse_cue_starts(text)
     assert starts == {1: 0.0, 2: 221 + 12 / 75, 3: 442 + 36 / 75}
