@@ -1806,8 +1806,14 @@ def test_cyanrip_run_footer_shows_stall_countdown_and_count(monkeypatch):
     monkeypatch.setattr(common, "VERBOSITY", 0)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
+    seen = []
+
+    def gen():
+        yield "Ripping and encoding track 3, progress - 10%\n"
+        seen.append(view._bg.get("stall guard"))
+
     try:
-        process = Mock(stdout=iter(["Ripping and encoding track 3, progress - 10%\n"]))
+        process = Mock(stdout=gen())
         process.wait.return_value = 0
         with patch("subprocess.Popen", return_value=process):
             _cyanrip_run("6", [], Path("/tmp/rip"), header={"_stalled": [2]},
@@ -1815,8 +1821,8 @@ def test_cyanrip_run_footer_shows_stall_countdown_and_count(monkeypatch):
     finally:
         ui.clear_view()
 
-    assert view._step in ("stall guard 10m00s \u00b7 1/3 stalled",
-                          "stall guard 9m59s \u00b7 1/3 stalled")
+    assert seen[0] in ("10m00s left \u00b7 1/3 stalled", "9m59s left \u00b7 1/3 stalled")
+    assert "stall guard" not in view._bg  # the pass's end clears the lane
 
 
 def test_cyanrip_run_total_time_arms_last_track_budget(monkeypatch, capsys):

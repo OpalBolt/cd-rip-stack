@@ -648,8 +648,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         # silent cyanrip freezes it (a grind still emits lines).
                         left = budget - (time.monotonic() - track_t0[number])
                         n_stalled = len(set(header.get("_stalled", []))) if header else 0
-                        view.step(f"stall guard {ui._hms(max(int(left), 0))} "
-                                  f"\u00b7 {n_stalled}/{STALL_CAP} stalled")
+                        view.bg("stall guard", f"{ui._hms(max(int(left), 0))} left "
+                                f"\u00b7 {n_stalled}/{STALL_CAP} stalled")
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
@@ -675,6 +675,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         show_track(pending_track, f"track {pending_track}", 100.0)
                     pending_track = int(done.group(1))
                     outcomes[pending_track] = "ok"
+                    if on_tty:
+                        view.bg_clear("stall guard")
                     if pending_track in track_t0:
                         track_took[pending_track] = ui._hms(
                             int(time.monotonic() - track_t0[pending_track]))
@@ -699,6 +701,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
         kill_child_after_grace(process)
         raise
     finally:
+        if on_tty:
+            view.bg_clear("stall guard")
         if log is not None and raw_held is not None:
             log.raw("cyanrip", raw_held[1])
     # A MusicBrainz miss gets its own box (rip_music); no replay of the chatter.
