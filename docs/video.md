@@ -17,8 +17,10 @@ skive rip movie --tmdbid 680  # skip the search (tv:N for a show, or a URL)
 2. **Fast scan** — `lsdvd` on the device (DVD) or `ffprobe bluray:` (BD) reads
    titles as durations in seconds. Any fast-scan failure or two titles within
    ±1s (decoy playlists) escalates to the full MakeMKV scan (~1–3 min, real
-   title numbers). `-T` and `--extras` runs start on the full scan; a TV disc
-   whose titles sum into a play-all escalates too.
+   title numbers). `-T` and `--extras` runs start on the full scan, and so
+   does every default `rip movie` (selecting the main alone needs real title
+   numbers — ADR 0015); a TV disc whose titles sum into a play-all escalates
+   too.
 3. **TMDB** — TMDB must answer before anything is ripped. The disc's volume
    label prefills the search and the results table appears: pick a hit, `s`
    types a new query, an empty result re-prompts typed, `q` aborts; `--tmdbid`
@@ -48,23 +50,30 @@ TMDB runtime raise a loud main-pick prompt — Enter takes the default
 (biggest), a number picks, `q` quits, anything else re-asks. Any yellow ratio
 row escalates the confirm to a default-No `y/N`.
 
+The default run rips the main alone (ADR 0015): one info line names the rip
+set before the confirm, extras stay on disc, and with no candidate main at
+all (a shorts disc) the biggest title rips.
+
 ```text
 Rip with this map? [Enter] rip · q quit
 ›
 ```
 
 ```bash
+skive rip movie -i          # extras too: rip them and encode them (superfast)
 skive rip movie --extras   # a bonus disc: no main pick, extras numbering
 skive rip movie --part 1   # a split film; --part 2 on the other disc
 ```
 
 - **Main feature** — auto-picked when one title sits near the TMDB runtime;
-  stages as `_tNN.mkv`. Audio keeps the film's original language; subtitles
-  keep Danish when present, else English.
+  stages as `_tNN.mkv`, and it is the only title a default run rips. Audio
+  keeps the film's original language; subtitles keep Danish when present,
+  else English.
 - **Parts** — pick the same movie on each disc; halves stage as `_tNN.pN.mkv`;
   transcode merges the main feature's parts in order.
-- **Extras** — `--extras` stages `- Extra NN`; a second extras disc rolls past
-  the existing numbers.
+- **Extras** — never ripped by the default run (ADR 0015); `-i` rips them
+  with the main and encodes them, `--extras` stages `- Extra NN` on a bonus
+  disc; a second extras disc rolls past the existing numbers.
 
 `--part` is movie-only.
 

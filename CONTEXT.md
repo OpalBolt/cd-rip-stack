@@ -25,11 +25,11 @@ One numbered video blob the disc scan reports — lsdvd/ffprobe on the fast path
 _Avoid_: track, chapter
 
 **Fast scan**:
-The default disc read: `lsdvd` straight on the device (DVD — no mount, no sudo) or `ffprobe bluray:` (BD). Yields titles as durations in seconds, in ~seconds — no sizes, no MakeMKV numbers.
+The default disc read for TV (and a movie `-i` rip-all run): `lsdvd` straight on the device (DVD — no mount, no sudo) or `ffprobe bluray:` (BD). Yields titles as durations in seconds, in ~seconds — no sizes, no MakeMKV numbers. A default movie run skips it for the full scan (ADR 0015).
 _Avoid_: quick scan, pre-scan
 
 **Full scan**:
-The fallback `makemkvcon info` run, fired when the fast scan fails, finds two titles within ±1s (duplicates/decoy obfuscation), or a movie `-T` menu is requested. Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
+The fallback `makemkvcon info` run, fired when the fast scan fails, finds two titles within ±1s (duplicates/decoy obfuscation), or a movie `-T` menu is requested — and for every default movie rip (ADR 0015: the main-only selection needs MakeMKV title numbers). Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
 _Avoid_: deep scan, makemkv scan
 
 **Eligible title**:
@@ -84,11 +84,11 @@ One disc's share of a movie split across discs. Staged `.pN`; a main feature's p
 _Avoid_: side, disc file
 
 **Extras**:
-Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. An aired special is not an extra — it is a Season 0 episode.
+Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. A default movie run never rips them (ADR 0015) — they stage only from `-i`, `-E` or `-T` runs. An aired special is not an extra — it is a Season 0 episode.
 _Avoid_: bonus, featurette, special
 
 **Extras marker**:
-The validation.json `extras` key (`include`, `quality`) that decides a movie's extras at transcode. Unmarked (`include: false`) — the default — they never encode: the source is disposed with the main (deleted, or `-k` parks it). Marked (`rip movie -i`, or by hand after `scripts/backlog-mark.py`) they encode at `quality` — `superfast` (default) or `full` (the main's preset). `scripts/sync-marks.py` propagates the library copy's marker to rip and lossless.
+The validation.json `extras` key (`include`, `quality`) that decides a movie's extras at transcode. `rip movie -i` both rips the disc's extras and marks them (ADR 0015) — a default run rips no extras at all, so unmarked extras reach staging only from `-E`/`-T` runs and legacy rips. Unmarked (`include: false`) they never encode: the source is disposed with the main (deleted, or `-k` parks it). Marked, they encode at `quality` — `superfast` (default) or `full` (the main's preset); a hand edit after `scripts/backlog-mark.py` marks older rips. `scripts/sync-marks.py` propagates the library copy's marker to rip and lossless.
 _Avoid_: extras flag, keep flag
 
 **Session cap**:

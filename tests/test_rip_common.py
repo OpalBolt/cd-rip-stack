@@ -272,6 +272,42 @@ def test_preamble_device_from_drv_line_reaches_scanner(tmp_path, monkeypatch):
     assert result.device == "/dev/sr1"
 
 
+def test_movie_default_run_skips_fast_scan_takes_full_scan(tmp_path, monkeypatch):
+    """A default movie run never touches the fast scan, even when the
+    scanner works (ADR 0015): selecting the arbitrated main alone needs
+    MakeMKV's real title numbers, so the full scan runs."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    _mock_preamble_seams(monkeypatch)
+    fast = Mock(return_value=GK_DURATIONS)
+    monkeypatch.setattr(rip_common, "fast_scan_dvd", fast)
+    _mock_search(monkeypatch)
+
+    result = rip_common.rip_preamble(
+        "movie", "skive rip movie", SimpleNamespace(tmdbid=None, verified=False))
+
+    fast.assert_not_called()
+    rip_common.scan_disc.assert_called_once()
+    assert result.fast_scan is False
+
+
+def test_movie_i_run_keeps_the_fast_scan(tmp_path, monkeypatch):
+    """A movie -i run (rip-all — extras ride along as keepers) is the one
+    movie shape that still takes the fast path (ADR 0015)."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    _mock_preamble_seams(monkeypatch)
+    fast = Mock(return_value=GK_DURATIONS)
+    monkeypatch.setattr(rip_common, "fast_scan_dvd", fast)
+    _mock_search(monkeypatch)
+
+    result = rip_common.rip_preamble(
+        "movie", "skive rip movie",
+        SimpleNamespace(tmdbid=None, verified=False, include_extras=True))
+
+    fast.assert_called_once_with(0, "/dev/sr0")
+    rip_common.scan_disc.assert_not_called()
+    assert result.fast_scan is True
+
+
 def test_tv_dvd_fast_scan_failure_falls_back_to_full_scan(tmp_path, monkeypatch, capsys):
     """A RuntimeError from the fast scan warns once and runs the full scan."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
@@ -381,20 +417,23 @@ def test_tv_bd_fast_scan_failure_falls_back_to_full_scan(tmp_path, monkeypatch, 
 
 
 def _movie_args(**kw):
-    """Movie args shaped for the fast path: no -T, no --extras."""
+    """Movie args shaped for the fast path: no -T, no --extras, and
+    include_extras only when a test asks (a default movie run takes the full
+    scan, ADR 0015)."""
     fields = dict(tmdbid=None, verified=False, titles=None, extras=False)
     fields.update(kw)
     return SimpleNamespace(**fields)
 
 
 def test_movie_dvd_fast_scan_synthesizes_titles(tmp_path, monkeypatch):
-    """Movie + DVD + no flags: plain movie rips fast-scan like TV (issue 07)."""
+    """Movie -i + DVD: the rip-all run fast-scans like TV (ADR 0015 — a
+    default movie run no longer does; it selects the main on the full scan)."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
     monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=GK_DURATIONS))
     _mock_search(monkeypatch)
 
-    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
+    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args(include_extras=True))
 
     rip_common.fast_scan_dvd.assert_called_once_with(0, "/dev/sr0")
     rip_common.scan_disc.assert_not_called()
@@ -405,13 +444,13 @@ def test_movie_dvd_fast_scan_synthesizes_titles(tmp_path, monkeypatch):
 
 
 def test_movie_bd_fast_scan_uses_bluray_scanner(tmp_path, monkeypatch):
-    """Movie + pressed BD + no flags: the ffprobe listing fast-scans."""
+    """Movie -i + pressed BD: the ffprobe listing fast-scans."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch, media="BD-ROM")
     monkeypatch.setattr(rip_common, "fast_scan_bluray", Mock(return_value=GK_DURATIONS))
     _mock_search(monkeypatch)
 
-    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
+    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args(include_extras=True))
 
     rip_common.fast_scan_bluray.assert_called_once_with(0, "/dev/sr0")
     rip_common.fast_scan_dvd.assert_not_called()
@@ -465,8 +504,9 @@ def test_movie_extras_flag_never_fast_scan(tmp_path, monkeypatch):
 
 
 def test_movie_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, monkeypatch, capsys):
-    """±1s duplicate durations on a movie fast scan escalate to the full scan
-    — the shared escalation doubles as the BD decoy filter on the fast path."""
+    """±1s duplicate durations on a movie -i fast scan escalate to the full
+    scan — the shared escalation doubles as the BD decoy filter on the fast
+    path (a default movie run never fast-scans, ADR 0015)."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     log = _mock_preamble_seams(monkeypatch)
     ambiguous_durations = GK_DURATIONS + [3933]  # 3932 duplicate within ±1s
@@ -475,7 +515,7 @@ def test_movie_fast_scan_ambiguous_durations_escalate_to_full_scan(tmp_path, mon
     rip_common.scan_disc.return_value = ("DVD-ROM", "A MOVIE", full_titles)
     _mock_search(monkeypatch)
 
-    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
+    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args(include_extras=True))
 
     rip_common.scan_disc.assert_called_once()
     assert result.fast_scan is False

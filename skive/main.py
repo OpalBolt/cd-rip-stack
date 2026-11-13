@@ -69,8 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     rip_movie_parser.add_argument("-E", "--extras", action="store_true",
                                   help="rip extras instead of main titles")
     rip_movie_parser.add_argument("-i", "--include-extras", action="store_true",
-                                  help="mark this movie's extras as keepers: transcode encodes them "
-                                       "(superfast) instead of disposing them with the source")
+                                  help="rip the disc's extras too (default: only the main feature rips) "
+                                       "and mark them as keepers: transcode encodes them (superfast)")
     rip_movie_parser.add_argument("--tmdbid", metavar="ID|URL",
                                   help="TMDB movie ID or URL (skip prompt)")
     rip_movie_parser.add_argument("-V", "--verified", action="store_true",

@@ -96,20 +96,23 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     else:
         log.note("media", f"media={media}")
 
-    # Fast path (ADR 0002): movie/TV + pressed video disc + no -T/--extras
-    # gates on scanner durations in seconds — lsdvd straight on the device (DVD) or
+    # Fast path (ADR 0002): TV + pressed video disc + no -T/--extras gates on
+    # scanner durations in seconds — lsdvd straight on the device (DVD) or
     # `ffprobe bluray:` (device listing, DRM-free). Recordable BD already
     # exits at the gate above, so only pressed BD reaches the fast scan.
-    # Flagged runs (-T menu/spec, --extras) stay on the full scan. Scanner
-    # title numbers never match MakeMKV's, so TV joins staged files back by
-    # duration (rip_tv.rename_tv_fast); movies rip all and keep MakeMKV's own
-    # _tNN numbers (rename_staged is join-free).
+    # Flagged runs (-T menu/spec, --extras) stay on the full scan, and so do
+    # default movie runs (ADR 0015): ripping the arbitrated main alone needs
+    # MakeMKV's real title numbers, so only a movie -i (rip-all) joins TV on
+    # the fast path. Scanner title numbers never match MakeMKV's, so TV
+    # joins staged files back by duration (rip_tv.rename_tv_fast); movies rip
+    # all and keep MakeMKV's own _tNN numbers (rename_staged is join-free).
     fast_scan = False
     scan_durations: list[int] | None = None
     titles_full: list[TitleInfo] = []
     if (kind in ("tv", "movie") and media.startswith(("DVD", "BD"))
             and getattr(args, "titles", None) is None
-            and not getattr(args, "extras", False)):
+            and not getattr(args, "extras", False)
+            and (kind == "tv" or getattr(args, "include_extras", False))):
         scanner = fast_scan_dvd if media.startswith("DVD") else fast_scan_bluray
         try:
             scan_durations = scanner(disc, device)

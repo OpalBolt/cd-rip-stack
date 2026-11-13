@@ -16,7 +16,7 @@ from skive.makemkv import (
 from skive.rip_common import fast_scan_header, rip_preamble
 from skive.scan import TitleInfo, resolve_titles
 from skive.validation import (
-    MAIN_FLOOR_S, arbitrate_main, grade_main, main_candidates,
+    MAIN_FLOOR_S, arbitrate_main, biggest_title, grade_main, main_candidates,
     merge_movie_document, movie_document, movie_row, resolve_main,
     VALIDATION_FILENAME, load_validation, write_validation,
 )
@@ -249,7 +249,8 @@ def _ask_main(near: list[tuple[int, int, float]], default_number: int) -> int:
 
 def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
                     runtime_s: int | None,
-                    extras: bool = False) -> tuple[str | None, list[dict]]:
+                    extras: bool = False,
+                    main_only: bool = False) -> tuple[str | None, list[dict]]:
     """The pre-rip gate (map.md decision 3): table, main pick, confirm —
     everything the human sees before the drive spins.
 
@@ -257,7 +258,11 @@ def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
     candidate near the TMDB runtime wins automatically, several force the
     pick prompt (default biggest), none near — or an unknown runtime —
     falls back to biggest bytes silently. Every outcome lands in the run log
-    under phase "main". The confirm ends the gate: plain
+    under phase "main". A main-only run (the default movie run, ADR 0015)
+    must name a title to rip, so when no candidate main exists at all
+    (shorts, bonus-shaped discs) the biggest title becomes the main instead
+    of none, and one info line under the table names the rip set before the
+    confirm. The confirm ends the gate: plain
     `ok? (Enter=rip, q=quit)`, escalating to a default-No y/N whenever any
     row graded yellow (blank cells never escalate). q — or anything but an
     explicit y on the yellow escalation — quits with nothing ripped, before
@@ -270,14 +275,15 @@ def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
         titles: Every scanned TitleInfo (fast-scan and full scan alike)
         runtime_s: TMDB runtime in seconds, None when unknown
         extras: -E run — no ratio column, no main logic at all
+        main_only: default movie run — the chosen main is also the rip set
 
     Returns:
         (main, rows) for the validation record written after the rip:
-        main is the chosen main "t21", None when nothing was chosen (shorts,
-        bonus discs, -E runs — transcode keeps its biggest-bytes fallback);
-        rows are {"t", "dur_s", "ratio", "band"} per scanned title in title
-        order, ratio the exact quotient (2dp for the record is the writer's
-        call) and ratio/band None where never graded.
+        main is the chosen main "t21", None when nothing was chosen (shorts
+        on non-main-only runs, bonus discs, -E runs — transcode keeps its
+        biggest-bytes fallback); rows are {"t", "dur_s", "ratio", "band"} per
+        scanned title in title order, ratio the exact quotient (2dp for the
+        record is the writer's call) and ratio/band None where never graded.
     """
     ordered = sorted(titles, key=lambda t: t.number)
     triples = [(t.number, t.seconds, t.size) for t in ordered]
@@ -297,8 +303,17 @@ def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
                    "zero": "biggest bytes — nothing near the runtime",
                    "unknown": "biggest bytes — runtime unknown"}[arb.kind]
             log.note("main", f"main=t{main_number} {why}")
+        elif main_only and biggest_title(triples) is not None:
+            # ADR 0015: a main-only run must name a title to rip — with no
+            # candidate main at all (shorts, bonus-shaped discs) the biggest
+            # title rips alone, mirroring transcode's biggest-bytes fallback.
+            main_number = biggest_title(triples)[0]
+            log.note("main", f"main=t{main_number} biggest bytes — no candidate main on the disc")
         else:
             log.note("main", "main=none — no candidate main on the disc")
+
+    if main_only and main_number is not None:
+        ui.info(f"rip set: t{main_number} only — extras not ripped (-i to include them)")
 
     rows = []
     for number, secs, _size in triples:
@@ -363,13 +378,27 @@ def rip_movie(args) -> None:
         # after the answer.
         with view.suspend():
             chosen_main, graded_rows = pre_rip_confirm(
-                log, display, titles_full, pick.runtime_secs, extras=args.extras)
+                log, display, titles_full, pick.runtime_secs, extras=args.extras,
+                main_only=(not args.extras and args.titles is None
+                           and not args.include_extras))
 
         # Resolve any title menu after the interactive identity gate. The run
         # opener must wait until this final scope is known.
         if preamble.fast_scan:
             titles = None
             infos = titles_full
+        elif (not args.extras and args.titles is None
+              and not args.include_extras):
+            # Main-only rip (ADR 0015): the arbitrated main alone rips —
+            # extras stay on disc; -i (rip-all + keeper marker), -T and -E
+            # cover everything else. An empty scan names no main, so the run
+            # rips all exactly like the old default.
+            titles = [int(chosen_main[1:])] if chosen_main else None
+            if titles is None:
+                infos = titles_full
+            else:
+                infos = [t for t in titles_full if t.number in titles]
+                log.note("titles", f"rip set: t{titles[0]} (main only — extras not ripped)")
         else:
             with view.suspend():
                 titles = resolve_titles(args.titles, titles_full, preamble.media)

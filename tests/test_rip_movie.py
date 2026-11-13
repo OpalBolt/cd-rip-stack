@@ -380,14 +380,16 @@ def test_rip_movie_partial_rip_exits_1():
 FAST_DURATIONS = [7021, 599]  # main feature + a 10-minute short
 
 
-def test_rip_movie_fast_scan_rips_all_with_two_line_header(monkeypatch):
-    """Plain movie rip on the fast scan: rip all in one call (titles=None,
-    no resolve_titles dedupe), a two-line header (no 0.0 B / ? preview), and
-    rename_staged keeping MakeMKV's own _tNN numbers."""
+def test_rip_movie_i_run_fast_scan_rips_all_with_two_line_header(monkeypatch):
+    """A movie -i run on the fast scan (the only movie run that still takes
+    it — default runs select the main and need MakeMKV numbers, ADR 0015):
+    rip all in one call (titles=None, no resolve_titles dedupe), a two-line
+    header (no 0.0 B / ? preview), and rename_staged keeping MakeMKV's own
+    _tNN numbers."""
     from skive import rip_common
     monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=FAST_DURATIONS))
 
-    args = FakeArgs()
+    args = FakeArgs(include_extras=True)
     mock_pick = TMDBPick(
         title="Fast Movie",
         year="2021",
@@ -423,6 +425,36 @@ def test_rip_movie_fast_scan_rips_all_with_two_line_header(monkeypatch):
                                     f"  titles: {len(FAST_DURATIONS)} (fast scan — no size/audio preview)")
     mock_rename.assert_called_once()
     assert mock_rename.call_args[1]["suffix"] == "t"
+
+
+def test_rip_movie_default_run_skips_fast_scan_takes_full_scan(monkeypatch):
+    """A default movie run never touches the fast scan even when the scanner
+    works (ADR 0015): selecting the main alone needs MakeMKV's real title
+    numbers, so the full scan runs — and with no titles above the main floor
+    the biggest title becomes the rip set."""
+    from skive import rip_common
+    fast = Mock(return_value=[600, 900])
+    monkeypatch.setattr(rip_common, "fast_scan_dvd", fast)
+
+    titles = [TitleInfo(21, 6400, 8_000_000_000, "en", "", False),  # the main
+              TitleInfo(4, 600, 100_000_000, "en", "", False)]       # an extra
+    log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
+    monkeypatch.setattr(rip_common, "scan_disc",
+                        Mock(return_value=("DVD-ROM", "", titles)))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    fast.assert_not_called()
+    rip_common.scan_disc.assert_called_once()
+    rip.assert_called_once()
+    rip_args, rip_kwargs = rip.call_args
+    assert rip_args[0] == [21]  # the arbitrated main alone
+    assert [t.number for t in rip_kwargs["infos"]] == [21]
+    assert rip_kwargs["total"] == 2  # the table still shows every title
+    assert ("titles", "rip set: t21 (main only — extras not ripped)") in \
+        [tuple(c.args) for c in log.note.call_args_list]
 
 
 # -- Interrupt (Ctrl+C) mid-rip (CONTEXT.md: Interrupt) ------------------------
@@ -613,7 +645,9 @@ def test_pre_rip_several_candidates_default_taken_on_enter(monkeypatch):
 
 
 def test_pre_rip_several_candidates_explicit_pick(monkeypatch):
-    """A number at the pick prompt chooses that title as the main."""
+    """A number at the pick prompt chooses that title as the main — and as
+    the main-only rip set (ADR 0015): the other near-runtime title stays on
+    disc."""
     log, prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""))
 
     with pytest.raises(SystemExit) as e:
@@ -622,6 +656,7 @@ def test_pre_rip_several_candidates_explicit_pick(monkeypatch):
     assert e.value.code == 0
     assert ("main", "main=t21 picked by hand — 2 titles near the runtime") in _main_notes(log)
     rip.assert_called_once()
+    assert rip.call_args[0][0] == [21]
 
 
 def test_pre_rip_several_candidates_q_quits_before_any_rip(monkeypatch, capsys):
@@ -651,11 +686,14 @@ def test_pre_rip_sole_near_candidate_automatic_without_prompt(monkeypatch, capsy
     assert ("main", "main=t5 near the runtime — automatic") in _main_notes(log)
     assert "0.99" in capsys.readouterr().err  # the candidate's graded ratio cell
     rip.assert_called_once()
+    assert rip.call_args[0][0] == [5]  # the main alone (ADR 0015)
 
 
-def test_pre_rip_zero_candidates_silent_records_none(monkeypatch):
-    """Shorts only (nothing at/above the floor): no main logic surfaces, the
-    log records main=none, and the run rips after its confirm."""
+def test_pre_rip_zero_candidates_main_only_picks_biggest(monkeypatch, capsys):
+    """Shorts only (nothing at/above the floor) on a default run: the
+    biggest title becomes the main — a main-only run must name a title to
+    rip (ADR 0015) — one info line names the rip set, and the run rips that
+    title alone after its confirm."""
     titles = [TitleInfo(1, 600, 100_000_000, "en", "", False),
               TitleInfo(2, 900, 200_000_000, "en", "", False)]
     log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
@@ -665,8 +703,27 @@ def test_pre_rip_zero_candidates_silent_records_none(monkeypatch):
 
     assert e.value.code == 0
     assert prompt.ask.call_count == 1
+    assert _main_notes(log) == [("main", "main=t2 biggest bytes — no candidate main on the disc")]
+    assert "rip set: t2 only — extras not ripped (-i to include them)" in capsys.readouterr().err
+    rip.assert_called_once()
+    assert rip.call_args[0][0] == [2]
+
+
+def test_pre_rip_zero_candidates_i_run_records_none(monkeypatch):
+    """Shorts only on a -i run (rip-all): no main logic names a title, the
+    log records main=none — transcode keeps its biggest-bytes fallback."""
+    titles = [TitleInfo(1, 600, 100_000_000, "en", "", False),
+              TitleInfo(2, 900, 200_000_000, "en", "", False)]
+    log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs(include_extras=True))
+
+    assert e.value.code == 0
+    assert prompt.ask.call_count == 1
     assert _main_notes(log) == [("main", "main=none — no candidate main on the disc")]
     rip.assert_called_once()
+    assert rip.call_args[0][0] is None  # rip all
 
 
 def test_pre_rip_yellow_escalation_default_no_aborts(monkeypatch, capsys):
@@ -778,6 +835,27 @@ def test_pre_rip_confirm_returns_the_validation_seam(monkeypatch):
         {"t": 21, "dur_s": 6252, "ratio": 6252 / 6480, "band": "green"},
     ]
     log.note.assert_any_call("main", "main=t21 picked by hand — 2 titles near the runtime")
+
+
+def test_pre_rip_confirm_main_only_shorts_take_biggest(monkeypatch, capsys):
+    """The seam call with main_only=True and no candidate main (a shorts
+    disc): the biggest title comes back as the main so the caller can rip it
+    alone (ADR 0015), and the rip-set info line prints before the confirm."""
+    from skive import rip_movie as rm
+    prompt = Mock()
+    prompt.ask.return_value = ""  # confirm Enter
+    monkeypatch.setattr("skive.ui.ask", prompt.ask)
+    log = Mock()
+    titles = [TitleInfo(1, 600, 100_000_000, "en", "", False),
+              TitleInfo(2, 900, 200_000_000, "en", "", False)]
+
+    main, rows = rm.pre_rip_confirm(log, "Short Film (2015)", titles, 900,
+                                    main_only=True)
+
+    assert main == "t2"
+    assert ("main", "main=t2 biggest bytes — no candidate main on the disc") in \
+        [tuple(c.args) for c in log.note.call_args_list]
+    assert "rip set: t2 only — extras not ripped (-i to include them)" in capsys.readouterr().err
 
 
 def test_pre_rip_confirm_unknown_runtime_blanks_rows(monkeypatch):
@@ -993,7 +1071,8 @@ def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_pat
 
 
 def test_post_rip_fast_scan_main_is_duration_joined_not_the_index(monkeypatch, tmp_path, capsys):
-    """Fast scan: the table's main is a scanner index (t0) — the recorded
+    """Fast scan (a -i movie run — the movie shape that still fast-scans,
+    ADR 0015): the table's main is a scanner index (t0) — the recorded
     main is the real final _tNN joined by duration, never the index."""
     import json
     from skive import rip_common
@@ -1018,7 +1097,7 @@ def test_post_rip_fast_scan_main_is_duration_joined_not_the_index(monkeypatch, t
                         lambda pre, pex, main, rows, **k: real(pre, pex, main, rows, run=fake_run))
 
     with pytest.raises(SystemExit) as e:
-        rip_movie(FakeArgs())
+        rip_movie(FakeArgs(include_extras=True))
     assert e.value.code == 0
 
     doc = json.loads((title_dir / "validation.json").read_text(encoding="utf-8"))
