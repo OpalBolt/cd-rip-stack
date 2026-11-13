@@ -69,6 +69,7 @@ def env(tmp_path, monkeypatch):
     bin_dir.mkdir()
     hb_log = tmp_path / "hb-calls.log"
     seconv_log = tmp_path / "seconv-calls.log"
+    mkv_log = tmp_path / "mkv-calls.log"
 
     (bin_dir / "HandBrakeCLI").write_text(
         f"""#!/bin/sh
@@ -87,8 +88,19 @@ cat "$in" > "$out"
     )
     (bin_dir / "mkvmerge").write_text(
         f"""#!/bin/sh
+{{ printf 'MKV:'; printf ' %s' "$@"; echo; }} >> "{mkv_log}"
 [ "$1" = "-J" ] && {{ echo '{{"tracks": []}}'; exit 0; }}
 out="$2"; shift 2
+# alignment remux: BADMERGE fails it; STUCK ignores the order (the remux
+# changes nothing, the re-run guard still sees the mismatch); otherwise the
+# ORDER-B part comes out in part 1's ORDER-A shape
+if [ "$1" = "--track-order" ]; then
+  shift 2
+  if grep -q BADMERGE "$1" 2>/dev/null; then exit 2; fi
+  if grep -q STUCK "$1" 2>/dev/null; then cat "$1" > "$out"; exit 0; fi
+  sed 's/ORDER-B/ORDER-A/' "$1" > "$out"
+  exit 0
+fi
 : > "$out"
 for a in "$@"; do
   [ "$a" = "+" ] && continue
@@ -152,8 +164,14 @@ if [ "$sel" = "s" ]; then
   fi
   exit 0
 fi
-# guard signatures: all parts identical unless a part carries TRACKS-DIFFER
-if grep -q TRACKS-DIFFER "$in" 2>/dev/null; then
+# guard signatures: all parts identical unless a part carries TRACKS-DIFFER;
+# ORDER-A/ORDER-B are the same track set in different orders (the Two
+# Towers shape the alignment path remuxes)
+if grep -q ORDER-A "$in" 2>/dev/null; then
+  printf '%s\\n' '{"streams":[{"codec_type":"video","codec_name":"mpeg2video","tags":{"language":"und"}},{"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng"}},{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"eng"}},{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"dan"}}]}'
+elif grep -q ORDER-B "$in" 2>/dev/null; then
+  printf '%s\\n' '{"streams":[{"codec_type":"video","codec_name":"mpeg2video","tags":{"language":"und"}},{"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng"}},{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"dan"}},{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"eng"}}]}'
+elif grep -q TRACKS-DIFFER "$in" 2>/dev/null; then
   printf '%s\\n' '{"streams":[{"codec_type":"video","codec_name":"mpeg2video","tags":{"language":"und"}},{"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng"}}]}'
 else
   printf '%s\\n' '{"streams":[{"codec_type":"video","codec_name":"mpeg2video","tags":{"language":"und"}},{"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng"}},{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"eng"}}]}'
@@ -530,6 +548,76 @@ def test_guard_match_still_merges_and_passes_merged_file(env):
     sc = (env / "seconv-calls.log").read_text().strip().splitlines()
     assert len(sc) == 2 and all("merged.mkv" in l for l in sc)
     assert sorted(p.name for p in (vid / "rip" / "movies" / "Merge (2003)" / "d1").iterdir()) == []
+
+
+# -- same track set, different order: align by remux, then merge -----------
+
+def test_order_mismatch_same_set_aligns_and_merges(env, capsys):
+    """A part set whose tracks match but sit in a different order (the Two
+    Towers discs' eng/dan subtitles) never quarantines: each later part
+    remuxes (stream copy) into part 1's order — eng before dan, the spec
+    0:0,0:1,0:3,0:2 — the guard re-verifies the remuxed locals, and the
+    merge + encode ship normally with an align phase in the log."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "ORDER-A")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "ORDER-B")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    L = vid / "library" / "movies" / "Two (2001)"
+    assert (L / "Two (2001).mkv").read_text() == "ORDER-AORDER-A"  # p2 came out aligned
+    assert not (vid / "issues" / "movies" / "Two (2001)").exists()
+    mkv = (env / "mkv-calls.log").read_text()
+    assert "--track-order 0:0,0:1,0:3,0:2" in mkv  # dan last, part 1's order
+    log = " ".join(l["status"] for l in run_log(env))
+    assert "aligning parts by stream-copy remux" in log
+    assert any(l.get("phase") == "align" for l in run_log(env))
+    assert list((env / "work").iterdir()) == []  # aligned twin cleaned up too
+
+
+def test_align_remux_failure_leaves_sources(env, capsys):
+    """A failed alignment remux behaves like a failed merge: the sources
+    stay in staging for the next run, no quarantine, the item fails, the
+    batch continues."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "ORDER-A")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "ORDER-B BADMERGE")
+    mk(vid, "rip/movies/Next (2002)/d1/Next (2002)_t00.mkv", "NEXT")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    d = vid / "rip" / "movies" / "Two (2001)" / "d1"
+    assert sorted(p.name for p in d.iterdir()) == ["Two (2001)_t00.p1.mkv", "Two (2001)_t00.p2.mkv"]
+    assert not (vid / "issues" / "movies" / "Two (2001)").exists()
+    assert not (vid / "library" / "movies" / "Two (2001)" / "Two (2001).mkv").exists()
+    assert (vid / "library" / "movies" / "Next (2002)" / "Next (2002).mkv").read_text() == "NEXT"
+    assert "FAILED mkvmerge" in err
+
+
+def test_align_still_mismatched_quarantines(env, capsys):
+    """A remux that does not actually align (here: STUCK ignores the order)
+    fails the re-run guard and quarantines whole, exactly like a set that
+    never matched — never a silent wrong-order append."""
+    vid = env / "vid"
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "ORDER-A")
+    mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "ORDER-B STUCK")
+
+    rc = transcode.run_transcode(Args())
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    issues = vid / "issues" / "movies" / "Two (2001)"
+    assert sorted(p.name for p in issues.glob("*.mkv")) == \
+        ["Two (2001)_t00.p1.mkv", "Two (2001)_t00.p2.mkv"]
+    assert (issues / "rip.jsonl").exists()
+    assert not (vid / "library" / "movies" / "Two (2001)" / "Two (2001).mkv").exists()
+    assert "tracks still differ after alignment" in err
+    assert list((env / "work").iterdir()) == []  # local copies and twins dropped
+
 
 
 def test_mkvmerge_output_captured_and_replayed_on_failure(env, capsys):

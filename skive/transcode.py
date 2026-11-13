@@ -26,8 +26,12 @@ validation document copied into each Season folder beside the encodes; TV
 extras file under the show's extras/ with embedded subs kept, no pass.
 A split main merges into one encode when every part's stream signature
 matches (mkvmerge: the unsuffixed title first, then the .pN parts in order);
-a signature mismatch quarantines the parts whole for a human, and an
-mkvmerge failure leaves the sources in place — logged, batch continuing.
+parts holding the same track set in a different order (the Two Towers discs
+staged their eng/dan subtitles differently) align first by stream-copy
+remux into part 1's order, the guard re-running on the remuxed locals — a
+mismatched set, or one still mismatched after alignment, quarantines the
+parts whole for a human, and an mkvmerge failure leaves the sources in
+place — logged, batch continuing.
 Movie extras — bonus _t titles and ` - Extra NN` disc labels alike — keep
 every embedded track (no subtitle pass, no zero-subs trick) and file under
 the movie's extras/, the number rolled past taken names.
@@ -53,7 +57,7 @@ import tempfile
 import threading
 import time
 from datetime import timedelta
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from skive import common
@@ -256,6 +260,35 @@ def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
                 return (f"{p.name} stream {k} ({fmt(a)}) != "
                         f"{parts[0].name} stream {k} ({fmt(b)})")
     return ""
+
+
+def _align_orders(parts: list[Item], ffprobe_exe: str) -> list[list[int]] | None:
+    """Per-part track orders that align every part's streams with part 1's
+    (mkvmerge --track-order form: one 0-based source-index list per part,
+    part 1's None). None when the parts' signatures differ beyond order --
+    the same track set rearranged is mergeable after alignment, a genuinely
+    different set is not (the guard's quarantine case)."""
+    sigs = []
+    for p in parts:
+        sig = _stream_sig(p.path, ffprobe_exe)
+        if sig is None:
+            return None
+        sigs.append(sig)
+    first = sigs[0]
+    orders: list[list[int] | None] = [None]
+    for sig in sigs[1:]:
+        if sorted(sig) != sorted(first):
+            return None
+        pool = list(range(len(sig)))
+        order = []
+        for want in first:
+            j = next((k for k in pool if sig[k] == want), None)
+            if j is None:
+                return None
+            pool.remove(j)
+            order.append(j)
+        orders.append(order)
+    return orders
 
 
 def _scan(input_dir: str, want: list[str],
@@ -671,16 +704,12 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     return True
 
 
-def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None = None) -> int:
-    """Concatenate a split main's parts into dst with mkvmerge ("+"-joined).
-    Every mkvmerge output line is written verbatim to the run's raw log (log.raw),
-    the same tee discipline as _encode, while the console sees everything at -vv,
-    "Error:" lines at -v, nothing at 0; anything the level hid is replayed
-    verbatim when the merge fails (rc 2+ -- rc 1 is a warning, the merged file
-    is still usable, so no replay)."""
-    cmd = [mkv_exe, "-o", dst, parts[0]]
-    for p in parts[1:]:
-        cmd += ["+", p]
+def _mkvtool(cmd: list[str], log: common.RipLog | None = None) -> int:
+    """Run one mkvmerge command with the merge discipline: every output
+    line verbatim to the run's raw log, the console sees everything at -vv,
+    \"Error:\" lines at -v, nothing at 0; anything the level hid is replayed
+    verbatim when the tool fails (rc 2+ -- rc 1 is a warning, the output is
+    still usable, so no replay)."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
     try:
@@ -694,14 +723,31 @@ def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None =
                 log.raw("mkvmerge", stripped)
         rc = proc.wait()
     except KeyboardInterrupt:
-        # CONTEXT.md Interrupt: stop the merge child; the partial merged file
-        # itself is dropped by run_transcode (sources only move on success).
+        # CONTEXT.md Interrupt: stop the child; any partial output file is
+        # dropped by run_transcode (sources only move on success).
         common.kill_child_after_grace(proc)
         raise
     if rc >= 2:
         for line in hidden:
             _tool("mkvmerge", line)
     return rc
+
+
+def _merge(dst: str, parts: list[str], mkv_exe: str, log: common.RipLog | None = None) -> int:
+    """Concatenate a split main's parts into dst with mkvmerge (\"+\"-joined)."""
+    cmd = [mkv_exe, "-o", dst, parts[0]]
+    for p in parts[1:]:
+        cmd += ["+", p]
+    return _mkvtool(cmd, log=log)
+
+
+def _remux(dst: str, src: str, mkv_exe: str, order: list[int],
+           log: common.RipLog | None = None) -> int:
+    """Stream-copy remux of src into dst with its tracks rearranged (one
+    --track-order spec over one input; 0-based source track IDs)."""
+    cmd = [mkv_exe, "-o", dst, "--track-order",
+           ",".join(f"0:{j}" for j in order), src]
+    return _mkvtool(cmd, log=log)
 
 
 def _units(items, main_num, rec_missing, extras_mark, limit, lib_dup=frozenset()):
@@ -1174,6 +1220,24 @@ def _merge_part(dst: str, local_parts: list[str], mkv_exe: str,
     return mrc
 
 
+def _remux_part(dst: str, src: str, mkv_exe: str, order: list[int],
+                log: common.RipLog, parts: list[str]) -> int:
+    """One part's alignment remux as the run's 'align' phase (0 ok, 1
+    warning, 2+ failure) — alignment is merge preparation, its seconds show
+    as the item's align cell."""
+    log.phase("align")
+    t0 = time.monotonic()
+    _phase_status("align", os.path.basename(src))
+    rc = _remux(dst, src, mkv_exe, order, log=log)
+    secs = max(int(time.monotonic() - t0), 1)
+    log.phase_end("ok" if rc <= 1 else f"FAIL({rc})")
+    _phase_line(ui.ok if rc <= 1 else ui.fail,
+                f"{os.path.basename(src)} aligned to part 1's order",
+                "align", secs)
+    parts.append(f"align {_hms(secs)}")
+    return rc
+
+
 def _ship_sidecars(side_dir: str, dest_dir: str, res) -> None:
     for name in res.sidecars:
         shutil.move(os.path.join(side_dir, name), os.path.join(dest_dir, name))
@@ -1545,6 +1609,54 @@ def run_transcode(args) -> int:
         _pf_drop((os.path.join(tmp_dir, s.name) for s in unit), log)
         log.note("skip", f"already in library: {dest} -- {', '.join(fates)}")
 
+    def _align_parts(i: Item, siblings: list[Item], align: list[list[int] | None],
+                     local_parts: list[str], log: common.RipLog,
+                     parts: list[str], cleanup: list[str]) -> list[str] | None:
+        """A part set whose track SET matches but whose order differs (the
+        Two Towers discs staged eng/dan subtitles in different orders)
+        aligns instead of quarantining: every later part remuxes (stream
+        copy, the 'align' phase) into part 1's order, and the guard re-runs
+        on the remuxed locals — proof the append pairs like with like.
+        Returns the aligned part list; None when the item already closed (a
+        remux failure leaves the sources in place like a merge failure; a
+        still-mismatched set quarantines like a guard hit)."""
+        nonlocal failed
+        out = [local_parts[0]]
+        for s, order, lb in zip(siblings[1:], align[1:], local_parts[1:]):
+            ab = os.path.join(tmp_dir, f"{s.name}.aligned.mkv")
+            inflight.append(ab)  # BEFORE the remux: a mid-remux interrupt drops the partial
+            rrc = _remux_part(ab, lb, mkv_exe, order, log, parts)
+            if rrc > 1:  # tool failure: sources stay in place, retry next run
+                log.note("align", f"FAILED mkvmerge ({rrc}): {s.name} -- sources left in place")
+                for p in cleanup + [ab]:
+                    _rmf(p)
+                for s2 in siblings:
+                    handled.add(s2.path)
+                failed = 1
+                _item_done(i.movie, parts, False, f"align (mkvmerge {rrc})")
+                return None
+            cleanup.append(ab)
+            _rmf(lb)  # the source copy is spent; its aligned twin stands in
+            cleanup.remove(lb)
+            out.append(ab)
+        still = _split_mismatch(
+            [siblings[0]] + [replace(s, path=p) for s, p in zip(siblings[1:], out[1:])],
+            ffprobe_exe)
+        if still:
+            msg = f"tracks still differ after alignment: {still} -- all parts to issues/movies"
+            log.note("guard", f"FAIL {msg}", echo=not view.tty)
+            if view.tty:
+                ui.fail(f"guard: {msg}")
+            for p in cleanup:
+                _rmf(p)
+            for s in siblings:
+                _quarantine(s.path, s, issues_root, log)
+                handled.add(s.path)
+            failed = 1
+            _item_done(i.movie, parts, False, "guard (tracks differ)")
+            return None
+        return out
+
     # Prefetch lookahead (slice 03): while one unit encodes, the next unit's
     # source files pull into the workdir in one background thread. The main
     # thread owns RipLog (no lock) — only it logs; pf_files registers every
@@ -1903,9 +2015,13 @@ def run_transcode(args) -> int:
                 cleanup: list[str] = []
                 if len(siblings) > 1:
                     # track guard: a mismatched part set never merges or
-                    # encodes -- all parts quarantine whole for a human
+                    # encodes -- all parts quarantine whole for a human.
+                    # Same set in a different order (the Two Towers discs:
+                    # eng/dan subtitles staged in different orders) aligns
+                    # by stream-copy remux instead (below, after the copies)
                     bad = _split_mismatch(siblings, ffprobe_exe)
-                    if bad:
+                    align = _align_orders(siblings, ffprobe_exe) if bad else None
+                    if bad and align is None:
                         msg = f"tracks differ: {bad} -- all parts to issues/movies"
                         log.note("guard", f"FAIL {msg}", echo=not view.tty)
                         if view.tty:  # a fail line, so the summary replays the guard failure
@@ -1920,6 +2036,10 @@ def run_transcode(args) -> int:
                         _item_done(i.movie, parts, False, "guard (tracks differ)")
                         continue
                     os.makedirs(dest_dir, exist_ok=True)
+                    if align is not None:
+                        log.note("guard",
+                                 "track order differs but the sets match -- "
+                                 "aligning parts by stream-copy remux")
                     local_parts = []
                     for s in siblings:
                         lb = os.path.join(tmp_dir, s.name)
@@ -1930,6 +2050,12 @@ def run_transcode(args) -> int:
                         local_parts.append(lb)
                         cleanup.append(lb)
                     _pf_start(unit_of[i.path], log)
+                    if align is not None:
+                        aligned = _align_parts(i, siblings, align, local_parts,
+                                               log, parts, cleanup)
+                        if aligned is None:
+                            continue
+                        local_parts = aligned
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
                     inflight.append(local_src)  # BEFORE the merge: mid-merge interrupt drops the partial
                     mrc = _merge_part(local_src, local_parts, mkv_exe, log, parts)

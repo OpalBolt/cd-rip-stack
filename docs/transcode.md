@@ -76,8 +76,11 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
 - **Movies** — the biggest `_tNN` group (parts sum) is the main feature;
   a recorded main in the title's `validation.json` wins over bytes. Split
   mains merge with mkvmerge before encoding — but only when every part's
-  track layout matches part 1's; a mismatched set quarantines whole,
-  unmerged (the merge guard). Ships
+  track layout matches part 1's; parts holding the same tracks in a
+  different order align first by stream-copy remux into part 1's order
+  (the `align` phase, guard re-verified), and a genuinely different set —
+  or one still mismatched after alignment — quarantines whole, unmerged
+  (the merge guard). Ships
   `library/movies/<Movie (Year)>/<Movie (Year)>.mkv`. Extras never merge;
   they file as ` - Extra NN` under the movie's `extras/`, embedded
   subtitles kept, no subtitle pass.

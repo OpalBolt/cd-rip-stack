@@ -80,7 +80,7 @@ The staged title chosen as the film itself — the candidate main nearest TMDB r
 _Avoid_: main title
 
 **Part**:
-One disc's share of a movie split across discs. Staged `.pN`; a main feature's parts merge into one file at transcode (track sets must match first), extras' parts stay split.
+One disc's share of a movie split across discs. Staged `.pN`; a main feature's parts merge into one file at transcode (track sets must match first). Parts holding the same track set in a different order — the Two Towers discs staged their eng/dan subtitles differently — align by stream-copy remux into part 1's order before the merge, the guard re-running on the remuxed files; a different set, or one still mismatched after alignment, quarantines whole. Extras' parts stay split.
 _Avoid_: side, disc file
 
 **Extras**:
