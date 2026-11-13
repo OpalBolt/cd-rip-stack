@@ -1936,3 +1936,85 @@ def test_purge_pass_stubs_window(tmp_path):
 
     assert old.exists() and full.exists()
     assert not any(path.exists() for path in fresh)
+
+
+def test_cyanrip_run_captures_disc_tracks(monkeypatch):
+    """The stream watch records the Disc tracks: count into the header dict."""
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    header: dict = {}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        process = Mock(stdout=iter(["Disc tracks: 4\n", "Rip complete\n"]))
+        process.wait.return_value = 0
+
+        with patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("100", [], Path(tmpdir), header=header)
+
+    assert header["_disc_tracks"] == 4
+
+
+def test_rip_music_continuation_intersects_operator_l(tmp_path, monkeypatch):
+    """The continuation pass's -l is the universe (Disc tracks:) intersected
+    with the operator's own -l, minus the stalled track."""
+    calls = []
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        calls.append(list(flags))
+        if len(calls) == 1:
+            header["_disc_tracks"] = 4
+            header["_tracks"] = {3: "stalled"}
+            header["_stalled"] = [3]
+            return 1, ""
+        header["_tracks"].update({1: "ok", 4: "ok"})
+        return 0, ""
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
+            patch("skive.rip_music._newest_flac_album",
+                  return_value=("Album", "Album")), \
+            patch("skive.rip_music._write_cd_record", return_value=[]):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=["-l", "2,3,4"]))
+
+    assert exc.value.code == 1  # holed run still fails loudly
+    assert calls[1][-2:] == ["-l", "2,4"]
+
+
+def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
+    """On a 4-track disc, tracks 1/2/3 stalling one per pass hits the cap:
+    exactly three cyanrip passes, no fourth, and the run fails with the
+    wipe-or-replace note naming all three."""
+    import json
+
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    calls = []
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        calls.append(list(flags))
+        stalled = header.setdefault("_stalled", [])
+        number = len(stalled) + 1
+        stalled.append(number)
+        header["_disc_tracks"] = 4
+        header["_tracks"] = {n: "stalled" for n in stalled}
+        return 1, ""
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
+
+    assert exc.value.code == 1
+    assert len(calls) == 3  # cap at three stalls — no fourth pass
+    assert calls[1][-2:] == ["-l", "2,3,4"]
+    assert calls[2][-2:] == ["-l", "3,4"]
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    wipe = [line["status"] for line in lines if "wipe or replace" in line["status"]]
+    assert len(wipe) == 1
+    for n in (1, 2, 3):
+        assert str(n) in wipe[0]

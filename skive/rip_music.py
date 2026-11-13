@@ -128,20 +128,20 @@ def rip_music(args) -> None:
             # continuation pass fails on its own (the existing failure path).
             pass_flags = list(flags)
             while True:
-                stalled_before = len(header.get("_stalled", []))
+                stalled_before = set(header.get("_stalled", []))
                 pass_t0 = time.time()
                 rc, cap_text = _cyanrip_run(args.offset, pass_flags, rip_dir, log,
                                              header, drive=device, budgets=budgets,
                                              last_track=last_track)
                 stalled = header.get("_stalled", [])
                 continuation = None
-                if rc != 0 and len(stalled) > stalled_before:
+                if rc != 0 and set(stalled) > stalled_before:
                     continuation = _continuation_pass(args.cyanrip_flags or [], header)
                 if continuation:
                     _purge_pass_stubs(rip_dir, pass_t0)
                     pass_flags = continuation
                     continue
-                if rc != 0 and len(stalled) > stalled_before:
+                if rc != 0 and set(stalled) > stalled_before:
                     log.note("rip", "wipe or replace the disc: tracks "
                              + ", ".join(str(n) for n in sorted(stalled))
                              + " stalled")
@@ -238,8 +238,6 @@ def rip_music(args) -> None:
                      if dur_by_number.get(number) is not None else "?",
                      result)
                     for number, result in sorted(header.get("_tracks", {}).items())]
-            n_ok = sum(row[2] == "ok" for row in rows)
-            n_failed = len(header.get("_stalled", []))
             interrupt_note = None
         elif rc == 0:
             rows = [(str(i + 1),
@@ -257,7 +255,7 @@ def rip_music(args) -> None:
                     ] if (rc == 130 or header.get("_stalled")) else []
             interrupt_note = "nothing deleted \u2014 staged files left in place" if rc == 130 else None
         n_ok = sum(row[2] == "ok" for row in rows)
-        n_failed = sum(row[2] == "failed" for row in rows)
+        n_failed = sum(row[2] in ("failed", "stalled") for row in rows)
         if miss:
             # Keep the drive in the re-run: the claim above moved a trailing
             # -d n out of cyanrip_flags, and disc 0 is the other drive. Drop a
@@ -438,7 +436,9 @@ def _continuation_pass(flags: list[str], header: dict) -> list[str] | None:
     """Flags for the continuation pass after a tripped pass: any operator `-l`
     replaced by the track universe (Disc tracks:, intersected with the
     operator's own -l) minus every stalled track so far. None when the
-    remaining set is empty — that is the cap."""
+    remaining set is empty or three tracks have stalled — that is the cap."""
+    if len(set(header.get("_stalled", []))) >= 3:
+        return None
     universe = set(range(1, (header.get("_disc_tracks") or 0) + 1))
     operator_l = _operator_l_tracks(flags)
     if operator_l is not None:
