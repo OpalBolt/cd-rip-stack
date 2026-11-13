@@ -1798,6 +1798,27 @@ def test_cyanrip_run_budget_trips_and_kills(monkeypatch, capsys):
     assert "track 1 stalled" in capsys.readouterr().err
 
 
+def test_cyanrip_run_footer_shows_stall_countdown_and_count(monkeypatch):
+    """An armed track shows its remaining budget and the run's stalled count
+    against the cap in the footer."""
+    from skive import ui
+
+    monkeypatch.setattr(common, "VERBOSITY", 0)
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        process = Mock(stdout=iter(["Ripping and encoding track 3, progress - 10%\n"]))
+        process.wait.return_value = 0
+        with patch("subprocess.Popen", return_value=process):
+            _cyanrip_run("6", [], Path("/tmp/rip"), header={"_stalled": [2]},
+                         budgets={3: 600.0})
+    finally:
+        ui.clear_view()
+
+    assert view._step in ("stall guard 10m00s \u00b7 1/3 stalled",
+                          "stall guard 9m59s \u00b7 1/3 stalled")
+
+
 def test_cyanrip_run_total_time_arms_last_track_budget(monkeypatch, capsys):
     """The last track's budget arms from the Total time header line (total −
     last start, max(600, 3×)) moments before track 1 begins; the guard stays

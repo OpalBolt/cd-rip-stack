@@ -399,6 +399,7 @@ _UNRECOGNISED = re.compile(r"Unrecognised .*(?:element|attribute): '")
 # cyanrip's QR code of the attach URL: rows of block characters only.
 _QR_ROW = re.compile(r"[ \u2580\u2584\u2588]*[\u2580\u2584\u2588][ \u2580\u2584\u2588]*")
 _RAW_PROGRESS_SECS = 5  # a progress line reaches the raw log at least this often
+STALL_CAP = 3  # stalled tracks per run before the stall guard stops continuing (ADR 0018)
 
 
 def _toc_durations(offset: str, flags: list[str],
@@ -441,7 +442,7 @@ def _continuation_pass(flags: list[str], header: dict) -> list[str] | None:
     replaced by the track universe (Disc tracks:, intersected with the
     operator's own -l) minus every stalled track so far. None when the
     remaining set is empty or three tracks have stalled — that is the cap."""
-    if len(set(header.get("_stalled", []))) >= 3:
+    if len(set(header.get("_stalled", []))) >= STALL_CAP:
         return None
     universe = set(range(1, (header.get("_disc_tracks") or 0) + 1))
     operator_l = _operator_l_tracks(flags)
@@ -630,16 +631,25 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         # emits progress lines constantly, this inline check
                         # suffices. cyanrip's own ETA is display-only.
                         tripped = number
-                        ui.warn(f"track {number} stalled: over its "
-                                f"{ui._hms(int(budget))} budget, killing the pass",
-                                phase="rip")
                         outcomes[number] = "stalled"
                         if header is not None:
                             header.setdefault("_stalled", []).append(number)
+                        n_stalled = len(set(header.get("_stalled", []))) if header else 1
+                        ui.warn(f"track {number} stalled: over its "
+                                f"{ui._hms(int(budget))} budget, killing the pass "
+                                f"({n_stalled}/{STALL_CAP} stalled)",
+                                phase="rip")
                         close_finished()
                         ui.item_end("fail", "stalled")
                         kill_child_after_grace(process)
                         break  # the killed child's stdout EOF ends the loop; break for fakes too
+                    if budget is not None and on_tty:
+                        # shortcut: ticks per progress line, not per second; a
+                        # silent cyanrip freezes it (a grind still emits lines).
+                        left = budget - (time.monotonic() - track_t0[number])
+                        n_stalled = len(set(header.get("_stalled", []))) if header else 0
+                        view.step(f"stall guard {ui._hms(max(int(left), 0))} "
+                                  f"\u00b7 {n_stalled}/{STALL_CAP} stalled")
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
