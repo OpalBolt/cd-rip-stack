@@ -67,6 +67,15 @@ def require_online() -> None:
         sys.exit(1)
 
 
+def title_matches(want: str, hit: str) -> bool:
+    """Two titles equal modulo case and punctuation — "X-Men" == "x men";
+    "X-Men" != "X-Men: Apocalypse". The name+year callers that must never
+    guess (the validation backfill, its repair) accept a hit only when its
+    title also matches the folder's name."""
+    norm = lambda s: "".join(c for c in s.casefold() if c.isalnum())
+    return bool(hit) and norm(want) == norm(hit)
+
+
 def parse_tmdbid(arg: str, kind: str) -> tuple[str, str]:
     """Parse --tmdbid argument, return (type, id).
 
@@ -278,12 +287,18 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
                 ui.warn(f"invalid choice '{pick_str}'")
 
 
-def search_first(kind: str, query: str) -> TMDBPick | None:
+def search_first(kind: str, query: str, year: str | None = None) -> TMDBPick | None:
     """The first TMDB search result for `query` — no table, no prompt.
 
+    `year` (a "YYYY" string) filters the hits: the first result whose
+    release year matches wins, None when none does. TMDB sorts search by
+    popularity, so a bare name's top hit is often a sequel or a sibling
+    ("X-Men" returns X-Men: Apocalypse before X-Men) — callers that know
+    the year (a title folder's suffix) must pass it.
+
     The library checker's identity fallback (skive validate): legacy folders
-    resolve by name+year to the top hit, a LEAD the report shows, never a
-    verdict. None on zero results; RuntimeError on network failure like every
+    resolve by name+year to a hit, a LEAD the report shows, never a verdict.
+    None on zero results; RuntimeError on network failure like every
     fetch here — the caller degrades that folder instead of aborting. Search
     results carry no runtime; callers needing one fetch details separately
     (fetch_by_id).
@@ -291,9 +306,10 @@ def search_first(kind: str, query: str) -> TMDBPick | None:
     Args:
         kind: "movie" or "tv" — search index to use
         query: The search text
+        year: Release year the hit must carry, None to take the raw top hit
 
     Returns:
-        The first result as a TMDBPick, or None when nothing matched
+        The matching result as a TMDBPick, or None when nothing matched
 
     Raises:
         RuntimeError: On API failure
@@ -302,14 +318,18 @@ def search_first(kind: str, query: str) -> TMDBPick | None:
     q_enc = urllib.parse.quote(query)
     url = f"https://api.themoviedb.org/3/search/{kind}?api_key={api_key}&query={q_enc}"
     data = _http_get_json(url)
-    results = data.get("results", [])
-    if not results:
+    for r in data.get("results", []):
+        if year is not None:
+            date_str = r.get("release_date") or r.get("first_air_date") or ""
+            if date_str[:4] != year:
+                continue
+        break
+    else:
         return None
-    r = results[0]
     title = r.get("title") or r.get("name", "-")
     date_str = r.get("release_date") or r.get("first_air_date", "-")
-    year = date_str[:4] if date_str and date_str != "-" else "-"
-    return TMDBPick(title=title, year=year,
+    date_year = date_str[:4] if date_str and date_str != "-" else "-"
+    return TMDBPick(title=title, year=date_year,
                     original_language=r.get("original_language", "-"),
                     type=kind, id=str(r.get("id", "-")))
 

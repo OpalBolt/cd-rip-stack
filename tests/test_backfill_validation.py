@@ -24,10 +24,11 @@ from skive.validation import VALIDATION_FILENAME  # noqa: E402
 def _install(monkeypatch, *, search=None, seasons=None, durs=None):
     """Inject the fake world: pick per (kind, query), season lists per
     (id, season), probe durations per file name."""
-    def fake_search(kind, query):
+    def fake_search(kind, query, year=None):
         if search is None:
-            raise AssertionError(f"unexpected TMDB search: {kind} {query}")
-        return search.get((kind, query))  # absent key = no match, like the real one
+            raise AssertionError(f"unexpected TMDB search: {kind} {query} ({year})")
+        # absent key = no match, like the real one
+        return search.get((kind, query, year))
 
     def fake_season(tv_id, season):
         if seasons is None:
@@ -58,9 +59,9 @@ def test_movie_backfill_writes_null_provenance(tmp_path, monkeypatch):
     _mk(vid, "rip/movies/Film (2001)/Film (2001)_t12.p1.mkv")
     _mk(vid, "lossless/movies/Second (2002)/Second (2002)_t03.mkv")
     _install(monkeypatch,
-             search={("movie", "Film"): TMDBPick("Film", "2001", "en", "movie",
+             search={("movie", "Film", "2001"): TMDBPick("Film", "2001", "en", "movie",
                                                  "123", runtime_secs=6000),
-                     ("movie", "Second"): TMDBPick("Second", "2002", "en", "movie",
+                     ("movie", "Second", "2002"): TMDBPick("Second", "2002", "en", "movie",
                                                    "124", runtime_secs=6000)},
              durs={"Film (2001)_t00.mkv": 5880, "Film (2001)_t12.p1.mkv": 900,
                    "Second (2001)_t03.mkv": None, "Second (2002)_t03.mkv": 5880})
@@ -97,11 +98,11 @@ def test_movie_backfill_copies_into_library_when_folder_exists(tmp_path, monkeyp
     (vid / "library/movies/Live (2005)" / VALIDATION_FILENAME).write_text(
         json.dumps(live_doc), encoding="utf-8")
     _install(monkeypatch,
-             search={("movie", kind): TMDBPick(kind, "20xx", "en", "movie",
-                                               {"Wait": "1", "Done": "2",
-                                                "Live": "9"}[kind],
-                                               runtime_secs=6000)
-                     for kind in ("Wait", "Done", "Live")},
+             search={("movie", kind, year): TMDBPick(kind, year, "en", "movie",
+                                                     fid, runtime_secs=6000)
+                     for kind, year, fid in (("Wait", "2003", "1"),
+                                             ("Done", "2004", "2"),
+                                             ("Live", "2005", "9"))},
              durs={"Wait (2003)_t00.mkv": 5880, "Done (2004)_t00.mkv": 5880,
                    "Live (2005)_t00.mkv": 5880})
 
@@ -135,7 +136,7 @@ def test_movie_backfill_skips_existing_doc_and_failures(tmp_path, monkeypatch, c
 
     assert (live / VALIDATION_FILENAME).read_text(encoding="utf-8") == '{"tmdb": {"id": "1"}}'
     err = capsys.readouterr().err
-    assert "no TMDB match for 'Nomatch'" in err
+    assert "no TMDB hit titled 'Nomatch' (2007)" in err
     assert "Noyear: no (Year)" in err
     assert "Empty (2008): no staged sources" in err
     for name in ("Nomatch (2007)", "Noyear", "Empty (2008)"):
@@ -148,7 +149,7 @@ def test_dry_run_default_writes_nothing(tmp_path, monkeypatch, capsys):
     vid = tmp_path / "vid"
     _mk(vid, "rip/movies/Film (2001)/Film (2001)_t00.mkv")
     _install(monkeypatch,
-             search={("movie", "Film"): TMDBPick("Film", "2001", "en", "movie",
+             search={("movie", "Film", "2001"): TMDBPick("Film", "2001", "en", "movie",
                                                  "123", runtime_secs=6000)},
              durs={"Film (2001)_t00.mkv": 5880})
 
@@ -175,7 +176,7 @@ def test_tv_backfill_builds_every_season_from_staged_names(tmp_path, monkeypatch
     _mk(vid, f"{show}/Show (2010)_S02E05-E06.mkv")
     _mk(vid, f"{show}/Show (2010) - Extra 01.mkv")  # never an episode row
     _install(monkeypatch,
-             search={("tv", "Show"): TMDBPick("Show", "2010", "en", "tv", "456")},
+             search={("tv", "Show", "2010"): TMDBPick("Show", "2010", "en", "tv", "456")},
              seasons={("456", 1): [(1, "a", 2580), (2, "b", 2580)],
                       ("456", 2): [(5, "e", 2580), (6, "f", 2580)]},
              durs={"Show (2010)_S01E01.mkv": 2600, "Show (2010)_S01E02.mkv": 2100,
@@ -219,7 +220,7 @@ def test_tv_backfill_rebuilds_old_shape_keeps_new_shape(tmp_path, monkeypatch, c
             {"volume_label": "Y", "run": "r2", "staged": [1]}]}],
         "encodes": []}), encoding="utf-8")
     _install(monkeypatch,
-             search={("tv", "Old"): TMDBPick("Old", "2011", "en", "tv", "111")},
+             search={("tv", "Old", "2011"): TMDBPick("Old", "2011", "en", "tv", "111")},
              seasons={("111", 1): [(1, "a", 2580), (2, "b", 2580)]},
              durs={"Old (2011)_S01E01.mkv": 2600, "Old (2011)_S01E02.mkv": 2600})
 
@@ -252,7 +253,7 @@ def test_tv_backfill_season_fetch_failure_skips_that_season(tmp_path, monkeypatc
         return [(1, "a", 2580)]
 
     _install(monkeypatch,
-             search={("tv", "Show"): TMDBPick("Show", "2010", "en", "tv", "456")},
+             search={("tv", "Show", "2010"): TMDBPick("Show", "2010", "en", "tv", "456")},
              seasons=None)
     monkeypatch.setattr(bf, "fetch_season", season)
     monkeypatch.setattr(bf, "probe_duration", lambda p: 2600)

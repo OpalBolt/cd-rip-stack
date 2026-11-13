@@ -471,8 +471,8 @@ def _fake_probe(durations: dict[str, int]):
     return run
 
 
-def _no_search(kind, query):
-    raise AssertionError(f"TMDB search must not run for {kind} {query!r}")
+def _no_search(kind, query, year=None):
+    raise AssertionError(f"TMDB search must not run for {kind} {query!r} ({year})")
 
 
 def _no_season_list(tv_id, season):
@@ -494,8 +494,8 @@ def _mamma_doc():
 
 
 def _mamma_search():
-    def search(kind, query):
-        assert (kind, query) == ("movie", "Mamma Mia!")
+    def search(kind, query, year=None):
+        assert (kind, query, year) == ("movie", "Mamma Mia!", "2008")
         return TMDBPick("Mamma Mia!", "2008", "en", "movie", "471")
     return search
 
@@ -653,7 +653,7 @@ def test_validate_movie_no_doc_main_is_biggest_root_mkv(tmp_path):
 
     findings = validate_library(root,
                                 run=_fake_probe({"aaa.mkv": 100, "bbb.mkv": 6300}),
-                                search=lambda k, q: TMDBPick("Two Files", "2001",
+                                search=lambda k, q, y: TMDBPick("Two Files", "2001",
                                                              "en", "movie", "5"),
                                 fetch_details=_details(6000))
 
@@ -681,10 +681,10 @@ def test_validate_movie_search_no_match_is_unidentified_row(tmp_path):
 
     findings = validate_library(
         root, run=_fake_probe({}),
-        search=lambda k, q: None)
+        search=lambda k, q, y: None)
 
     assert findings == [Finding("movies/" + MAMMA, "unidentified",
-                                'TMDB search: no match for "Mamma Mia!"')]
+                                'TMDB search: no match for "Mamma Mia!" (2008)')]
 
 
 def test_validate_movie_search_failure_warns_once_and_unidentifies(tmp_path, capsys):
@@ -693,7 +693,7 @@ def test_validate_movie_search_failure_warns_once_and_unidentifies(tmp_path, cap
     root = _library(tmp_path)
     (root / "movies" / MAMMA).mkdir()
 
-    def down(kind, query):
+    def down(kind, query, year=None):
         raise RuntimeError("TMDB request failed: HTTP 500")
 
     findings = validate_library(root, run=_fake_probe({}), search=down)
@@ -910,8 +910,8 @@ def test_validate_tv_legacy_uses_search_and_season_list(tmp_path):
     (season / "Show (2016) - S01E01.mkv").touch()
     (season / "Show (2016) - S01E02.mkv").touch()
 
-    def search(kind, query):
-        assert (kind, query) == ("tv", "Show")
+    def search(kind, query, year=None):
+        assert (kind, query, year) == ("tv", "Show", "2016")
         return TMDBPick("Show", "2016", "en", "tv", "9")
 
     def season_list(tv_id, n):
@@ -944,11 +944,11 @@ def test_validate_tv_unresolved_identity_skips_missing_and_ratio(tmp_path):
     (show / "extras" / "Show (2016)_t03.mkv").touch()
 
     findings = validate_library(tmp_path / "library", run=_fake_probe({}),
-                                search=lambda k, q: None,
+                                search=lambda k, q, y: None,
                                 season_list=_no_season_list)
 
     assert findings == [
-        Finding("tv/Show (2016)", "unidentified", 'TMDB search: no match for "Show"'),
+        Finding("tv/Show (2016)", "unidentified", 'TMDB search: no match for "Show" (2016)'),
         Finding("tv/Show (2016)", "staging name", "extras/Show (2016)_t03.mkv",
                 path="extras/Show (2016)_t03.mkv"),
     ]
@@ -1011,9 +1011,9 @@ def test_validate_duplicate_id_across_folders_flagged_once(tmp_path):
     legacy.mkdir()
     (legacy / "Mamma Mia 2 (2008).mkv").touch()
 
-    def search(kind, query):
+    def search(kind, query, year=None):
         # the second folder's NAME lands on the same film — the Mamma shape
-        assert (kind, query) == ("movie", "Mamma Mia 2")
+        assert (kind, query, year) == ("movie", "Mamma Mia 2", "2008")
         return TMDBPick("Mamma Mia!", "2008", "en", "movie", "471")
 
     findings = validate_library(root, run=_fake_probe({"Mamma Mia 2 (2008).mkv": 6252}),
@@ -1272,7 +1272,8 @@ def test_fix_staging_names_renames_extras_labels(tmp_path):
 def test_run_validate_fix_applies_then_reports_clean(tmp_path, capsys, monkeypatch):
     """--fix applies before the walk: the renamed file vanishes from the
     findings and the JSON carries the fixed list."""
-    monkeypatch.setattr("skive.validation.search_first", lambda kind, query: None)
+    monkeypatch.setattr("skive.validation.search_first",
+                           lambda kind, query, year=None: None)
     ex = tmp_path / "library" / "movies" / "Up (2009)" / "extras"
     ex.mkdir(parents=True)
     (ex / "Up (2009)_t01.mkv").write_text("x")
@@ -1376,7 +1377,8 @@ def test_validate_check_column_carries_severity_symbols(monkeypatch):
 def test_run_validate_json_is_the_bare_report_on_stdout(tmp_path, capsys, monkeypatch):
     """--json: exactly json.dumps(report, indent=2) plus a newline on
     stdout, nothing on stderr — the data path is untouched by the look."""
-    monkeypatch.setattr("skive.validation.search_first", lambda kind, query: None)
+    monkeypatch.setattr("skive.validation.search_first",
+                           lambda kind, query, year=None: None)
     (tmp_path / "library" / "movies").mkdir(parents=True)
 
     run_validate(tmp_path, run=_fake_probe({}), json_=True)

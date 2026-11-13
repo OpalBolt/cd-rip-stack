@@ -804,9 +804,9 @@ def _search_identity(kind: str, rel: str, folder_name: str, search,
         findings.append(Finding(rel, "unidentified",
                                 "no validation.json and no (Year) in the folder name"))
         return None
-    name = m.group(1)
+    name, year = m.group(1), m.group(2)
     try:
-        pick = search(kind, name)
+        pick = search(kind, name, year)
     except (RuntimeError, ValueError) as e:
         ui.warn(f"TMDB search failed for {folder_name} ({e})")
         findings.append(Finding(rel, "unidentified",
@@ -814,7 +814,7 @@ def _search_identity(kind: str, rel: str, folder_name: str, search,
         return None
     if pick is None:
         findings.append(Finding(rel, "unidentified",
-                                f'TMDB search: no match for "{name}"'))
+                                f'TMDB search: no match for "{name}" ({year})'))
         return None
     return pick.id
 

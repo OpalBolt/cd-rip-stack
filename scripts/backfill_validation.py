@@ -36,7 +36,7 @@ from pathlib import Path
 _repo = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo))  # the skive package
 
-from skive.tmdb import fetch_season, search_first
+from skive.tmdb import fetch_season, search_first, title_matches
 from skive.validation import (
     STAGING_LABEL, VALIDATION_FILENAME, YEAR_SUFFIX, _double_runtime,
     load_validation, merge_tv_document, movie_document, movie_row,
@@ -55,12 +55,20 @@ def _search(kind: str, folder: Path):
         print(f"skip {folder.name}: no (Year) in the folder name", file=sys.stderr)
         return None
     try:
-        pick = search_first(kind, m.group(1))
+        # The year rides along: TMDB sorts search by popularity, so a bare
+        # name's top hit is often a sequel (X-Men (2000) resolved to X-Men:
+        # Apocalypse) — only a year-matching hit may be recorded.
+        pick = search_first(kind, m.group(1), m.group(2))
     except (RuntimeError, ValueError) as e:
         print(f"skip {folder.name}: TMDB search failed ({e})", file=sys.stderr)
         return None
-    if pick is None:
-        print(f"skip {folder.name}: no TMDB match for {m.group(1)!r}", file=sys.stderr)
+    if pick is None or not title_matches(m.group(1), pick.title):
+        # TMDB sorts search by popularity and its sibling titles blur
+        # (every "Danskernes egen historie" query returns the same three
+        # hits) — a year-matching hit whose title differs is a guess, and
+        # the backfill never guesses.
+        print(f"skip {folder.name}: no TMDB hit titled {m.group(1)!r} ({m.group(2)})",
+              file=sys.stderr)
         return None
     return pick
 

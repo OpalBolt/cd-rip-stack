@@ -370,6 +370,37 @@ def test_search_first_zero_results_is_none():
             assert search_first("movie", "Nothing Real") is None
 
 
+def test_search_first_year_filter_skips_wrong_year_hits():
+    """TMDB sorts search by popularity — a bare name's top hit is often a
+    sequel (X-Men returns X-Men: Apocalypse before X-Men). With a year, the
+    first year-matching hit wins, never the raw top hit."""
+    mock_data = {"results": [
+        {"title": "X-Men: Apocalypse", "release_date": "2016-05-18",
+         "original_language": "en", "id": 246655},
+        {"title": "X-Men: Days of Future Past", "release_date": "2014-05-23",
+         "original_language": "en", "id": 127585},
+        {"title": "X-Men", "release_date": "2000-07-13",
+         "original_language": "en", "id": 36657},
+    ]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data):
+            pick = search_first("movie", "X-Men", year="2000")
+    assert pick.title == "X-Men"
+    assert pick.id == "36657"
+
+
+def test_search_first_year_filter_no_matching_year_is_none():
+    """No hit carries the wanted year: None — the caller skips the folder
+    rather than recording a wrong id (the backfill's rule)."""
+    mock_data = {"results": [
+        {"title": "X-Men: Apocalypse", "release_date": "2016-05-18",
+         "original_language": "en", "id": 246655},
+    ]}
+    with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+        with patch("skive.tmdb._http_get_json", return_value=mock_data):
+            assert search_first("movie", "X-Men", year="2000") is None
+
+
 def test_search_first_network_failure_raises_runtime_error():
     """A failed search raises RuntimeError like every fetch in tmdb.py — the
     checker degrades that folder instead of aborting the walk."""
