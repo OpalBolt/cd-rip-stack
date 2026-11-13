@@ -410,6 +410,7 @@ def test_rip_movie_i_run_fast_scan_rips_all_with_two_line_header(monkeypatch):
             patch("skive.rip_movie.rename_staged") as mock_rename, \
             patch("skive.rip_movie.subtitle_note", return_value="subs=none"), \
             patch("pathlib.Path.unlink"):
+        mock_rename.side_effect = lambda d, sd, **k: (Path(sd) / f"{d}_t00.mkv").write_bytes(b"x")
         with pytest.raises(SystemExit) as e:
             rip_movie(args)
         assert e.value.code == 0
@@ -589,7 +590,7 @@ def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
 MAMMA = TMDBPick("Mamma Mia!", "2008", "en", "movie", "157", runtime_secs=6480)
 
 
-def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
+def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",), root=None):
     """Movie flow seams for the pre-rip gate tests: full scan over `titles`,
     `pick` from search, `answers` feeding the shared prompt in order (the main
     pick when it appears, then the confirm; StopIteration kills the run on an
@@ -604,6 +605,11 @@ def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
     prompt.ask.side_effect = lambda *a, **k: next(chain)
     rip = Mock(return_value=0)
 
+    # Off the real NAS mount: completing runs stage a 1-byte .mkv that must
+    # never reach the transcode box's rip/ tree.
+    import tempfile
+    monkeypatch.setenv("VIDEOS_MOUNT", str(root) if root else tempfile.mkdtemp())
+
     monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))
     monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
     monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=("DVD-ROM", "", titles)))
@@ -615,7 +621,11 @@ def _movie_flow(monkeypatch, titles, pick=MAMMA, answers=("",)):
     monkeypatch.setattr("skive.ui.confirm", lambda *a, **k: next(chain).strip().lower() in ("y", "yes"))
     monkeypatch.setattr("skive.rip_movie.inject_profile", Mock(return_value=Path("/tmp/test.xml")))
     monkeypatch.setattr("skive.rip_movie.rip_titles", rip)
-    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock())
+    def _stage_one(_display, stage_dir, **k):
+        # A completing run must leave a staged file — the zero-staged guard
+        # (run ebe649b3) fails a run whose stage is empty at rc 0.
+        (Path(stage_dir) / f"{_display}_t21.mkv").write_bytes(b"x")
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=_stage_one))
     monkeypatch.setattr("skive.rip_movie.subtitle_note", Mock(return_value="subs=none"))
     return log, prompt, rip
 
@@ -991,7 +1001,7 @@ def test_rip_movie_prints_run_summary_rows_and_count(monkeypatch, tmp_path, caps
     def fake_run(cmd, **k):
         return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.5\n")
 
-    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""))
+    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""), root=tmp_path)
     monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
     real = rm.post_rip_validation
     monkeypatch.setattr(rm, "post_rip_validation",
@@ -1014,12 +1024,30 @@ def test_rip_movie_failed_rip_with_no_rows_ends_on_a_failure_line(monkeypatch, c
     line still reports the failure the exit code carries."""
     _log, _prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
     rip.return_value = 2
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock())  # nothing staged
 
     with pytest.raises(SystemExit) as e:
         rip_movie(FakeArgs())
 
     assert e.value.code == 2
     assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
+
+
+def test_rip_movie_rc0_zero_staged_fails_and_keeps_the_raw_log(monkeypatch, capsys):
+    """The BD-RE case (run ebe649b3): makemkvcon aborts every title save but
+    exits 0 — nothing staged must still fail the run (rc 1) so the raw log
+    with the actual MakeMKV error survives finish()."""
+    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("", ""))
+    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock())  # nothing staged
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 1
+    assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
+    log.finish.assert_called_once_with(1)
+    status = [str(c.args[0]) for c in log.phase_end.call_args_list if c.args]
+    assert any("nothing staged" in s for s in status)
 
 
 def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_path, capsys):
@@ -1040,7 +1068,7 @@ def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_pat
     def fake_run(cmd, **k):
         return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.5\n")
 
-    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""))
+    log, _prompt, _rip = _movie_flow(monkeypatch, MIXED_TITLES, answers=("21", ""), root=tmp_path)
     monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
     real = rm.post_rip_validation
     monkeypatch.setattr(rm, "post_rip_validation",
@@ -1090,7 +1118,7 @@ def test_post_rip_fast_scan_main_is_duration_joined_not_the_index(monkeypatch, t
         return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.0\n")
 
     _log, _prompt, _rip = _movie_flow(
-        monkeypatch, [], pick=TMDBPick("Fast Movie", "2021", "en", "movie", "1"))
+        monkeypatch, [], pick=TMDBPick("Fast Movie", "2021", "en", "movie", "1"), root=tmp_path)
     monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
     real = rm.post_rip_validation
     monkeypatch.setattr(rm, "post_rip_validation",

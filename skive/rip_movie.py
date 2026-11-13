@@ -473,7 +473,14 @@ def rip_movie(args) -> None:
             probed = post_rip_validation(preamble, preexisting, chosen_main, graded_rows,
                                          include_extras=args.include_extras)
 
-            log.phase_end()
+            if infos and not probed:
+                # makemkvcon exits 0 even when every title save aborts (BD-RE
+                # read/hash failure): an empty stage is a failed rip, and
+                # rc!=0 keeps the raw log that names the MakeMKV error.
+                worst_rc = worst_rc or 1
+                log.phase_end(f"FAIL — nothing staged from {len(infos)} title(s)")
+            else:
+                log.phase_end()
             rc = worst_rc
         except KeyboardInterrupt:
             # CONTEXT.md Interrupt: delete the in-flight partial (junk-labeled

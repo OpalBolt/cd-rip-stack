@@ -629,7 +629,14 @@ def rip_tv(args) -> None:
             ui.info(note)
             log.note("subtitle", note)
 
-            log.phase_end()
+            # makemkvcon rc 0 with an empty stage is a failed rip (see the
+            # movie guard): rc!=0 keeps the raw log naming the error.
+            staged = [f for f in show_dir.glob("*.mkv") if f not in preexisting]
+            if infos and not staged:
+                worst_rc = worst_rc or 1
+                log.phase_end("FAIL — nothing staged")
+            else:
+                log.phase_end()
             log.finish(worst_rc)
             view.close()
             rows = _summary_rows(show_dir, display, 0, [], preexisting, worst_rc)
@@ -918,7 +925,13 @@ def rip_tv(args) -> None:
                 # show-folder root. Interrupts exit above and never reach this.
                 probed = post_rip_validation(preamble, season, assignment, ep_runtimes)
 
-            log.phase_end()
+            if renamed is not None and not renamed:
+                # Full scan staged nothing (makemkvcon rc 0, every save
+                # aborted): fail the run so the raw log survives.
+                worst_rc = worst_rc or 1
+                log.phase_end("FAIL — nothing staged")
+            else:
+                log.phase_end()
             rc = worst_rc if joined else 1
         except KeyboardInterrupt:
             # CONTEXT.md Interrupt: _interrupted deletes the in-flight partial,
