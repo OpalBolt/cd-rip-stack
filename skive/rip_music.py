@@ -92,6 +92,7 @@ def rip_music(args) -> None:
     summary_tracks: list[dict] = []
     header: dict = {}  # filled mid-rip by the stream watch; survives an interrupt
     miss = None  # the MusicBrainz miss (CONTEXT.md): a box, no summary table
+    holed = False  # final pass clean but earlier stalls skipped (a failure)
     try:
         # Log the total on every exit — success, Ctrl-C, or failure — so the raw
         # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
@@ -120,10 +121,31 @@ def rip_music(args) -> None:
 
             # Run cyanrip with tee-like capture. The stream watch fills `header`
             # with the album header pair mid-rip and names the run as soon as the
-            # pair is complete.
-            rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header,
-                                         drive=device, budgets=budgets,
-                                         last_track=last_track)
+            # pair is complete. A tripped pass (stall guard, ADR 0018) does not
+            # fail the run: its 0-byte stubs are purged and the pass re-runs with
+            # `-l` = the track universe minus every stalled track so far, until
+            # the pass is clean, the cap (3 stalled tracks) is reached, or a
+            # continuation pass fails on its own (the existing failure path).
+            pass_flags = list(flags)
+            while True:
+                stalled_before = len(header.get("_stalled", []))
+                pass_t0 = time.time()
+                rc, cap_text = _cyanrip_run(args.offset, pass_flags, rip_dir, log,
+                                             header, drive=device, budgets=budgets,
+                                             last_track=last_track)
+                stalled = header.get("_stalled", [])
+                continuation = None
+                if rc != 0 and len(stalled) > stalled_before:
+                    continuation = _continuation_pass(args.cyanrip_flags or [], header)
+                if continuation:
+                    _purge_pass_stubs(rip_dir, pass_t0)
+                    pass_flags = continuation
+                    continue
+                if rc != 0 and len(stalled) > stalled_before:
+                    log.note("rip", "wipe or replace the disc: tracks "
+                             + ", ".join(str(n) for n in sorted(stalled))
+                             + " stalled")
+                break
 
             # A MusicBrainz miss never prompts: the run fails and the box
             # (after the view closes) tells the operator what to fix.
@@ -142,8 +164,13 @@ def rip_music(args) -> None:
             # which also yields the staging folder. A failed run never scans
             # staging — its name is the header's (pair, or album alone) or '-'.
             # An interrupt keeps whatever the stream set mid-rip (no header: '-').
+            # A holed run (final pass clean, earlier stalls skipped) is a
+            # failure: nonzero rc, failed result line, raw log kept — but it
+            # keeps the success path's naming and CD record.
+            holed = rc == 0 and bool(header.get("_stalled"))
+            rip_ok = rc == 0 or holed
             name, rel_folder = "-", "-"
-            if rc == 0:
+            if rip_ok:
                 name, rel_folder = _newest_flac_album(rip_dir)
             header_name = album_header_name(header)
             if header_name and header.get("album_artist"):
@@ -151,7 +178,7 @@ def rip_music(args) -> None:
             elif rc != 0:
                 name = header_name or "-"
             log.name = name
-            if rc == 0:
+            if rip_ok:
                 log.phase_end()
             elif miss:
                 log.fail_open_phase("FAIL: " + _miss_result(miss))
@@ -159,8 +186,25 @@ def rip_music(args) -> None:
                 log.fail_open_phase(f"FAIL({rc})")
             if rel_folder != "-":  # nothing ripped: no folder to name
                 log.note("rip", f"folder: {rel_folder}")
-            if rc == 0:
+            if rip_ok:
                 summary_tracks = _write_cd_record(rip_dir, rel_folder, args.offset, log)
+            if holed:
+                # One note per stalled track: the pre-filled hand re-rip
+                # command (offset, drive, pass-through without any -l, then
+                # the full stalled list) — the miss box's rerun hint shape.
+                holed_flags = list(args.cyanrip_flags or [])
+                if "-l" in holed_flags:
+                    r = holed_flags.index("-l")
+                    del holed_flags[r:r + 2]
+                rerun = ["skive", "rip", "music"]
+                if args.disc:
+                    rerun += ["-d", str(args.disc)]
+                rerun_cmd = shlex.join(rerun + [args.offset, "--", *holed_flags]
+                                       + ["-l", ",".join(str(n) for n in
+                                                         sorted(header["_stalled"]))])
+                for number in sorted(header["_stalled"]):
+                    log.note("rip", f"track {number} stalled — hand re-rip: {rerun_cmd}")
+                rc = 1
         except KeyboardInterrupt:
             # CONTEXT.md Interrupt: _cyanrip_run already stopped the child (SIGINT,
             # grace window, kill). Music staging has no junk labels — cyanrip writes
@@ -181,7 +225,23 @@ def rip_music(args) -> None:
         # garble it); the outer close is idempotent. Every exit path gets a
         # durable summary, including an interrupted rip.
         view.close()
-        if rc == 0:
+        if holed:
+            # One row per track: real track numbers from _tracks, durations
+            # from the record's staged files; n_failed counts the holes.
+            dur_by_number: dict[int, int | None] = {}
+            for position, t in enumerate(summary_tracks, start=1):
+                number_match = _TRACK_FILE_NUMBER.match(t["file"])
+                number = int(number_match.group(1)) if number_match else position
+                dur_by_number[number] = t["dur_s"]
+            rows = [(str(number),
+                     _summary_hms(dur_by_number[number])
+                     if dur_by_number.get(number) is not None else "?",
+                     result)
+                    for number, result in sorted(header.get("_tracks", {}).items())]
+            n_ok = sum(row[2] == "ok" for row in rows)
+            n_failed = len(header.get("_stalled", []))
+            interrupt_note = None
+        elif rc == 0:
             rows = [(str(i + 1),
                      _summary_hms(t["dur_s"]) if t["dur_s"] is not None else "?",
                      "ok")
@@ -360,6 +420,54 @@ def _toc_durations(offset: str, flags: list[str],
     return durations, (numbers[-1], starts[numbers[-1]])
 
 
+def _operator_l_tracks(flags: list[str]) -> set[int] | None:
+    """The operator's own `-l` pass-through as a track-number set, None when
+    no `-l` was given (cyanrip-style comma list)."""
+    if "-l" not in flags:
+        return None
+    i = flags.index("-l")
+    if i + 1 >= len(flags):
+        return None
+    try:
+        return {int(tok) for tok in flags[i + 1].split(",") if tok.strip()}
+    except ValueError:
+        return None
+
+
+def _continuation_pass(flags: list[str], header: dict) -> list[str] | None:
+    """Flags for the continuation pass after a tripped pass: any operator `-l`
+    replaced by the track universe (Disc tracks:, intersected with the
+    operator's own -l) minus every stalled track so far. None when the
+    remaining set is empty — that is the cap."""
+    universe = set(range(1, (header.get("_disc_tracks") or 0) + 1))
+    operator_l = _operator_l_tracks(flags)
+    if operator_l is not None:
+        universe &= operator_l
+    remaining = sorted(universe - set(header.get("_stalled", [])))
+    if not remaining:
+        return None
+    kept = list(flags)
+    if "-l" in kept:
+        r = kept.index("-l")
+        del kept[r:r + 2]
+    return kept + ["-l", ",".join(str(n) for n in remaining)]
+
+
+def _purge_pass_stubs(rip_dir: Path, since: float) -> None:
+    """Delete the killed pass's 0-byte *.flac/*.log/*.cue stubs under rip_dir
+    (recursive) written since `since` — the pass's start wall clock, so
+    concurrent or older albums are untouched. Nonzero files stay."""
+    for path in rip_dir.rglob("*"):
+        if path.suffix not in (".flac", ".log", ".cue") or not path.is_file():
+            continue
+        try:
+            st = path.stat()
+            if st.st_size == 0 and st.st_mtime >= since:
+                path.unlink()
+        except OSError:
+            continue
+
+
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                  header: dict | None = None, drive: str | None = None,
                  budgets: dict[int, float] | None = None,
@@ -486,6 +594,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         track_total = int(stripped.split(":", 1)[1].strip())
                     except ValueError:
                         track_total = None
+                    if header is not None and track_total is not None:
+                        header["_disc_tracks"] = track_total
                 if budgets is not None and last_track is not None \
                         and last_track[0] not in budgets:
                     total = total_time_s(stripped)

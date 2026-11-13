@@ -14,6 +14,7 @@ from skive.rip_music import (
     _cyanrip_run,
     _newest_flac_album,
     _metaflac_tag,
+    _purge_pass_stubs,
     _toc_durations,
     _write_cd_record,
     require_online,
@@ -1797,3 +1798,141 @@ def test_rip_music_disarms_guard_with_z_flag(tmp_path, monkeypatch):
             rip_music(FakeArgs(offset="6", cyanrip_flags=["-Z"]))
     assert exc.value.code == 0
     assert mock_toc.call_count == 0
+
+def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypatch, capsys):
+    """After a trip the pass re-runs with -l minus the stalled track; a clean
+    continuation completes with the hole — but the holed run is a loud
+    failure: nonzero exit, ok/stalled summary rows, one re-rip note per hole,
+    and the stalled outcome is never overwritten."""
+    import json
+
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    calls = []
+    outcomes_seen = []
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        calls.append(list(flags))
+        header.setdefault("_tracks", {})[1] = "ok"
+        if len(calls) == 1:
+            header["_disc_tracks"] = 3
+            header["_tracks"][2] = "stalled"
+            header["_stalled"] = [2]
+            header["album"], header["album_artist"] = "Album", "Artist"
+            return 1, ""
+        header["_tracks"][3] = "ok"  # the excluded track 2 is never touched
+        outcomes_seen.append(dict(header["_tracks"]))
+        return 0, ""
+
+    record = [{"file": "01 - A.flac", "dur_s": 100, "format": "flac"},
+              {"file": "03 - C.flac", "dur_s": 200, "format": "flac"}]
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
+            patch("skive.rip_music._newest_flac_album",
+                  return_value=("Album", "Album")), \
+            patch("skive.rip_music._write_cd_record", return_value=record):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
+
+    assert exc.value.code == 1  # a holed run never reads as success
+    assert calls[1][-2:] == ["-l", "1,3"]  # continuation excludes track 2
+    assert outcomes_seen[-1] == {1: "ok", 2: "stalled", 3: "ok"}  # outcome kept
+    captured = capsys.readouterr()
+    assert "stalled" in captured.out + captured.err
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    notes = [line["status"] for line in lines if "hand re-rip" in line["status"]]
+    assert len(notes) == 1
+    assert "skive rip music 6 -- -l 2" in notes[0]
+    assert "track 2 stalled" in notes[0]
+
+
+def test_rip_music_three_stalls_hit_cap(tmp_path, monkeypatch, capsys):
+    """A third stall stops the run: one wipe-or-replace note naming all three
+    stalled tracks, exit nonzero, no fourth pass."""
+    import json
+
+    monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    calls = []
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        calls.append(list(flags))
+        stalled = header.setdefault("_stalled", [])
+        number = len(stalled) + 1
+        stalled.append(number)
+        header["_disc_tracks"] = 3
+        header["_tracks"] = {n: "stalled" for n in stalled}
+        return 1, ""
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
+
+    assert exc.value.code == 1
+    assert len(calls) == 3
+    assert calls[1][-2:] == ["-l", "2,3"]
+    assert calls[2][-2:] == ["-l", "3"]
+    lines = [json.loads(line)
+             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    wipe = [line["status"] for line in lines if "wipe or replace" in line["status"]]
+    assert len(wipe) == 1
+    for n in (1, 2, 3):
+        assert str(n) in wipe[0]
+
+
+def test_rip_music_continuation_own_failure_fails_run(tmp_path, monkeypatch, capsys):
+    """A continuation pass failing on its own (rc!=0, no new stall) breaks to
+    the existing failure path — no further passes."""
+    calls = []
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None, last_track=None):
+        calls.append(list(flags))
+        if len(calls) == 1:
+            header["_disc_tracks"] = 2
+            header["_tracks"] = {1: "stalled"}
+            header["_stalled"] = [1]
+            return 1, ""
+        return 1, ""  # own failure (e.g. MusicBrainz miss)
+
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
+
+    assert exc.value.code == 1
+    assert len(calls) == 2
+    captured = capsys.readouterr()
+    assert "fail" in (captured.out + captured.err).lower()
+
+
+def test_purge_pass_stubs_window(tmp_path):
+    """_purge_pass_stubs: window-limited stub purge (helper direct call)."""
+    """Only 0-byte flac/log/cue stubs written inside the killed pass's window
+    are purged; older 0-byte and nonzero files survive."""
+    import os
+    import time
+
+    old = tmp_path / "old.flac"
+    old.touch()
+    os.utime(old, (time.time() - 100, time.time() - 100))
+    full = tmp_path / "sub" / "full.flac"
+    full.parent.mkdir()
+    full.write_bytes(b"x")
+    fresh = [tmp_path / "fresh.flac", tmp_path / "sub" / "fresh.log",
+             tmp_path / "fresh.cue"]
+    for path in fresh:
+        path.touch()
+
+    _purge_pass_stubs(tmp_path, time.time() - 5)
+
+    assert old.exists() and full.exists()
+    assert not any(path.exists() for path in fresh)
