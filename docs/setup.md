@@ -71,7 +71,9 @@ one-line error and exit 1.
 ## Drives
 
 `rip music` needs the drive's CD sample offset, in samples, as its first
-argument:
+argument. With both drives attached it also needs `-d N` to pick the drive —
+the same makemkv drive number `rip movie`/`rip tv` use; without it skive
+resolves drive 0 the same way (cyanrip's first-found drive is never used):
 
 - Black Blu-ray drive: `103`
 - Sandberg: `6`

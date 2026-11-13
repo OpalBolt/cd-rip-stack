@@ -22,15 +22,18 @@ from skive.rip_music import (
 
 @pytest.fixture(autouse=True)
 def _stage_root(tmp_path, monkeypatch):
-    """Keep staging off the real /mnt/music."""
+    """Keep staging off the real /mnt/music, and the DRV sniff off makemkv."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
+    monkeypatch.setattr("skive.rip_music.sniff_disc",
+                        lambda disc=0: ("CD", "", "/dev/sr0"))
 
 
 class FakeArgs:
     """Minimal argparse.Namespace for rip_music."""
-    def __init__(self, offset=None, cyanrip_flags=None):
+    def __init__(self, offset=None, cyanrip_flags=None, disc=0):
         self.offset = offset
         self.cyanrip_flags = cyanrip_flags or []
+        self.disc = disc
 
 
 def test_cyanrip_run_cmdline():
@@ -45,9 +48,55 @@ def test_cyanrip_run_cmdline():
 
             cmd = mock_popen.call_args[0][0]
             assert cmd == ["cyanrip", "-s", "100", "-N"]
-            assert rip_dir == mock_popen.call_args[1]["cwd"]
+            assert mock_popen.call_args[1]["cwd"] == rip_dir
             assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT
             assert (rc, captured) == (0, "")
+
+
+def test_cyanrip_run_cmdline_drive():
+    """The resolved device forwards to cyanrip's -d."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rip_dir = Path(tmpdir)
+        process = Mock(stdout=iter(()))
+        process.wait.return_value = 0
+
+        with patch("subprocess.Popen", return_value=process) as mock_popen:
+            rc, captured = _cyanrip_run("6", [], rip_dir, drive="/dev/sr1")
+
+            assert mock_popen.call_args[0][0] == ["cyanrip", "-s", "6", "-d", "/dev/sr1"]
+            assert mock_popen.call_args[1]["cwd"] == rip_dir
+            assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT
+            assert (rc, captured) == (0, "")
+
+
+def test_rip_music_resolves_disc_number_to_device(monkeypatch):
+    """-d N uses makemkv's DRV-line device; the srN guess is only the fallback
+    when the DRV line prints no path (same rule as rip movie/tv)."""
+    monkeypatch.setattr("skive.rip_music.sniff_disc",
+                        lambda disc=0: ("CD", "", "/dev/sr1"))
+    args = FakeArgs(offset="6", disc=1)
+
+    with patch("skive.rip_music.ensure_mounted"), \
+         patch("skive.rip_music.require_online"), \
+         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
+         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        try:
+            rip_music(args)
+        except SystemExit:
+            pass
+        assert mock_run.call_args.kwargs["drive"] == "/dev/sr1"
+
+    monkeypatch.setattr("skive.rip_music.sniff_disc",
+                        lambda disc=0: ("CD", "", ""))
+    with patch("skive.rip_music.ensure_mounted"), \
+         patch("skive.rip_music.require_online"), \
+         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
+         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        try:
+            rip_music(FakeArgs(offset="6", disc=1))
+        except SystemExit:
+            pass
+        assert mock_run.call_args.kwargs["drive"] == "/dev/sr1"
 
 
 def test_cyanrip_run_quiet_at_default(capsys, monkeypatch):

@@ -95,6 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # rip music
     rip_music_parser = rip_subparsers.add_parser("music", help="rip CD")
+    rip_music_parser.add_argument("-d", "--disc", type=int, default=0, metavar="N",
+                                  help="drive number (default 0); use for concurrent rips from two drives")
     rip_music_parser.add_argument("offset", nargs="?", default=None,
                                   help="drive read offset")
     rip_music_parser.add_argument("cyanrip_flags", nargs=argparse.REMAINDER,

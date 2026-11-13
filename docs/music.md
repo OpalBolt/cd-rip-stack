@@ -13,12 +13,15 @@ the code and its tests.
 ```bash
 skive rip music 103            # rip with the drive's sample offset
 skive rip music 6 -N           # skip the MusicBrainz lookup
+skive rip music -d 1 6         # rip from drive 1 (same -d N as rip movie/tv)
 ```
 
 The offset is your drive's CD sample offset and is required — the drive table
 is on [setup](setup.md). Without it skive prints usage and exits 2, drive
 untouched. Further arguments pass straight through to cyanrip; `-N` also
-skips skive's online gate, so an offline rip still runs.
+skips skive's online gate, so an offline rip still runs. With two drives
+attached, `-d N` picks the drive — the same makemkv drive number `rip movie`
+and `rip tv` use, so the same `-d 1` means the same physical drive.
 
 The share mounts on demand and cyanrip runs inside `/mnt/music/rip/cd/`,
 writing each album as final-named FLACs into its own `<album>/` subfolder.

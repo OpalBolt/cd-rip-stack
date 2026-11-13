@@ -12,6 +12,7 @@ from pathlib import Path
 
 from skive import common, ui
 from skive.common import RipLog, ensure_mounted, kill_child_after_grace
+from skive.scan import sniff_disc
 from skive.cyanrip_log import (
     album_header_field,
     album_header_name,
@@ -39,8 +40,9 @@ def rip_music(args) -> None:
     """
     # Validate offset
     if args.offset is None:
-        ui.fail("usage: skive rip music <offset> [cyanrip_flags...]")
+        ui.fail("usage: skive rip music [-d N] <offset> [cyanrip_flags...]")
         ui.fail("  offset       drive sample offset (see drive table in README)")
+        ui.fail("  -d N         drive number, same as rip movie/tv (default 0)")
         ui.fail("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)")
         sys.exit(2)
 
@@ -54,7 +56,12 @@ def rip_music(args) -> None:
     rip_dir.mkdir(parents=True, exist_ok=True)
 
     # RipLog
-    log = RipLog("skive rip music", f"cyanrip offset={args.offset}", "-", root=music_mnt)
+    # Same -d N as rip movie/tv: makemkv's disc index resolved to a real device
+    # by the DRV line (a bare /dev/srN guess can point at the OTHER drive).
+    _, _, device = sniff_disc(disc=args.disc)
+    device = device or f"/dev/sr{args.disc}"
+    log = RipLog("skive rip music", f"cyanrip offset={args.offset} drive={device}",
+                 "-", root=music_mnt)
     log.start()
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
@@ -78,7 +85,8 @@ def rip_music(args) -> None:
             # Run cyanrip with tee-like capture. The stream watch fills `header`
             # with the album header pair mid-rip and names the run as soon as the
             # pair is complete.
-            rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header)
+            rc, cap_text = _cyanrip_run(args.offset, flags, rip_dir, log, header,
+                                         drive=device)
 
             # A MusicBrainz miss never prompts: the run fails and the box
             # (after the view closes) tells the operator what to fix.
@@ -285,7 +293,7 @@ _RAW_PROGRESS_SECS = 5  # a progress line reaches the raw log at least this ofte
 
 
 def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
-                 header: dict | None = None) -> tuple[int, str]:
+                 header: dict | None = None, drive: str | None = None) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
     verbosity tiers (quiet by default, progress lines at -v, everything at
     -vv; a failed run replays what was hidden, story 7, except a MusicBrainz
@@ -297,7 +305,7 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
     the moment the pair is complete, and records each track's outcome under
     header["_tracks"] ({number: "ok" | "interrupted"}) for the interrupt
     summary."""
-    cmd = ["cyanrip", "-s", offset] + flags
+    cmd = ["cyanrip", "-s", offset] + (["-d", drive] if drive else []) + flags
     process = subprocess.Popen(
         cmd,
         cwd=rip_dir,
