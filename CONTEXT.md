@@ -21,27 +21,23 @@ The disc's label string from the MakeMKV DRV scan line (`ROGUE_ONE`). A prefille
 _Avoid_: disc title, disc name
 
 **Disc title**:
-One numbered video blob the disc scan reports — lsdvd/ffprobe on the fast path, MakeMKV when the scan escalates. A disc title is not an episode.
+One numbered video blob the disc scan reports (ADR 0021). A disc title is not an episode.
 _Avoid_: track, chapter
 
-**Fast scan**:
-The default disc read for TV (and a movie `-i` rip-all run): `lsdvd` straight on the device (DVD — no mount, no sudo) or `ffprobe bluray:` (BD). Yields titles as durations in seconds, in ~seconds — no sizes, no MakeMKV numbers. A default movie run skips it for the full scan (ADR 0015).
-_Avoid_: quick scan, pre-scan
-
-**Full scan**:
-The fallback `makemkvcon info` run, fired when the fast scan fails, finds two titles within ±1s (duplicates/decoy obfuscation), or a movie `-T` menu is requested — and for every default movie rip (ADR 0015: the main-only selection needs MakeMKV title numbers). Gives MakeMKV title numbers, sizes, languages, and segment maps, so the rip runs per-title with no duration join.
-_Avoid_: deep scan, makemkv scan
+**Disc scan**:
+The one disc read for every video rip: `makemkvcon info` (ADR 0021, replacing the fast scan and its escalation ladder). Gives MakeMKV title numbers, sizes, durations, languages, and segment maps, so the selection table's size column is real and the rip runs per-title with no duration join.
+_Avoid_: fast scan, full scan, quick scan, deep scan, pre-scan
 
 **MakeMKV key**:
 The `app_Key` activation string in `~/.MakeMKV/settings.conf` on the rip box. The free beta key rotates roughly monthly (forum.makemkv.com topic t=1053); a purchased key is permanent. An expired key blocks BD ripping only — DVDs stay free, CDs never touch MakeMKV.
 _Avoid_: license, registration, serial
 
 **Eligible title**:
-A disc title that can become an episode by default: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment; sub-floor titles still list in the table's bottom section, dropped by default and rescued only by a map row.
+A disc title that can become an episode by default: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment; sub-floor titles still list in the table's bottom section, dropped by default and rescued only by a table row.
 _Avoid_: candidate title
 
 **Play-all title**:
-A disc title whose duration equals the sum of a subset of other eligible titles — a compilation, never an episode, never ripped. A tight-window match (±120s) escalates to the full scan (ADR 0002); a wider soft-window match auto-skips without escalation, shown with its evidence as `≈ sum of …` — both overridable: a map row assigning it an episode still rips it. The lone title of a play-all-only disc never matches this sum — it is not this term.
+A disc title whose duration equals the sum of a subset of other eligible titles — a compilation, never an episode, never ripped. A tight-window match (±120s) auto-skips; a wider soft-window match auto-skips too, shown with its evidence as `≈ sum of …` — both overridable: a table row assigning it an episode still rips it. The lone title of a play-all-only disc never matches this sum — it is not this term.
 _Avoid_: compilation, sum title
 
 **Season**:
@@ -49,28 +45,28 @@ A TMDB-numbered season of a TV show. Season 0 is specials. Never inferred from d
 _Avoid_: volume, part
 
 **Episode**:
-One aired unit of a TV show, numbered `S02E05` per TMDB. Numbers come from the stated episode range plus disc position — never from disc title numbers, never from command-line flags.
+One aired unit of a TV show, numbered `S02E05` per TMDB. Numbers come from the accepted selection table — prefilled by the episode guess or stated at the cursor — never from disc title numbers, never from command-line flags.
 _Avoid_: title
 
 **Episode guess**:
-The pre-filled episode range at the range prompt, walked greedily from the first unstaged episode (discs are ripped in order, so staged episodes are a contiguous prefix): each episode claims the first remaining eligible title with a green disc÷TMDB ratio, and the walk stops at the first episode with no fitting title or no runtime. A suggestion only — shown in the title overview before the prompt with (est.) marks; the stated range plus disc position still builds the map (ADR 0001). Without runtimes or matches, the prefill falls back to one episode per eligible title.
+The selection table's pre-filled TV actions, walked greedily from the first unstaged episode (discs are ripped in order, so staged episodes are a contiguous prefix): each episode claims the first remaining eligible title with a green disc÷TMDB ratio, and the walk stops at the first episode with no fitting title or no runtime. A suggestion only — the accepted table builds the map (ADR 0001). Without runtimes or matches, the prefill falls back to one episode per eligible title.
 _Avoid_: auto-detect, count guess
 
 **Ratio audit**:
 The per-title sanity check: disc duration ÷ TMDB runtime. Green when the ratio fits the PAL fingerprint (~0.92–1.04 — PAL discs run ~4–5% short); yellow otherwise. Durations grade assignments; they never make them.
 _Avoid_: duration matching
 
+**Selection table**:
+The unified pre-rip TUI — one table component for movie titles, TV titles and CD tracks, rows carrying length, size, audit, action and notes. Prefilled by the audits; every action restatable in place; the accepted table states what rips.
+_Avoid_: title menu, picker, confirm table
+
+**Action**:
+One row's verb in the selection table — rip, skip, an episode number (TV), main or extra (movie). Audits prefill it; the operator restates it at the cursor, and Space-marked rows fill in order from one typed number; Enter accepts the whole table.
+_Avoid_: fix row, map entry
+
 **Episode map**:
-The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by the range prompt plus position assignment, corrected at the table with map-line rows; a mistake before the rip never restarts the run.
+The disc-title → episode assignment behind a rip (`0=1, 1=2-3`). Built by the selection table — prefilled by the episode guess, restated per-row before the drive spins; a mistake before the rip never restarts the run.
 _Avoid_: mapping string
-
-**Map line**:
-The confirm table's whole-map answer: comma-separated rows (`0=e,1=e,2=1,2-8=1-7`), applied per-row — a bad row is named and skipped, the good rows apply, the table re-renders. The chapter-split boundary table takes the same grammar.
-_Avoid_: fix row, mapping string
-
-**Block row**:
-A map-line row `A-B=X-Y`: the eligible titles numbered A through B, in disc order, take episodes X through Y; non-eligible titles inside the window are named and skipped, and an unfilled episode warns loudly.
-_Avoid_: range rebasing
 
 **Season folder**:
 The library folder holding one season's episodes: `Season 01` under the show's `library/tv/` dir. Season 0's folder is named `Specials`.
@@ -100,11 +96,11 @@ The transcode eligibility gate: a staged main whose rip run has landed (no junk 
 _Avoid_: done marker, rip-DONE, done indicator
 
 **Extras**:
-Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. A default movie run never rips them (ADR 0015) — they stage only from `-i`, `-E` or `-T` runs. An aired special is not an extra — it is a Season 0 episode.
+Bonus features staged `<Movie (Year)> - Extra NN[.pN].mkv`; filed under `extras/` beside the movie or show. The movie prefill rips only the main (ADR 0015) — extras stage only when the selection table sets their rows to extra. An aired special is not an extra — it is a Season 0 episode.
 _Avoid_: bonus, featurette, special
 
 **Extras marker**:
-The validation.json `extras` key (`include`, `quality`) that decides a movie's extras at transcode. `rip movie -i` both rips the disc's extras and marks them (ADR 0015) — a default run rips no extras at all, so unmarked extras reach staging only from `-E`/`-T` runs and legacy rips. Unmarked (`include: false`) they never encode: the source is disposed with the main (deleted, or `-k` parks it). Marked, they encode at `quality` — `superfast` (default) or `full` (the main's preset); a hand edit after `scripts/backlog-mark.py` marks older rips. `scripts/sync-marks.py` propagates the library copy's marker to rip and lossless.
+The validation.json `extras` key (`include`, `quality`) that decides a movie's extras at transcode. An accepted movie table with extra rows both rips them and marks them (ADR 0015) — unmarked extras reach staging only from legacy rips. Unmarked (`include: false`) they never encode: the source is disposed with the main (deleted, or `-k` parks it). Marked, they encode at `quality` — `superfast` (default) or `full` (the main's preset); a hand edit after `scripts/backlog-mark.py` marks older rips. `scripts/sync-marks.py` propagates the library copy's marker to rip and lossless.
 _Avoid_: extras flag, keep flag
 
 **Session cap**:
@@ -153,7 +149,7 @@ _Avoid_: failed folder, retry queue
 _Avoid_: manifest, metadata file, verification.json
 
 **Candidate main**:
-A movie-rip title at or above the main floor (2400 s). One candidate near the TMDB runtime names the main outright; several near it demand a human pick (default: biggest) before the drive spins.
+A movie-rip title at or above the main floor (2400 s). One candidate near the TMDB runtime names the main outright; several near it prefill the biggest as main with the ambiguity named in the notes — restated at the table with `m`.
 _Avoid_: main title, feature-length title
 
 **Library checker**:
@@ -167,7 +163,7 @@ The `skive search <scope> QUERY` answer to "have I already ripped this?" — sco
 _Avoid_: library search, catalog, index
 
 **Rip preflight**:
-The duplicate gate fired once the run's name is settled — after the movie pick (inside the identity gates) and after the TV season prompt: an exact-name title folder on disk escalates the confirm to default-No (bare Enter refuses, explicit `y` rips anyway). TV staging never escalates — staged episodes are the interrupted-re-rip path; a TV show on disk with other seasons only informs; `-E` extras runs skip it — adding to an owned title is the normal case.
+The duplicate gate fired once the run's name is settled — after the movie pick (inside the identity gates) and after the TV season prompt: an exact-name title folder on disk escalates the confirm to default-No (bare Enter refuses, explicit `y` rips anyway). TV staging never escalates — staged episodes are the interrupted-re-rip path; a TV show on disk with other seasons only informs; adding extras to an owned title is the normal case and takes the explicit `y`.
 _Avoid_: duplicate check, pre-scan
 
 ### Subtitles
@@ -208,11 +204,11 @@ skive's own line about what a run is doing — four kinds, each a symbol on a TT
 _Avoid_: log message, print
 
 **Run view**:
-The console the long-running commands draw while they work — `rip movie`, `rip tv`, `rip music`, `transcode` — as framed scrollback: a run opener box, then one item frame per item streaming its event and tool lines into ordinary scrollback, and a closed live box redrawing beneath them (the situation: current item, progress bar, ETA, background activity such as the prefetch copy, the perf line). Interactive moments — pick tables, fix-row prompts — suspend the live box; the run's end removes it and prints the run summary. Piped, `NO_COLOR` or `TERM=dumb`, the same event stream renders as plain tagged lines with no box characters. Never gates the durable logs — run log and raw log are always written.
+The console the long-running commands draw while they work — `rip movie`, `rip tv`, `rip music`, `transcode` — as framed scrollback: a run opener box, then one item frame per item streaming its event and tool lines into ordinary scrollback, and a closed live box redrawing beneath them (the situation: current item, progress bar, ETA, background activity such as the prefetch copy, the perf line). Interactive moments — pick prompts, the selection table — suspend the live box; the run's end removes it and prints the run summary. Piped, `NO_COLOR` or `TERM=dumb`, the same event stream renders as plain tagged lines with no box characters. Never gates the durable logs — run log and raw log are always written.
 _Avoid_: TUI, dashboard, progress screen
 
 **Run opener**:
-The closed box a run view prints when its work is settled, stating the run's scope — for transcode the session count against the queue (`4 of 63 this session (cap 4, ~8–40 min) · 59 deferred`), the encoder choice and the scan-skip count, with each skipped path as a `!` line right under the box; for rips `Andor (2022) S01 · disc 2 · /dev/sr0`. Nothing of the run prints above it. Rips print it after their interactive phase (search, picks, map), since the scope is unknown before.
+The closed box a run view prints when its work is settled, stating the run's scope — for transcode the session count against the queue (`4 of 63 this session (cap 4, ~8–40 min) · 59 deferred`), the encoder choice and the scan-skip count, with each skipped path as a `!` line right under the box; for rips `Andor (2022) S01 · disc 2 · /dev/sr0`. Nothing of the run prints above it. Rips print it after their interactive phase (search, picks, selection table), since the scope is unknown before.
 _Avoid_: banner, header
 
 **Item frame**:
@@ -243,7 +239,7 @@ _Avoid_: verification log, event log
 Verbatim tool output for one run, captured while it runs: `logs/raw/<run>.jsonl`. Deleted on a clean exit; kept when a run fails or is interrupted. A rip that stages nothing fails even at makemkvcon rc 0 — MakeMKV reports aborted title saves (BD read/hash errors) as messages, not exit codes — so the raw log naming the error survives. Verbosity (`-v`, `-vv`) only gates the console — both logs are always written.
 
 **Scan dump**:
-A full scan's verbatim `makemkvcon info` output, persisted the moment the scan runs: `logs/scan/<run>_<volume label>.txt`. Never deleted — a disc's structure is in hand exactly once, while questions about it surface later at a table or a stuck prompt, when the disc may already be out of the drive. Replays through the scanner with `MAKEMKV_INFO="cat <dump>"`, so a questioned table is reproducible without the disc.
+The disc scan's verbatim `makemkvcon info` output, persisted the moment the scan runs: `logs/scan/<run>_<volume label>.txt`. Never deleted — a disc's structure is in hand exactly once, while questions about it surface later at a table or a stuck prompt, when the disc may already be out of the drive. Replays through the scanner with `MAKEMKV_INFO="cat <dump>"`, so a questioned table is reproducible without the disc.
 _Avoid_: scan log, issue log
 
 **Interrupt**:
