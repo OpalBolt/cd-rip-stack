@@ -66,7 +66,7 @@ Every prompt reads the answer on a `›` line. A prompt that has a default
 shows it in brackets (`[1]`, `[y/N]`); a few, like the sync-sd picker, have
 none. The one-answer prompts stay small — the TMDB pick, the TV season — but
 the scope of a rip is decided in the [selection
-table](video.md#the-selection-table), not at a prompt. The
+table](docs/video.md#the-selection-table), not at a prompt. The
 [transcode](docs/transcode.md#the-console) page shows a full run.
 
 ## Docs
@@ -88,6 +88,6 @@ One page per job:
 
 ## Development
 
-Tests: `uv run pytest` (1042 passing). How skive decides things and the
+Tests: `uv run pytest` (1035 passing). How skive decides things and the
 glossary: [CONTEXT.md](CONTEXT.md). Deferred work: [roadmap.md](roadmap.md).
 Decisions: [docs/adr/](docs/adr/).

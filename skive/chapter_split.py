@@ -168,8 +168,9 @@ def boundary_flags(start_chs: list[int], chapter_starts: list[float],
 
 
 def boundary_note(flagged: set[int]) -> str | None:
-    """The note line printed above the boundary table, naming the flagged
-    episodes; None when every boundary sits inside the window.
+    """The note line printed in the status line below the boundary table,
+    naming the flagged episodes; None when every boundary sits inside the
+    window.
 
     Args:
         flagged: Episode numbers whose start boundary is outside the window

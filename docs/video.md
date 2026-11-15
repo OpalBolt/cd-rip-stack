@@ -123,8 +123,8 @@ lists the show's staged files and, on `y`, deletes them (mis-file remedy).
 
 Keys, every medium: `↑`/`↓` or `j`/`k` move the cursor; `Enter` accepts;
 `q` quits — nothing ripped, exit 1; `Ctrl+C` is the repo interrupt (partial
-cleanup, exit 130); `Esc` drops pending input and marks (TV). A bad edit is
-named at the row — no keystroke restarts the run.
+cleanup, exit 130); `Esc` drops pending input and marks (TV). A bad edit
+is named in the status line below the table — no keystroke restarts the run.
 
 Blocking vs warning: a **red row blocks Enter** and names why in its notes —
 an episode clash, a claim on an already-staged episode, an episode past the
@@ -139,13 +139,13 @@ terminal`), exit 1, nothing spins.
 
 ## The console
 
-Every prompt has one shape: the question, the default in brackets when it
-has one (the sync-sd picker has none), the choices dimmed, then an answer on
-a `›` line. A destructive confirm defaults to No:
+One-answer prompts keep one shape: the question, the default in brackets
+when it has one (the sync-sd picker has none), the choices dimmed, then an
+answer on a `›` line. The table's confirms are keys instead — a destructive
+confirm is a Textual modal defaulting to No:
 
 ```text
-delete 4 staged files for Andor (2022)? [y/N]
-›
+y delete · n / Esc keep (default)
 ```
 
 After the picks and the map, the rip opens with one line that names the
@@ -178,8 +178,9 @@ columns (episode · runtime · chapter start · notes): chapter starts graded
 against summed TMDB runtimes suggest each split point. Digits type a chapter
 number at the cursor row and Enter sets that boundary (1-based, like VLC);
 E-lo is pinned to chapter 1 — only interior boundaries move. Suggestions
-outside ±120s of the summed runtimes are flagged above the table — a warning,
-never a block; a rejected chapter value turns the row red, names why, and
+outside ±120s of the summed runtimes are flagged in the row's notes and
+the status line under the table — a warning, never a block; a rejected
+chapter value turns the row red, names why, and
 Enter refuses while any row is red. Accepting cuts at the confirmed
 boundaries; `q` keeps the combined file. The cut is `ffmpeg -c copy` —
 lossless; the combined file is deleted once every piece exists.

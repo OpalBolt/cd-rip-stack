@@ -33,8 +33,10 @@ fails here — the yellow miss box, before any table, the drive never spins:
 several releases match → the box lists the candidates; re-run by hand with
 the printed command (`skive rip music 6 -- -R <n>`). No release at all →
 the box gives the attach link: attach the disc to its release, then re-run.
-A failed pre-pass or resolve still rips: the table shows a blank audit
-(the pre-pass arms no budgets, the run proceeds normally).
+A failed resolve still rips: the table shows a blank audit (the pre-pass
+arms no budgets, the run proceeds normally). A failed pre-pass rips with
+no table at all — the table is gated on durations, and its rows need the
+TOC lengths.
 
 ### The track table
 
