@@ -18,9 +18,6 @@ from textual.widgets import Static
 from skive import ui
 from skive.selection import INTERRUPT, QUIT, _Table, Binding
 
-console = ui.console  # the shared console; a module name tests can swap
-
-
 BOUNDARY_WINDOW = 120
 """Seconds a suggested boundary may sit from its summed-runtime target and
 still read unflagged; chapters ~7.8 min apart cannot overlap two windows."""
@@ -406,7 +403,7 @@ def fix_rejection(fix: tuple[int, int], start_chs: list[int], n_chapters: int,
     (red rows block Enter) and every typed value before it lands.
 
     Args:
-        fix: (episode, start chapter) from parse_fix
+        fix: (episode, start chapter) — the table's typed fix row
         start_chs: Each episode's current start chapter, 1-based
         n_chapters: The file's chapter count
         lo: First episode number of the range
@@ -486,8 +483,10 @@ def split_combined(combined: Path, targets: dict[int, Path], season: int,
             log.note("split", "skipped: no terminal — combined kept")
             return
         display = combined.name
-        confirmed = run_boundary_table(display, season, lo, hi, suggested[0],
-                                       chapter_starts, duration_s, ep_runtimes)
+        with ui.suspend():
+            confirmed = run_boundary_table(display, season, lo, hi,
+                                           suggested[0], chapter_starts,
+                                           duration_s, ep_runtimes)
         if confirmed == INTERRUPT:
             raise KeyboardInterrupt  # Textual restored the terminal; sweep below
         if confirmed == QUIT:

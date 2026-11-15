@@ -147,12 +147,13 @@ no footer. The
 A disc exposing exactly one eligible title carrying a multi-episode range rips
 whole — its episodes are chapter ranges inside one file. After the rename, a
 boundary table appears: chapter starts graded against summed TMDB runtimes
-suggest each split point; `2=14` means episode 2 starts at chapter 14
-(1-based, like VLC). Enter cuts at these boundaries; a fix row moves one
-interior boundary (E-lo is pinned to chapter 1; a rejected row prints why and
-changes nothing); suggestions outside ±120s of the summed runtimes are flagged
-above the table. The cut is `ffmpeg -c copy` — lossless; the combined file is
-deleted once every piece exists.
+suggest each split point. A fix row like `2=14` moves episode 2's boundary to
+chapter 14 (1-based, like VLC); E-lo is pinned to chapter 1 — only interior
+boundaries move. Suggestions outside ±120s of the summed runtimes are flagged
+above the table, a rejected fix row blocks in red and names the reason, and
+Enter refuses while any row is red. Accepting cuts at the confirmed
+boundaries; `q` keeps the combined file. The cut is `ffmpeg -c copy` —
+lossless; the combined file is deleted once every piece exists.
 
 Declining (`q`), a missing TMDB runtime, fewer chapters than episodes, an
 existing per-episode target, or any ffmpeg failure keeps the combined

@@ -53,13 +53,9 @@ KEYFRAME_TOL_S = 0.05
 CHAPTER_TOL_S = 0.05
 
 
-class _Enter:
-    """The scripted boundary prompt: answer Enter — accept the suggested layout."""
-
-    @staticmethod
-    def ask(*_args, **_kwargs):
-        return ""
-
+def _accept(display, season, lo, hi, spans, starts, duration, runtimes):
+    """The scripted boundary table: Enter — accept the suggested spans."""
+    return spans
 
 def _ffprobe(path: Path, entries: str, stream: str | None = None) -> str:
     cmd = ["ffprobe", "-v", "error"]
@@ -152,16 +148,21 @@ def verify_real_file_cut() -> bool:
           at_starts, f"keyframes at {keys}")
 
     # The REAL split path: real probe, real ffmpeg cuts (run=subprocess.run);
-    # only the boundary prompt is scripted — Enter accepts the suggestion.
+    # only the boundary table seam is scripted — Enter accepts the suggestion
+    # (the phase tests' _confirm pattern; pytest/the harness stdin is not a
+    # terminal, so the isatty gate is faked too).
     log = RipLog("verify_chapter_split", "ffmpeg", DISPLAY, root=work)
     log.start()
-    real_prompt = chapter_split.Prompt
-    chapter_split.Prompt = _Enter
+    real_isatty = chapter_split.sys.stdin.isatty
+    real_table = chapter_split.run_boundary_table
+    chapter_split.sys.stdin.isatty = lambda: True
+    chapter_split.run_boundary_table = _accept
     try:
         split_combined(combined, targets, SEASON, 1, 3, EP_RUNTIMES, log,
                        run=subprocess.run)
     finally:
-        chapter_split.Prompt = real_prompt
+        chapter_split.sys.stdin.isatty = real_isatty
+        chapter_split.run_boundary_table = real_table
     log.finish(0)
 
     check("all three episode pieces exist", all(t.exists() for t in targets.values()))
