@@ -585,3 +585,104 @@ def test_accepted_echo_prints_the_episode_table_plain(monkeypatch):
     for col in COLUMNS:
         assert col in text
     assert "E01" in text and "≈ sum of 0, 1, 2" in text and "below the TV floor" in text
+
+
+# --- CD: the track table (slice 05) ------------------------------------------
+
+from skive.selection import CdTable, CdTrack, RIP_ACTION, cd_audit_cell, run_cd_table  # noqa: E402
+from skive.selection import print_accepted_cd  # noqa: E402
+
+CD_TRACKS = [CdTrack(1, 200), CdTrack(2, 300)]
+
+
+def _cd(keys, check, tracks=CD_TRACKS, mb={1: 200, 2: 300}, size=(80, 24)):
+    async def go():
+        app = CdTable("CD · offset 6", tracks, mb)
+        async with app.run_test(size=size) as pilot:
+            if keys:
+                await pilot.press(*keys)
+                await pilot.pause()
+            check(app)
+    asyncio.run(go())
+
+
+def test_cd_prefills_all_rip():
+    """Every track prefills rip; the audit cell grades TOC ÷ MB (green at
+    1.00, yellow uniformly off, blank without a resolved duration)."""
+    assert_eq(cd_audit_cell(200, 200).plain, "1.00")
+    assert_eq(cd_audit_cell(200, 200).style, "green")
+    assert_eq(cd_audit_cell(200, 150).style, "yellow")
+    assert_eq(cd_audit_cell(200, None).plain, "")
+
+    def check(app):
+        assert_eq(app.actions, {1: RIP_ACTION, 2: RIP_ACTION})
+        cells = app._cells(CD_TRACKS[1])
+        assert_eq(cells[1].plain, "0:05:00")
+        assert_eq(cells[2].plain, "")  # size blank for CDs
+        assert_eq(cells[3].plain, "1.00")
+        assert_eq(cells[4].plain, "rip")
+    _cd(None, check)
+
+
+def test_cd_blank_audit_when_the_resolve_failed():
+    def check(app):
+        assert_eq(app._cells(CD_TRACKS[0])[3].plain, "")
+    _cd(None, check, mb=None)
+
+
+def test_cd_skip_and_restore():
+    def check(app):
+        assert_eq(app.actions, {1: "skip", 2: RIP_ACTION})
+        assert_eq(app._cells(CD_TRACKS[0])[4].plain, "skip")
+    _cd(("s",), check)
+
+
+def test_cd_restore_returns_the_track_to_rip():
+    def check(app):
+        assert_eq(app.actions, {1: RIP_ACTION, 2: RIP_ACTION})
+    _cd(("s", "down", "r", "up", "r"), check)
+
+
+def test_cd_accept_returns_the_action_map():
+    def check(app):
+        pass
+    result = {}
+
+    def capture(app):
+        result["actions"] = app.actions
+    _cd(("s", "down", "enter"), capture)
+    assert_eq(result["actions"], {1: "skip", 2: RIP_ACTION})
+
+
+def test_cd_refuses_to_accept_all_skip():
+    def check(app):
+        # still open: the hint names the refusal, no exit happened
+        assert_eq(app.return_value, None)  # Enter refused, still open
+        assert_eq(app.actions, {1: "skip", 2: "skip"})
+    _cd(("s", "down", "s", "enter"), check)
+
+
+def test_cd_quit_exits_with_nothing_ripped():
+    """`q` exits with QUIT — the caller rips nothing."""
+    async def go():
+        app = CdTable("CD · offset 6", CD_TRACKS, {1: 200, 2: 300})
+        async with app.run_test() as pilot:
+            await pilot.press("q")
+            await pilot.pause()
+            return app.return_value
+    assert_eq(asyncio.run(go()), QUIT)
+
+
+def test_cd_accepted_echo_prints_plain(monkeypatch):
+    out = io.StringIO()
+    con = Console(file=out, width=80, theme=THEME, highlight=False,
+                  emoji=False, force_terminal=False)
+    monkeypatch.setattr(ui, "console", con)
+    print_accepted_cd("CD · offset 6", CD_TRACKS, {1: "skip", 2: RIP_ACTION},
+                      {1: 200, 2: 300})
+    text = out.getvalue()
+    assert "\x1b[" not in text
+    assert "CD · offset 6" in text
+    for col in COLUMNS:
+        assert col in text
+    assert "0:03:20" in text and "1.00" in text and "skip" in text

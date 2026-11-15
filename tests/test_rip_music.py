@@ -2093,3 +2093,138 @@ def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
     assert len(wipe) == 1
     for n in (1, 2, 3):
         assert str(n) in wipe[0]
+
+# --- The pre-rip resolve and the CD selection table (selection-table slice 05)
+
+_INFO_TEXT = ("Disc tracks: 2\n"
+              "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
+              "&tracks=2&toc=1+2+180000+150+90000\n")
+_NOT_FOUND_TEXT = ("Disc tracks: 2\n"
+                   "Unable to find release info\n"
+                   "https://musicbrainz.org/cdtoc/attach?id=ZzYyXw987654"
+                   "&tracks=2&toc=1+2+180000+150+90000\n")
+_MULTIPLE_TEXT = ("Disc tracks: 2\n"
+                  "Multiple releases found in database for DiscID MnoPqr111111\n"
+                  "    1 (ID: aaa-111): Test Album One (2001)\n"
+                  "    2 (ID: bbb-222): Test Album Two (2008)\n")
+_STUB_TEXT = ("Disc tracks: 2\n"
+              "stub release found\n"
+              "https://musicbrainz.org/cdtoc/attach?id=StuVw12345678"
+              "&tracks=2&toc=1+2+180000+150+90000\n")
+
+
+def _rip_with_table(tmp_text, table_result, track_lengths_result):
+    """Run rip_music with the TOC pre-pass resolving `tmp_text` and stubs for
+    everything past the table. Returns (mock_run, mock_table, exit code)."""
+    args = FakeArgs(offset="6")
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music.RipLog"), \
+            patch("skive.rip_music._toc_prepass",
+                  return_value=({1: 200.0, 2: 300.0}, tmp_text)), \
+            patch("skive.rip_music.track_lengths",
+                  return_value=track_lengths_result), \
+            patch("skive.ui.terminal_present", return_value=True), \
+            patch("skive.rip_music.run_cd_table",
+                  return_value=table_result) as mock_table, \
+            patch("skive.rip_music._cyanrip_run",
+                  return_value=(0, "")) as mock_run, \
+            patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        code = None
+        try:
+            rip_music(args)
+        except SystemExit as e:
+            code = e.code
+    return mock_run, mock_table, code
+
+
+def test_cd_table_skips_leave_the_rip_and_name_the_summary(tmp_path, capsys):
+    """A skipped track rides cyanrip's -l exclusion list (merged over a disc
+    with no operator -l), is named once in the run summary, and reaches the
+    disc index as a manual skip."""
+    mock_run, mock_table, code = _rip_with_table(
+        _INFO_TEXT, {1: "rip", 2: "skip"}, {1: 200, 2: 300})
+    assert code == 0
+    pass_flags = mock_run.call_args[0][1]
+    assert ["-l", "1"] == pass_flags[-2:]
+    mb = mock_table.call_args[0][2]
+    assert mb == {1: 200, 2: 300}
+    err = capsys.readouterr().err
+    assert "0:05:00" in err  # skipped row: named once
+    assert "skipped" in err
+    assert "no summary" not in err
+
+
+def test_cd_blank_audit_fallback_when_the_resolve_fails():
+    """A resolve that yields no track lengths shows the table anyway — the
+    audit column stays blank and the rip is never blocked."""
+    mock_run, mock_table, code = _rip_with_table(_INFO_TEXT, {1: "rip", 2: "rip"}, None)
+    assert code == 0
+    assert mock_table.call_args[0][2] is None
+    assert mock_run.called
+
+
+def test_pre_rip_not_found_miss_fails_before_the_table(capsys):
+    """A not-found disc fails pre-rip: the yellow-box warn lines print with
+    the -R re-run guidance, and neither the table app nor cyanrip launches."""
+    mock_run, mock_table, code = _rip_with_table(
+        _NOT_FOUND_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300})
+    assert code == 1
+    assert not mock_run.called
+    assert not mock_table.called
+    err = capsys.readouterr().err
+    assert "not on MusicBrainz" in err
+    assert ("Open the link, attach this disc to its release, then re-run."
+            in err)
+    assert "https://musicbrainz.org/cdtoc/attach?id=ZzYyXw987654" in err
+
+
+def test_pre_rip_multiple_miss_fails_before_the_table(capsys):
+    """Several releases: the candidates and the detach/re-run guidance print
+    pre-rip; the drive never spins."""
+    mock_run, mock_table, code = _rip_with_table(
+        _MULTIPLE_TEXT, {1: "rip", 2: "rip"}, None)
+    assert code == 1
+    assert not mock_run.called
+    assert not mock_table.called
+    err = capsys.readouterr().err
+    assert "several MusicBrainz releases" in err
+    assert "Test Album One" in err and "Test Album Two" in err
+    assert "Re-run with the right one" in err and "-R <n>" in err
+
+
+def test_pre_rip_stub_miss_fails_before_the_table(capsys):
+    mock_run, mock_table, code = _rip_with_table(
+        _STUB_TEXT, {1: "rip", 2: "rip"}, None)
+    assert code == 1
+    assert not mock_run.called
+    assert not mock_table.called
+    assert "not on MusicBrainz" in capsys.readouterr().err
+
+
+def test_continuation_universe_excludes_manual_skips():
+    """One continuation universe: a stalled continuation pass never re-rips
+    a manually skipped track."""
+    from skive.rip_music import _continuation_pass
+    flags = _continuation_pass([], {"_disc_tracks": 4, "_stalled": [3],
+                                    "_skipped": [2]})
+    assert flags == ["-l", "1,4"]
+    # the operator's own -l still narrows the universe first
+    flags = _continuation_pass(["-l", "2,3,4"],
+                               {"_disc_tracks": 4, "_stalled": [],
+                                "_skipped": [2]})
+    assert flags == ["-l", "3,4"]
+
+
+def test_cd_record_manual_skips_key(tmp_path):
+    """The disc index records manual skips beside stalled ones."""
+    folder = tmp_path / "Album"
+    folder.mkdir()
+    (folder / "Album.log").write_text("Offset:         +10 samples\n")
+    (folder / "Album.cue").write_text("cue")
+    _write_cd_record(tmp_path, "Album", "10", Mock(run="rip-1"),
+                     stalled=[3], skipped=[2])
+    import json
+    doc = json.loads((folder / "validation.json").read_text())
+    assert doc["discs"]["1"]["skipped"] == [2]
+    assert doc["discs"]["1"]["stalled"] == [3]

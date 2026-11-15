@@ -700,3 +700,100 @@ def run_episode_table(display: str, emap: EpisodeMap,
             set of staged episode numbers
     """
     return EpisodeTable(display, emap, list_staging, clear_staging).run()
+
+
+# --- CD: the track table ------------------------------------------------------
+
+RIP_ACTION = "rip"
+"""The CD verbs: every track prefills rip; `s` skips, `r` restores."""
+
+CD_ACTION_STYLE = {RIP_ACTION: "bold green", SKIP_ACTION: "dim"}
+
+
+@dataclass
+class CdTrack:
+    """One table row: the disc track number and its TOC duration (a CD has
+    no size or scan — the row rides the shared table with the other columns
+    blank)."""
+    number: int
+    seconds: int
+
+
+def cd_audit_cell(toc_s: int, mb_s: int | None) -> Text:
+    """The audit cell: TOC ÷ MusicBrainz track duration, green within 2%
+    and yellow when off — a wrong release shows every row uniformly off.
+    Blank (never yellow) when the resolve yielded no duration."""
+    if not mb_s:
+        return Text("")
+    ratio = toc_s / mb_s
+    style = "green" if 0.98 <= ratio <= 1.02 else "yellow"
+    return Text(f"{ratio:.2f}", style=style)
+
+
+def cd_row_cells(t: CdTrack, actions: dict[int, str],
+                 mb_durations: dict[int, int] | None) -> tuple:
+    """One CD row's six cells: number · TOC length · blank size · audit ·
+    action · blank notes."""
+    action = actions.get(t.number, RIP_ACTION)
+    return (Text(str(t.number), style="bold"),
+            Text(hms(t.seconds)),
+            Text(""),
+            cd_audit_cell(t.seconds, (mb_durations or {}).get(t.number)),
+            Text(action, style=CD_ACTION_STYLE.get(action, "")),
+            Text(""))
+
+
+def print_accepted_cd(display: str, tracks: list[CdTrack],
+                      accepted: dict[int, str],
+                      mb_durations: dict[int, int] | None = None) -> None:
+    """Echo the accepted CD table as plain lines into scrollback, before the
+    drive spins — the same six columns, built through ui.table so it is
+    pipe-safe and NO_COLOR-safe by construction."""
+    ui.console.print(f"\n{display}")
+    table = ui.table(*COLUMNS)
+    for t in sorted(tracks, key=lambda t: t.number):
+        table.add_row(*cd_row_cells(t, accepted, mb_durations))
+    ui.console.print(table)
+
+
+class CdTable(_Table):
+    """The CD track table: one row per track, all prefilled rip. Keys: ↑/↓
+    or j/k move; `s` skips a known-bad track, `r` restores it; Enter accepts
+    and returns the track→action map; `q` quits with nothing ripped."""
+
+    BINDINGS = [
+        Binding("s", "verb('skip')", "skip"),
+        Binding("r", "verb('rip')", "restore"),
+    ]
+
+    HINT = "↑/↓ j/k move · s skip · r restore · Enter accept · q quit"
+
+    def __init__(self, display: str, tracks: list[CdTrack],
+                 mb_durations: dict[int, int] | None = None):
+        super().__init__(display, sorted(tracks, key=lambda t: t.number))
+        self.mb_durations = mb_durations
+        self.actions = {t.number: RIP_ACTION for t in self.titles}
+
+    def _cells(self, t: CdTrack) -> tuple:
+        return cd_row_cells(t, self.actions, self.mb_durations)
+
+    def action_verb(self, verb: str) -> None:
+        number = self._cursor_title().number
+        self.actions[number] = verb
+        self._refresh_row(number)
+
+    def action_accept(self) -> None:
+        if all(a == SKIP_ACTION for a in self.actions.values()):
+            self.query_one("#hint", Static).update(
+                "nothing to rip — every track is skipped")
+            return
+        self.exit(dict(self.actions))
+
+
+def run_cd_table(display: str, tracks: list[CdTrack],
+                 mb_durations: dict[int, int] | None = None,
+                 ) -> dict[int, str] | str:
+    """Run the CD track table and return the accepted track→action map,
+    QUIT (the caller exits 1 with nothing ripped) or INTERRUPT (see
+    run_selection_table)."""
+    return CdTable(display, tracks, mb_durations).run()
