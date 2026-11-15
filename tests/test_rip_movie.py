@@ -501,7 +501,6 @@ def test_table_moved_main_is_the_rip_set(monkeypatch):
     assert e.value.code == 0
     rip.assert_called_once()
     assert rip.call_args[0][0] == [21]
-    assert ("main", "main=t12 default (biggest bytes) — 2 titles near the runtime") not in _main_notes(log) or True
 
 
 def test_table_accept_with_extras_rides_the_i_machinery(monkeypatch, tmp_path, capsys):
@@ -577,6 +576,66 @@ def test_movie_run_without_a_terminal_refuses(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "selection table needs a terminal" in err
     assert err.strip().endswith("selection table needs a terminal")
+
+
+def test_movie_run_on_a_plain_tty_still_launches(monkeypatch, capsys):
+    """NO_COLOR on a real terminal is plainness, not a missing terminal: the
+    table still launches (stderr isatty() is true-terminal presence)."""
+    import sys
+    from skive import ui
+    log, _prompt, rip = _movie_flow(monkeypatch, MIXED_TITLES)
+    monkeypatch.setenv("NO_COLOR", "1")
+    ui.set_view(ui.RunView(tty=False, live=False, perf=False))
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True, raising=False)
+    try:
+        with pytest.raises(SystemExit) as e:
+            rip_movie(FakeArgs())
+    finally:
+        ui.clear_view()
+
+    assert e.value.code == 0
+    rip.assert_called_once()
+
+
+def test_table_accept_with_extras_never_marks_a_foreign_film(monkeypatch, tmp_path, capsys):
+    """An existing validation.json naming a different film is left untouched
+    by post_rip_validation — and the accepted-extras marker must not sneak
+    an extras key into it either: the record stays byte-identical."""
+    import json
+    from skive import rip_movie as rm
+
+    titles = [TitleInfo(21, 6252, 4_300_000_000, "dan", "", False),
+              TitleInfo(12, 300, 500_000_000, "dan", "", False)]
+    log, _prompt, rip = _movie_flow(monkeypatch, titles,
+                                    table_actions={21: "main", 12: "extra"},
+                                    root=tmp_path)
+    from skive import rip_common
+    monkeypatch.setattr(rip_common, "_confirm", Mock(return_value=True))
+    title_dir = tmp_path / "rip" / "movies" / "Mamma Mia! (2008)"
+    title_dir.mkdir(parents=True)
+    foreign = {"tmdb": {"id": "999", "type": "movie", "title": "Other Film",
+                        "runtime_s": 5400},
+               "volume_label": "", "run": "oldrun1", "main": None,
+               "titles": [], "encodes": []}
+    path = title_dir / "validation.json"
+    path.write_text(json.dumps(foreign), encoding="utf-8")
+    before = path.read_bytes()
+
+    def fake_run(cmd, **k):
+        return Mock(stdout="6252\n")
+
+    real = rm.post_rip_validation
+    monkeypatch.setattr(rm, "post_rip_validation",
+                        lambda pre, pex, main, rows, **k: real(pre, pex, main, rows, run=fake_run))
+
+    with pytest.raises(SystemExit) as e:
+        rip_movie(FakeArgs())
+
+    assert e.value.code == 0
+    assert path.read_bytes() == before
+    assert "extras" not in json.loads(path.read_text(encoding="utf-8"))
+    log.note.assert_any_call("validation",
+                             "existing validation.json names a different film — kept")
 
 
 def _movie_flow(monkeypatch, titles, pick=MAMMA, table_actions=None, root=None):

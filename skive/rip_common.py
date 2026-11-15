@@ -124,8 +124,6 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     # staging mkdir, so "already ripped" and "wrong name" are caught before
     # anything spins — a refusal exits with nothing created.
     if kind == "movie":
-        # spill: movie -E died with the selection table — the extras
-        # carve-out in _identity_gates is now unused by every caller.
         _identity_gates(videos_mnt, log, display, pick)
 
     # The title staging exists only once the TMDB pick has named it (CONTEXT.md:
@@ -237,8 +235,8 @@ def _duplicate_id_folders(videos_mnt: Path, tmdb_id: str) -> list[Path]:
     return matches
 
 
-def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick,
-                    extras: bool = False) -> None:
+def _identity_gates(videos_mnt: Path, log: RipLog, display: str,
+                    pick: TMDBPick) -> None:
     """The movie identity gates (map.md decision 2), run after the TMDB pick
     resolves and before any staging folder is created: (a) the picked id
     already has a folder under rip/, lossless/ or library/ — including this
@@ -249,8 +247,7 @@ def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick,
     folder exists and its validation.json records a different film. Both
     warn-and-confirm, default No: a refusal logs phase "gate" and exits with
     nothing staged; gate (b)'s same-id case never prompts (the documented
-    re-rip path). -E extras runs skip gate (a) — adding to an owned title is
-    the normal case (CONTEXT.md: Rip preflight). Movies only — TV is the
+    re-rip path). Movies only — TV is the
     season gate's job.
 
     Args:
@@ -258,17 +255,15 @@ def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick,
         log: The run's RipLog, already started
         display: The pick's sanitized folder name
         pick: The resolved TMDB pick
-        extras: -E run — the already-ripped gate never fires
     """
     duplicates = _duplicate_id_folders(videos_mnt, pick.id)
-    if not extras:
-        for _state, folder in folder_states(display, videos_mnt, "movies"):
-            if folder in duplicates:
-                continue
-            recorded = _recorded_identity(folder)
-            if recorded is not None and recorded[0] != pick.id:
-                continue  # a different film under this name — gate (b)'s case
-            duplicates.append(folder)
+    for _state, folder in folder_states(display, videos_mnt, "movies"):
+        if folder in duplicates:
+            continue
+        recorded = _recorded_identity(folder)
+        if recorded is not None and recorded[0] != pick.id:
+            continue  # a different film under this name — gate (b)'s case
+        duplicates.append(folder)
     if duplicates:
         ui.warn(f'"{display}" might already be ripped:')
         for folder in duplicates:

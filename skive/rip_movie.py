@@ -105,8 +105,7 @@ def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
 
 
 def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | None,
-                        graded_rows: list[dict], run=subprocess.run,
-                        include_extras: bool = False) -> list[dict]:
+                        graded_rows: list[dict], run=subprocess.run) -> list[dict]:
     """The post-rip record (map.md decision 5), run beside the subtitle note:
     probe what actually staged, grade it, resolve the main to a real file
     number, report one line per file, and write validation.json at the
@@ -161,12 +160,30 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
             log.note("validation", "existing validation.json names a different film — kept")
             return rows
         doc = merge_movie_document(old, doc)
-    if include_extras:
-        # -i/--include-extras (CONTEXT.md: Extras marker): the extras this
-        # run staged are keepers — transcode encodes them (superfast)
-        doc["extras"] = {"include": True, "quality": "superfast"}
     write_validation(path, doc)
     return rows
+
+
+def _terminal_present() -> bool:
+    """True terminal presence on stderr, ignoring NO_COLOR/TERM: plainness
+    is a rendering choice, not the non-TTY case."""
+    try:
+        if sys.stderr is not None and sys.stderr.isatty():
+            return True
+    except ValueError:  # closed stream
+        pass
+    return bool(ui.console.is_terminal)
+
+
+def _doc_is_this_film(tmdb_id, path: Path) -> bool:
+    """No document (marker is a no-op) or a document naming this film —
+    the guard for writing the extras marker into validation.json."""
+    old = load_validation(path)
+    if old is None:
+        return True
+    old_tmdb = old.get("tmdb")
+    old_id = old_tmdb.get("id") if isinstance(old_tmdb, dict) else None
+    return old_id is not None and str(old_id) == str(tmdb_id)
 
 
 def _quit_nothing_ripped() -> None:
@@ -212,7 +229,7 @@ def rip_movie(args) -> None:
         # table echoes into scrollback, the view redraws after. Non-TTY runs
         # refuse before the table — nothing spins, one stderr line.
         with view.suspend():
-            if not view.tty:
+            if not view.tty and not _terminal_present():
                 ui.fail("selection table needs a terminal")
                 sys.exit(1)
             result = run_selection_table(log, display, titles_full,
@@ -304,9 +321,12 @@ def rip_movie(args) -> None:
             # resolved to a real final file number, validation.json at the
             # title-folder root. Interrupts exit above and never reach this.
             probed = post_rip_validation(preamble, preexisting, chosen_main, graded_rows)
-            if extra_numbers:
+            if extra_numbers and _doc_is_this_film(preamble.pick.id,
+                                                   title_dir / VALIDATION_FILENAME):
                 # Accepted extra rows (the table's -i replacement): the
-                # extras marker only — never forced over a manual keep-edit.
+                # extras marker only — never forced over a manual keep-edit,
+                # and never into a foreign film's record (post_rip_validation
+                # leaves a different-film document untouched).
                 set_extras_marker(title_dir / VALIDATION_FILENAME, True,
                                   "superfast")
 
