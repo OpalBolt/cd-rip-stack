@@ -1,4 +1,4 @@
-"""Tests for common.py: title-spec parser, JSONL run/raw logs, mount helper."""
+"""Tests for common.py: JSONL run/raw logs, mount helper."""
 
 import json
 import re
@@ -15,44 +15,6 @@ import skive.common
 
 def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-
-
-class TestParseTitles:
-    """title-spec parser tests."""
-
-    def test_all(self):
-        assert skive.common.parse_titles("all") is None
-        assert skive.common.parse_titles("") is None
-
-    def test_single(self):
-        assert skive.common.parse_titles("5") == [5]
-        assert skive.common.parse_titles("0") == [0]
-
-    def test_range(self):
-        assert skive.common.parse_titles("2-4") == [2, 3, 4]
-        assert skive.common.parse_titles("0-2") == [0, 1, 2]
-
-    def test_comma_list(self):
-        assert skive.common.parse_titles("0,5-7") == [0, 5, 6, 7]
-        assert skive.common.parse_titles("1,3,5") == [1, 3, 5]
-        assert skive.common.parse_titles("0,5-7,10") == [0, 5, 6, 7, 10]
-
-    def test_reject_disc_n(self):
-        with pytest.raises(ValueError, match="disc:N does not belong"):
-            skive.common.parse_titles("disc:2")
-        with pytest.raises(ValueError, match="disc:N does not belong"):
-            skive.common.parse_titles("disc:0")
-
-    def test_reject_garbage(self):
-        with pytest.raises(ValueError, match="invalid title number"):
-            skive.common.parse_titles("abc")
-        with pytest.raises(ValueError, match="invalid range"):
-            skive.common.parse_titles("3-")
-
-    def test_range_start_gt_end(self):
-        with pytest.raises(ValueError) as exc_info:
-            skive.common.parse_titles("5-2")
-        assert str(exc_info.value) == "invalid range 5-2: start > end"
 
 
 class TestSanitize:

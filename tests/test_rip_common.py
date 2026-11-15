@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from skive import rip_common
-from skive.common import MENU, RipLog
+from skive.common import RipLog
 from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
 from skive.validation import VALIDATION_FILENAME, movie_document, write_validation

@@ -13,11 +13,6 @@ from pathlib import Path
 
 from skive import ui
 
-# Sentinel for bare -T/--titles (flag with no value) -> open the interactive
-# title menu. Lives here so main.py and makemkv.py can both import it without
-# a cycle.
-MENU = object()
-
 # Console verbosity: 0 = skive's own lines only, 1 = -v adds tool messages
 # worth babysitting, 2 = -vv raw passthrough. Module-level so the print sites
 # in makemkv.py/rip_music.py read it without threading a parameter through
@@ -314,50 +309,3 @@ def ensure_mounted(mnt: str, export: str) -> None:
     if subprocess.run(["sudo", "mount", "-t", "nfs", export, mnt]).returncode != 0:
         ui.fail(f"mount {export} -> {mnt} failed (export unreachable, or no sudo / nfs client on the host?)")
         sys.exit(1)
-
-
-def parse_titles(spec: str) -> list[int] | None:
-    """Parse a title specification.
-
-    Returns None for 'all' (or empty), otherwise a sorted list of ints.
-
-    Grammar: all | N | N-M | comma list mixing both (0,5-7)
-
-    Args:
-        spec: Title specification string
-
-    Raises:
-        ValueError: If spec is invalid (disc:N, garbage, etc.)
-    """
-    spec = spec.strip()
-    if not spec or spec == "all":
-        return None
-
-    if spec.startswith("disc:"):
-        raise ValueError(f"disc:N does not belong in a title spec; use --disc N instead of '{spec}'")
-
-    titles: set[int] = set()
-    for part in spec.split(","):
-        part = part.strip()
-        if not part:
-            continue
-
-        if "-" in part:
-            # Range N-M
-            try:
-                start, end = part.split("-", 1)
-                start_int = int(start.strip())
-                end_int = int(end.strip())
-            except ValueError as e:
-                raise ValueError(f"invalid range '{part}': {e}")
-            if start_int > end_int:
-                raise ValueError(f"invalid range {part}: start > end")
-            titles.update(range(start_int, end_int + 1))
-        else:
-            # Single N
-            try:
-                titles.add(int(part))
-            except ValueError:
-                raise ValueError(f"invalid title number '{part}'; use digits only")
-
-    return sorted(titles)
