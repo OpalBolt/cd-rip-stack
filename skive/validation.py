@@ -317,7 +317,7 @@ def main_candidates(titles: list[tuple[int, int, int]]) -> list[tuple[int, int, 
 
 def biggest_title(titles: list[tuple[int, int, int]]) -> tuple[int, int, int] | None:
     """The biggest-bytes title; longest duration breaks ties — and decides
-    outright when every size is 0 (the fast scan knows durations only).
+    outright when no size is present.
 
     Args:
         titles: (title_number, duration_seconds, size_bytes) triples
@@ -412,23 +412,20 @@ def movie_row(file: str, t: int, dur_s: int | None, runtime_s: int | None) -> di
 
 
 def resolve_main(chosen_main: str | None, graded_rows: list[dict],
-                 staged_rows: list[dict], fast_scan: bool) -> str | None:
+                 staged_rows: list[dict]) -> str | None:
     """The table's chosen main resolved to a real staged file number.
 
-    Full-scan table numbers are MakeMKV numbers, so the file whose final
-    _tNN equals the chosen number wins outright; missing there (skipped
-    decoy, collision roll forward) — and always on the fast scan, whose
-    table numbers are scanner indices — the resolution falls back to a
-    duration join ±1s against the chosen title's scanned duration. A join
-    that matches nothing or several files resolves to None: never guess.
+    Table numbers are MakeMKV numbers, so the file whose final _tNN equals
+    the chosen number wins outright; missing there (skipped decoy,
+    collision roll forward) the resolution falls back to a duration join
+    ±1s against the chosen title's scanned duration. A join that matches
+    nothing or several files resolves to None: never guess.
 
     Args:
         chosen_main: The table's pick ("t21"), None when nothing was chosen
         graded_rows: The pre-rip rows — the scanned duration per table number
         staged_rows: The probed post-rip rows — the real _tNN and actual
             duration per staged file (this run's files only)
-        fast_scan: The fast path ran — table numbers are indices, skip the
-            exact-number match
 
     Returns:
         The main as a real "tNN" file number, or None when unresolved
@@ -436,7 +433,7 @@ def resolve_main(chosen_main: str | None, graded_rows: list[dict],
     if chosen_main is None:
         return None
     main_t = int(chosen_main[1:])
-    if not fast_scan and any(r["t"] == main_t for r in staged_rows):
+    if any(r["t"] == main_t for r in staged_rows):
         return chosen_main
     scanned = next((r["dur_s"] for r in graded_rows if r["t"] == main_t), None)
     if scanned is None:
@@ -490,8 +487,8 @@ def tv_row(ep: int, file: str, t: int | None, dur_s: int | None,
     Args:
         ep: The episode number (a double's lo)
         file: Final file name in the show folder ("Show (2019)_S02E05.mkv")
-        t: The disc title the episode came from, None when unknown — fast-scan
-            table numbers are scanner indices, and an episode outside this
+        t: The disc title the episode came from, None when unknown — an
+            episode outside this
             run's map has no title to name
         dur_s: Probed duration in seconds, None when it would not read
         runtime_s: TMDB runtime in seconds, None when unknown
@@ -682,8 +679,8 @@ class Finding(NamedTuple):
 
 
 def probe_duration(path: Path, run=subprocess.run) -> int | None:
-    """The file's duration in seconds via ffprobe (`format=duration`, the
-    rename_tv_fast probe shape); None when the file won't probe — the caller
+    """The file's duration in seconds via ffprobe (`format=duration`);
+    None when the file won't probe — the caller
     reports it unreadable instead of crashing the walk.
 
     Args:

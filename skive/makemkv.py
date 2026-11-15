@@ -74,7 +74,7 @@ def status_block(what: str, drive: str, phase: str, title_x: int, title_y: int,
 
     Line 1 is what is being ripped: display title and drive. Line 2 is the
     detail: phase · title x/y · cur / total · disc · ETA. The size, disc, and
-    ETA segments appear only when known (empty-string inputs), so fast scans
+    ETA segments appear only when known (empty-string inputs), so sizeless
     and sizeless rips get a shorter line instead of invented numbers.
 
     Args:

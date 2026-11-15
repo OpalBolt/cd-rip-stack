@@ -29,7 +29,7 @@ SUM_SOFT_TOL_S = 300
 """Soft play-all window: a deliberately looser ±300s sum window for the
 same subset scan (a flat widening of the tight ±120s, chosen over a relative
 window to keep the tolerance nameable and testable). Soft matches disqualify
-and skip like tight ones, but never trigger the fast-scan escalation."""
+and skip."""
 
 
 def _summing_subset(components: list[int], target: int, tol: int) -> list[int] | None:

@@ -19,17 +19,6 @@ def _stage_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _fast_scan_fails(monkeypatch):
-    """Default movie tests land on the full-scan fallback, exactly like the
-    pre-fast-scan flow (issue 07 fast-path tests override these seams)."""
-    from skive import rip_common
-    monkeypatch.setattr(rip_common, "fast_scan_dvd",
-                        Mock(side_effect=RuntimeError("tests force the full-scan fallback")))
-    monkeypatch.setattr(rip_common, "fast_scan_bluray",
-                        Mock(side_effect=RuntimeError("tests force the full-scan fallback")))
-
-
-@pytest.fixture(autouse=True)
 def _confirm_enter(monkeypatch):
     """Every movie run now ends its pre-rip gate in a shared prompt; default
     it to Enter (=rip) so the flow tests keep their shape."""
@@ -378,84 +367,6 @@ def test_rip_movie_partial_rip_exits_1():
 # --- Fast-scan rip flow (ADR 0002, issue 07) ---
 
 FAST_DURATIONS = [7021, 599]  # main feature + a 10-minute short
-
-
-def test_rip_movie_i_run_fast_scan_rips_all_with_two_line_header(monkeypatch):
-    """A movie -i run on the fast scan (the only movie run that still takes
-    it — default runs select the main and need MakeMKV numbers, ADR 0015):
-    rip all in one call (titles=None, no resolve_titles dedupe), a two-line
-    header (no 0.0 B / ? preview), and rename_staged keeping MakeMKV's own
-    _tNN numbers."""
-    from skive import rip_common
-    monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=FAST_DURATIONS))
-
-    args = FakeArgs(include_extras=True)
-    mock_pick = TMDBPick(
-        title="Fast Movie",
-        year="2021",
-        original_language="en",
-        type="movie",
-        id="1",
-    )
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])) as mock_scan, \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.search_loop", return_value=mock_pick), \
-            patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
-            patch("skive.rip_movie.rip_titles", return_value=0) as mock_rip, \
-            patch("skive.rip_movie.resolve_titles") as mock_resolve, \
-            patch("skive.rip_movie.rename_staged") as mock_rename, \
-            patch("skive.rip_movie.subtitle_note", return_value="subs=none"), \
-            patch("pathlib.Path.unlink"):
-        mock_rename.side_effect = lambda d, sd, **k: (Path(sd) / f"{d}_t00.mkv").write_bytes(b"x")
-        with pytest.raises(SystemExit) as e:
-            rip_movie(args)
-        assert e.value.code == 0
-
-    mock_scan.assert_not_called()
-    mock_resolve.assert_not_called()
-    mock_rip.assert_called_once()
-    rip_args, rip_kwargs = mock_rip.call_args
-    assert rip_args[0] is None
-    assert rip_kwargs["total"] == len(FAST_DURATIONS)
-    assert [t.number for t in rip_kwargs["infos"]] == list(range(len(FAST_DURATIONS)))
-    assert rip_kwargs["header"] == ("Fast Movie (2021)\n"
-                                    f"  titles: {len(FAST_DURATIONS)} (fast scan — no size/audio preview)")
-    mock_rename.assert_called_once()
-    assert mock_rename.call_args[1]["suffix"] == "t"
-
-
-def test_rip_movie_default_run_skips_fast_scan_takes_full_scan(monkeypatch):
-    """A default movie run never touches the fast scan even when the scanner
-    works (ADR 0015): selecting the main alone needs MakeMKV's real title
-    numbers, so the full scan runs — and with no titles above the main floor
-    the biggest title becomes the rip set."""
-    from skive import rip_common
-    fast = Mock(return_value=[600, 900])
-    monkeypatch.setattr(rip_common, "fast_scan_dvd", fast)
-
-    titles = [TitleInfo(21, 6400, 8_000_000_000, "en", "", False),  # the main
-              TitleInfo(4, 600, 100_000_000, "en", "", False)]       # an extra
-    log, prompt, rip = _movie_flow(monkeypatch, titles, answers=("",))
-    monkeypatch.setattr(rip_common, "scan_disc",
-                        Mock(return_value=("DVD-ROM", "", titles)))
-
-    with pytest.raises(SystemExit) as e:
-        rip_movie(FakeArgs())
-
-    assert e.value.code == 0
-    fast.assert_not_called()
-    rip_common.scan_disc.assert_called_once()
-    rip.assert_called_once()
-    rip_args, rip_kwargs = rip.call_args
-    assert rip_args[0] == [21]  # the arbitrated main alone
-    assert [t.number for t in rip_kwargs["infos"]] == [21]
-    assert rip_kwargs["total"] == 2  # the table still shows every title
-    assert ("titles", "rip set: t21 (main only — extras not ripped)") in \
-        [tuple(c.args) for c in log.note.call_args_list]
 
 
 # -- Interrupt (Ctrl+C) mid-rip (CONTEXT.md: Interrupt) ------------------------
@@ -949,7 +860,7 @@ def test_probe_staged_skips_preexisting_files(tmp_path):
                      "ratio": None, "band": None}]
 
 
-def _preamble_for(tmp_path, pick=MAMMA, fast_scan=False):
+def _preamble_for(tmp_path, pick=MAMMA):
     """A real Preamble (dataclass) for direct post_rip_validation calls:
     Mock log carrying a string run, MAMMA display, the volume label."""
     from skive.rip_common import Preamble
@@ -958,8 +869,8 @@ def _preamble_for(tmp_path, pick=MAMMA, fast_scan=False):
     title_dir = tmp_path / "Mamma Mia! (2008)"
     pre = Preamble(log=log, pick=pick, display="Mamma Mia! (2008)", media="DVD-ROM",
                    titles_full=[], title_dir=title_dir, stage=title_dir / "d0",
-                   minlength=120, keep="", disc=0, label="MAMMA_MIA",
-                   fast_scan=fast_scan)
+                   minlength=120, keep="", disc=0, label="MAMMA_MIA")
+
     return pre, log
 
 
@@ -1096,40 +1007,6 @@ def test_post_rip_flow_writes_probed_actuals_and_flags_main(monkeypatch, tmp_pat
     assert "Mamma Mia! (2008)_t12.mkv  1:50:00  green" in err
     assert "validation: 2 files, 1 green main, 0 yellow" in err
     log.note.assert_any_call("validation", "2 files, 1 green main, 0 yellow")
-
-
-def test_post_rip_fast_scan_main_is_duration_joined_not_the_index(monkeypatch, tmp_path, capsys):
-    """Fast scan (a -i movie run — the movie shape that still fast-scans,
-    ADR 0015): the table's main is a scanner index (t0) — the recorded
-    main is the real final _tNN joined by duration, never the index."""
-    import json
-    from skive import rip_common
-    from skive import rip_movie as rm
-    monkeypatch.setattr(rip_common, "fast_scan_dvd", Mock(return_value=[7021, 599]))
-
-    title_dir = tmp_path / "rip" / "movies" / "Fast Movie (2021)"
-    durs = {"Fast Movie (2021)_t09.mkv": 7020, "Fast Movie (2021)_t03.mkv": 599}
-
-    def stage_files(_display, _dir, **k):
-        for name in durs:
-            (title_dir / name).write_bytes(b"x")
-
-    def fake_run(cmd, **k):
-        return Mock(stdout=f"{durs[cmd[-1].split('/')[-1]]}.0\n")
-
-    _log, _prompt, _rip = _movie_flow(
-        monkeypatch, [], pick=TMDBPick("Fast Movie", "2021", "en", "movie", "1"), root=tmp_path)
-    monkeypatch.setattr("skive.rip_movie.rename_staged", Mock(side_effect=stage_files))
-    real = rm.post_rip_validation
-    monkeypatch.setattr(rm, "post_rip_validation",
-                        lambda pre, pex, main, rows, **k: real(pre, pex, main, rows, run=fake_run))
-
-    with pytest.raises(SystemExit) as e:
-        rip_movie(FakeArgs(include_extras=True))
-    assert e.value.code == 0
-
-    doc = json.loads((title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["main"] == "t9"  # joined by duration — t0 was a scanner index
 
 
 def test_post_rip_unreadable_duration_still_writes(tmp_path, capsys):

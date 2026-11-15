@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pytest
 
 from skive.rip_tv import (
-    staged_eps, print_table, rename_tv, rip_tv, rename_tv_fast, episode_target,
+    staged_eps, print_table, rename_tv, rip_tv, episode_target,
     post_rip_validation,
 )
 from skive.scan import TitleInfo
@@ -124,7 +124,6 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
                         lambda pre, *a, **k: real_post(pre, *a, run=Mock(return_value=Mock(stdout="600.0\n"))))
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -433,7 +432,6 @@ def test_extras_flow():
     args = FakeArgs()
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -485,7 +483,6 @@ def test_rip_only_requested_titles_that_survived_scan():
     mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -579,7 +576,6 @@ def _clear_staged_flow(tmp_path, monkeypatch, answers):
     prompt.ask.side_effect = answers
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -636,7 +632,6 @@ def test_floor_drops_short_titles_before_rip():
     mock_episodes = [(1, "ep1", 2400)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -687,7 +682,6 @@ def test_playall_forced_to_extra():
     mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -737,7 +731,6 @@ def test_playall_pin_survives_n_reask():
     mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -788,7 +781,6 @@ def test_fix_row_can_assign_playall_to_episode():
                      (4, "ep4", 3600), (5, "ep5", 3700)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
         with patch("skive.rip_common.ensure_mounted"):
             with patch("skive.rip_common.purge_junk"):
@@ -998,8 +990,6 @@ def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
         verified = True
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd",
-                  side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
             patch("skive.rip_common.ensure_mounted"), \
@@ -1064,8 +1054,6 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
         verified = True
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd",
-                  side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
             patch("skive.rip_common.ensure_mounted"), \
@@ -1092,81 +1080,6 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
     assert rows == [{"ep": 1, "file": "Show (2000)_S01E01-E03.mkv", "t": 0,
                      "dur_s": 9400, "runtime_s": 9660, "ratio": 0.97,
                      "band": "green"}]
-
-
-def test_split_hook_fires_on_fast_scan_path(tmp_path, monkeypatch):
-    """Fast scan of a play-all-only disc: the real duration join renames the
-    lone staged file to the combined name, and the split fires there too —
-    after the rename, before the subtitle note."""
-    import json
-    from skive.tmdb import TMDBPick
-    from skive.rip_tv import rename_tv_fast as real_join
-
-    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
-    show_dir.mkdir(parents=True)
-    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
-    combined = show_dir / "Show (2000)_S01E01-E03.mkv"
-    order = []
-
-    def promote_one_junk(stage):
-        (show_dir / "B1_t00.mkv").touch()   # what makemkvcon would have staged
-
-    def joined_join(display, dir_, season, assignment, durs, **k):
-        return real_join(display, dir_, season, assignment, durs,
-                         run=Mock(return_value=Mock(stdout="9643\n")))
-
-    def fake_subs(_dir):
-        order.append("subs")
-        assert (show_dir / "Show (2000)_S01E01.mkv").exists()
-        return "subs=dan"
-
-    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 2810,
-            "Show (2000)_S01E03.mkv": 2810}
-
-    def fake_run(cmd, **k):
-        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
-
-    real_post = post_rip_validation
-    prompt = MagicMock()
-    prompt.ask.side_effect = ["", "", "0=1-3", ""]  # season, range prefill, fix row, rip
-
-    @dataclass
-    class FakeArgs:
-        titles = None          # no -T flag: the fast scan gates the disc
-        extras = False
-        tmdbid = None
-        verified = True
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", return_value=[9643]), \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            _prompts(prompt), \
-            patch("skive.rip_tv.fetch_season", return_value=episodes), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0), \
-            patch("skive.rip_tv.promote_staged", side_effect=promote_one_junk), \
-            patch("skive.rip_tv.rename_tv_fast", side_effect=joined_join), \
-            patch("skive.rip_tv.split_combined",
-                  side_effect=_split_fake_cut(show_dir, order)), \
-            patch("skive.rip_tv.subtitle_note", side_effect=fake_subs), \
-            patch("skive.rip_tv.post_rip_validation",
-                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
-        with pytest.raises(SystemExit) as e:
-            rip_tv(FakeArgs())
-
-    assert e.value.code == 0
-    assert order == ["split", "subs"]
-    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
-    rows = doc["seasons"][0]["episodes"]
-    assert [r["file"] for r in rows] == ["Show (2000)_S01E01.mkv",
-                                         "Show (2000)_S01E02.mkv",
-                                         "Show (2000)_S01E03.mkv"]
-    assert all(r["t"] is None for r in rows)   # fast-scan rows, existing rule
 
 
 def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
@@ -1211,8 +1124,6 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
         verified = True
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd",
-                  side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
             patch("skive.rip_common.ensure_mounted"), \
@@ -1242,271 +1153,12 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
     assert "info  split: interrupted" in capsys.readouterr().err
 
 
-# --- Fast scan: duration join + rename (ADR 0002, DVD half) ---
-GK_DURATIONS = [3932, 3897, 3653, 11482]
-# Play-all-free: a fast scan that finds a play-all escalates (ADR 0008), so
-# genuine fast-path flow tests carry the three episodes only.
-FAST_DURATIONS = GK_DURATIONS[:3]
-
-
-def _ffprobe_run(durations: dict[str, int]):
-    """Fake subprocess.run: ffprobe returns the mapped duration for a file."""
-    def fake_run(cmd, **kwargs):
-        assert cmd[:1] == ["ffprobe"]
-        name = Path(cmd[-1]).name
-        return Mock(returncode=0, stdout=f"{durations[name]}\n")
-    return fake_run
-
-
-def test_rename_tv_fast_happy_path(tmp_path):
-    """Four GK junk files join by duration: three episodes + one extra named."""
-    for n, dur in enumerate(GK_DURATIONS):
-        (tmp_path / f"GENERATION_KILL_t{n}.mkv").touch()
-
-    rename_tv_fast("Show (2000)", tmp_path, 1,
-                   {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)},
-                   GK_DURATIONS, run=_ffprobe_run({f"GENERATION_KILL_t{n}.mkv": d
-                                                   for n, d in enumerate(GK_DURATIONS)}))
-
-    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
-    assert (tmp_path / "Show (2000)_S01E02.mkv").exists()
-    assert (tmp_path / "Show (2000)_S01E03.mkv").exists()
-    assert (tmp_path / "Show (2000) - Extra 01.mkv").exists()
-
-
-def test_rename_tv_fast_duplicate_duration_keeps_lowest_tnn(tmp_path, capsys):
-    """Two staged files within ±1s of one title: lowest _tNN wins, the loser
-    is warned and stays junk-labeled."""
-    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
-    (tmp_path / "GENERATION_KILL_t05.mkv").touch()  # duplicate/decoy of t00
-
-    rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 1)}, [3932],
-                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932,
-                                     "GENERATION_KILL_t05.mkv": 3932}))
-
-    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
-    assert (tmp_path / "GENERATION_KILL_t05.mkv").exists()  # loser stays junk
-    err = capsys.readouterr().err
-    assert "t05" in err
-    assert err.count("GENERATION_KILL_t05") == 1  # one warning, not one per join
-
-
-def test_rename_tv_fast_second_claimant_never_warned_as_loser(tmp_path, capsys):
-    """Two scanner titles share a duration, two staged files: the file title 1
-    claims gets renamed — it was never a loser, so no junk warning. One
-    disposition per staged file."""
-    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
-    (tmp_path / "GENERATION_KILL_t01.mkv").touch()
-
-    ok = rename_tv_fast("Show (2000)", tmp_path, 1,
-                        {0: (1, 1), 1: (2, 2)}, [3932, 3932],
-                        run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932,
-                                          "GENERATION_KILL_t01.mkv": 3932}))
-
-    assert ok is True
-    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
-    assert (tmp_path / "Show (2000)_S01E02.mkv").exists()
-    err = capsys.readouterr().err
-    assert "junk-labeled" not in err  # title 1 claimed it — no loser warning
-    assert "GENERATION_KILL → Show (2000)_S01E01" in err
-    assert "GENERATION_KILL → Show (2000)_S01E02" in err
-
-
-def test_rename_tv_fast_double_loser_warned_once(tmp_path, capsys):
-    """A file losing two same-duration joins is warned exactly once, in the
-    single post-join pass — not once per losing title."""
-    for n in range(3):
-        (tmp_path / f"GENERATION_KILL_t{n:02d}.mkv").touch()
-
-    rename_tv_fast("Show (2000)", tmp_path, 1,
-                   {0: (1, 1), 1: (2, 2)}, [3932, 3932],
-                   run=_ffprobe_run({f"GENERATION_KILL_t{n:02d}.mkv": 3932
-                                     for n in range(3)}))
-
-    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
-    assert (tmp_path / "Show (2000)_S01E02.mkv").exists()
-    assert (tmp_path / "GENERATION_KILL_t02.mkv").exists()  # loser stays junk
-    assert capsys.readouterr().err.count("GENERATION_KILL_t02") == 1
-
-
-def test_rename_tv_fast_unjoinable_file_stays_junk(tmp_path, capsys):
-    """A staged file within no scanner title's ±1s is warned and left alone."""
-    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
-    (tmp_path / "GENERATION_KILL_t09.mkv").touch()  # 500s menu loop: unjoinable
-
-    rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 1)}, [3932],
-                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932,
-                                     "GENERATION_KILL_t09.mkv": 500}))
-
-    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
-    assert (tmp_path / "GENERATION_KILL_t09.mkv").exists()
-    assert "matches no scanned title" in capsys.readouterr().err
-
-
-def test_rename_tv_fast_missing_episode_aborts_before_any_rename(tmp_path, capsys):
-    """An eligible title without a staged file returns False and renames NOTHING."""
-    (tmp_path / "GENERATION_KILL_t00.mkv").touch()  # only title 0's file
-
-    ok = rename_tv_fast("Show (2000)", tmp_path, 1,
-                        {0: (1, 1), 2: (3, 3)},  # title 2 -> E3 has no file
-                        [3932, 3897, 3653],
-                        run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932}))
-
-    assert ok is False
-    err = capsys.readouterr().err
-    assert "title 2 (E03) has no staged file — rename aborted" in err
-    assert (tmp_path / "GENERATION_KILL_t00.mkv").exists()  # nothing renamed
-    assert not (tmp_path / "Show (2000)_S01E01.mkv").exists()
-
-
-def test_rename_tv_fast_missing_double_names_the_range(tmp_path, capsys):
-    """The abort line names a double assignment as E01-E02."""
-    ok = rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 2)}, [3932],
-                        run=_ffprobe_run({}))
-    assert ok is False
-    assert "title 0 (E01-E02)" in capsys.readouterr().err
-
-
-def test_rename_tv_fast_unmatched_extra_warns_without_abort(tmp_path, capsys):
-    """An extra (lo=0) with no staged file only warns; episodes still rename."""
-    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
-
-    rename_tv_fast("Show (2000)", tmp_path, 1,
-                   {0: (1, 1), 3: (0, 0)},  # title 3 extra: file never ripped
-                   [3932, 3897, 3653, 11482],
-                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932}))
-
-    assert (tmp_path / "Show (2000)_S01E01.mkv").exists()
-    assert "title 3" not in capsys.readouterr().err
-
-
-def test_rename_tv_fast_never_clobbers(tmp_path, capsys):
-    """An existing episode target wins; the joined file stays junk-labeled."""
-    (tmp_path / "Show (2000)_S01E01.mkv").write_text("existing")
-    (tmp_path / "GENERATION_KILL_t00.mkv").touch()
-
-    rename_tv_fast("Show (2000)", tmp_path, 1, {0: (1, 1)}, [3932],
-                   run=_ffprobe_run({"GENERATION_KILL_t00.mkv": 3932}))
-
-    assert (tmp_path / "Show (2000)_S01E01.mkv").read_text() == "existing"
-    assert (tmp_path / "GENERATION_KILL_t00.mkv").exists()
-    assert "already exists" in capsys.readouterr().err
-
-
 def test_episode_target_singles_doubles_and_seasons():
     """The shared target helper names singles, doubles and specials."""
     stage = Path("/stage")
     assert episode_target(stage, "Show (2000)", 1, 3, 3) == stage / "Show (2000)_S01E03.mkv"
     assert episode_target(stage, "Show (2000)", 1, 1, 2) == stage / "Show (2000)_S01E01-E02.mkv"
     assert episode_target(stage, "Show (2000)", 0, 5, 5) == stage / "Show (2000)_S00E05.mkv"
-
-
-def test_fast_scan_rip_rips_all_at_floor_and_joins(tmp_path, monkeypatch):
-    """Fast-path rip_tv: rip_titles(None, ..., tv_floor) and rename_tv_fast
-    with the scanner durations — never the full-scan rename_tv."""
-    from skive.tmdb import TMDBPick
-
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]
-    prompt = MagicMock()
-    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", return_value=FAST_DURATIONS), \
-            patch("skive.rip_common.scan_disc") as mock_scan_disc, \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            _prompts(prompt), \
-            patch("skive.rip_tv.fetch_season", return_value=episodes), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
-            patch("skive.rip_tv.rename_tv") as mock_rename_tv, \
-            patch("skive.rip_tv.rename_tv_fast") as mock_rename_fast, \
-            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-        with pytest.raises(SystemExit) as e:
-            rip_tv(FakeArgs())
-
-    assert e.value.code == 0
-    mock_scan_disc.assert_not_called()  # the fast scan gated the disc
-
-    rip_args = mock_rip_titles.call_args
-    assert rip_args.args[0] is None  # rip all in one call
-    assert rip_args.args[2] == tv_floor(120) == 600  # MakeMKV minlength = TV floor
-    assert rip_args.kwargs["total"] == 3
-
-    mock_rename_tv.assert_not_called()
-    fast_args = mock_rename_fast.call_args.args
-    assert fast_args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3)}  # no play-all on this disc
-    assert fast_args[4] == FAST_DURATIONS
-
-
-def test_fast_scan_playall_escalates_to_full_scan_and_skips_it(tmp_path, capsys):
-    """A play-all on the fast scan escalates (ADR 0008): the full MakeMKV scan
-    re-runs, the run joins the full-scan path (per-title minlength, not the TV
-    floor; direct rename, no duration join), the escalation is logged, and the
-    play-all is skipped in the rip selection."""
-    from skive.tmdb import TMDBPick
-
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]
-    # MakeMKV numbers differ from scanner positions — what the escalation is for.
-    mkv_titles = [TitleInfo(10, 3932, 100, "dan", "", False),
-                  TitleInfo(11, 3897, 101, "dan", "", False),
-                  TitleInfo(12, 3653, 102, "dan", "", False),
-                  TitleInfo(13, 11482, 400, "dan", "", False)]
-    prompt = MagicMock()
-    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", return_value=GK_DURATIONS), \
-            patch("skive.rip_common.scan_disc") as mock_gate_scan, \
-            patch("skive.rip_tv.scan_disc", return_value=("DVD-ROM", "", mkv_titles)) as mock_full_scan, \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.RipLog") as mock_log, \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            _prompts(prompt), \
-            patch("skive.rip_tv.fetch_season", return_value=episodes), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
-            patch("skive.rip_tv.rename_tv") as mock_rename_tv, \
-            patch("skive.rip_tv.rename_tv_fast") as mock_rename_fast, \
-            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-        mock_log.return_value.run = "run-1"  # the validation document's run identity
-        with pytest.raises(SystemExit) as e:
-            rip_tv(FakeArgs())
-
-    assert e.value.code == 0
-    mock_gate_scan.assert_not_called()  # the fast scan gated the disc
-    mock_full_scan.assert_called_once()  # the play-all escalated it
-    mock_log.return_value.note.assert_any_call("scan", "play-all detected — full-scan escalation")
-    assert "fast scan found a play-all title — escalating" in capsys.readouterr().err
-
-    rip_args = mock_rip_titles.call_args
-    assert rip_args.args[0] == [10, 11, 12]  # the play-all (13) is skipped
-    assert rip_args.args[2] == 120  # full-scan rip: MakeMKV minlength, not the TV floor
-    assert rip_args.kwargs["total"] == 4
-
-    mock_rename_fast.assert_not_called()  # no duration join after escalation
-    mock_rename_tv.assert_called_once()  # direct rename by MakeMKV title numbers
-    assert mock_rename_tv.call_args.args[3] == {10: (1, 1), 11: (2, 2), 12: (3, 3), 13: (0, 0)}
 
 
 def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
@@ -1534,7 +1186,6 @@ def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
     mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.purge_junk"), \
@@ -1579,7 +1230,6 @@ def test_fix_row_rescued_playall_rips():
     mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.purge_junk"), \
@@ -1612,64 +1262,6 @@ def test_fix_row_rescued_playall_rips():
     assert "→ S01E03 (ep3)" in texts[2]
 
 
-def test_fast_scan_rename_abort_logs_and_exits_before_subtitle_note(tmp_path, capsys):
-    """rename_tv_fast returning False: the caller logs the abort, closes the
-    log with rc 1, and exits 1 — before the subtitle note. Promotion has
-    already moved this disc's rip up, so the joined junk rests in the show
-    folder for the next run's purge; nothing is renamed."""
-    from skive.tmdb import TMDBPick
-
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
-    prompt = MagicMock()
-    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
-    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
-    show_dir.mkdir(parents=True, exist_ok=True)
-    (show_dir / "B1_t00.mkv").touch()
-    (show_dir / "B1_t01.mkv").touch()
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", return_value=FAST_DURATIONS), \
-            patch("skive.rip_common.scan_disc") as mock_scan_disc, \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            patch("skive.rip_common.RipLog") as mock_log, \
-            _prompts(prompt), \
-            patch("skive.rip_tv.fetch_season", return_value=episodes), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0), \
-            patch("skive.rip_tv.promote_staged") as mock_promote, \
-            patch("skive.rip_tv.rename_tv_fast", return_value=False) as mock_rename_fast, \
-            patch("skive.rip_tv.subtitle_note", return_value="subs=dan") as mock_subs:
-        with pytest.raises(SystemExit) as e:
-            rip_tv(FakeArgs())
-
-    assert e.value.code == 1
-    mock_scan_disc.assert_not_called()  # the fast scan gated the disc
-    mock_promote.assert_called_once()  # promotion precedes the rename gate
-    mock_rename_fast.assert_called_once()
-    log = mock_log.return_value
-    log.note.assert_any_call("rename", "join aborted — an episode's staged file is missing")
-    log.phase_end.assert_called_once()  # the abort reaches rip.log ...
-    log.finish.assert_called_once_with(1)  # ... with a final total line
-    mock_subs.assert_not_called()
-    assert sorted(p.name for p in show_dir.glob("*.mkv")) == ["B1_t00.mkv", "B1_t01.mkv"]
-    # the run still ends on its summary's failure line: each attempted
-    # title's missing output counts failed
-    assert "fail  3 failed · 0 ok" in capsys.readouterr().err.splitlines()[-1]
-
-
-# -- Interrupt (Ctrl+C) at the prompts (CONTEXT.md: Interrupt) -----------------
-
 def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch, capsys):
     """Ctrl+C at the season prompt: the run log records status=interrupted, the
     exit is 130 with ONE summary line, and no traceback escapes."""
@@ -1692,7 +1284,6 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
     prompt.ask.side_effect = KeyboardInterrupt
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.require_online"), \
@@ -1733,7 +1324,6 @@ def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
     prompt.ask.side_effect = ["", "", KeyboardInterrupt]
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.require_online"), \
@@ -1752,7 +1342,7 @@ def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
 
 # -- Post-rip validation record (issue 06, map.md decision 6) ------------------
 
-def _tv_preamble_for(tmp_path, fast_scan=False):
+def _tv_preamble_for(tmp_path):
     """A real Preamble (dataclass) for direct post_rip_validation calls:
     Mock log carrying a string run, the Show (2000) pick and folder."""
     from skive.rip_common import Preamble
@@ -1764,7 +1354,7 @@ def _tv_preamble_for(tmp_path, fast_scan=False):
     pre = Preamble(log=log, pick=TMDBPick("Show", "2000", "en", "tv", "5"),
                    display="Show (2000)", media="DVD-ROM", titles_full=[],
                    title_dir=title_dir, stage=title_dir / "d0", minlength=120,
-                   keep="", disc=0, label="SHOW_S2", fast_scan=fast_scan)
+                   keep="", disc=0, label="SHOW_S2")
     return pre, log
 
 
@@ -1827,22 +1417,6 @@ def test_post_rip_double_records_lo_extra_and_junk_skipped(tmp_path):
     ]
     assert season["discs"] == [{"volume_label": "SHOW_S2", "run": "newrun1",
                                 "staged": [5, 6]}]
-
-
-def test_post_rip_fast_scan_rows_record_t_none(tmp_path):
-    """Fast scan: the table numbers are scanner indices, never real _tNN
-    (slice-04 review P2) — rows record t=None even though the map covers the
-    episode. Null is honest."""
-    import json
-    pre, _log = _tv_preamble_for(tmp_path, fast_scan=True)
-    pre.title_dir.mkdir()
-    (pre.title_dir / "Show (2000)_S01E01.mkv").write_bytes(b"x")
-
-    post_rip_validation(pre, 1, {0: (1, 1)}, {1: 4140},
-                        run=Mock(return_value=Mock(stdout="3930\n")))
-
-    doc = json.loads((pre.title_dir / "validation.json").read_text(encoding="utf-8"))
-    assert doc["seasons"][0]["episodes"][0]["t"] is None
 
 
 def test_post_rip_unknown_runtime_and_yellow_band(tmp_path):
@@ -2028,8 +1602,6 @@ def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
 
     real_post = post_rip_validation
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd",
-                  side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.purge_junk"), \
@@ -2069,61 +1641,6 @@ def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
     log.phase_end.assert_called_once()  # the write precedes the phase close
 
 
-def test_fast_scan_flow_rows_record_t_none(tmp_path):
-    """Fast-path rip: the record still lands after the renames, and its rows
-    carry t=None — the fast scan's table numbers are scanner indices, not
-    real _tNN (slice-04 review P2)."""
-    import json
-    from skive.tmdb import TMDBPick
-
-    episodes = [(1, "ep1", 4140), (2, "ep2", 4080), (3, "ep3", 3840)]
-    prompt = MagicMock()
-    prompt.ask.side_effect = ["", "", ""]  # season, accept range pre-fill, Enter=rip
-    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
-    show_dir.mkdir(parents=True, exist_ok=True)
-
-    def join_creates_episodes(_display, _dir, _season, _assignment, _durs, **k):
-        for ep in (1, 2, 3):
-            (show_dir / f"Show (2000)_S01E0{ep}.mkv").write_bytes(b"x")
-        return True
-
-    durs = {"Show (2000)_S01E01.mkv": 3930, "Show (2000)_S01E02.mkv": 3895,
-            "Show (2000)_S01E03.mkv": 3653}
-
-    def fake_run(cmd, **k):
-        return Mock(stdout=f"{durs[Path(cmd[-1]).name]}\n")
-
-    real_post = post_rip_validation
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd", return_value=FAST_DURATIONS), \
-            patch("skive.rip_common.scan_disc") as mock_scan_disc, \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.RipLog") as mock_log, \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Show", year="2000", original_language="en", type="tv", id="5")), \
-            _prompts(prompt), \
-            patch("skive.rip_tv.fetch_season", return_value=episodes), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0), \
-            patch("skive.rip_tv.rename_tv_fast", side_effect=join_creates_episodes), \
-            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
-            patch("skive.rip_tv.post_rip_validation",
-                  lambda pre, *a, **k: real_post(pre, *a, run=fake_run)):
-        mock_log.return_value.run = "run-1"  # the validation document's run identity
-        with pytest.raises(SystemExit) as e:
-            rip_tv(_ValidationFakeArgs())
-
-    assert e.value.code == 0
-    mock_scan_disc.assert_not_called()  # the fast scan gated the disc
-    doc = json.loads((show_dir / "validation.json").read_text(encoding="utf-8"))
-    episodes = doc["seasons"][0]["episodes"]
-    assert [r["ep"] for r in episodes] == [1, 2, 3]
-    assert [r["dur_s"] for r in episodes] == [3930, 3895, 3653]
-    assert [r["t"] for r in episodes] == [None, None, None]
-
-
 def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
     """Ctrl+C mid-rip: the in-flight partial is purged, exit 130 — and no
     validation.json exists: the write sits beside the subtitle note, after
@@ -2144,8 +1661,6 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
         raise KeyboardInterrupt
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd",
-                  side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.require_online"), \
@@ -2210,8 +1725,6 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
         verified = True
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.fast_scan_dvd",
-                  side_effect=RuntimeError("tests force the full-scan fallback")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", titles or _gk_titles())), \
             patch("skive.rip_common.ensure_mounted"), \
@@ -2315,8 +1828,6 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
     ui.set_view(view)
     try:
         with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-                patch("skive.rip_common.fast_scan_dvd",
-                      side_effect=RuntimeError("tests force the full-scan fallback")), \
                 patch("skive.rip_common.scan_disc",
                       return_value=("DVD-ROM", "", _gk_titles())), \
                 patch("skive.rip_common.ensure_mounted"), \
@@ -2369,8 +1880,6 @@ def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
     ui.set_view(view)
     try:
         with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-                patch("skive.rip_common.fast_scan_dvd",
-                      side_effect=RuntimeError("tests force the full-scan fallback")), \
                 patch("skive.rip_common.scan_disc",
                       return_value=("DVD-ROM", "", _gk_titles())), \
                 patch("skive.rip_common.ensure_mounted"), \

@@ -15,8 +15,8 @@ from skive.makemkv import (
     CONFIG_DIR, build_selection, inject_profile, promote_staged, purge_junk,
     rename_staged, rip_header, subtitle_note, rip_titles, hsize,
 )
-from skive.rip_common import fast_scan_header, rip_preamble, tv_season_gate
-from skive.scan import resolve_titles, scan_disc
+from skive.rip_common import rip_preamble, tv_season_gate
+from skive.scan import resolve_titles
 from skive.tmdb import fetch_season
 from skive.validation import (
     VALIDATION_FILENAME, _double_runtime, load_validation, merge_tv_document,
@@ -118,7 +118,6 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
         s = secs % 60
         dur = f"{h}:{m:02d}:{s:02d}"
 
-        # Fast-scan titles carry no size (lsdvd knows durations only) — no 0.0 B row
         sz = hsize(size) if size else ""
 
         lo, hi = assignment.get(t, (0, 0))
@@ -151,7 +150,6 @@ def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
 def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) -> Path:
     """Target path for an episode assignment: single or double episode name.
 
-    Shared by rename_tv (full scan) and rename_tv_fast (duration join).
     Existence is the caller's concern (never clobber).
 
     Args:
@@ -224,103 +222,6 @@ def rename_tv(display: str, show_dir: Path, season: int,
     return renamed
 
 
-def rename_tv_fast(display: str, show_dir: Path, season: int,
-                   assignment: dict[int, tuple[int, int]], scan_durations: list[int],
-                   run=subprocess.run) -> bool:
-    """Join staged junk files to scanner titles by duration, then rename.
-
-    The fast scan's title numbers are positional and never match MakeMKV's,
-    so every staged _tNN file is ffprobed and joined to the scanner title
-    with the same duration (±1s) before the episode map is applied. An
-    assigned episode with no staged file aborts before ANY rename — never
-    guess. Unmatched extras, losers of a duplicate join, and unjoinable
-    files stay junk-labeled with one warning each.
-
-    Args:
-        display: Show name
-        show_dir: The show's title folder under rip/tv — the promoted files
-            joined and renamed here rest directly in it
-        season: Season number
-        assignment: Scanner title number -> (lo, hi) mapping (table's keys)
-        scan_durations: Scanner durations in scan order (index == title number)
-        run: subprocess.run callable for monkeypatching
-
-    Returns:
-        True on success (renamed or warned); False when aborted — an
-        assigned episode had no staged file (message already printed). The
-        caller owns the exit so the abort still reaches rip.log.
-    """
-    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                   "-of", "csv=p=0"]
-    staged = []  # (path, _tNN, duration seconds)
-    for mkv in show_dir.glob("*.mkv"):
-        m = re.search(r'_t(\d+)$', mkv.stem)
-        if not m:
-            continue
-        result = run(ffprobe_cmd + [str(mkv)], capture_output=True, text=True)
-        try:
-            fdur = int(float(result.stdout.strip()))
-        except ValueError:
-            ui.warn(f"cannot read duration of {mkv.name} — left junk-labeled")
-            continue
-        staged.append((mkv, int(m.group(1)), fdur))
-
-    # Join: scanner title order, lowest _tNN wins, losers stay junk.
-    claimed: set[Path] = set()
-    losers: set[Path] = set()
-    matched: dict[int, Path] = {}
-    for i, d in enumerate(scan_durations):
-        candidates = sorted((s for s in staged if s[0] not in claimed and abs(s[2] - d) <= 1),
-                            key=lambda s: s[1])
-        if not candidates:
-            continue
-        matched[i] = candidates[0][0]
-        claimed.add(candidates[0][0])
-        losers.update(loser[0] for loser in candidates[1:])
-    # One warning per unclaimed file, only after the join: a file warned as
-    # title i's loser can still be claimed by a later title j with the same
-    # duration, and a file losing two joins must not be warned twice.
-    for mkv, _tnum, _fdur in staged:
-        if mkv in claimed:
-            continue
-        if mkv in losers:
-            ui.warn(f"{mkv.name} matches a duplicate duration — left junk-labeled")
-        else:
-            ui.warn(f"{mkv.name} matches no scanned title — left junk-labeled")
-
-    # Abort before touching anything: an episode without its file is a bug
-    # (wrong disc, failed rip) — renaming the rest would mislabel the season.
-    for i in range(len(scan_durations)):
-        lo, hi = assignment.get(i, (0, 0))
-        if lo >= 1 and i not in matched:
-            code = f"E{lo:02d}" if lo == hi else f"E{lo:02d}-E{hi:02d}"
-            ui.fail(f"title {i} ({code}) has no staged file — rename aborted, files left junk-labeled")
-            return False
-
-    for i in sorted(matched):
-        mkv = matched[i]
-        lo, hi = assignment.get(i, (0, 0))
-        if lo == 0:
-            # Extra - roll "Extra NN" past existing
-            m_val = 1
-            while (show_dir / f"{display} - Extra {m_val:02d}.mkv").exists():
-                m_val += 1
-            target = show_dir / f"{display} - Extra {m_val:02d}.mkv"
-        else:
-            target = episode_target(show_dir, display, season, lo, hi)
-
-        # Check for clobber
-        if target.exists():
-            ui.warn(f"{target.name} already exists — {mkv.name} left alone")
-            continue
-
-        mkv.rename(target)
-        cur = re.sub(r'_t\d+$', '', mkv.stem)
-        ui.info(f"{cur} → {target.stem}")
-
-    return True
-
-
 def chapter_split_hook(preamble, season: int,
                        titles_info: list[tuple[int, int, int]],
                        playalls: set[int], assignment: dict[int, tuple[int, int]],
@@ -357,7 +258,7 @@ def chapter_split_hook(preamble, season: int,
 
 def probe_episodes(show_dir: Path, display: str, season: int,
                    assignment: dict[int, tuple[int, int]], ep_runtimes: dict[int, int],
-                   fast_scan: bool, run=subprocess.run) -> list[dict]:
+                   run=subprocess.run) -> list[dict]:
     """Probe this season's staged episode files for the validation record.
 
     Globs the show folder for `<display>_S{season:02d}E*.mkv` and parses each
@@ -367,10 +268,7 @@ def probe_episodes(show_dir: Path, display: str, season: int,
     rule — one runtime per lo would read a false 2.00 on a healthy double).
     Durations are actuals probed from the files — never the scan table's
     promise. `t` inverts this run's episode map: the first title whose
-    (lo, hi) covers the episode, full scans only — the fast scan's table
-    numbers are scanner indices, not real _tNN (slice-04 review P2), and the
-    real join died with the junk labels at rename, so fast-scan rows record
-    t=None; so does an episode this run's map doesn't cover (an earlier
+    (lo, hi) covers the episode; None for an episode this run's map doesn't cover (an earlier
     disc's file re-probed by the all-season sweep). Null is honest. A file
     whose duration ffprobe won't read is recorded with dur_s null and one
     stderr warning: probing never crashes, never skips the write.
@@ -381,7 +279,6 @@ def probe_episodes(show_dir: Path, display: str, season: int,
         season: Season number the disc belongs to
         assignment: This run's title -> (lo, hi) episode map
         ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
-        fast_scan: The fast path ran — table numbers are indices, t stays None
         run: subprocess.run callable for monkeypatching
 
     Returns:
@@ -404,11 +301,9 @@ def probe_episodes(show_dir: Path, display: str, season: int,
         except ValueError:
             ui.warn(f"cannot read duration of {mkv.name} — recorded without one")
             dur = None
-        t = None
-        if not fast_scan:
-            # Invert this run's map: the first title whose (lo, hi) covers the ep
-            t = next((num for num in sorted(assignment)
-                      if assignment[num][0] <= ep <= assignment[num][1]), None)
+        # `t` inverts this run's map: the first title whose (lo, hi) covers the ep
+        t = next((num for num in sorted(assignment)
+                  if assignment[num][0] <= ep <= assignment[num][1]), None)
         rows.append(tv_row(ep, mkv.name, t, dur,
                            _double_runtime(ep_runtimes, ep, hi)))
     rows.sort(key=lambda r: r["ep"])
@@ -434,7 +329,7 @@ def post_rip_validation(preamble, season: int, assignment: dict[int, tuple[int, 
 
     Args:
         preamble: The run's Preamble — show folder, log, pick, display,
-            volume label, fast-scan flag
+            volume label
         season: Season number the disc belongs to
         assignment: This run's title -> (lo, hi) episode map
         ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
@@ -443,7 +338,7 @@ def post_rip_validation(preamble, season: int, assignment: dict[int, tuple[int, 
     show_dir = preamble.title_dir
     log = preamble.log
     rows = probe_episodes(show_dir, preamble.display, season, assignment,
-                          ep_runtimes, preamble.fast_scan, run)
+                          ep_runtimes, run)
     yellow = sum(1 for r in rows if r["band"] == "yellow")
     log.note("validation", f"{len(rows)} episodes, {yellow} yellow")
 
@@ -682,26 +577,10 @@ def rip_tv(args) -> None:
         # entirely — not eligible, not in the table, not ripped.
         titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
         # Play-alls by window tier: tight ±120s and the soft ±300s window both
-        # disqualify and skip; only tight ones trigger the full-scan escalation.
+        # disqualify and skip (ADR 0008).
         disqualified = sum_disqualified_windowed(titles_info)
         playalls = set(disqualified)
-        tight_playalls = {t for t, (tier, _) in disqualified.items() if tier == "tight"}
 
-        # ADR 0002/0008: a play-all on the fast scan escalates to the full
-        # MakeMKV scan — skipping it needs MakeMKV's real title numbers. The
-        # fast durations are discarded and the run joins the full-scan path
-        # (direct rename, no duration join), like the duplicate-duration
-        # trigger in the preamble.
-        if preamble.fast_scan and tight_playalls:
-            ui.info("fast scan found a play-all title — escalating to the full MakeMKV scan")
-            log.note("scan", "play-all detected — full-scan escalation")
-            _, _, titles_full = scan_disc(minlength, disc=preamble.disc, log=preamble.log)
-            titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
-            titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
-            disqualified = sum_disqualified_windowed(titles_info)
-            playalls = set(disqualified)
-            preamble.fast_scan = False
-            preamble.scan_durations = None
 
         def pin_playalls(a: dict[int, tuple[int, int]]) -> dict[int, tuple[int, int]]:
             """Play-alls pin extra whatever the stated range said — the rip
@@ -853,40 +732,26 @@ def rip_tv(args) -> None:
         try:
             # Rip phase
             log.phase("rip")
-            if preamble.fast_scan:
-                # Fast scan: MakeMKV's title set is shaped by the same floor the
-                # scanner list used, so rip all in one call and join the staged
-                # files back to scanner titles by duration at rename time.
-                # Footer names follow scanner order (the join comes later).
-                order = [t for t, _, _ in titles_info]
-                names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
-                header = fast_scan_header(display, len(titles_info))
-                attempted = order
-                worst_rc = rip_titles(None, profile_path, tv_floor(minlength), stage_tv, disc=preamble.disc,
-                                      total=len(titles_info), infos=titles_full, header=header, log=log,
-                                      device=preamble.device, on_title_start=start_rip(order, names),
-                                      names=names)
-            else:
-                # Explicit -T selections may include titles filtered from the confirmed scan.
-                rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
-                # Play-alls whose final assignment is extra are never ripped
-                # (ADR 0008) — derived after the confirm loop, so a fix row
-                # rescuing one rips it. -T runs stay exactly as they were.
-                if user_titles is None:
-                    skip = playall_skip(playalls, assignment)
-                    if skip:
-                        # The full scan list, not the floored titles_info: sub-TV-floor
-                        # fragments (120-600s extras) rip too — "all" means all of them.
-                        rip_selection = [t.number for t in titles_full if t.number not in skip]
-                order = (rip_selection if rip_selection is not None
-                         else sorted(t.number for t in titles_full))
-                names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
-                attempted = order
-                worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
-                                      total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log,
-                                      device=preamble.device,
-                                      on_title_start=start_rip(order, names, rip_selection is not None),
-                                      names=names, outcomes=outcomes)
+            # Explicit -T selections may include titles filtered from the confirmed scan.
+            rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
+            # Play-alls whose final assignment is extra are never ripped
+            # (ADR 0008) — derived after the confirm loop, so a fix row
+            # rescuing one rips it. -T runs stay exactly as they were.
+            if user_titles is None:
+                skip = playall_skip(playalls, assignment)
+                if skip:
+                    # The full scan list, not the floored titles_info: sub-TV-floor
+                    # fragments (120-600s extras) rip too — "all" means all of them.
+                    rip_selection = [t.number for t in titles_full if t.number not in skip]
+            order = (rip_selection if rip_selection is not None
+                     else sorted(t.number for t in titles_full))
+            names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
+            attempted = order
+            worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
+                                  total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log,
+                                  device=preamble.device,
+                                  on_title_start=start_rip(order, names, rip_selection is not None),
+                                  names=names, outcomes=outcomes)
             inflight = None
 
             if worst_rc != 0:
@@ -899,36 +764,27 @@ def rip_tv(args) -> None:
 
             # Rename per the map
             _phase_status("rename", f"{display} S{season:02d}")
-            # The fast-scan join can abort (an episode's staged file missing):
-            # logged here, then the run ends on its failed summary with rc 1.
-            joined = True
-            if preamble.fast_scan:
-                joined = rename_tv_fast(display, show_dir, season, assignment, preamble.scan_durations)
-                if not joined:
-                    log.note("rename", "join aborted — an episode's staged file is missing")
-            else:
-                renamed = rename_tv(display, show_dir, season, assignment)
+            renamed = rename_tv(display, show_dir, season, assignment)
 
-            if joined:
-                # Chapter split (ADR 0009): a play-all-only disc's combined file
-                # divides here — after the rename, before the subtitle note and
-                # post-rip validation, on both scan paths. The split contains its
-                # own interrupts, so a Ctrl+C at its table never reaches the
-                # generic interrupt exit below.
-                _phase_status("split", f"{display} S{season:02d}")
-                chapter_split_hook(preamble, season, titles_info, playalls,
-                                   assignment, ep_runtimes)
+            # Chapter split (ADR 0009): a play-all-only disc's combined file
+            # divides here — after the rename, before the subtitle note and
+            # post-rip validation, on both scan paths. The split contains its
+            # own interrupts, so a Ctrl+C at its table never reaches the
+            # generic interrupt exit below.
+            _phase_status("split", f"{display} S{season:02d}")
+            chapter_split_hook(preamble, season, titles_info, playalls,
+                               assignment, ep_runtimes)
 
-                # Subtitle note
-                note = subtitle_note(show_dir)
-                ui.info(note)
-                log.note("subtitle", note)
+            # Subtitle note
+            note = subtitle_note(show_dir)
+            ui.info(note)
+            log.note("subtitle", note)
 
-                # Post-rip validation (map.md decision 6): the record beside the
-                # subtitle note — this season's staged episodes probed and graded,
-                # merged into the folder's document, validation.json at the
-                # show-folder root. Interrupts exit above and never reach this.
-                probed = post_rip_validation(preamble, season, assignment, ep_runtimes)
+            # Post-rip validation (map.md decision 6): the record beside the
+            # subtitle note — this season's staged episodes probed and graded,
+            # merged into the folder's document, validation.json at the
+            # show-folder root. Interrupts exit above and never reach this.
+            probed = post_rip_validation(preamble, season, assignment, ep_runtimes)
 
             if renamed is not None and not renamed:
                 # Full scan staged nothing (makemkvcon rc 0, every save
@@ -937,7 +793,7 @@ def rip_tv(args) -> None:
                 log.phase_end("FAIL — nothing staged")
             else:
                 log.phase_end()
-            rc = worst_rc if joined else 1
+            rc = worst_rc
         except KeyboardInterrupt:
             # CONTEXT.md Interrupt: _interrupted deletes the in-flight partial,
             # keeps completed renames, logs status=interrupted, prints the

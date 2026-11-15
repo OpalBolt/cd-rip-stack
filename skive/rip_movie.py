@@ -13,7 +13,7 @@ from skive.makemkv import (
     build_selection, hsize, inject_profile, promote_staged, purge_junk,
     rename_staged, rip_header, subtitle_note, rip_titles,
 )
-from skive.rip_common import fast_scan_header, rip_preamble
+from skive.rip_common import rip_preamble
 from skive.scan import TitleInfo, resolve_titles
 from skive.validation import (
     MAIN_FLOOR_S, arbitrate_main, biggest_title, grade_main, main_candidates,
@@ -61,7 +61,7 @@ def _interrupted(log, stage_dirs: list[Path], view,
 
 _FINAL_T = re.compile(r'_t(\d+)(?:\.p\d+)?$')
 """A staged file's final title number — parsed from the FINAL name, never
-the scan table (fast-scan numbers are scanner indices; renames roll numbers
+the scan table (renames roll numbers
 forward past collisions). An optional trailing .pN part suffix (multi-part
 movies) may follow the number: the part file's t is its base title's t."""
 
@@ -127,7 +127,7 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
 
     Args:
         preamble: The run's Preamble — title folder, log, pick, display,
-            volume label, fast-scan flag
+            volume label
         preexisting: Files present before the rip started — never probed
         chosen_main: The table's pick ("t21"), None when nothing was chosen
         graded_rows: The pre-rip rows from pre_rip_confirm
@@ -138,7 +138,7 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
     pick = preamble.pick
 
     rows = probe_staged(title_dir, preexisting, pick.runtime_secs, run)
-    main = resolve_main(chosen_main, graded_rows, rows, preamble.fast_scan)
+    main = resolve_main(chosen_main, graded_rows, rows)
 
     for r in rows:
         parts = [r["file"], _hms(r["dur_s"]) if r["dur_s"] is not None else "?"]
@@ -179,7 +179,7 @@ def print_table(display: str, titles: list[TitleInfo], runtime_s: int | None,
     """Print the pre-rip table in title-number order (the TV confirm table,
     movie cut).
 
-    One row per scanned title: number, duration, size when known (fast-scan
+    One row per scanned title: number, duration, size when known
     rows carry size 0 and show a blank cell, like TV). Candidates at/above
     MAIN_FLOOR_S get a ratio cell graded green/yellow in the shared band;
     sub-floor titles show duration only; an unknown runtime blanks the ratio
@@ -272,7 +272,7 @@ def pre_rip_confirm(log, display: str, titles: list[TitleInfo],
     Args:
         log: The run's RipLog; main outcomes log under phase "main"
         display: Sanitized display title shown over the table
-        titles: Every scanned TitleInfo (fast-scan and full scan alike)
+        titles: Every scanned TitleInfo
         runtime_s: TMDB runtime in seconds, None when unknown
         extras: -E run — no ratio column, no main logic at all
         main_only: default movie run — the chosen main is also the rip set
@@ -384,10 +384,7 @@ def rip_movie(args) -> None:
 
         # Resolve any title menu after the interactive identity gate. The run
         # opener must wait until this final scope is known.
-        if preamble.fast_scan:
-            titles = None
-            infos = titles_full
-        elif (not args.extras and args.titles is None
+        if (not args.extras and args.titles is None
               and not args.include_extras):
             # Main-only rip (ADR 0015): the arbitrated main alone rips —
             # extras stay on disc; -i (rip-all + keeper marker), -T and -E
@@ -432,22 +429,9 @@ def rip_movie(args) -> None:
             run_preexisting = set(title_dir.glob("*.mkv"))
             preexisting = run_preexisting
             log.phase("rip")
-            if preamble.fast_scan:
-                # Fast scan (ADR 0002): durations only, so rip all in one call —
-                # the ±1s escalation already filtered decoys, and rename_staged
-                # keeps MakeMKV's own _tNN numbers (no duration join needed).
-                # minlength unchanged: movies have no episode floor, so
-                # RIP_MINLENGTH stays the gate (a 10-minute short must still rip).
-                # Synthesized infos carry size 0 and no audio, so mirror the TV
-                # fast path's two-line header instead of rip_header's 0.0 B / ?.
-                header = fast_scan_header(display, len(titles_full))
-                worst_rc = rip_titles(None, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                      total=len(titles_full), infos=titles_full, header=header, log=log,
-                                      device=preamble.device, on_title_start=title_started)
-            else:
-                worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                      total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log,
-                                      device=preamble.device, on_title_start=title_started)
+            worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
+                                  total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log,
+                                  device=preamble.device, on_title_start=title_started)
 
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")

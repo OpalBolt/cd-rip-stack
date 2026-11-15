@@ -11,7 +11,7 @@ from pathlib import Path
 from skive.common import RipLog, ensure_mounted, sanitize
 from skive.makemkv import purge_junk
 from skive.scan import (
-    TitleInfo, ambiguous, fast_scan_bluray, fast_scan_dvd, is_recordable, iso2b, scan_disc, sniff_disc,
+    TitleInfo, is_recordable, iso2b, scan_disc, sniff_disc,
 )
 from skive.search import folder_states, fmt_seasons, seasons_in
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
@@ -33,8 +33,6 @@ class Preamble:
     keep: str
     disc: int
     device: str = ""  # real device from the DRV line, or the /dev/srN fallback
-    fast_scan: bool = False
-    scan_durations: list[int] | None = None  # durations in scan order, fast path only
     label: str = ""  # spill: slice-05 document needs the volume label
 
 
@@ -96,44 +94,11 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     else:
         log.note("media", f"media={media}")
 
-    # Fast path (ADR 0002): TV + pressed video disc + no -T/--extras gates on
-    # scanner durations in seconds — lsdvd straight on the device (DVD) or
-    # `ffprobe bluray:` (device listing, DRM-free). Recordable BD already
-    # exits at the gate above, so only pressed BD reaches the fast scan.
-    # Flagged runs (-T menu/spec, --extras) stay on the full scan, and so do
-    # default movie runs (ADR 0015): ripping the arbitrated main alone needs
-    # MakeMKV's real title numbers, so only a movie -i (rip-all) joins TV on
-    # the fast path. Scanner title numbers never match MakeMKV's, so TV
-    # joins staged files back by duration (rip_tv.rename_tv_fast); movies rip
-    # all and keep MakeMKV's own _tNN numbers (rename_staged is join-free).
-    fast_scan = False
-    scan_durations: list[int] | None = None
+    # One disc scan (ADR 0021): every video disc takes `makemkvcon info` —
+    # movie and TV rips share it, MakeMKV title numbers are always real and
+    # sizes always present.
     titles_full: list[TitleInfo] = []
-    if (kind in ("tv", "movie") and media.startswith(("DVD", "BD"))
-            and getattr(args, "titles", None) is None
-            and not getattr(args, "extras", False)
-            and (kind == "tv" or getattr(args, "include_extras", False))):
-        scanner = fast_scan_dvd if media.startswith("DVD") else fast_scan_bluray
-        try:
-            scan_durations = scanner(disc, device)
-        except RuntimeError as e:
-            ui.warn(f"fast scan failed ({e}) — falling back to the full MakeMKV scan")
-            log.note("scan", "fast scan failed — full-scan fallback")
-        else:
-            if ambiguous(scan_durations):
-                # Escalation trigger (ADR 0002): duplicate/decoy/angle playlists
-                # that the fast path's duration join would mis-handle — discard
-                # the fast result and take the full scan path (same code path
-                # as the RuntimeError fallback below).
-                ui.warn("fast scan found duplicate-duration titles — escalating to the full MakeMKV scan")
-                log.note("scan", "duplicate durations — full-scan escalation")
-                scan_durations = None
-            else:
-                fast_scan = True
-                titles_full = [TitleInfo(number=i, seconds=d, size=0, audio="", subtitles="", scrambled=False)
-                               for i, d in enumerate(scan_durations)]
-    if not fast_scan:
-        _, label, titles_full = scan_disc(minlength, disc=disc, log=log)
+    _, label, titles_full = scan_disc(minlength, disc=disc, log=log)
 
     require_online()
 
@@ -175,7 +140,7 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     purge_junk([title_dir, stage])
 
     return Preamble(log, pick, display, media, titles_full, title_dir, stage,
-                    minlength, keep, disc, device, fast_scan=fast_scan, scan_durations=scan_durations,
+                    minlength, keep, disc, device,
                     label=label)  # spill: slice-05 document needs the volume label
 
 
@@ -369,19 +334,3 @@ def interrupted_exit(log, stage_dirs: list[Path]) -> None:
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
     sys.exit(130)
 
-
-def fast_scan_header(display: str, n: int) -> str:
-    """Two-line rip header for fast-scan runs (ADR 0002).
-
-    Fast-scan infos carry size 0 and no audio, so this omits the size/audio
-    lines that makemkv.rip_header would fill with 0.0 B and '?'.
-
-    Args:
-        display: Sanitized display title shown on the header's first line.
-        n: Number of titles reported on the second line.
-
-    Returns:
-        The header string passed to makemkv.rip_titles.
-    """
-    return (f"{display}\n"
-            f"  titles: {n} (fast scan — no size/audio preview)")
