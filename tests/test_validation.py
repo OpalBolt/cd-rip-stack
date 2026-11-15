@@ -1387,3 +1387,21 @@ def test_run_validate_json_is_the_bare_report_on_stdout(tmp_path, capsys, monkey
     report = json_report([], tmp_path / "library")
     assert captured.out == json.dumps(report, indent=2, ensure_ascii=False) + "\n"
     assert captured.err == ""
+
+
+def test_exactly_one_main_rule():
+    """Exactly one main-marked title passes; zero or several come back as the finding."""
+    from skive.validation import MAIN_ACTION, exactly_one_main
+    assert exactly_one_main({21: MAIN_ACTION, 12: "extra"}) is None
+    assert exactly_one_main({21: "extra"}) == []
+    assert exactly_one_main({21: MAIN_ACTION, 12: MAIN_ACTION}) == [21, 12]
+
+
+def test_arbitrate_main_several_carries_ambiguity_note():
+    """Several-near arbitration carries a ready-to-render ambiguity fact; others don't."""
+    from skive.validation import arbitrate_main
+    arb = arbitrate_main([(21, 6252, 4_000_000_000), (12, 6662, 19_000_000_000)], 6480)
+    assert arb.kind == "several"
+    assert arb.note == "2 titles near the runtime"
+    assert arbitrate_main([(3, 6400, 8_000_000_000)], 6480).note is None
+    assert arbitrate_main([], None).note is None

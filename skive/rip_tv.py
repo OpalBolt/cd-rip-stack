@@ -23,9 +23,10 @@ from skive.validation import (
     tv_document, tv_row, write_validation,
 )
 from skive.tv_match import (
-    tv_floor, sum_disqualified, parse_range, next_unstaged, assign_range,
+    tv_floor, parse_range, assign_range,
     range_mismatch_note, range_past_end_note, apply_fixes, audit_cell,
-    playall_skip, playall_only, guess_range,
+    playall_skip, playall_only, prefill_assignment,
+    sum_disqualified_windowed,
 )
 
 console = ui.console  # the shared console; a module name tests can swap
@@ -680,20 +681,25 @@ def rip_tv(args) -> None:
         # TV floor: menu loops and fragments never make episodes. Dropped
         # entirely — not eligible, not in the table, not ripped.
         titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
-        playalls = sum_disqualified(titles_info)
+        # Play-alls by window tier: tight ±120s and the soft ±300s window both
+        # disqualify and skip; only tight ones trigger the full-scan escalation.
+        disqualified = sum_disqualified_windowed(titles_info)
+        playalls = set(disqualified)
+        tight_playalls = {t for t, (tier, _) in disqualified.items() if tier == "tight"}
 
         # ADR 0002/0008: a play-all on the fast scan escalates to the full
         # MakeMKV scan — skipping it needs MakeMKV's real title numbers. The
         # fast durations are discarded and the run joins the full-scan path
         # (direct rename, no duration join), like the duplicate-duration
         # trigger in the preamble.
-        if preamble.fast_scan and playalls:
+        if preamble.fast_scan and tight_playalls:
             ui.info("fast scan found a play-all title — escalating to the full MakeMKV scan")
             log.note("scan", "play-all detected — full-scan escalation")
             _, _, titles_full = scan_disc(minlength, disc=preamble.disc, log=preamble.log)
             titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
             titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
-            playalls = sum_disqualified(titles_info)
+            disqualified = sum_disqualified_windowed(titles_info)
+            playalls = set(disqualified)
             preamble.fast_scan = False
             preamble.scan_durations = None
 
@@ -744,10 +750,9 @@ def rip_tv(args) -> None:
             if eligible == 0:
                 ui.fail("no eligible titles on this disc")
                 sys.exit(1)
-            first = next_unstaged(ep_names, staged)
-            guess = guess_range(titles_info, playalls, ep_runtimes, staged, ep_names)
-            lo, hi = guess if guess is not None else (
-                (first, first) if eligible == 1 else (first, first + eligible - 1))
+            prefill = prefill_assignment(titles_info, playalls, ep_runtimes, staged, ep_names)
+            filled = [r for r in prefill.values() if r[0] >= 1]
+            lo, hi = (min(r[0] for r in filled), max(r[1] for r in filled))
             with ui.suspend():  # the overview + prompt print normally
                 print_table(display, season, titles_info,
                             assign_range(titles_info, playalls, lo, hi),

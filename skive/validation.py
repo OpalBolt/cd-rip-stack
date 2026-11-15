@@ -276,6 +276,9 @@ class MainArbitration(NamedTuple):
     kind: str
     near: list[tuple[int, int, float]]  # (t-number, secs, exact ratio), several only
     pick: tuple[int, int, int] | None
+    note: str | None = None
+    """Ready-to-render ambiguity fact; set when several candidates sit near
+    the runtime, None otherwise."""
 
 
 def grade_main(dur_s: int, runtime_s: int | None) -> tuple[float, str] | None:
@@ -354,8 +357,28 @@ def arbitrate_main(candidates: list[tuple[int, int, int]],
     if len(near) > 1:
         return MainArbitration("several",
                                [(n, s, s / runtime_s) for n, s, _ in sorted(near)],
-                               biggest_title(near))
+                               biggest_title(near),
+                               f"{len(near)} titles near the runtime")
     return MainArbitration("zero", [], biggest_title(candidates))
+
+
+MAIN_ACTION = "main"
+"""The verb a title→action map uses to mark the movie's main feature."""
+
+
+def exactly_one_main(actions: dict[int, str]) -> list[int] | None:
+    """The exactly-one-main rule over a title→action map.
+
+    Args:
+        actions: title_number -> action verb (MAIN_ACTION marks the main)
+
+    Returns:
+        None when exactly one title carries MAIN_ACTION; otherwise the
+        main-marked titles in dict order (empty when none was marked) —
+        a structured finding a table can render per-row
+    """
+    marked = [t for t, a in actions.items() if a == MAIN_ACTION]
+    return None if len(marked) == 1 else marked
 
 
 # --- Post-rip record (map.md decision 5) ------------------------------------

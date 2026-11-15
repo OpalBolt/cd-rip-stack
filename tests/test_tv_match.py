@@ -5,8 +5,10 @@ import pytest
 from skive.tv_match import (
     parse_range, next_unstaged, assign_range, range_mismatch_note,
     range_past_end_note, parse_fix_rows, apply_fixes, map_str,
-    tv_floor, sum_disqualified, playall_skip, playall_only, audit_ratio,
-    audit_cell, guess_range,
+    tv_floor, sum_disqualified, sum_disqualified_windowed, playall_skip,
+    playall_only, audit_ratio, audit_cell, guess_range, guess_pairing,
+    prefill_assignment, episode_clashes, staged_claims, unfilled_episodes,
+    sub_floor_titles,
 )
 
 
@@ -243,12 +245,30 @@ def test_sum_disqualified_clean_list():
 
 
 def test_sum_disqualified_tolerance():
-    """±120s tolerance: sum +100s still disqualifies, +200s does not."""
+    """Windows: sum +100s is tight, +200s is soft (both disqualify now),
+    +400s is outside both."""
     plus_100 = [(0, 1000, 1), (1, 1500, 1), (2, 2600, 1)]
     assert sum_disqualified(plus_100) == {2}
 
     plus_200 = [(0, 1000, 1), (1, 1500, 1), (2, 2700, 1)]
-    assert sum_disqualified(plus_200) == set()
+    assert sum_disqualified(plus_200) == {2}  # soft window
+
+    plus_400 = [(0, 1000, 1), (1, 1500, 1), (2, 2900, 1)]
+    assert sum_disqualified(plus_400) == set()
+
+
+def test_sum_disqualified_windowed_tiers():
+    """Each window yields its tier and the matched component subset as
+    evidence for the `≈ sum of …` note."""
+    tight = [(0, 1000, 1), (1, 1500, 1), (2, 2520, 1)]  # 2500, +20s
+    disq = sum_disqualified_windowed(tight)
+    assert disq == {2: ("tight", [0, 1])}
+
+    soft = [(0, 1000, 1), (1, 1500, 1), (2, 2700, 1)]  # 2500, +200s
+    disq = sum_disqualified_windowed(soft)
+    assert disq == {2: ("soft", [0, 1])}
+
+    assert sum_disqualified_windowed([(0, 1000, 1), (1, 1500, 1)]) == {}
 
 
 def test_sum_disqualified_overlapping_playalls():
@@ -310,3 +330,84 @@ def test_playall_only_disarm_extra():
     """The lone eligible title left extra — or unmapped — fires nothing."""
     assert playall_only([(0, 3000, 1)], set(), {0: (0, 0)}) is None
     assert playall_only([(0, 3000, 1)], set(), {}) is None
+
+
+# The engine seams extracted in slice 01
+
+def test_guess_pairing_matches_guess_range():
+    """The pairing is the per-title view of the same walk guess_range reports."""
+    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
+    runtimes = {1: 4020, 2: 2820, 3: 2820}
+    names = {1: "ep1", 2: "ep2", 3: "ep3"}
+    pairing = guess_pairing(titles, {3}, runtimes, set(), names)
+    assert pairing == {1: 0, 2: 1, 3: 2}
+    assert guess_range(titles, {3}, runtimes, set(), names) == (1, 3)
+
+
+def test_prefill_assignment_uses_green_fit():
+    """Green ratios pair each episode with its own title; play-alls stay extra."""
+    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
+    runtimes = {1: 4020, 2: 2820, 3: 2820}
+    names = {1: "ep1", 2: "ep2", 3: "ep3"}
+    assert prefill_assignment(titles, {3}, runtimes, set(), names) == {
+        0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+
+
+def test_prefill_assignment_starts_at_first_unstaged():
+    """Staged episodes are a contiguous prefix; the prefill continues past them."""
+    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1)]
+    runtimes = {4: 4020, 5: 2820, 6: 2820}
+    names = {4: "ep4", 5: "ep5", 6: "ep6"}
+    assert prefill_assignment(titles, set(), runtimes, {1, 2, 3}, names) == {
+        0: (4, 4), 1: (5, 5), 2: (6, 6)}
+
+
+def test_prefill_assignment_fallback_one_per_eligible():
+    """No runtimes (or no green matches): one episode per eligible title."""
+    titles = [(0, 1000, 1), (1, 1000, 1), (2, 11482, 1)]
+    names = {1: "ep1", 2: "ep2"}
+    assert prefill_assignment(titles, {2}, {}, set(), names) == {
+        0: (1, 1), 1: (2, 2), 2: (0, 0)}
+    # Zero green matches (runtimes wildly off) falls back the same way.
+    assert prefill_assignment(titles, {2}, {1: 100, 2: 100}, set(), names) == {
+        0: (1, 1), 1: (2, 2), 2: (0, 0)}
+
+
+def test_prefill_assignment_empty_and_playall_only_edges():
+    """Empty title list -> empty map; a play-all-only disc prefills nothing."""
+    names = {1: "ep1"}
+    assert prefill_assignment([], set(), {}, set(), names) == {}
+    titles = [(3, 11482, 1)]
+    assert prefill_assignment(titles, {3}, {1: 4020}, set(), names) == {3: (0, 0)}
+
+
+def test_episode_clashes():
+    """An episode claimed by two titles is a clash; singles and extras are not."""
+    assignment = {0: (1, 2), 1: (2, 2), 2: (0, 0)}
+    assert episode_clashes(assignment) == [(2, [0, 1])]
+    assert episode_clashes({0: (1, 1), 1: (2, 3)}) == []
+
+
+def test_staged_claims():
+    """Assignments touching staged episodes come back as (episode, title)."""
+    assignment = {0: (1, 3), 1: (2, 2)}
+    assert staged_claims(assignment, {2}) == [(2, 0), (2, 1)]
+    assert staged_claims(assignment, set()) == []
+    assert staged_claims({0: (0, 0)}, {1, 2}) == []
+
+
+def test_unfilled_episodes():
+    """Holes inside the covered range; extras never fill."""
+    assignment = {0: (1, 2), 1: (4, 4), 2: (0, 0)}
+    assert unfilled_episodes(1, 4, assignment) == [3]
+    assert unfilled_episodes(1, 2, assignment) == []
+    assert unfilled_episodes(1, 3, {0: (1, 2)}) == [3]
+    assert unfilled_episodes(1, 4, {0: (0, 0)}) == [1, 2, 3, 4]
+
+
+def test_sub_floor_titles():
+    """Sub-floor titles, in disc order, numbers intact."""
+    titles = [(0, 100, 1), (1, 5000, 1), (2, 599, 1)]
+    assert sub_floor_titles(titles, 600) == [0, 2]
+    assert sub_floor_titles(titles, 4000) == [0, 2]
+    assert sub_floor_titles([(7, 600, 1)], 600) == []

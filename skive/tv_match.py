@@ -22,13 +22,72 @@ def tv_floor(minlength: int) -> int:
     return max(minlength, 600)
 
 
+SUM_TIGHT_TOL_S = 120
+"""Tight play-all window: duration within ±120s of a subset sum."""
+
+SUM_SOFT_TOL_S = 300
+"""Soft play-all window: a deliberately looser ±300s sum window for the
+same subset scan (a flat widening of the tight ±120s, chosen over a relative
+window to keep the tolerance nameable and testable). Soft matches disqualify
+and skip like tight ones, but never trigger the fast-scan escalation."""
+
+
+def _summing_subset(components: list[int], target: int, tol: int) -> list[int] | None:
+    """Indices of a 2..6-subset of ascending `components` summing to within
+    `tol` of `target`, or None. Pruned DFS: ascending order lets a total past
+    target + tol end the branch."""
+    max_parts = 6
+
+    def dfs(start: int, count: int, total: int, picked: list[int]) -> list[int] | None:
+        if count >= 2 and abs(total - target) <= tol:
+            return list(picked)
+        if count == max_parts:
+            return None
+        for i in range(start, len(components)):
+            if total + components[i] > target + tol:
+                break  # ascending: every later component overshoots too
+            picked.append(i)
+            hit = dfs(i + 1, count + 1, total + components[i], picked)
+            if hit is not None:
+                return hit
+            picked.pop()
+        return None
+
+    return dfs(0, 0, 0, [])
+
+
+def sum_disqualified_windowed(titles: list[tuple[int, int, int]]) -> dict[int, tuple[str, list[int]]]:
+    """Play-alls by window tier: title -> ("tight"|"soft", component titles).
+
+    A play-all's duration matches the sum of a subset of 2..6 of the OTHER
+    titles' durations, in the tight ±SUM_TIGHT_TOL_S window first, then the
+    soft ±SUM_SOFT_TOL_S window. The component title numbers are the matched
+    subset — the evidence for the `≈ sum of …` note a table can render. Only
+    the summed title is disqualified; its components stay eligible. Runs on
+    floored titles so short menu loops can't produce false sums.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), already floored
+
+    Returns:
+        Dict title_number -> (tier, component title numbers, ascending)
+    """
+    result: dict[int, tuple[str, list[int]]] = {}
+    for number, secs, _ in titles:
+        others = sorted((d, n) for n, d, _ in titles if n != number)
+        for tier, tol in (("tight", SUM_TIGHT_TOL_S), ("soft", SUM_SOFT_TOL_S)):
+            hit = _summing_subset([d for d, _ in others], secs, tol)
+            if hit is not None:
+                result[number] = (tier, [others[i][1] for i in hit])
+                break
+    return result
+
+
 def sum_disqualified(titles: list[tuple[int, int, int]]) -> set[int]:
     """Titles that are play-alls: duration within ±120s of a subset sum.
 
-    A play-all's duration matches the sum of a subset of 2..6 of the OTHER
-    titles' durations. Only the summed title is disqualified; its components
-    stay eligible, and every qualifying title is returned. Runs on floored
-    titles so short menu loops can't produce false sums.
+    Both windows count (see sum_disqualified_windowed); only the title numbers
+    come back.
 
     Args:
         titles: List of (title_number, duration_seconds, size_bytes), already floored
@@ -36,30 +95,7 @@ def sum_disqualified(titles: list[tuple[int, int, int]]) -> set[int]:
     Returns:
         Set of title numbers that are play-alls
     """
-    tol = 120
-    max_parts = 6
-
-    def has_summing_subset(components: list[int], target: int) -> bool:
-        """Pruned DFS over ascending components: any 2..6-subset sum ≈ target?"""
-        def dfs(start: int, count: int, total: int) -> bool:
-            if count >= 2 and abs(total - target) <= tol:
-                return True
-            if count == max_parts:
-                return False
-            for i in range(start, len(components)):
-                if total + components[i] > target + tol:
-                    break  # ascending: every later component overshoots too
-                if dfs(i + 1, count + 1, total + components[i]):
-                    return True
-            return False
-        return dfs(0, 0, 0)
-
-    disqualified: set[int] = set()
-    for number, secs, _ in titles:
-        others = sorted(d for n, d, _ in titles if n != number)
-        if has_summing_subset(others, secs):
-            disqualified.add(number)
-    return disqualified
+    return set(sum_disqualified_windowed(titles))
 
 
 def playall_skip(playalls: set[int], assignment: dict[int, tuple[int, int]]) -> set[int]:
@@ -204,11 +240,36 @@ def guess_range(titles: list[tuple[int, int, int]], playalls: set[int],
     Returns:
         (lo, hi) over the walked episodes, or None when zero episodes matched
     """
+    pairing = guess_pairing(titles, playalls, ep_runtimes, staged, ep_names)
+    if not pairing:
+        return None
+    eps = sorted(pairing)
+    return (eps[0], eps[-1])
+
+
+def guess_pairing(titles: list[tuple[int, int, int]], playalls: set[int],
+                  ep_runtimes: dict[int, int], staged: set[int],
+                  ep_names: dict[int, str]) -> dict[int, int]:
+    """The episode guess walk, kept per-title: episode -> title.
+
+    The same greedy walk guess_range reports as a range, but with the
+    pairing intact so the prefill can place each episode on its own row.
+    Empty dict when zero episodes matched.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        playalls: Title numbers disqualified as play-alls
+        ep_runtimes: episode_number -> TMDB runtime seconds
+        staged: Episode numbers already staged
+        ep_names: episode_number -> name from TMDB
+
+    Returns:
+        Dict episode_number -> title_number over the walked episodes
+    """
     secs = {t: d for t, d, _ in titles}
     remaining = [t for t, _, _ in titles if t not in playalls]
     ep = next_unstaged(ep_names, staged)
-    lo = ep
-    matched = 0
+    pairing: dict[int, int] = {}
     while True:
         rt = ep_runtimes.get(ep, 0)
         if rt <= 0:
@@ -218,10 +279,115 @@ def guess_range(titles: list[tuple[int, int, int]], playalls: set[int],
                    None)
         if fit is None:
             break
-        remaining.pop(fit)
-        matched += 1
+        pairing[ep] = remaining.pop(fit)
         ep += 1
-    return (lo, lo + matched - 1) if matched else None
+    return pairing
+
+
+def prefill_assignment(titles: list[tuple[int, int, int]], playalls: set[int],
+                       ep_runtimes: dict[int, int], staged: set[int],
+                       ep_names: dict[int, str]) -> dict[int, tuple[int, int]]:
+    """The full per-title prefill: title -> (lo, hi), extras as (0, 0).
+
+    Green-ratio fit wins: the guess walk pairs each walked episode with its
+    own title (singles only; doubles stay fix-row territory). When there are
+    no runtimes or no green matches the documented fallback fills one episode
+    per eligible title in disc order, starting at the first unstaged episode.
+    Play-alls are always extra.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        playalls: Title numbers disqualified as play-alls
+        ep_runtimes: episode_number -> TMDB runtime seconds
+        staged: Episode numbers already staged
+        ep_names: episode_number -> name from TMDB
+
+    Returns:
+        Dict title_number -> (lo_ep, hi_ep) covering every title
+    """
+    pairing = guess_pairing(titles, playalls, ep_runtimes, staged, ep_names)
+    if pairing:
+        assignment = {t: (0, 0) for t, _, _ in titles}
+        for ep, t in pairing.items():
+            assignment[t] = (ep, ep)
+        return assignment
+    eligible = len(titles) - len(playalls)
+    first = next_unstaged(ep_names, staged)
+    return assign_range(titles, playalls, first, first + eligible - 1)
+
+
+def episode_clashes(assignment: dict[int, tuple[int, int]]) -> list[tuple[int, list[int]]]:
+    """Episodes claimed by two or more titles, ascending.
+
+    Args:
+        assignment: title -> (lo, hi) mapping
+
+    Returns:
+        List of (episode_number, claiming title numbers in dict order); empty
+        when every episode has at most one claimant
+    """
+    claimed: dict[int, list[int]] = {}
+    for t, (lo, hi) in assignment.items():
+        for e in range(lo, hi + 1):
+            claimed.setdefault(e, []).append(t)
+    return [(e, ts) for e, ts in sorted(claimed.items()) if len(ts) > 1]
+
+
+def staged_claims(assignment: dict[int, tuple[int, int]],
+                  staged: set[int]) -> list[tuple[int, int]]:
+    """Assignments that claim an already-staged episode, ascending by episode.
+
+    Args:
+        assignment: title -> (lo, hi) mapping
+        staged: Episode numbers already staged
+
+    Returns:
+        List of (episode_number, claiming title number); empty when nothing
+        assigned touches the staged set
+    """
+    out = []
+    for t, (lo, hi) in assignment.items():
+        for e in range(lo, hi + 1):
+            if e in staged:
+                out.append((e, t))
+    return sorted(out)
+
+
+def unfilled_episodes(lo: int, hi: int,
+                      assignment: dict[int, tuple[int, int]]) -> list[int]:
+    """Holes inside the covered range: episodes lo..hi no title claims.
+
+    Args:
+        lo: First episode number of the covered range
+        hi: Last episode number of the covered range
+        assignment: title -> (lo, hi) mapping
+
+    Returns:
+        Ascending episode numbers in the range left unassigned; empty when
+        the range is fully covered
+    """
+    filled: set[int] = set()
+    for a, b in assignment.values():
+        if a >= 1:
+            filled.update(range(a, b + 1))
+    return [e for e in range(lo, hi + 1) if e not in filled]
+
+
+def sub_floor_titles(titles: list[tuple[int, int, int]],
+                     minlength: int) -> list[int]:
+    """The sub-floor titles — duration below tv_floor(minlength) — in disc
+    order, numbers intact. The listing set the table and rip flow use for
+    titles too short to count as episode material.
+
+    Args:
+        titles: List of (title_number, duration_seconds, size_bytes), disc order
+        minlength: Minimum title length in seconds the scan used
+
+    Returns:
+        Title numbers below the floor, disc order
+    """
+    floor = tv_floor(minlength)
+    return [t for t, d, _ in titles if d < floor]
 
 
 def range_mismatch_note(titles: list[tuple[int, int, int]], playalls: set[int], lo: int, hi: int) -> str | None:
