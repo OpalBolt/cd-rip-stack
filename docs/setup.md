@@ -21,7 +21,7 @@ uv by its own means and run `uv tool install --editable .` yourself.
 By hand, on Arch (`yay` works in place of `paru`):
 
 ```bash
-sudo pacman -S --needed flac lsdvd mkvtoolnix-cli rsync tesseract tesseract-data-eng tesseract-data-dan
+sudo pacman -S --needed flac mkvtoolnix-cli rsync tesseract tesseract-data-eng tesseract-data-dan
 paru -S --needed makemkv cyanrip
 ```
 
@@ -31,8 +31,6 @@ paru -S --needed makemkv cyanrip
   unaffected
 - `cyanrip` — CD rips (AccurateRip verification)
 - `flac` — provides `metaflac`
-- `lsdvd` — the DVD fast-scan gate; without it every DVD silently falls back
-  to the slow full scan
 - `mkvtoolnix` — provides `mkvmerge`
 - `tesseract` with the `eng` and `dan` language data — subtitle-pass OCR;
   `tesseract --list-langs` must show both

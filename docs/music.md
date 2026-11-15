@@ -12,7 +12,7 @@ the code and its tests.
 
 ```bash
 skive rip music 103            # rip with the drive's sample offset
-skive rip music 6 -N           # skip the MusicBrainz lookup
+skive rip music 6 -N           # skip the MusicBrainz lookup, the resolve and the table
 skive rip music -d 1 6         # rip from drive 1 (same -d N as rip movie/tv)
 ```
 
@@ -24,13 +24,33 @@ attached, `-d N` picks the drive — the same makemkv drive number `rip movie`
 and `rip tv` use, so the same `-d 1` means the same physical drive. It works
 before or after the offset (`skive rip music 6 -d 1` too).
 
+### The pre-rip resolve
+
+One `cyanrip -I` TOC pre-pass reads the track durations and arms the stall
+guard's per-track budgets; the MusicBrainz lookup resolves against them
+before the drive spins for the real rip. A disc MusicBrainz cannot name
+fails here — the yellow miss box, before any table, the drive never spins:
+several releases match → the box lists the candidates; re-run by hand with
+the printed command (`skive rip music 6 -- -R <n>`). No release at all →
+the box gives the attach link: attach the disc to its release, then re-run.
+A failed pre-pass or resolve still rips: the table shows a blank audit
+(the pre-pass arms no budgets, the run proceeds normally).
+
+### The track table
+
+On resolve, the selection table (ADR 0020) lists one row per track, all
+prefilled rip: track number, TOC length, blank size, and the audit column —
+TOC ÷ MusicBrainz duration per track, green within 2%, yellow off. A wrong
+release match shows every row uniformly off before the disc spins. `s`
+skips a track you know misrips, `r` restores it (the CD verbs of [the
+selection table](video.md#the-selection-table)); Enter accepts and the
+table echoes into scrollback. Manual skips leave the main cyanrip pass
+through its `-l` exclusion list and merge with the stall guard's — a
+continuation pass never re-rips them either.
+
 The share mounts on demand and cyanrip runs inside `/mnt/music/rip/cd/`,
 writing each album as final-named FLACs into its own `<album>/` subfolder.
-If MusicBrainz can't name the disc, the rip fails with a miss box and never
-prompts. Several releases match → the box lists the candidates; re-run by hand
-with the printed command (`skive rip music 6 -- -R <n>`). No release at all →
-the box gives the attach link: attach the disc to its release, then re-run. On
-a terminal the console opens with one line (`skive rip music · <album> · offset 6`), then a
+On a terminal the console opens with one line (`skive rip music · <album> · offset 6`), then a
 `▸ 7/12  <title>` heading per track with its events indented beneath.
 A footer redraws under the scroll with the track counter, title, offset and a
 progress bar:
@@ -51,16 +71,21 @@ info  7/12  track 7
 ```
 
 `-v` adds cyanrip tool lines and `-vv` passes cyanrip raw. The run ends with a per-track
-summary table (track, duration, result) and one result line. A clean rip just
-finishes — eject and swap discs by hand. Ctrl-C stops the child cleanly, logs `interrupted`, exits 130.
+summary table (track, duration, result) and one result line — manually
+skipped tracks are named here with result `skipped`, on holed runs too. A
+clean rip just finishes — eject and swap discs by hand. Ctrl-C stops the child
+cleanly, logs `interrupted`, exits 130.
 
 ### The album record
 
 A successful rip writes `validation.json` into the staged album folder — born
-complete: the cyanrip run, the drive offset used, and each track's AccurateRip
-status (`accurate`, `partial`, `not_found`) with its confidence. If cyanrip's
-report cannot be parsed, the record is still written without the AccurateRip
-results and the run log calls it out. `tag` merges into it later.
+complete: the cyanrip run, the drive offset used, each track's AccurateRip
+status (`accurate`, `partial`, `not_found`) with its confidence, and the
+disc index's skip lists — manually skipped tracks beside the stall guard's
+stalled ones, so the record tells the disc's whole story and a holed re-rip
+honors both universes. If cyanrip's report cannot be parsed, the record is
+still written without the AccurateRip results and the run log calls it out.
+`tag` merges into it later.
 
 ## tag
 

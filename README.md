@@ -13,7 +13,7 @@ SRT sidecars. Eight commands below; each docs page is one job.
 git clone <this repo> && cd cd-rip-stack
 mise run install    # skive on PATH, editable from this repo (or: uv tool install --editable .)
 export TMDB_API_KEY=... NFS_VIDEOS=host:/export/videos NFS_MUSIC=host:/export/music
-skive rip movie     # shares mount on demand; insert the disc and answer the prompts
+skive rip movie     # shares mount on demand; insert the disc, pick from TMDB, set the table
 ```
 
 Env keys, dependencies, drives and logs: [setup](docs/setup.md). The
@@ -64,7 +64,10 @@ fail  Blade Runner (1982)_t01.mkv: copy 3m02s + subs 4s + detect 5s + encode 7m4
 
 Every prompt reads the answer on a `›` line. A prompt that has a default
 shows it in brackets (`[1]`, `[y/N]`); a few, like the sync-sd picker, have
-none. The [transcode](docs/transcode.md#the-console) page shows a full run.
+none. The one-answer prompts stay small — the TMDB pick, the TV season — but
+the scope of a rip is decided in the [selection
+table](video.md#the-selection-table), not at a prompt. The
+[transcode](docs/transcode.md#the-console) page shows a full run.
 
 ## Docs
 
@@ -85,6 +88,6 @@ One page per job:
 
 ## Development
 
-Tests: `uv run pytest` (933 passing). How skive decides things and the
+Tests: `uv run pytest` (1042 passing). How skive decides things and the
 glossary: [CONTEXT.md](CONTEXT.md). Deferred work: [roadmap.md](roadmap.md).
 Decisions: [docs/adr/](docs/adr/).
