@@ -15,7 +15,7 @@ from skive.rip_music import (
     _newest_flac_album,
     _metaflac_tag,
     _purge_pass_stubs,
-    _toc_durations,
+    _toc_prepass,
     _write_cd_record,
     require_online,
     rip_music,
@@ -940,7 +940,7 @@ def test_holed_run_records_stalled_tracks_in_disc_index(tmp_path, monkeypatch):
     args = FakeArgs(offset="123", cyanrip_flags=[])
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
             patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
         with pytest.raises(SystemExit) as exc:
@@ -1737,9 +1737,9 @@ def test_raw_log_throttles_progress_and_drops_unrecognised(monkeypatch):
 
 # -- Stall guard (ADR 0018) ----------------------------------------------------
 
-def test_toc_durations_parses_info_prepass(tmp_path):
+def test_toc_prepass_parses_info_text(tmp_path):
     """The cyanrip -I pre-pass runs with the same offset/drive/flags and its
-    Track n info blocks yield every track's duration, the last included."""
+    Track n info blocks yield every track's duration plus the raw text."""
     info = ("Total time:     00:11:15.120\n"
             "Tracks:\n"
             "Track 1 info:\n"
@@ -1752,23 +1752,24 @@ def test_toc_durations_parses_info_prepass(tmp_path):
             "    Duration:    00:09:00.000\n")
     result = Mock(returncode=0, stdout=info)
     with patch("skive.rip_music.subprocess.run", return_value=result) as mock_run:
-        durations = _toc_durations("6", ["-R", "1"], "/dev/sr0")
+        durations, text = _toc_prepass("6", ["-R", "1"], "/dev/sr0")
     assert mock_run.call_args.args[0] == ["cyanrip", "-I", "-s", "6",
                                           "-d", "/dev/sr0", "-R", "1"]
     assert durations == {1: 135.12, 2: 540.0}
+    assert text == info
 
 
-def test_toc_durations_none_on_any_failure(tmp_path):
+def test_toc_prepass_none_on_any_failure(tmp_path):
     """Nonzero rc, unparseable output or a spawn error all leave the guard
-    unarmed (None)."""
+    unarmed ((None, stdout))."""
     with patch("skive.rip_music.subprocess.run",
-               return_value=Mock(returncode=1, stdout="")):
-        assert _toc_durations("6", [], None) is None
+               return_value=Mock(returncode=1, stdout="raw")):
+        assert _toc_prepass("6", [], None) == (None, "raw")
     with patch("skive.rip_music.subprocess.run",
                return_value=Mock(returncode=0, stdout="no track info here")):
-        assert _toc_durations("6", [], None) is None
+        assert _toc_prepass("6", [], None) == (None, "no track info here")
     with patch("skive.rip_music.subprocess.run", side_effect=FileNotFoundError):
-        assert _toc_durations("6", [], None) is None
+        assert _toc_prepass("6", [], None) == (None, "")
 
 
 def test_cyanrip_run_budget_trips_and_kills(monkeypatch, capsys):
@@ -1850,7 +1851,7 @@ def test_rip_music_stalled_rows_in_summary(tmp_path, monkeypatch, capsys):
 
     with patch("skive.rip_music.ensure_mounted"), \
          patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._toc_durations", return_value=None), \
+         patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
          patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
@@ -1862,17 +1863,20 @@ def test_rip_music_stalled_rows_in_summary(tmp_path, monkeypatch, capsys):
 
 
 def test_rip_music_disarms_guard_with_z_flag(tmp_path, monkeypatch):
-    """-Z anywhere in the pass-through flags skips the TOC pre-pass."""
+    """-Z anywhere in the pass-through flags skips the TOC pre-pass: no
+    pre-pass call at all, and the rip itself still runs."""
     toc = Mock()
     with patch("skive.rip_music.ensure_mounted"), \
          patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._toc_durations", toc) as mock_toc, \
-         patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
+         patch("skive.rip_music._toc_prepass", toc) as mock_prepass, \
+         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
          patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=["-Z"]))
     assert exc.value.code == 0
-    assert mock_toc.call_count == 0
+    assert mock_prepass.call_count == 0
+    assert mock_run.call_count == 1
+    assert "-I" not in mock_run.call_args[0][1]  # no pre-pass flags leaked
 
 def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypatch, capsys):
     """After a trip the pass re-runs with -l minus the stalled track; a clean
@@ -1903,7 +1907,7 @@ def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypa
               {"file": "03 - C.flac", "dur_s": 200, "format": "flac"}]
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
             patch("skive.rip_music._newest_flac_album",
                   return_value=("Album", "Album")), \
@@ -1944,7 +1948,7 @@ def test_rip_music_three_stalls_hit_cap(tmp_path, monkeypatch, capsys):
 
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
@@ -1978,7 +1982,7 @@ def test_rip_music_continuation_own_failure_fails_run(tmp_path, monkeypatch, cap
 
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
@@ -2045,7 +2049,7 @@ def test_rip_music_continuation_intersects_operator_l(tmp_path, monkeypatch):
 
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
             patch("skive.rip_music._newest_flac_album",
                   return_value=("Album", "Album")), \
@@ -2078,7 +2082,7 @@ def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
 
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_durations", return_value=None), \
+            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
             patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
@@ -2113,15 +2117,18 @@ _STUB_TEXT = ("Disc tracks: 2\n"
               "&tracks=2&toc=1+2+180000+150+90000\n")
 
 
-def _rip_with_table(tmp_text, table_result, track_lengths_result):
+def _rip_with_table(tmp_text, table_result, track_lengths_result,
+                    durations={1: 200.0, 2: 300.0}, cyanrip_flags=None):
     """Run rip_music with the TOC pre-pass resolving `tmp_text` and stubs for
-    everything past the table. Returns (mock_run, mock_table, exit code)."""
-    args = FakeArgs(offset="6")
+    everything past the table. `durations` may be None — a real miss yields
+    no ``Track n info:`` blocks, so the miss path is driven by the text
+    shape, not by durations. Returns (mock_run, mock_table, exit code)."""
+    args = FakeArgs(offset="6", cyanrip_flags=cyanrip_flags or [])
     with patch("skive.rip_music.ensure_mounted"), \
             patch("skive.rip_music.require_online"), \
             patch("skive.rip_music.RipLog"), \
             patch("skive.rip_music._toc_prepass",
-                  return_value=({1: 200.0, 2: 300.0}, tmp_text)), \
+                  return_value=(durations, tmp_text)), \
             patch("skive.rip_music.track_lengths",
                   return_value=track_lengths_result), \
             patch("skive.ui.terminal_present", return_value=True), \
@@ -2168,7 +2175,7 @@ def test_pre_rip_not_found_miss_fails_before_the_table(capsys):
     """A not-found disc fails pre-rip: the yellow-box warn lines print with
     the -R re-run guidance, and neither the table app nor cyanrip launches."""
     mock_run, mock_table, code = _rip_with_table(
-        _NOT_FOUND_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300})
+        _NOT_FOUND_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300}, durations=None)
     assert code == 1
     assert not mock_run.called
     assert not mock_table.called
@@ -2183,7 +2190,7 @@ def test_pre_rip_multiple_miss_fails_before_the_table(capsys):
     """Several releases: the candidates and the detach/re-run guidance print
     pre-rip; the drive never spins."""
     mock_run, mock_table, code = _rip_with_table(
-        _MULTIPLE_TEXT, {1: "rip", 2: "rip"}, None)
+        _MULTIPLE_TEXT, {1: "rip", 2: "rip"}, None, durations=None)
     assert code == 1
     assert not mock_run.called
     assert not mock_table.called
@@ -2195,7 +2202,7 @@ def test_pre_rip_multiple_miss_fails_before_the_table(capsys):
 
 def test_pre_rip_stub_miss_fails_before_the_table(capsys):
     mock_run, mock_table, code = _rip_with_table(
-        _STUB_TEXT, {1: "rip", 2: "rip"}, None)
+        _STUB_TEXT, {1: "rip", 2: "rip"}, None, durations=None)
     assert code == 1
     assert not mock_run.called
     assert not mock_table.called
@@ -2228,3 +2235,63 @@ def test_cd_record_manual_skips_key(tmp_path):
     doc = json.loads((folder / "validation.json").read_text())
     assert doc["discs"]["1"]["skipped"] == [2]
     assert doc["discs"]["1"]["stalled"] == [3]
+
+
+def test_bare_operator_l_never_crashes_when_skips_pending():
+    """A bare `-l` (no value) with manual skips pending appends the skip list
+    instead of indexing past the end of the flags."""
+    mock_run, mock_table, code = _rip_with_table(
+        _INFO_TEXT, {1: "rip", 2: "skip"}, {1: 200, 2: 300},
+        cyanrip_flags=["-l"])
+    assert code == 0
+    pass_flags = mock_run.call_args[0][1]
+    assert ["-l", "1"] == pass_flags[-2:]
+
+
+def test_holed_run_names_manual_skips_in_the_summary(tmp_path, capsys):
+    """A holed run (clean continuation after a stall) names manually skipped
+    tracks in the summary — the stream never saw them, so it's the only
+    place they appear."""
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
+                 budgets=None):
+        calls.append(list(flags))
+        if len(calls) == 1:
+            header["_disc_tracks"] = 3
+            header["_tracks"] = {1: "stalled"}
+            header["_stalled"] = [1]
+            return 1, ""
+        return 0, ""
+
+    calls = []
+    args = FakeArgs(offset="6", cyanrip_flags=[])
+    with patch("skive.rip_music.ensure_mounted"), \
+            patch("skive.rip_music.require_online"), \
+            patch("skive.rip_music.RipLog"), \
+            patch("skive.rip_music._toc_prepass",
+                  return_value=({1: 200.0, 2: 300.0, 3: 400.0}, _INFO_TEXT)), \
+            patch("skive.rip_music.track_lengths", return_value=None), \
+            patch("skive.ui.terminal_present", return_value=True), \
+            patch("skive.rip_music.run_cd_table",
+                  return_value={1: "rip", 2: "skip", 3: "rip"}), \
+            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
+            patch("skive.rip_music._newest_flac_album",
+                  return_value=("Album", "Album")), \
+            patch("skive.rip_music._write_cd_record", return_value=[]):
+        with pytest.raises(SystemExit) as exc:
+            rip_music(args)
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "skipped" in out
+    assert calls[1][-2:] == ["-l", "3"]  # skip and stall both excluded
+
+
+def test_n_flag_behaves_like_z_no_resolve_no_table(capsys):
+    """Under -N there is no resolve and no selection table: the offline
+    passthrough run goes straight to the rip, and skips are impossible."""
+    mock_run, mock_table, code = _rip_with_table(
+        _INFO_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300},
+        cyanrip_flags=["-N"])
+    assert code == 0
+    assert not mock_table.called
+    assert mock_run.called

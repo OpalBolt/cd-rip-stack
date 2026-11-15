@@ -16,6 +16,8 @@ import urllib.request
 
 _TOC_PARAM = re.compile(r"[?&]toc=(\d+(?:\+\d+)+)")
 _ID_PARAM = re.compile(r"[?&]id=([^&\s]+)")
+_BARE_DISCID = re.compile(r"^DiscID:\s*(\S+)$", re.MULTILINE)
+_TRACKS_COUNT = re.compile(r"[?&]tracks=(\d+)|^Disc tracks:\s*(\d+)", re.MULTILINE)
 
 # libdiscid's base64 alphabet: '+'→'_', '/'→'.', padding '='→'-'.
 _DISCID_ALPHABET = str.maketrans({"+": "_", "/": ".", "=": "-"})
@@ -30,22 +32,31 @@ def toc_from_text(text: str) -> list[int] | None:
 
 
 def discid_from_toc(toc: list[int]) -> str:
-    """The MusicBrainz DiscID (libdiscid algorithm) from a full TOC: first
-    track, last track, then every start offset with the lead-out last."""
-    first, last, offsets = toc[0], toc[1], toc[2:]
-    payload = f"{first:02d} {last:02d} "
-    for offset in offsets:
-        payload += f"{offset + 150:08X} "
+    """The MusicBrainz DiscID (cyanrip's port of libdiscid's
+    ``create_disc_id()``) from a full TOC: first track, last track, lead-out,
+    per-track start offsets — uppercase hex, no separators, all 100 TOC slots
+    hashed (entry 0 the lead-out, tracks 1..n, the rest zeroed). Offsets must
+    already carry the +150 frame pregap, as cyanrip's ``toc=`` values do."""
+    first, last = toc[0], toc[1]
+    offsets = [0] * 100
+    for position, offset in enumerate(toc[3:], start=1):
+        offsets[position] = offset
+    offsets[0] = toc[2]  # lead-out first, hashed as entry 0
+    payload = f"{first:02X}{last:02X}" + "".join(f"{o:08X}" for o in offsets)
     digest = hashlib.sha1(payload.encode("ascii")).digest()
     return base64.b64encode(digest).decode("ascii").translate(_DISCID_ALPHABET)
 
 
 def discid_from_text(text: str) -> str | None:
     """The DiscID from cyanrip's pre-pass output: an ``id=`` URL parameter
-    when the pre-pass printed it, else computed from the ``toc=`` TOC."""
+    when the pre-pass printed it, else the bare ``DiscID:`` line a found
+    release prints, else computed from the ``toc=`` TOC."""
     id_match = _ID_PARAM.search(text or "")
     if id_match:
         return id_match.group(1)
+    bare = _BARE_DISCID.search(text or "")
+    if bare:
+        return bare.group(1)
     toc = toc_from_text(text)
     if toc is not None and len(toc) >= 4:
         return discid_from_toc(toc)
@@ -66,15 +77,24 @@ def discid_info(discid: str, timeout: int = 10) -> dict | None:
         return None
 
 
-def release_track_lengths(info: dict) -> dict[int, int] | None:
-    """Per-track seconds from the lookup's first release (its first medium's
-    tracklist, recording length preferred). None when the release has no
-    usable track durations — the stub shape."""
+def release_track_lengths(info: dict,
+                          track_count: int | None = None) -> dict[int, int] | None:
+    """Per-track seconds from the lookup's first release (recording length
+    preferred). On a multi-disc release the medium whose track count matches
+    ``track_count`` (the pre-pass ``tracks=``) grades the table; without a
+    match, the first medium. None when the release has no usable track
+    durations — the stub shape."""
     releases = info.get("releases") if isinstance(info, dict) else None
     if not releases:
         return None
     mediums = releases[0].get("mediums") or []
-    tracks = (mediums[0].get("tracks") or []) if mediums else []
+    medium = mediums[0] if mediums else None
+    if track_count is not None and len(mediums) > 1:
+        for candidate in mediums:
+            if len(candidate.get("tracks") or []) == track_count:
+                medium = candidate
+                break
+    tracks = (medium.get("tracks") or []) if medium else []
     lengths: dict[int, int] = {}
     for position, track in enumerate(tracks, start=1):
         ms = track.get("length") or (track.get("recording") or {}).get("length")
@@ -90,4 +110,6 @@ def track_lengths(text: str) -> dict[int, int] | None:
     discid = discid_from_text(text)
     if not discid:
         return None
-    return release_track_lengths(discid_info(discid) or {})
+    count = _TRACKS_COUNT.search(text or "")
+    track_count = int(count.group(1) or count.group(2)) if count else None
+    return release_track_lengths(discid_info(discid) or {}, track_count)

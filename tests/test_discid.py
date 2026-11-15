@@ -3,6 +3,7 @@
 
 import json
 import re
+from pathlib import Path
 import urllib.error
 
 from skive.discid import (
@@ -95,3 +96,62 @@ def test_discid_info_hits_the_ws2_endpoint(monkeypatch):
 
     monkeypatch.setattr("skive.discid.urllib.request.urlopen", boom)
     assert discid_module.discid_info("AbCdEf123456") is None
+
+
+_SUMMERTIME_FIXTURE = (Path(__file__).parent / "fixtures" / "cyanrip"
+                       / "summertime-blues.log")
+
+_SUMMERTIME_TOC = [1, 19, 354705, 150, 20335, 45765, 70122, 85770, 106592,
+                   125922, 151877, 168452, 187122, 209860, 232147, 250112,
+                   265927, 284967, 299585, 312580, 325957, 339192]
+
+
+def test_discid_from_toc_matches_the_fixture_disc():
+    """The golden pair from the repo's own cyanrip fixture disc: the TOC in
+    the miss URL must compute exactly the DiscID cyanrip printed for it."""
+    assert discid_from_toc(_SUMMERTIME_TOC) == "bOpGMzWaoGKqV7OC6onCHgXytfE-"
+
+
+def test_discid_from_text_reads_the_bare_discid_line():
+    """A found release prints a bare ``DiscID:`` line and no attach URL —
+    the real summertime-blues header text must still yield the DiscID."""
+    assert discid_from_text(_SUMMERTIME_FIXTURE.read_text()) == \
+        "bOpGMzWaoGKqV7OC6onCHgXytfE-"
+
+
+_MULTI_MEDIUM_INFO = {
+    "releases": [{
+        "title": "Two-fer",
+        "mediums": [
+            {"position": 1, "tracks": [
+                {"recording": {"length": 100000}},
+                {"recording": {"length": 110000}},
+            ]},
+            {"position": 2, "tracks": [
+                {"recording": {"length": 200123}},
+                {"length": 300000},
+                {"recording": {"length": 400000}},
+            ]},
+        ],
+    }],
+}
+
+
+def test_release_track_lengths_grades_the_matching_medium():
+    """On a multi-disc release, the medium whose track count matches the
+    pre-pass count grades the table — CD2 is not graded against CD1."""
+    assert release_track_lengths(_MULTI_MEDIUM_INFO, 3) == {1: 200, 2: 300, 3: 400}
+    assert release_track_lengths(_MULTI_MEDIUM_INFO, 2) == {1: 100, 2: 110}
+    # no matching medium: falls back to the first one
+    assert release_track_lengths(_MULTI_MEDIUM_INFO, 9) == {1: 100, 2: 110}
+    assert release_track_lengths(_MULTI_MEDIUM_INFO) == {1: 100, 2: 110}
+
+
+def test_track_lengths_passes_the_pre_pass_track_count(monkeypatch):
+    monkeypatch.setattr("skive.discid.discid_info",
+                        lambda d: dict(_MULTI_MEDIUM_INFO))
+    assert track_lengths(INFO_TEXT) == {1: 100, 2: 110}
+    three = ("Disc tracks: 3\n"
+             "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
+             "&tracks=3&toc=1+3+180000+150+90000+120000\n")
+    assert track_lengths(three) == {1: 200, 2: 300, 3: 400}

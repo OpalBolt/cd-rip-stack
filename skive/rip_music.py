@@ -134,13 +134,17 @@ def rip_music(args) -> None:
             # shows the table with a blank audit — never a blocked rip.
             miss = None
             mb_lengths: dict[int, int] | None = None
-            if not skip_online and durations is not None:
+            if not skip_online:
+                # A real miss makes cyanrip refuse at the lookup and exit with
+                # no ``Track n info:`` blocks — durations None — so the miss
+                # parse runs on the pre-pass text regardless of whether the
+                # durations parsed (the table itself stays gated on them).
                 miss = parse_musicbrainz_miss(info_text)
-                if miss is None:
+                if miss is None and durations is not None:
                     mb_lengths = track_lengths(info_text)
 
             skipped: set[int] = set()
-            if durations is not None and miss is None:
+            if durations is not None and miss is None and not skip_online:
                 # The selection table (ADR 0020): one row per track, all
                 # prefilled rip. The view suspends for it; non-TTY runs refuse
                 # before the table — nothing spins.
@@ -182,7 +186,7 @@ def rip_music(args) -> None:
                 universe = (operator_l if operator_l is not None
                             else set(range(1, max(durations) + 1)))
                 keep = ",".join(str(n) for n in sorted(universe - skipped))
-                if "-l" in pass_flags:
+                if "-l" in pass_flags and operator_l is not None:
                     pass_flags[pass_flags.index("-l") + 1] = keep
                 else:
                     pass_flags += ["-l", keep]
@@ -302,6 +306,13 @@ def rip_music(args) -> None:
                      if dur_by_number.get(number) is not None else "?",
                      result)
                     for number, result in sorted(header.get("_tracks", {}).items())]
+            # Manually skipped tracks: named here on holed runs too —
+            # absent from every pass, so the stream never saw them.
+            rows += [(str(number),
+                      _summary_hms(round(durations[number]))
+                      if durations and number in durations else "?",
+                      "skipped")
+                     for number in sorted(header.get("_skipped", []))]
             interrupt_note = None
         elif rc == 0:
             rows = [(str(i + 1),
@@ -491,12 +502,6 @@ def _toc_prepass(offset: str, flags: list[str],
     except Exception:  # any failure: OSError, timeout, tests' Popen mocks
         return None, ""
     return durations, result.stdout
-
-
-def _toc_durations(offset: str, flags: list[str],
-                   drive: str | None) -> dict[int, float] | None:
-    """The stall-guard's view of the TOC pre-pass: durations only."""
-    return _toc_prepass(offset, flags, drive)[0]
 
 
 def _operator_l_tracks(flags: list[str]) -> set[int] | None:
