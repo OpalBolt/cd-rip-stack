@@ -124,8 +124,9 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     # staging mkdir, so "already ripped" and "wrong name" are caught before
     # anything spins — a refusal exits with nothing created.
     if kind == "movie":
-        _identity_gates(videos_mnt, log, display, pick,
-                        extras=getattr(args, "extras", False))
+        # spill: movie -E died with the selection table — the extras
+        # carve-out in _identity_gates is now unused by every caller.
+        _identity_gates(videos_mnt, log, display, pick)
 
     # The title staging exists only once the TMDB pick has named it (CONTEXT.md:
     # Staging): rip/<type>/<Name (Year)>/d{disc}/ — the per-drive subdir so two

@@ -98,7 +98,7 @@ def _mock_preamble_seams(monkeypatch, media="DVD-ROM", real_log=False):
 
 def _tv_args(**kw):
     """TV args: no -T, no --extras."""
-    fields = dict(tmdbid=None, verified=False, titles=None, extras=False)
+    fields = dict(tmdbid=None, verified=False)  # movie -T/-E/-i are dead
     fields.update(kw)
     return SimpleNamespace(**fields)
 
@@ -221,7 +221,7 @@ def test_preamble_junk_purge_scoped_to_title_folder(tmp_path, monkeypatch):
 # --- One disc scan (ADR 0021): the preamble always runs scan_disc -----------
 
 def _movie_args(**kw):
-    fields = dict(tmdbid=None, verified=False, titles=None, extras=False)
+    fields = dict(tmdbid=None, verified=False)  # movie -T/-E/-i are dead
     fields.update(kw)
     return SimpleNamespace(**fields)
 
@@ -498,16 +498,19 @@ def test_gates_pass_silently_for_a_foreign_legacy_folder(tmp_path, monkeypatch):
     assert result.stage == tmp_path / "rip" / "movies" / "Mamma Mia! (2008)" / "d0"
 
 
-def test_extras_run_skips_the_already_ripped_gate(tmp_path, monkeypatch):
-    """-E adds to an owned title: the movie on disk is the normal case —
-    the already-ripped gate never fires."""
+def test_already_ripped_gate_fires_without_the_extras_carve_out(tmp_path, monkeypatch, capsys):
+    """The movie -E carve-out died with the flags (map.md decision 8): a
+    library-owned title escalates default-No like any other run — a refusal
+    exits 1 and stages nothing."""
     tmp_path.joinpath("library", "movies", "Mamma Mia! (2008)").mkdir(parents=True)
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    _movie_run(monkeypatch)  # no answers: any prompt stops the test
+    _movie_run(monkeypatch, answers=("", ""))  # gate prompts, default-No's default-No confirm
 
-    result = rip_common.rip_preamble("movie", "skive rip movie", _movie_args(extras=True))
+    with pytest.raises(SystemExit) as e:
+        rip_common.rip_preamble("movie", "skive rip movie", _movie_args())
 
-    assert result.stage == tmp_path / "rip" / "movies" / "Mamma Mia! (2008)" / "d0"
+    assert e.value.code == 1
+    assert "might already be ripped" in capsys.readouterr().err
 
 
 # -- TV rip preflight (season gate) --
