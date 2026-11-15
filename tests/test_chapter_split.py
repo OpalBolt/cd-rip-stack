@@ -2,20 +2,22 @@
 boundary suggestion (nearest start, ±120s window flag, declines); plus the
 boundary table, prompt loop, cut, and phase orchestration (slice 03)."""
 
+import asyncio
 import json
-from io import StringIO
 from pathlib import Path
+from io import StringIO
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock
 
 from rich.console import Console
+from unittest.mock import Mock
+
 
 import skive.chapter_split as chapter_split
 from skive.chapter_split import (
-    boundary_loop, boundary_note, boundary_table, boundary_flags,
-    parse_fix, probe_chapters, split_combined, spans_from_starts,
-    suggest_boundaries,
+    boundary_flags, boundary_note, print_accepted_boundaries, probe_chapters,
+    split_combined, spans_from_starts, suggest_boundaries, BoundaryTable,
 )
+from skive.selection import QUIT
 
 
 # Downton S4 D1 shape: one combined title, 21 chapters ~7.8 min apart, three
@@ -183,59 +185,140 @@ def test_probe_feeds_suggestion():
     assert flagged == set()
 
 
-# --- The boundary table, prompt loop, cut, and phase (slice 03) -------------
+# --- The boundary table (the selection component's fourth consumer) ----------
+
+SUGGESTED = [(1, 7), (8, 14), (15, 21)]
 
 
-def _cells(table) -> list[tuple[str, str]]:
-    """The (text, style) of every band-styled ratio cell a table renders."""
-    con = Console(width=120, file=StringIO())
-    return [(seg.text.strip(), str(seg.style)) for seg in con.render(table)
-            if str(seg.style) in ("green", "yellow")]
+def _pilot(keys, check, start_chs=None, size=(80, 24)):
+    """Run the boundary table headless, press `keys`, and run `check(app)`
+    inside the live context — the widget tree is pruned once the app exits."""
+    app = BoundaryTable("Show_S01E01-E03.mkv", 1, 1, 3,
+                        list(start_chs or [1, 8, 15]), DOWNTON_STARTS,
+                        DOWNTON_DURATION, DOWNTON_RUNTIMES)
+
+    async def go():
+        async with app.run_test(size=size) as pilot:
+            if keys:
+                await pilot.press(*keys)
+                await pilot.pause()
+            check(app)
+    asyncio.run(go())
 
 
-def _stage(monkeypatch, answers):
-    """Record console + scripted ui.ask for the boundary UI: the question
-    prints to the recording console, an empty answer takes the default."""
-    con = Console(record=True, width=120)
-    monkeypatch.setattr(chapter_split, "console", con)
-    p = MagicMock()
-    p.ask.side_effect = list(answers)
-
-    def ask(question, choices="", default=""):
-        con.print(f"{question} [{default}] {choices}")
-        return p.ask(question).strip() or default
-
-    monkeypatch.setattr(chapter_split.ui, "ask", ask)
-    return con, p
+def test_boundary_table_prefill_renders_graded_rows():
+    """Graded prefill: one row per episode, the suggested start chapter as
+    the action cell, the span duration in the runtime cell, no notes."""
+    def check(app):
+        assert [r.number for r in app.titles] == [1, 2, 3]
+        assert app._cells(app.titles[0])[2].plain == "1"
+        assert app._cells(app.titles[1])[2].plain == "8"
+        assert app._cells(app.titles[1])[1].plain == "0:54:36"
+        assert app._cells(app.titles[2])[3].plain == ""
+        assert app._blocks == {}
+    _pilot([], check)
 
 
-def test_boundary_table_row_per_episode():
-    """One row per episode: code, inclusive 1-based span, start timestamp,
-    span duration (the last episode runs to the container duration)."""
-    table = boundary_table(1, 1, [(1, 7), (8, 14), (15, 21)], DOWNTON_STARTS,
-                           DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    con = Console(record=True, width=120)
-    con.print(table)
-    text = con.export_text()
-    assert "S01E01" in text and "S01E02" in text and "S01E03" in text
-    assert "1-7" in text and "8-14" in text and "15-21" in text
-    assert "0:00:00" in text
-    assert "0:54:36" in text          # span 3276s at chapter 8
-    assert "1:49:12" in text          # chapter 15 sits at 6552s
-    assert "0:47:38" in text          # last span: 9410 - 6552
+def test_boundary_table_correction_moves_start_and_reregrades():
+    """Typing `14` at the E02 row and Enter moves its start to chapter 14;
+    the layout re-grades, a second Enter accepts the corrected spans."""
+    def check(app):
+        assert app.return_value == [(1, 13), (14, 14), (15, 21)]
+    _pilot(["j", "1", "4", "enter", "enter"], check)
 
 
-def test_boundary_table_ratio_cells_styled_by_band():
-    """The ratio cell grades span vs that episode's own TMDB runtime in the
-    audit band: E01/E02 sit green (1.01), the PAL-short tail reads yellow."""
-    table = boundary_table(1, 1, [(1, 7), (8, 14), (15, 21)], DOWNTON_STARTS,
-                           DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    con = Console(record=True, width=120)
-    con.print(table)
-    text = con.export_text()      # note: exporting clears the record buffer
-    assert "1.01" in text and "0.88" in text
-    assert _cells(table) == [("1.01", "green"), ("1.01", "green"),
-                             ("0.88", "yellow")]
+def test_boundary_table_correction_reregrades_flags_after_fix():
+    """Moving E03's start past the window flags it: a yellow warning names
+    the episode and Enter still accepts (the ratio-audit rule)."""
+    def check(app):
+        assert app.return_value == [(1, 7), (8, 19), (20, 21)]
+        assert "outside ±120s" in app._cells(app.titles[2])[3].plain
+        assert "E03" in app._status_text().plain
+        assert "boundary suggestion outside ±120s" in app._status_text().plain
+    _pilot(["j", "j", "2", "0", "enter", "enter"], check)
+
+
+def test_boundary_table_pinned_first_episode_blocks():
+    """E-lo is pinned to chapter 1: a typed chapter at its row is rejected,
+    the row is named, and nothing changes."""
+    def check(app):
+        assert app.return_value is None
+        assert app.start_chs == [1, 8, 15]
+        assert "pinned" in app.message
+    _pilot(["5", "enter"], check)
+
+
+def test_boundary_table_missing_chapter_blocks_and_names_row():
+    def check(app):
+        assert app.return_value is None
+        assert app.start_chs == [1, 8, 15]
+        assert "no chapter 99" in app.message
+        assert "E02" in app.message
+    _pilot(["j", "9", "9", "enter"], check)
+
+
+def test_boundary_table_nonincreasing_and_starving_rows_are_named():
+    """A start behind the previous episode's, and one that starves the next
+    episode, are both refused — the row named, nothing changed."""
+    def check(app):
+        assert app.return_value is None
+        assert app.start_chs == [1, 8, 15]
+        assert "✗ E02" in app.message and "must increase" in app.message
+    _pilot(["j", "1", "enter"], check)
+
+    def check_starve(app):
+        assert app.start_chs == [1, 8, 15]
+        assert "✗ E02: chapter 15 leaves E02 no chapters" in app.message
+    _pilot(["j", "1", "5", "enter"], check_starve)
+
+
+def test_boundary_table_blocked_layout_renders_red_and_refuses():
+    """A standing layout that breaks the rules (here: prefill duplicates
+    chapter 8) renders the row red, names it, and refuses Enter; the fix
+    clears the block and a further Enter accepts."""
+    def check_blocked(app):
+        assert app.return_value is None
+        assert 3 in app._blocks
+        assert "must increase" in app._blocks[3]
+        assert any("red" in sp.style
+                   for c in app._cells(app.titles[2]) for sp in c.spans)
+        assert "E03" in app._status_text().plain
+    _pilot(["enter"], check_blocked, start_chs=[1, 8, 8])
+
+    def check_fixed(app):
+        assert app.return_value == [(1, 7), (8, 14), (15, 21)]
+    _pilot(["j", "j", "1", "5", "enter", "enter"], check_fixed,
+           start_chs=[1, 8, 8])
+
+
+def test_boundary_table_rejected_edit_then_accept():
+    """A rejected typed value costs a message; the untouched layout accepts
+    on the next Enter."""
+    def check(app):
+        assert app.return_value == SUGGESTED
+    _pilot(["j", "1", "enter", "backspace", "enter", "enter"], check)
+
+
+def test_boundary_table_accept_returns_suggested_spans():
+    def check(app):
+        assert app.return_value == SUGGESTED
+    _pilot(["enter"], check)
+
+
+def test_boundary_table_q_declines():
+    def check(app):
+        assert app.return_value == QUIT
+    _pilot(["q"], check)
+
+
+def test_boundary_table_arrows_move_the_cursor():
+    def check(app):
+        assert app.query_one("DataTable").cursor_row == 2
+    _pilot(["j", "j"], check)
+
+    def check_up(app):
+        assert app.query_one("DataTable").cursor_row == 0
+    _pilot(["j", "k"], check_up)
 
 
 def test_boundary_note_names_flagged_episodes():
@@ -253,104 +336,34 @@ def test_boundary_flags_reregrade_a_fixed_layout():
     assert boundary_flags([1, 8, 20], DOWNTON_STARTS, DOWNTON_RUNTIMES, 1, 3) == {3}
 
 
-def test_parse_fix_and_spans_from_starts_shapes():
-    assert parse_fix("2=14") == (2, 14)
-    assert parse_fix(" 2 = 14 ") == (2, 14)
-    assert parse_fix("2") is None and parse_fix("e") is None
-    assert parse_fix("1-2") is None
+def test_parse_grammar_gone_and_spans_from_starts_shapes():
+    """The `e=ch` grammar is gone; the span shape it fed survives."""
+    assert not hasattr(chapter_split, "parse_fix")
+    assert not hasattr(chapter_split, "boundary_loop")
     assert spans_from_starts([1, 8, 15], 21) == [(1, 7), (8, 14), (15, 21)]
     assert spans_from_starts([1, 5], 6) == [(1, 4), (5, 6)]
 
 
-# The boundary prompt loop
-SUGGESTED = [(1, 7), (8, 14), (15, 21)]
+# The split phase: probe → table → never-clobber → cut → delete
 
 
-def test_boundary_loop_enter_confirms_suggested_spans(monkeypatch):
-    con, _p = _stage(monkeypatch, [""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == SUGGESTED
-    assert "Split at these boundaries?" in con.export_text()
+def _confirm(monkeypatch, outcome=SUGGESTED):
+    """Script the boundary table seam: `outcome` is the confirmed spans, QUIT
+    (declined) or a callable/exception raised at the table. Also fakes a
+    terminal (pytest's stdin is not one), so the phase reaches the table."""
+    monkeypatch.setattr(chapter_split.sys.stdin, "isatty", lambda: True)
+    calls = []
 
+    def table(display, season, lo, hi, spans, starts, duration, runtimes):
+        calls.append(display)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if callable(outcome):
+            return outcome()
+        return outcome
 
-def test_boundary_loop_q_declines(monkeypatch):
-    _stage(monkeypatch, ["q"])
-    assert boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                         DOWNTON_DURATION, DOWNTON_RUNTIMES) is None
-
-
-def test_boundary_loop_fix_moves_start_and_rerenders(monkeypatch):
-    """`2=14` moves E02's start to chapter 14 and re-renders the table."""
-    con, _p = _stage(monkeypatch, ["2=14", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == [(1, 13), (14, 14), (15, 21)]
-    text = con.export_text()
-    assert text.count("Split at these boundaries?") == 2        # fix, then re-render, then Enter
-    assert text.count("14-14") == 1         # the fixed span on the re-render
-
-
-def test_boundary_loop_reregrades_flags_after_fix(monkeypatch):
-    """The note re-grades above each re-render: the suggested layout sits
-    inside the window, the moved E03 boundary flags, the note names it."""
-    con, _p = _stage(monkeypatch, ["3=20", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == [(1, 7), (8, 19), (20, 21)]
-    text = con.export_text()
-    first_prompt = text.index("Split at these boundaries?")
-    assert "boundary suggestion outside" not in text[:first_prompt]
-    note_line = next(ln for ln in text[first_prompt:].splitlines()
-                     if "boundary suggestion outside" in ln)
-    assert "E03" in note_line
-
-
-def test_boundary_loop_rejects_first_episode_row(monkeypatch):
-    con, _p = _stage(monkeypatch, ["1=5", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == SUGGESTED
-    assert "pinned" in con.export_text()
-
-
-def test_boundary_loop_rejects_episode_outside_range(monkeypatch):
-    con, _p = _stage(monkeypatch, ["4=5", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == SUGGESTED
-    assert "outside 1-3" in con.export_text()
-
-
-def test_boundary_loop_rejects_chapter_past_file_end(monkeypatch):
-    con, _p = _stage(monkeypatch, ["2=99", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == SUGGESTED
-    assert "no chapter 99" in con.export_text()
-
-
-def test_boundary_loop_rejects_starving_boundaries(monkeypatch):
-    """`3=1` backs E03 onto E02's start; `2=15` drops E02 onto E03's — both
-    leave an episode chapterless, both print why and change nothing."""
-    con, _p = _stage(monkeypatch, ["3=1", "2=15", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == SUGGESTED
-    text = con.export_text()
-    assert "must increase" in text
-    assert "leaves E02 no chapters" in text
-
-
-def test_boundary_loop_rejects_unreadable_row(monkeypatch):
-    con, _p = _stage(monkeypatch, ["move it", ""])
-    spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                          DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    assert spans == SUGGESTED
-    assert "cannot read fix row" in con.export_text()
-
-
-# The split phase: probe → table+prompt → never-clobber → cut → delete
+    monkeypatch.setattr(chapter_split, "run_boundary_table", table)
+    return calls
 
 
 def _split_paths(tmp_path):
@@ -385,12 +398,12 @@ def _split_notes(log):
     return [c.args[1] for c in log.note.call_args_list if c.args[0] == "split"]
 
 
-def test_split_combined_enter_cuts_all_pieces_and_deletes_combined(
+def test_split_combined_accept_cuts_all_pieces_and_deletes_combined(
         tmp_path, monkeypatch):
-    """Enter: one ffmpeg per episode — input seek to the chapter start, `-t`
+    """Accept: one ffmpeg per episode — input seek to the chapter start, `-t`
     over the span, all streams, stream copy only — every piece present, the
-    combined file deleted, one success note with the piece count."""
-    _stage(monkeypatch, [""])
+    accepted table echoed, the combined file deleted, one success note."""
+    calls = _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
     cmds = []
@@ -418,11 +431,41 @@ def test_split_combined_enter_cuts_all_pieces_and_deletes_combined(
     assert cmds[1][-1] == str(targets[2])
     assert cmds[2][4] == "6552.000" and cmds[2][8] == "2858.000"
     assert cmds[2][-1] == str(targets[3])
+    assert calls == [combined.name]      # the table ran once over the file's name
+
+
+def test_split_combined_accepted_table_echoed_as_plain_lines(
+        tmp_path, monkeypatch):
+    """The accepted boundary table echoes as plain lines into scrollback
+    before the cut — the print_accepted pattern (pipe-safe by construction)."""
+    real = chapter_split.ui.console
+    con = Console(record=True, width=120, file=StringIO())
+    chapter_split.ui.console = con
+    try:
+        print_accepted_boundaries("Show_S01E01-E03.mkv", 1, 1, SUGGESTED,
+                                  DOWNTON_STARTS, DOWNTON_DURATION,
+                                  DOWNTON_RUNTIMES)
+        text = con.export_text()
+    finally:
+        chapter_split.ui.console = real
+    assert "S01E01" in text and "S01E03" in text
+    assert "8" in text and "0:54:36" in text
+
+    # Prints normally under a suspended seam run view (ADR 0012: interactive
+    # surfaces never print under the Live region).
+    view = chapter_split.ui.RunView(tty=True, live=False)
+    chapter_split.ui.set_view(view)
+    try:
+        print_accepted_boundaries("Show_S01E01-E03.mkv", 1, 1, SUGGESTED,
+                                  DOWNTON_STARTS, DOWNTON_DURATION,
+                                  DOWNTON_RUNTIMES)
+    finally:
+        chapter_split.ui.clear_view()
 
 
 def test_split_combined_unreadable_probe_declines_without_table(
         tmp_path, monkeypatch):
-    _con, p = _stage(monkeypatch, [])
+    calls = _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -432,14 +475,13 @@ def test_split_combined_unreadable_probe_declines_without_table(
     split_combined(combined, targets, 1, 1, 3, DOWNTON_RUNTIMES, log, run=run)
 
     assert combined.exists()
-    p.ask.assert_not_called()   # no table, no prompt
-    assert "Split at these boundaries?" not in chapter_split.console.export_text()
+    assert calls == []                   # no table, no interaction
     notes = _split_notes(log)
     assert len(notes) == 1 and "probe unreadable" in notes[0]
 
 
 def test_split_combined_missing_runtime_declines(tmp_path, monkeypatch):
-    _con, p = _stage(monkeypatch, [])
+    calls = _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
     runtimes = {1: 3240, 2: 3240, 3: 0}
@@ -448,13 +490,13 @@ def test_split_combined_missing_runtime_declines(tmp_path, monkeypatch):
                    run=_split_run(DOWNTON_STARTS, DOWNTON_DURATION))
 
     assert combined.exists()
-    p.ask.assert_not_called()
+    assert calls == []
     notes = _split_notes(log)
     assert len(notes) == 1 and "no TMDB runtime for E03" in notes[0]
 
 
 def test_split_combined_fewer_chapters_declines(tmp_path, monkeypatch):
-    _con, p = _stage(monkeypatch, [])
+    calls = _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -462,13 +504,14 @@ def test_split_combined_fewer_chapters_declines(tmp_path, monkeypatch):
                    run=_split_run([0.0, 468.0], 9410.0))
 
     assert combined.exists()
-    p.ask.assert_not_called()
+    assert calls == []
     notes = _split_notes(log)
     assert len(notes) == 1 and "2 chapters but 3 episodes" in notes[0]
 
 
 def test_split_combined_q_declines_and_keeps_combined(tmp_path, monkeypatch):
-    _stage(monkeypatch, ["q"])
+    """A declined table: the combined file stays, loud and named."""
+    calls = _confirm(monkeypatch, QUIT)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -480,14 +523,33 @@ def test_split_combined_q_declines_and_keeps_combined(tmp_path, monkeypatch):
     notes = _split_notes(log)
     assert len(notes) == 1
     assert "skipped" in notes[0] and "declined" in notes[0]
+    assert calls == [combined.name]
 
 
-def test_split_combined_interrupt_at_prompt_keeps_combined_and_continues(
+def test_split_combined_no_terminal_declines_and_keeps_combined(
         tmp_path, monkeypatch):
-    """Ctrl+C at the boundary table: contained — nothing cut, combined kept,
-    one interrupted note, and the phase returns so the run goes on."""
-    _con, p = _stage(monkeypatch, [])
-    p.ask.side_effect = KeyboardInterrupt
+    """A headless completion never hangs: without a terminal the split
+    declines like a declined table — combined kept, one named note."""
+    calls = _confirm(monkeypatch)
+    monkeypatch.setattr(chapter_split.sys.stdin, "isatty", lambda: False)
+    combined, targets = _split_paths(tmp_path)
+    log = Mock()
+
+    split_combined(combined, targets, 1, 1, 3, DOWNTON_RUNTIMES, log,
+                   run=_split_run(DOWNTON_STARTS, DOWNTON_DURATION))
+
+    assert combined.exists()
+    assert calls == []                   # no table was ever launched
+    notes = _split_notes(log)
+    assert notes == ["skipped: no terminal — combined kept"]
+
+
+def test_split_combined_interrupt_at_table_keeps_combined_and_continues(
+        tmp_path, monkeypatch):
+    """Ctrl+C at the boundary table: Textual restores the terminal, the
+    phase's contained handler fires — nothing cut, combined kept, one
+    interrupted note, and the phase returns so the run goes on."""
+    _confirm(monkeypatch, KeyboardInterrupt())
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -502,7 +564,7 @@ def test_split_combined_interrupt_at_prompt_keeps_combined_and_continues(
 def test_split_combined_interrupt_midcut_sweeps_partials(tmp_path, monkeypatch):
     """Ctrl+C during the second cut: the first episode's partial is swept,
     the combined file kept, one interrupted note."""
-    _stage(monkeypatch, [""])
+    _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -522,7 +584,7 @@ def test_split_combined_never_clobber_aborts_before_first_cut(
         tmp_path, monkeypatch):
     """Any existing per-episode target aborts the whole split before the
     first ffmpeg: staging is never clobbered, combined kept."""
-    _stage(monkeypatch, [""])
+    calls = _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     targets[2].touch()                   # an episode an earlier disc staged
     log = Mock()
@@ -546,12 +608,13 @@ def test_split_combined_never_clobber_aborts_before_first_cut(
     notes = _split_notes(log)
     assert len(notes) == 1
     assert "S01E02.mkv already exists" in notes[0]
+    assert calls == [combined.name]      # confirmed first, then refused
 
 
 def test_split_combined_ffmpeg_failure_sweeps_partials(tmp_path, monkeypatch):
     """A failing cut sweeps the pieces already cut, never touches the rest,
     keeps the combined file, and notes the failure."""
-    _stage(monkeypatch, [""])
+    _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -572,7 +635,7 @@ def test_split_combined_piece_that_did_not_land_keeps_combined(
         tmp_path, monkeypatch):
     """A run that claims success without producing the file is no success:
     the pieces-present guard keeps the combined file and notes the failure."""
-    _stage(monkeypatch, [""])
+    _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -588,7 +651,7 @@ def test_split_combined_missing_ffmpeg_sweeps_partials(tmp_path, monkeypatch):
     """A cut that cannot even launch (missing/unexecutable ffmpeg raises
     OSError from the run seam) is the same failure as a bad exit: partials
     swept, combined kept, the ffmpeg-failed note, and the phase returns."""
-    _stage(monkeypatch, [""])
+    _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
 
@@ -616,7 +679,7 @@ def test_split_combined_interrupt_after_unlink_keeps_pieces(
     """Ctrl+C landing between the combined file's unlink and the success note
     must not sweep: every piece is cut and the combined file is already gone,
     so the split completed — success note, pieces kept, phase returns."""
-    _stage(monkeypatch, [""])
+    _confirm(monkeypatch)
     combined, targets = _split_paths(tmp_path)
     log = Mock()
     real_unlink = Path.unlink
@@ -635,23 +698,3 @@ def test_split_combined_interrupt_after_unlink_keeps_pieces(
     assert not combined.exists()
     notes = _split_notes(log)
     assert notes == ["3 episodes cut — combined deleted"]
-
-
-def test_boundary_loop_prints_under_a_seam_view(monkeypatch):
-    """The boundary table and fix prompt print normally while a seam run
-    view is suspended (ADR 0012: interactive surfaces never print under the
-    Live region), and the loop still answers."""
-    from skive import ui
-
-    con, _p = _stage(monkeypatch, [""])
-    view = ui.RunView(tty=True, live=False)
-    ui.set_view(view)
-    try:
-        spans = boundary_loop(1, 1, 3, SUGGESTED, DOWNTON_STARTS,
-                              DOWNTON_DURATION, DOWNTON_RUNTIMES)
-    finally:
-        ui.clear_view()
-    assert spans == SUGGESTED
-    text = con.export_text()
-    assert "Split at these boundaries?" in text
-    assert "S01E01" in text

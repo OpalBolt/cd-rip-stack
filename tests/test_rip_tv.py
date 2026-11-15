@@ -617,6 +617,9 @@ def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
     prompt = MagicMock()
     prompt.ask.side_effect = [""]  # season
     _table_accepts_map(monkeypatch, {0: (1, 3)})
+    # pytest's stdin is not a terminal; the split must reach the table to be
+    # interrupted at it.
+    monkeypatch.setattr("skive.chapter_split.sys.stdin.isatty", lambda: True)
 
     @dataclass
     class FakeArgs:
@@ -721,7 +724,9 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
 
 def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
                                                        capsys):
-    """Ctrl+C at the boundary table: the split sweeps and notes `interrupted`,
+    """Ctrl+C at the boundary table (# spill: chapter-split-table — the
+    interrupt is staged at the run_boundary_table seam now): the split sweeps
+    and notes `interrupted`,
     then the run continues through the subtitle note and validation with its
     exit code — no status=interrupted line, no 130, no junk purge."""
     import json
@@ -750,9 +755,11 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
 
     real_post = post_rip_validation
     prompt = MagicMock()
-    # season, then Ctrl+C at the split prompt
-    prompt.ask.side_effect = ["", KeyboardInterrupt]
+    prompt.ask.side_effect = [""]  # season
     _table_accepts_map(monkeypatch, {0: (1, 3)})
+    # pytest's stdin is not a terminal; the split must reach the table to be
+    # interrupted at it.
+    monkeypatch.setattr("skive.chapter_split.sys.stdin.isatty", lambda: True)
 
     @dataclass
     class FakeArgs:
@@ -775,6 +782,8 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
             patch("skive.rip_tv.rip_titles", return_value=0), \
             patch("skive.rip_tv.rename_tv", side_effect=fake_rename), \
             patch("skive.chapter_split.probe_chapters", side_effect=fake_probe), \
+            patch("skive.chapter_split.run_boundary_table",
+                  side_effect=KeyboardInterrupt), \
             patch("skive.rip_tv.subtitle_note", side_effect=fake_subs), \
             patch("skive.rip_tv.post_rip_validation",
                   lambda pre, *a, **k: real_post(

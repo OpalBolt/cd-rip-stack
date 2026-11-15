@@ -198,6 +198,9 @@ class _Table(App):
     ]
 
     HINT = ""
+    COLUMNS = COLUMNS
+    """The row columns; the boundary table overrides with its own set (the
+    component is shared, the columns are per-consumer)."""
 
     def __init__(self, display: str, titles: list[TitleInfo]):
         super().__init__()
@@ -219,7 +222,7 @@ class _Table(App):
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
-        table.add_columns(*COLUMNS)
+        table.add_columns(*self.COLUMNS)
         self._col_keys = list(table.columns.keys())
         self._row_keys: dict[int, object] = {}
         for t in self.titles:
