@@ -1,7 +1,9 @@
-"""Headless Pilot tests for the selection table (ADR 0020, slice 03): cursor
-movement, the three verbs, several-near prefill, exactly-one-main, accept,
-quit and interrupt — plus render checks at 80 columns and a narrow width, in
-color and NO_COLOR."""
+"""Headless Pilot tests for the selection table (ADR 0020): the movie table
+(slice 03: cursor movement, the three verbs, several-near prefill,
+exactly-one-main, accept, quit and interrupt) and the TV episode table (slice
+04: typed episodes and doubles, Space mark-fill, sub-floor and play-all
+rescue, blocking and warning states, `c` clear-staged) — plus render checks
+at 80 columns and a narrow width, in color and NO_COLOR."""
 
 import asyncio
 import io
@@ -14,9 +16,11 @@ from rich.theme import Theme
 from skive import ui
 from skive.scan import TitleInfo
 from skive.selection import (
-    COLUMNS, EXTRA_ACTION, INTERRUPT, QUIT, SKIP_ACTION, SelectionTable,
-    graded_rows, prefill, print_accepted, rip_set_line,
+    COLUMNS, EXTRA_ACTION, INTERRUPT, QUIT, SKIP_ACTION, EpisodeTable,
+    SelectionTable, episode_map, graded_rows, parse_episode, prefill,
+    print_accepted, print_accepted_episodes, rip_set_line,
 )
+from skive.tv_match import sum_disqualified_windowed
 from skive.ui import THEME
 from skive.validation import MAIN_ACTION
 
@@ -276,3 +280,308 @@ def test_echo_in_color_on_a_tty(monkeypatch):
     out = _echo(monkeypatch, width=80, color=True)
     assert "Mamma Mia! (2008)" in out
     assert "main" in out and "extra" in out
+
+
+# --- TV: the episode table (slice 04) ----------------------------------------
+
+# The Generation Kill disc: three episodes, a play-all (t3 ≈ sum of 0, 1, 2)
+# and a sub-floor making-of (t4). Rows render: 0, 1, 2, 3, then 4 last.
+GK = [TitleInfo(0, 3932, 1_000_000_000, "dan", "", False),
+      TitleInfo(1, 3897, 1_000_000_000, "dan", "", False),
+      TitleInfo(2, 3653, 1_000_000_000, "dan", "", False),
+      TitleInfo(3, 11482, 3_000_000_000, "dan", "", False),
+      TitleInfo(4, 300, 100_000_000, "dan", "", False)]
+GK_EPS = {e: f"ep{e}" for e in range(1, 11)}
+GK_RUNTIMES = {1: 4140, 2: 4080, 3: 3840, **{e: 3900 for e in range(4, 11)}}
+
+
+def _gk_map(staged=(), titles=GK):
+    info = [(t.number, t.seconds, t.size) for t in titles if t.seconds >= 600]
+    return episode_map(1, titles, 120, sum_disqualified_windowed(info),
+                       GK_EPS, GK_RUNTIMES, set(staged))
+
+
+def _tv(keys, check, emap=None, staging=(), size=(100, 30)):
+    """Run the episode table headless, press `keys` (a pause between each so
+    modals settle), run `check(app)` inside the live context. `staging` is
+    the list of files `c` offers; the clear callback deletes them."""
+    async def go():
+        emap_ = emap or _gk_map()
+        files = list(staging)
+        app = EpisodeTable("Generation Kill (2008)", emap_,
+                           lambda: [f for f in files if f.exists()],
+                           lambda doomed: ([f.unlink() for f in doomed], set())[1])
+        async with app.run_test(size=size) as pilot:
+            for k in keys:
+                await pilot.press(k)
+                await pilot.pause()
+            check(app)
+    asyncio.run(go())
+
+
+def _status(app) -> str:
+    return app._status_text().plain
+
+
+def test_parse_episode_values():
+    assert parse_episode("3") == (3, 3)
+    assert parse_episode("3-4") == (3, 4)
+    for bad in ("", "0", "3-", "-3", "4-3", "x", "3-4-5"):
+        assert parse_episode(bad) is None
+
+
+def test_episode_map_prefill_guess_playall_and_sub_floor():
+    """The guess fills the eligible titles; the play-all prefills skip with
+    its sum evidence; the sub-floor title lists last, real number, skip."""
+    emap = _gk_map()
+    assert emap.assign == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: None, 4: None}
+    assert [t.number for t in emap.titles] == [0, 1, 2, 3, 4]
+    assert emap.evidence == {3: "≈ sum of 0, 1, 2", 4: "below the TV floor"}
+
+
+def test_sub_floor_rows_list_last_even_when_scanned_first():
+    titles = [GK[4], *GK[:4]]
+    assert [t.number for t in _gk_map(titles=titles).titles] == [0, 1, 2, 3, 4]
+
+
+def test_rows_render_six_columns_with_audit_and_evidence():
+    """Six columns at 80 columns and a narrow width; episode names and the
+    play-all / sub-floor evidence in notes, the ratio in the audit column."""
+    def check(app):
+        table = app.query_one(DataTable)
+        assert_eq(len(table.columns), len(COLUMNS))
+        assert_eq(table.row_count, 5)
+        row0 = [str(c) for c in table.get_row_at(0)]
+        assert_eq(row0[0], "0")
+        assert_eq(row0[3], "0.95")
+        assert_eq(row0[4], "E01")
+        assert_eq(row0[5], "ep1")
+        assert_eq([str(c) for c in table.get_row_at(3)][4:], [
+            "skip", "≈ sum of 0, 1, 2"])
+        assert_eq([str(c) for c in table.get_row_at(4)][4:], [
+            "skip", "below the TV floor"])
+    for size in ((80, 24), (48, 24)):
+        _tv((), check, size=size)
+
+
+def test_typed_episode_sets_the_cursor_row_on_enter():
+    """Digits accumulate at the cursor; Enter commits the value (and only
+    that — a second Enter accepts)."""
+    def check(app):
+        assert_eq(app.emap.assign[0], (5, 5))
+        assert_eq(app.return_value, None)  # the first Enter did not accept
+    _tv(("5", "enter"), check)
+    _tv(("5", "enter", "enter"), lambda app: assert_eq(
+        app.return_value, {0: (5, 5), 1: (2, 2), 2: (3, 3), 3: None, 4: None}))
+
+
+def test_typed_double_is_one_range():
+    _tv(("down", "down", "3", "minus", "4", "enter"),
+        lambda app: assert_eq(app.emap.assign[2], (3, 4)))
+
+
+def test_typing_shows_an_input_line_and_backspace_edits_it():
+    def check(app):
+        assert "episode ▸ 3" in _status(app)
+    _tv(("3", "minus", "4", "backspace", "backspace"), check)
+    _tv(("3", "minus", "4"), lambda app: assert_eq(
+        "episode ▸ 3-4" in _status(app), True))
+
+
+def test_a_bad_typed_value_is_named_and_changes_nothing():
+    def check(app):
+        assert_eq(app.emap.assign[0], (1, 1))
+        assert "'0' is not an episode" in _status(app)
+    _tv(("0", "enter"), check)
+
+
+def test_moving_commits_the_pending_value_to_the_row_left():
+    _tv(("6", "down"), lambda app: (
+        assert_eq(app.emap.assign[0], (6, 6)),
+        assert_eq(app.query_one(DataTable).cursor_row, 1)))
+
+
+def test_space_marks_a_run_and_one_number_fills_it_in_table_order():
+    """Marked rows fill from the typed number in disc order; unmarked rows
+    never change."""
+    def check(app):
+        assert_eq(app.emap.assign, {0: (7, 7), 1: (2, 2), 2: (8, 8),
+                                    3: None, 4: None})
+        assert_eq(app.marked, set())
+    # mark t0 and t2 (skipping t1), type 7, Enter
+    _tv(("space", "down", "down", "space", "7", "enter"), check)
+
+
+def test_marks_show_in_the_number_column_and_escape_clears_them():
+    def check(app):
+        assert_eq(str(app.query_one(DataTable).get_row_at(0)[0]), "* 0")
+    _tv(("space",), check)
+    _tv(("space", "escape"), lambda app: assert_eq(app.marked, set()))
+
+
+def test_a_range_cannot_fill_a_marked_run():
+    def check(app):
+        assert_eq(app.emap.assign[0], (1, 1))
+        assert "fills from one number" in _status(app)
+    _tv(("space", "3", "minus", "4", "enter"), check)
+
+
+def test_sub_floor_row_is_rescued_by_typing_an_episode():
+    """A sub-floor title (bottom row, real number 4) prefills skip; typing an
+    episode rescues it and it comes back in the accepted map."""
+    _tv(("down", "down", "down", "down", "4", "enter", "enter"),
+        lambda app: assert_eq(app.return_value[4], (4, 4)))
+
+
+def test_sub_floor_row_is_rescued_as_extra_with_e():
+    _tv(("down", "down", "down", "down", "e", "enter"),
+        lambda app: assert_eq(app.return_value[4], (0, 0)))
+
+
+def test_playall_is_rescued_by_typing_an_episode():
+    _tv(("down", "down", "down", "4", "enter", "enter"),
+        lambda app: assert_eq(app.return_value[3], (4, 4)))
+
+
+def test_e_and_s_restate_a_row_as_extra_or_skip():
+    _tv(("e",), lambda app: assert_eq(app.emap.assign[0], (0, 0)))
+    _tv(("down", "s"), lambda app: assert_eq(app.emap.assign[1], None))
+
+
+def test_a_clash_reddens_both_rows_names_them_and_blocks_enter():
+    """Two titles on one episode: both rows render red with the other named,
+    the status says Enter is refused, and Enter does not accept."""
+    def check(app):
+        assert_eq(sorted(app._blocks), [0, 1])
+        table = app.query_one(DataTable)
+        for row in (0, 1):
+            cells = table.get_row_at(row)
+            assert "✗ E02 clash with" in str(cells[5])
+            assert all(any("red" in str(sp.style) for sp in c.spans)
+                       for c in cells)  # the whole row renders red
+        assert "t1" in str(table.get_row_at(0)[5])
+        assert "t0" in str(table.get_row_at(1)[5])
+        assert "blocked" in _status(app) and "t0, t1" in _status(app)
+        assert_eq(app.return_value, None)
+    _tv(("2", "enter", "enter", "enter"), check)
+
+
+def test_fixing_a_clash_unblocks_enter():
+    _tv(("2", "enter", "down", "9", "enter", "enter"), lambda app: assert_eq(
+        app.return_value[1], (9, 9)))
+
+
+def test_staged_episode_renders_a_marker_and_blocks_a_claim():
+    """Episodes already staged show in the status line; claiming one is a
+    block (red row, named), Enter refused."""
+    emap = _gk_map(staged={1})
+    assert emap.assign[0] == (2, 2)  # the guess starts at the first unstaged
+
+    def check(app):
+        assert "already staged: E01" in _status(app)
+        assert_eq(app._blocks, {0: ["✗ E01 already staged"]})
+        assert_eq(app.return_value, None)
+    _tv(("1", "enter", "enter"), check, emap=emap)
+
+
+def test_claim_past_the_season_end_blocks_enter():
+    def check(app):
+        assert "past the season's last (E10)" in str(
+            app.query_one(DataTable).get_row_at(0)[5])
+        assert_eq(app.return_value, None)
+    _tv(("9", "9", "enter", "enter"), check)
+
+
+def test_unfilled_episode_warns_loudly_but_never_blocks():
+    """E5 here leaves E4 inside the covered range unclaimed: the status
+    warns, and Enter still accepts."""
+    def check(app):
+        assert "! unfilled: E04" in _status(app)
+        assert_eq(app.return_value, None)
+    _tv(("5", "enter"), check)
+    _tv(("5", "enter", "enter"), lambda app: assert_eq(
+        app.return_value[0], (5, 5)))
+
+
+def test_the_ratio_audit_never_gates():
+    """A far-off ratio grades yellow in the audit column; Enter still
+    accepts. Rescue the 300s making-of onto E9 (a 3900s episode): 0.08."""
+    rescue = ("down", "down", "down", "down", "9", "enter")
+    _tv(rescue, lambda app: assert_eq(
+        app.query_one(DataTable).get_row_at(4)[3].style, "yellow"))
+    _tv(rescue + ("enter",), lambda app: assert_eq(app.return_value[4], (9, 9)))
+
+
+def test_nothing_to_rip_refuses_enter():
+    def check(app):
+        assert "nothing to rip" in _status(app)
+        assert_eq(app.return_value, None)
+    _tv(("s", "down", "s", "down", "s", "enter"), check)
+
+
+def test_quit_and_interrupt_exit_with_their_sentinels():
+    _tv(("q",), lambda app: assert_eq(app.return_value, QUIT))
+    _tv(("ctrl+c",), lambda app: assert_eq(app.return_value, INTERRUPT))
+
+
+def test_c_lists_the_staged_files_and_deletes_only_on_explicit_y(tmp_path):
+    a = tmp_path / "Show_S01E01.mkv"
+    b = tmp_path / "Show_S01E02-E03.mkv"
+    a.touch(); b.touch()
+
+    def listed(app):
+        # the modal is up: it names both files; nothing deleted yet
+        text = " ".join(str(w.render()) for w in app.screen.query("Static"))
+        assert "Show_S01E01.mkv" in text and "Show_S01E02-E03.mkv" in text
+        assert a.exists() and b.exists()
+    _tv(("c",), listed, staging=[a, b])
+
+    _tv(("c", "y"), lambda app: assert_eq(
+        (a.exists(), b.exists(), "deleted 2" in _status(app)),
+        (False, False, True)), staging=[a, b])
+
+
+def test_c_declined_keeps_files_and_enter_in_the_modal_never_deletes_or_accepts(tmp_path):
+    a = tmp_path / "Show_S01E01.mkv"
+    a.touch()
+    _tv(("c", "n"), lambda app: assert_eq(a.exists(), True), staging=[a])
+    _tv(("c", "escape"), lambda app: assert_eq(a.exists(), True), staging=[a])
+
+    def check(app):
+        assert_eq(a.exists(), True)
+        assert_eq(app.return_value, None)  # Enter / q did nothing under the modal
+    _tv(("c", "enter", "q"), check, staging=[a])
+
+
+def test_c_with_nothing_staged_says_so():
+    _tv(("c",), lambda app: assert_eq(
+        "nothing staged for this show" in _status(app), True))
+
+
+def test_clearing_staged_files_refreshes_the_staged_set_and_unblocks(tmp_path):
+    """After c+y the staged set the table grades against is the callback's
+    refreshed one: a claim on a just-cleared episode stops blocking."""
+    f = tmp_path / "Show_S01E01.mkv"
+    f.touch()
+    emap = _gk_map(staged={1})
+
+    def check(app):
+        assert_eq(app._blocks, {})
+        assert_eq(app.emap.staged, set())
+        assert_eq(app.emap.assign[0], (1, 1))
+    _tv(("1", "enter", "c", "y"), check, emap=emap, staging=[f])
+
+
+def test_accepted_echo_prints_the_episode_table_plain(monkeypatch):
+    out = io.StringIO()
+    con = Console(file=out, width=80, theme=THEME, highlight=False,
+                  emoji=False, force_terminal=False)
+    monkeypatch.setattr(ui, "console", con)
+    emap = _gk_map()
+    print_accepted_episodes("Generation Kill (2008)", emap, dict(emap.assign))
+    text = out.getvalue()
+    assert "\x1b[" not in text
+    assert "Generation Kill (2008) — season 01" in text
+    for col in COLUMNS:
+        assert col in text
+    assert "E01" in text and "≈ sum of 0, 1, 2" in text and "below the TV floor" in text

@@ -1,22 +1,37 @@
 """The selection table (ADR 0020): one transient Textual app over the disc
 scan's titles, launched inside the run view's suspend — six universal columns
-(`#` · length · size · audit · action · notes), prefilled by main
-arbitration. The operator moves with ↑/↓ or j/k and restates the action at
-the cursor: `m` moves the single main, `e` marks an extra, `s` skips; Enter
+(`#` · length · size · audit · action · notes), prefilled by the audits. The
+operator moves with ↑/↓ or j/k and restates the action at the cursor; Enter
 accepts, `q` quits with nothing ripped, Ctrl+C follows the repo Interrupt.
-Movie verb config only (KISS): TV and CD verb configs come later.
 
-The component is a face, not a brain: the prefill and the graded rows are
-pure functions here, the exactly-one-main rule stays in skive.validation."""
+Two verb configs ride the one component: the movie table (`m` moves the
+single main, `e` extra, `s` skip) and the TV episode table (typed episode
+numbers `3` / `3-4`, Space-marked runs filled in order from one typed number,
+`e` extra, `s` skip, `c` clears the show's staged files). The component is a
+face, not a brain: the prefill, the graded rows and the episode map's
+violations are pure functions/classes here, the exactly-one-main rule stays
+in skive.validation and the episode math in skive.tv_match."""
+
+import re
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Callable
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Static
 
 from skive import ui
 from skive.makemkv import hsize
 from skive.scan import TitleInfo
+from skive.tv_match import (
+    audit_cell as episode_audit_cell, episode_clashes, past_end_claims,
+    prefill_assignment, staged_claims, sub_floor_titles, tv_floor,
+    unfilled_episodes,
+)
 from skive.validation import (
     MAIN_ACTION, MAIN_FLOOR_S, arbitrate_main, biggest_title, exactly_one_main,
     grade_main, main_candidates,
@@ -160,46 +175,46 @@ def print_accepted(display: str, titles: list[TitleInfo],
     ui.console.print(table)
 
 
-class SelectionTable(App):
-    """The movie selection table: rows over the scan, cursor edits, accept.
-
-    Keys: ↑/↓ or j/k move the cursor; `m` moves the single main (exactly one
-    main always holds), `e` marks an extra, `s` skips — never on the main
-    row, whose action can only be moved with `m`. Enter accepts and returns
-    the title→action map; `q` exits with QUIT (nothing ripped); Ctrl+C exits
-    with INTERRUPT (Textual restores the terminal on every exit path)."""
+class _Table(App):
+    """The shared table shell: rows over the scan, cursor movement, accept,
+    quit, interrupt. A verb config subclasses it with its own cells and
+    actions; Enter accepts (`action_accept`), `q` exits with QUIT (nothing
+    ripped), Ctrl+C with INTERRUPT (Textual restores the terminal on every
+    exit path)."""
 
     CSS = """
     #disc { height: 1; text-style: bold; }
     DataTable { height: 1fr; }
-    #hint { height: 1; color: $text-muted; }
+    #status { height: auto; }
+    #hint { height: auto; color: $text-muted; }
     """
 
     BINDINGS = [
-        Binding("up,k", "move(-1)", show=False),
-        Binding("down,j", "move(1)", show=False),
-        Binding("m", "main", "main"),
-        Binding("e", "verb('extra')", "extra"),
-        Binding("s", "verb('skip')", "skip"),
+        Binding("up,k", "move(-1)", show=False, priority=True),
+        Binding("down,j", "move(1)", show=False, priority=True),
         Binding("enter", "accept", "accept", priority=True),
         Binding("q", "quit_table", "quit", priority=True),
         Binding("ctrl+c", "interrupt", "interrupt", priority=True),
     ]
 
-    def __init__(self, display: str, titles: list[TitleInfo],
-                 runtime_s: int | None, log=None):
+    HINT = ""
+
+    def __init__(self, display: str, titles: list[TitleInfo]):
         super().__init__()
         self.display_name = display
-        self.titles = sorted(titles, key=lambda t: t.number)
-        self.runtime_s = runtime_s
-        self.run_log = log
-        self.actions, self.notes = prefill(self.titles, runtime_s, self.run_log)
+        self.titles = list(titles)
+
+    def _cells(self, t: TitleInfo) -> tuple:
+        raise NotImplementedError
+
+    def _status_widgets(self) -> list:
+        return []
 
     def compose(self) -> ComposeResult:
         yield Static(self.display_name, id="disc")
         yield DataTable(cursor_type="row")
-        yield Static("↑/↓ j/k move · m main · e extra · s skip · Enter accept · q quit",
-                     id="hint")
+        yield from self._status_widgets()
+        yield Static(self.HINT, id="hint")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -208,21 +223,18 @@ class SelectionTable(App):
         self._col_keys = list(table.columns.keys())
         self._row_keys: dict[int, object] = {}
         for t in self.titles:
-            key = table.add_row(*_row_cells(t, self.actions, self.notes,
-                                            self.runtime_s),
-                                key=str(t.number))
-            self._row_keys[t.number] = key
+            self._row_keys[t.number] = table.add_row(*self._cells(t),
+                                                     key=str(t.number))
 
     def _cursor_title(self) -> TitleInfo:
-        table = self.query_one(DataTable)
-        return self.titles[table.cursor_row]
+        return self.titles[self.query_one(DataTable).cursor_row]
 
     def _refresh_row(self, number: int) -> None:
         t = next(t for t in self.titles if t.number == number)
         table = self.query_one(DataTable)
-        cells = _row_cells(t, self.actions, self.notes, self.runtime_s)
-        for col_key, cell in zip(self._col_keys, cells):
-            table.update_cell(self._row_keys[number], col_key, cell)
+        for col_key, cell in zip(self._col_keys, self._cells(t)):
+            table.update_cell(self._row_keys[number], col_key, cell,
+                              update_width=True)
 
     def action_move(self, delta: int) -> None:
         table = self.query_one(DataTable)
@@ -230,6 +242,42 @@ class SelectionTable(App):
             table.action_cursor_up()
         else:
             table.action_cursor_down()
+
+    def action_accept(self) -> None:
+        raise NotImplementedError
+
+    def action_quit_table(self) -> None:
+        self.exit(QUIT)
+
+    def action_interrupt(self) -> None:
+        self.exit(INTERRUPT)
+
+
+class SelectionTable(_Table):
+    """The movie selection table: rows over the scan, cursor edits, accept.
+
+    Keys: ↑/↓ or j/k move the cursor; `m` moves the single main (exactly one
+    main always holds), `e` marks an extra, `s` skips — never on the main
+    row, whose action can only be moved with `m`. Enter accepts and returns
+    the title→action map."""
+
+    BINDINGS = [
+        Binding("m", "main", "main"),
+        Binding("e", "verb('extra')", "extra"),
+        Binding("s", "verb('skip')", "skip"),
+    ]
+
+    HINT = "↑/↓ j/k move · m main · e extra · s skip · Enter accept · q quit"
+
+    def __init__(self, display: str, titles: list[TitleInfo],
+                 runtime_s: int | None, log=None):
+        super().__init__(display, sorted(titles, key=lambda t: t.number))
+        self.runtime_s = runtime_s
+        self.run_log = log
+        self.actions, self.notes = prefill(self.titles, runtime_s, self.run_log)
+
+    def _cells(self, t: TitleInfo) -> tuple:
+        return _row_cells(t, self.actions, self.notes, self.runtime_s)
 
     def action_main(self) -> None:
         number = self._cursor_title().number
@@ -255,12 +303,6 @@ class SelectionTable(App):
             return
         self.exit(dict(self.actions))
 
-    def action_quit_table(self) -> None:
-        self.exit(QUIT)
-
-    def action_interrupt(self) -> None:
-        self.exit(INTERRUPT)
-
 
 def run_selection_table(log, display: str, titles: list[TitleInfo],
                         runtime_s: int | None) -> dict[int, str] | str:
@@ -269,3 +311,392 @@ def run_selection_table(log, display: str, titles: list[TitleInfo],
     re-raises KeyboardInterrupt — exit 130 — once Textual has restored the
     terminal)."""
     return SelectionTable(display, titles, runtime_s, log).run()
+
+
+# --- TV: the episode map and its table ---------------------------------------
+
+EpisodeAction = tuple[int, int] | None
+"""One title's TV action: an episode (lo, hi) — a double when hi > lo —,
+(0, 0) for an extra, or None for skip (not ripped)."""
+
+EXTRA_EPISODES = (0, 0)
+
+
+def parse_episode(text: str) -> tuple[int, int] | None:
+    """A typed episode value: `3` -> (3, 3), `3-4` -> (3, 4). None for
+    anything else (zero, an inverted or half-typed range)."""
+    m = re.fullmatch(r"(\d+)(?:-(\d+))?", text.strip())
+    if m is None:
+        return None
+    lo = int(m.group(1))
+    hi = int(m.group(2)) if m.group(2) else lo
+    return (lo, hi) if lo >= 1 and hi >= lo else None
+
+
+@dataclass
+class EpisodeMap:
+    """The TV table's state, free of any terminal: every scanned title's
+    action, the TMDB facts the rows grade against, and the episodes already
+    staged. Violations and warnings are derived from the actions — never
+    stored — so every edit re-grades the whole map."""
+    season: int
+    titles: list[TitleInfo]  # table order: scan order, sub-floor titles last
+    assign: dict[int, EpisodeAction]
+    evidence: dict[int, str]  # static notes: play-all sums, the sub-floor label
+    ep_names: dict[int, str]
+    ep_runtimes: dict[int, int]
+    staged: set[int]
+
+    @property
+    def max_ep(self) -> int:
+        return max(self.ep_names, default=0)
+
+    def _episodes(self) -> dict[int, tuple[int, int]]:
+        return {t: r for t, r in self.assign.items()
+                if r is not None and r[0] >= 1}
+
+    def blocks(self) -> dict[int, list[str]]:
+        """Title -> its blocking reasons (Enter refuses while any exist):
+        episode clashes, claims on staged episodes, episodes past the
+        season's end."""
+        eps = self._episodes()
+        out: dict[int, list[str]] = {}
+        for e, ts in episode_clashes(eps):
+            for t in ts:
+                others = ", ".join(f"t{o}" for o in ts if o != t)
+                out.setdefault(t, []).append(f"✗ E{e:02d} clash with {others}")
+        for e, t in staged_claims(eps, self.staged):
+            out.setdefault(t, []).append(f"✗ E{e:02d} already staged")
+        for e, t in past_end_claims(eps, self.max_ep):
+            out.setdefault(t, []).append(
+                f"✗ E{e:02d} past the season's last (E{self.max_ep:02d})")
+        return out
+
+    def unfilled(self) -> list[int]:
+        """Episodes inside the covered range nothing claims and nothing
+        staged covers — a warning, never a block."""
+        eps = self._episodes()
+        if not eps:
+            return []
+        return [e for e in unfilled_episodes(min(r[0] for r in eps.values()),
+                                             max(r[1] for r in eps.values()),
+                                             eps)
+                if e not in self.staged]
+
+    def cells(self, t: TitleInfo, blocks: dict[int, list[str]],
+              marked: bool = False) -> tuple:
+        """One row's six cells; a blocked row renders red whole, its reasons
+        named in the notes cell."""
+        n = t.number
+        lohi = self.assign[n]
+        if lohi is None:
+            action, style = "skip", ACTION_STYLE[SKIP_ACTION]
+        elif lohi == EXTRA_EPISODES:
+            action, style = "extra", ACTION_STYLE[EXTRA_ACTION]
+        else:
+            action = f"E{lohi[0]:02d}" + (f"-E{lohi[1]:02d}" if lohi[1] > lohi[0] else "")
+            style = "bold green"
+        audit = (episode_audit_cell(t.seconds, *lohi, self.ep_runtimes)
+                 if lohi is not None else None)
+        parts = list(blocks.get(n, []))
+        if lohi is not None and lohi[0] >= 1 and self.ep_names.get(lohi[0]):
+            parts.append(self.ep_names[lohi[0]])
+        if n in self.evidence:
+            parts.append(self.evidence[n])
+        row = (Text(("* " if marked else "") + str(n), style="bold"),
+               Text(hms(t.seconds)),
+               Text(hsize(t.size) if t.size else ""),
+               Text(audit[0], style=audit[1]) if audit else Text(""),
+               Text(action, style=style),
+               Text(" · ".join(parts)))
+        if n in blocks:
+            for cell in row:
+                cell.stylize("red")
+        return row
+
+
+def episode_map(season: int, titles: list[TitleInfo], minlength: int,
+                playalls: dict[int, tuple[str, list[int]]],
+                ep_names: dict[int, str], ep_runtimes: dict[int, int],
+                staged: set[int]) -> EpisodeMap:
+    """The audited prefill as an EpisodeMap: the episode guess walks from the
+    first unstaged episode over the eligible titles; play-alls prefill skip
+    with their `≈ sum of …` evidence; sub-floor titles list last with their
+    real disc numbers, prefilled skip.
+
+    Args:
+        season: Season number the disc belongs to
+        titles: Every scanned title, scan order
+        minlength: Minimum title length in seconds the scan used
+        playalls: sum_disqualified_windowed over the floored titles —
+            title -> (tier, component titles)
+        ep_names: episode_number -> name from TMDB
+        ep_runtimes: episode_number -> TMDB runtime seconds
+        staged: Episode numbers already staged
+    """
+    floor = tv_floor(minlength)
+    info = [(t.number, t.seconds, t.size) for t in titles if t.seconds >= floor]
+    guessed = prefill_assignment(info, set(playalls), ep_runtimes, staged,
+                                 ep_names)
+    below = set(sub_floor_titles([(t.number, t.seconds, t.size) for t in titles],
+                                 minlength))
+    assign: dict[int, EpisodeAction] = {}
+    evidence: dict[int, str] = {}
+    for t in titles:
+        n = t.number
+        if n in below:
+            assign[n] = None
+            evidence[n] = "below the TV floor"
+        elif n in playalls:
+            assign[n] = None
+            evidence[n] = "≈ sum of " + ", ".join(str(c) for c in sorted(playalls[n][1]))
+        else:
+            assign[n] = guessed[n]
+    ordered = [t for t in titles if t.number not in below] + \
+              [t for t in titles if t.number in below]
+    return EpisodeMap(season, ordered, assign, evidence, ep_names,
+                      ep_runtimes, set(staged))
+
+
+def print_accepted_episodes(display: str, emap: EpisodeMap,
+                            accepted: dict[int, EpisodeAction]) -> None:
+    """Echo the accepted episode map as plain lines into scrollback, before
+    the run opener — the same six columns as the table. Built through
+    ui.table, so it is pipe-safe and NO_COLOR-safe by construction."""
+    final = replace(emap, assign=accepted)
+    ui.console.print(f"\n{display} — season {emap.season:02d}")
+    table = ui.table(*COLUMNS)
+    for t in final.titles:
+        table.add_row(*final.cells(t, {}))
+    ui.console.print(table)
+
+
+class ConfirmClear(ModalScreen[bool]):
+    """The explicit confirm for `c`: lists the show's staged files; only `y`
+    deletes — Esc/n (or any other outcome) keeps them."""
+
+    CSS = """
+    ConfirmClear { align: center middle; }
+    #dialog { width: 80%; height: auto; max-height: 90%;
+              border: round $warning; padding: 0 1; }
+    #files { height: auto; max-height: 14; }
+    """
+
+    BINDINGS = [
+        Binding("y", "answer(True)", "delete"),
+        Binding("n,escape", "answer(False)", "keep"),
+    ]
+
+    def __init__(self, display: str, names: list[str]):
+        super().__init__()
+        self.display_name = display
+        self.names = names
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(Text(f"delete {len(self.names)} staged files for "
+                              f"{self.display_name}?", style="bold"))
+            with VerticalScroll(id="files"):
+                yield Static(Text("\n".join(self.names)))
+            yield Static(Text("y delete · n / Esc keep (default)", style="dim"))
+
+    def action_answer(self, yes: bool) -> None:
+        self.dismiss(yes)
+
+
+class EpisodeTable(_Table):
+    """The TV selection table over an EpisodeMap.
+
+    Keys: ↑/↓ or j/k move; digits and `-` type an episode value at the
+    cursor (`3`, `3-4`) that Enter commits (a second Enter accepts); Space
+    marks rows — a typed number then fills the marked rows in table order
+    from that number, never touching unmarked rows; `e` extra, `s` skip; `c`
+    lists and (on `y`) deletes the show's staged files; Esc drops pending
+    input and marks. A bad edit is named at the status line, never restarts
+    the run. Enter returns the title -> EpisodeAction map; it refuses while
+    any row is red (clash / staged claim / past the season's end) and when
+    nothing would rip. An unfilled episode only warns."""
+
+    BINDINGS = [
+        Binding("e", "verb('extra')", "extra"),
+        Binding("s", "verb('skip')", "skip"),
+        Binding("space", "mark", "mark"),
+        Binding("c", "clear_staged", "clear staged"),
+        Binding("escape", "cancel", show=False),
+        Binding("backspace", "backspace", show=False),
+        Binding("minus", "type('-')", show=False),
+        *[Binding(d, f"type('{d}')", show=False) for d in "0123456789"],
+    ]
+
+    HINT = ("↑/↓ j/k move · 3 / 3-4 type episode, Enter sets · Space mark run · "
+            "e extra · s skip · c clear staged · Enter accept · q quit")
+
+    def __init__(self, display: str, emap: EpisodeMap,
+                 list_staging: Callable[[], list[Path]] | None = None,
+                 clear_staging: Callable[[list[Path]], set[int]] | None = None):
+        super().__init__(f"{display} — season {emap.season:02d}", emap.titles)
+        self.show_display = display
+        self.emap = emap
+        self.list_staging = list_staging or (lambda: [])
+        self.clear_staging = clear_staging or (lambda doomed: set())
+        self.marked: set[int] = set()
+        self.pending = ""
+        self.message = ""
+        self._blocks = emap.blocks()
+
+    def _cells(self, t: TitleInfo) -> tuple:
+        return self.emap.cells(t, self._blocks, t.number in self.marked)
+
+    def _status_widgets(self) -> list:
+        return [Static(self._status_text(), id="status")]
+
+    def _status_text(self) -> Text:
+        lines = []
+        if self.emap.staged:
+            eps = ", ".join(f"E{e:02d}" for e in sorted(self.emap.staged))
+            lines.append(Text(f"already staged: {eps} — c clears the show's "
+                              "staged files", style="dim"))
+        if self._blocks:
+            rows = ", ".join(f"t{n}" for n in sorted(self._blocks))
+            lines.append(Text(f"✗ blocked: fix the red rows ({rows}) — "
+                              "Enter refused", style="bold red"))
+        unfilled = self.emap.unfilled()
+        if unfilled:
+            lines.append(Text("! unfilled: " + ", ".join(f"E{e:02d}" for e in unfilled)
+                              + " — Enter still accepts", style="bold yellow"))
+        if self.pending:
+            lines.append(Text(f"episode ▸ {self.pending}▏  (Enter sets it)"))
+        if self.message:
+            lines.append(Text(self.message, style="bold"))
+        return Text("\n").join(lines)
+
+    def _regrade(self, message: str = "") -> None:
+        """Re-derive violations after any edit and repaint every row (a
+        clash turns both rows red) and the status lines."""
+        self._blocks = self.emap.blocks()
+        self.message = message
+        for t in self.titles:
+            self._refresh_row(t.number)
+        self.query_one("#status", Static).update(self._status_text())
+
+    @property
+    def _modal_open(self) -> bool:
+        return len(self.screen_stack) > 1
+
+    def _commit(self) -> bool:
+        """Apply the typed value: to the marked rows (filled in table order
+        from one number) when any are marked, else to the cursor row. True
+        when there was something typed."""
+        if not self.pending:
+            return False
+        parsed = parse_episode(self.pending)
+        typed, self.pending = self.pending, ""
+        if parsed is None:
+            self._regrade(f"✗ '{typed}' is not an episode (want 3 or 3-4)")
+        elif self.marked:
+            if parsed[1] != parsed[0]:
+                self._regrade("✗ a marked run fills from one number, not a range")
+            else:
+                run = [t.number for t in self.titles if t.number in self.marked]
+                for i, n in enumerate(run):
+                    self.emap.assign[n] = (parsed[0] + i, parsed[0] + i)
+                self.marked.clear()
+                self._regrade()
+        else:
+            self.emap.assign[self._cursor_title().number] = parsed
+            self._regrade()
+        return True
+
+    def action_type(self, ch: str) -> None:
+        if self._modal_open:
+            return
+        if ch == "-" and ("-" in self.pending or not self.pending):
+            return
+        self.pending += ch
+        self._regrade()
+
+    def action_backspace(self) -> None:
+        if self.pending and not self._modal_open:
+            self.pending = self.pending[:-1]
+            self._regrade()
+
+    def action_cancel(self) -> None:
+        if self._modal_open:
+            return
+        self.pending = ""
+        self.marked.clear()
+        self._regrade()
+
+    def action_move(self, delta: int) -> None:
+        if self._modal_open:
+            return
+        self._commit()
+        super().action_move(delta)
+
+    def action_verb(self, verb: str) -> None:
+        if self._modal_open:
+            return
+        self._commit()
+        self.emap.assign[self._cursor_title().number] = (
+            EXTRA_EPISODES if verb == EXTRA_ACTION else None)
+        self._regrade()
+
+    def action_mark(self) -> None:
+        if self._modal_open:
+            return
+        self._commit()
+        n = self._cursor_title().number
+        self.marked ^= {n}
+        self._regrade()
+
+    def action_accept(self) -> None:
+        if self._modal_open:
+            return
+        if self._commit():
+            return  # Enter set the typed value; a second Enter accepts
+        if self._blocks:
+            self._regrade("✗ Enter refused — the red rows must be fixed first")
+        elif all(r is None for r in self.emap.assign.values()):
+            self._regrade("✗ nothing to rip — every title is skipped")
+        else:
+            self.exit(dict(self.emap.assign))
+
+    def action_quit_table(self) -> None:
+        if not self._modal_open:
+            super().action_quit_table()
+
+    def action_clear_staged(self) -> None:
+        if self._modal_open:
+            return
+        self._commit()
+        doomed = self.list_staging()
+        if not doomed:
+            self._regrade("nothing staged for this show")
+            return
+
+        def answered(yes: bool | None) -> None:
+            if not yes:
+                self._regrade("kept the staged files")
+                return
+            self.emap.staged = self.clear_staging(doomed)
+            self._regrade(f"deleted {len(doomed)} staged files")
+
+        self.push_screen(ConfirmClear(self.show_display, [f.name for f in doomed]),
+                         answered)
+
+
+def run_episode_table(display: str, emap: EpisodeMap,
+                      list_staging: Callable[[], list[Path]],
+                      clear_staging: Callable[[list[Path]], set[int]]
+                      ) -> dict[int, EpisodeAction] | str:
+    """Run the TV table over the episode map and return the accepted
+    title -> EpisodeAction map, QUIT or INTERRUPT (see run_selection_table).
+
+    Args:
+        display: Show name (Show (Year))
+        emap: The prefilled episode map
+        list_staging: The show's staged files, for `c`
+        clear_staging: Deletes the listed files and returns the refreshed
+            set of staged episode numbers
+    """
+    return EpisodeTable(display, emap, list_staging, clear_staging).run()

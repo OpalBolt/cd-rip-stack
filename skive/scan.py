@@ -1,7 +1,6 @@
 """MakeMKV disc reading: media sniffing, the one disc scan and its parsers,
-the interactive title menu, and the ISO language helper."""
+and the ISO language helper."""
 
-import io
 import os
 import re
 import subprocess
@@ -10,13 +9,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
-
 from skive import ui
-from skive.common import MENU, RipLog, parse_titles
-from skive.makemkv import _qval, hsize
+from skive.common import RipLog
+from skive.makemkv import _qval
 
 
 def iso2b(code: str) -> str:
@@ -327,154 +322,3 @@ def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str, str]:
         proc.kill()
         proc.wait()
     return _parse_media(drv_line, disc), _parse_label(drv_line, disc), _parse_device(drv_line, disc)
-
-
-def _getch() -> str:
-    """Read one key from stdin (raw termios); arrows -> UP/DOWN."""
-    import termios
-    import tty
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        b = sys.stdin.buffer.read(1)
-        if b == b"\x1b":
-            seq = sys.stdin.buffer.read(2)
-            if seq == b"[A":
-                return "UP"
-            if seq == b"[B":
-                return "DOWN"
-            return b.decode(errors="replace")
-        return b.decode(errors="replace")
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-
-def _menu_state(n: int, selected: list[bool], cursor: int, key: str) -> tuple[list[bool], int, bool, bool]:
-    """Pure menu transition. Returns (selected, cursor, done, abort)."""
-    done = abort = False
-    if key == " ":
-        if cursor == 0:
-            new = not all(selected)
-            selected = [new] * n
-        else:
-            selected[cursor - 1] = not selected[cursor - 1]
-    elif key in ("UP", "k"):
-        cursor = (cursor - 1) % (n + 1)
-    elif key in ("DOWN", "j"):
-        cursor = (cursor + 1) % (n + 1)
-    elif key in ("\r", "\n"):
-        done = True
-    elif key in ("q", "Q"):
-        abort = True
-    return selected, cursor, done, abort
-
-
-def _fmt_dur(seconds: int) -> str:
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}"
-
-
-def _render(titles: list[TitleInfo], selected: list[bool], cursor: int,
-            height: int | None = None) -> list[str]:
-    """Render the menu (header + title table + hint) to lines (ANSI-styled on a TTY).
-
-    On a TTY only the title rows that fit the terminal height show, in a
-    window around the cursor row."""
-    buf = io.StringIO()
-    styled = ui._styled()  # TTY: the shared rounded table; plain: the bare grid as before
-    console = Console(file=buf, force_terminal=styled, width=ui._width() if styled else 110,
-                      theme=ui.THEME, highlight=False)
-    console.print(("> " if cursor == 0 else "  ") + "Rip all titles")
-    columns = ("", "", "title", "length", "size", "flag", "audio", "subs")
-    if styled:
-        table = ui.table(*columns)
-    else:
-        table = Table(show_header=False, box=None, pad_edge=False, padding=(0, 1))
-        for name in columns:
-            table.add_column(name)
-    for col in table.columns[2:5]:
-        col.justify = "right"
-    shown = range(len(titles))
-    if styled:
-        # 7 = "Rip all" + 3 table rules + header row + hint + the trailing newline
-        rows = max(1, (height or ui.console.height) - 7)
-        start = min(max(0, cursor - 1 - rows // 2), max(0, len(titles) - rows))
-        shown = range(start, min(len(titles), start + rows))
-    for i in shown:
-        t = titles[i]
-        table.add_row(
-            ">" if cursor == i + 1 else " ",
-            Text("[x]" if selected[i] else "[ ]"),
-            f"title {t.number}",
-            _fmt_dur(t.seconds),
-            hsize(t.size),
-            "S" if t.scrambled else "",
-            f"A:{t.audio}",
-            f"subs:{t.subtitles}",
-        )
-    console.print(table)
-    console.print("space=toggle  Enter=rip  ↑/↓ or j/k=move  q=quit")
-    return buf.getvalue().rstrip("\n").split("\n")
-
-
-def title_menu(titles: list[TitleInfo], getch=_getch, out=sys.stderr) -> list[int] | None:
-    """Interactive checkbox menu, longest-first.
-
-    Returns None when every title is selected (rip 'all' in one call), else the
-    sorted selected title numbers. q aborts with SystemExit(1).
-    """
-    if not titles:
-        return None
-    disp = sorted(titles, key=lambda t: -t.seconds)
-    n = len(disp)
-    selected = [True] * n
-    cursor = 0
-    while True:
-        out.write("\x1b[2J\x1b[H")  # clear + home
-        for line in _render(disp, selected, cursor):
-            out.write(line + "\n")
-        key = getch()
-        selected, cursor, done, abort = _menu_state(n, selected, cursor, key)
-        if abort:
-            ui.info("quit — nothing ripped.")
-            sys.exit(1)
-        if done:
-            break
-    if all(selected):
-        return None
-    return sorted(disp[i].number for i in range(n) if selected[i])
-
-
-def _dedupe(titles: list[TitleInfo]) -> list[TitleInfo]:
-    """Drop playlist-obfuscation duplicates: titles with identical duration.
-
-    Keeps the richest copy per duration (most subtitle languages, then
-    largest size, then lowest title number).
-    # ponytail: exact-seconds key; use a tolerance if decoys ever differ by 1s.
-    """
-    best: dict[int, TitleInfo] = {}
-    for t in sorted(titles, key=lambda t: (-len(t.subtitles.split(",")) if t.subtitles else 0,
-                                           -t.size, t.number)):
-        best.setdefault(t.seconds, t)
-    return sorted(best.values(), key=lambda t: t.number)
-
-
-def resolve_titles(titles_arg, titles: list[TitleInfo], media: str = "") -> list[int] | None:
-    """Resolve the -T flag to a rip list (None = rip all), using the titles
-    already scanned by the caller.
-
-    MENU (bare -T) opens the interactive menu; a SPEC string is parsed; None
-    means rip all — except on Blu-ray, where scrambled (decoy) titles are
-    dropped by default.
-    """
-    if titles_arg is MENU:
-        return title_menu(titles)
-    if titles_arg is not None:
-        return parse_titles(titles_arg)
-    if media.startswith("BD"):
-        keep = _dedupe([t for t in titles if not t.scrambled])
-        if len(keep) != len(titles):
-            return sorted(t.number for t in keep)
-    return None

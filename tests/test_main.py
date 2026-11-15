@@ -29,6 +29,14 @@ def test_verbose_flag_is_top_level_only():
         build_parser().parse_args(["rip", "movie", "-v"])
 
 
+@pytest.mark.parametrize("flag", ["-T", "--titles", "-E", "--extras"])
+def test_rip_tv_has_no_title_or_extras_flags(flag):
+    """The selection table decides titles and extras: `rip tv` no longer
+    takes -T/-E."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["rip", "tv", flag])
+
+
 # -- Interrupt fallback (CONTEXT.md: Interrupt): one line, exit 130 ------------
 
 def test_main_interrupt_fallback_one_line_exit_130(monkeypatch, capsys):

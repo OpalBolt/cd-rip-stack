@@ -164,17 +164,6 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
     return rows
 
 
-def _terminal_present() -> bool:
-    """True terminal presence on stderr, ignoring NO_COLOR/TERM: plainness
-    is a rendering choice, not the non-TTY case."""
-    try:
-        if sys.stderr is not None and sys.stderr.isatty():
-            return True
-    except ValueError:  # closed stream
-        pass
-    return bool(ui.console.is_terminal)
-
-
 def _doc_is_this_film(tmdb_id, path: Path) -> bool:
     """No document (marker is a no-op) or a document naming this film —
     the guard for writing the extras marker into validation.json."""
@@ -229,7 +218,7 @@ def rip_movie(args) -> None:
         # table echoes into scrollback, the view redraws after. Non-TTY runs
         # refuse before the table — nothing spins, one stderr line.
         with view.suspend():
-            if not view.tty and not _terminal_present():
+            if not view.tty and not ui.terminal_present():
                 ui.fail("selection table needs a terminal")
                 sys.exit(1)
             result = run_selection_table(log, display, titles_full,

@@ -1,4 +1,4 @@
-"""Tests for the TV rip flow: prompts, confirm table, renames, staging."""
+"""Tests for the TV rip flow: season prompt, the selection-table wiring, renames, staging."""
 
 import sys
 import tempfile
@@ -9,13 +9,10 @@ from dataclasses import dataclass
 import pytest
 
 from skive.rip_tv import (
-    staged_eps, print_table, rename_tv, rip_tv, episode_target,
+    staged_eps, rename_tv, rip_tv, episode_target,
     post_rip_validation,
 )
 from skive.scan import TitleInfo
-from skive.tv_match import tv_floor
-from rich.console import Console
-from rich.table import Table
 
 
 def test_staged_eps_singles_and_doubles():
@@ -90,16 +87,30 @@ def _gk_titles():
             TitleInfo(3, 11482, 1, "dan", "", False)]
 
 
-def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
-                staged_names=(), titles_arg="all"):
-    """Drive rip_tv through season/range/confirm prompts over a temp stage.
+@pytest.fixture(autouse=True)
+def _table_accepts_the_prefill(monkeypatch):
+    """The selection table is a real terminal app (tested headless in
+    test_selection.py); flow tests stand in for it. The default stand-in
+    accepts the prefill; a test passes its own to edit or refuse."""
+    monkeypatch.setattr("skive.ui.terminal_present", lambda: True)
+    monkeypatch.setattr("skive.rip_tv.run_episode_table",
+                        lambda display, emap, ls, cs: dict(emap.assign))
+
+
+def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers=("",),
+                staged_names=(), table=None):
+    """Drive rip_tv through the season prompt and the table over a temp stage.
 
     staged_names are created in the show's title folder before the run
-    (already-ripped episodes shape the pre-fill). titles_arg is the -T flag
-    value ("all" rips everything). Returns (rename_tv mock, console mock, rc).
+    (already-ripped episodes shape the prefill). table replaces the default
+    accept-the-prefill stand-in: table(display, emap, list_staging,
+    clear_staging) returns the accepted map, QUIT or INTERRUPT. Returns
+    (rename_tv mock, console mock, rc).
     """
     from skive.tmdb import TMDBPick
 
+    if table is not None:
+        monkeypatch.setattr("skive.rip_tv.run_episode_table", table)
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
     show_dir.mkdir(parents=True, exist_ok=True)
@@ -108,17 +119,15 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
 
     @dataclass
     class FakeArgs:
-        titles = titles_arg
-        extras = False
         tmdbid = None
         verified = True
 
     prompt = MagicMock()
-    prompt.ask.side_effect = answers
+    prompt.ask.side_effect = list(answers)
 
     # The post-rip validation record probes staged files with ffprobe; flow
-    # tests assert prompts and tables, so its probe subprocess stays a fake
-    # here (the record itself is tested directly, below).
+    # tests assert the wiring, so its probe subprocess stays a fake here (the
+    # record itself is tested directly, below).
     real_post = post_rip_validation
     monkeypatch.setattr("skive.rip_tv.post_rip_validation",
                         lambda pre, *a, **k: real_post(pre, *a, run=Mock(return_value=Mock(stdout="600.0\n"))))
@@ -133,14 +142,14 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
                         with _prompts(prompt):
                             with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
                                 with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
+                                    with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
                                         with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
                                             with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
                                                 with patch("skive.rip_tv.console") as mock_console:
-                                                    mock_console.prompt = prompt  # for prompt-shape asserts
+                                                    mock_console.prompt = prompt
+                                                    mock_console.rip_titles = mock_rip_titles
                                                     # The split phase's probe/cut subprocesses stay
-                                                    # fake here too: flow tests assert prompts and
-                                                    # tables, and an armed caption run must never
+                                                    # fake here too: an armed caption run must never
                                                     # shell out (the phase itself is tested
                                                     # directly in test_chapter_split.py).
                                                     with patch("skive.rip_tv.split_combined"):
@@ -151,15 +160,10 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers,
     return mock_rename_tv, mock_console, None
 
 
-def _table_texts(console) -> list[str]:
-    """Render each Table the mocked console printed, to plain text."""
-    texts = []
-    for c in console.print.call_args_list:
-        if c.args and isinstance(c.args[0], Table):
-            plain = Console(record=True, width=120)
-            plain.print(c.args[0])
-            texts.append(plain.export_text())
-    return texts
+def _table_accepts_map(monkeypatch, accepted):
+    """Stand in for the table accepting exactly `accepted`."""
+    monkeypatch.setattr("skive.rip_tv.run_episode_table",
+                        lambda display, emap, ls, cs: dict(accepted))
 
 
 def _captions(console) -> list[str]:
@@ -168,181 +172,104 @@ def _captions(console) -> list[str]:
             if c.args and "play-all-only disc" in str(c.args[0])]
 
 
-def test_range_prefill_skips_staged_and_fills_disc(tmp_path, monkeypatch):
+def test_table_prefill_skips_staged_and_fills_disc(tmp_path, monkeypatch):
     """The map's regression fixture: E01-E03 staged, this disc carries E04-E06.
 
-    Enter accepts the pre-fill 4-6 — the episode guess (E4→t0, E5→t1, E6→t2,
-    each ratio 1.00); the three eligible titles get E4-E6 in disc order and
-    the play-all (t3) stays extra.
+    Enter accepts the prefill — the episode guess (E4→t0, E5→t1, E6→t2, each
+    ratio 1.00); the play-all (t3) prefills skip, so it is not in the accepted
+    map and not ripped.
     """
     episodes = [(e, f"ep{e}", rt) for e, rt in
                 ((1, 3932), (2, 3897), (3, 3653), (4, 3932), (5, 3897), (6, 3653))]
     staged = [f"Show (2000)_S01E0{e}.mkv" for e in (1, 2, 3)]
 
-    mock_rename_tv, _console, rc = _range_flow(
-        tmp_path, monkeypatch, _gk_titles(), episodes, ["", "", ""], staged)
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), episodes, staged_names=staged)
 
     assert rc == 0
-    assert mock_rename_tv.call_args.args[3] == {0: (4, 4), 1: (5, 5), 2: (6, 6), 3: (0, 0)}
+    assert mock_rename_tv.call_args.args[3] == {0: (4, 4), 1: (5, 5), 2: (6, 6)}
+    assert console.rip_titles.call_args.args[0] == [0, 1, 2]
 
 
-def test_overview_before_range_prompt_guess_prefill(tmp_path, monkeypatch):
-    """The overview precedes the range prompt: guessed assignments wear
-    (est.), the play-all reads "play-all, not ripped", the eligible no-fit
-    title reads "extra"; the pre-fill comes from the guess (1-3, not the
-    eligible count's 1-4), and Enter accepts it — the rip's assignment equals
-    the overview's positional fill."""
+def test_table_gets_guess_prefill_with_playall_evidence_and_extra_tail(tmp_path, monkeypatch):
+    """The table opens on the guess: the play-all prefills skip carrying its
+    `≈ sum of …` evidence, and the eligible no-fit title prefills extra (the
+    walk spent t0 on E1 and only 3 episodes exist)."""
     titles = [TitleInfo(0, 3940, 1, "dan", "", False),
               TitleInfo(1, 2855, 1, "dan", "", False),
               TitleInfo(2, 2852, 1, "dan", "", False),
               TitleInfo(3, 9643, 1, "dan", "", False),   # play-all: 3940+2855+2852 = 9647
-              TitleInfo(4, 4000, 1, "dan", "", False)]   # 4000/4020 = 0.995, inside the green band — still extra: the walk spent t0 on E1 and only 3 episodes exist
+              TitleInfo(4, 4000, 1, "dan", "", False)]   # 4000/4020 = 0.995, in the band — still extra
     episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
+    seen = {}
 
-    mock_rename_tv, console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes,
-                                              ["", "", ""])  # season, accept prefill, Enter=rip
+    def table(display, emap, list_staging, clear_staging):
+        seen["display"], seen["emap"] = display, emap
+        return dict(emap.assign)
+
+    mock_rename_tv, _console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes,
+                                               table=table)
 
     assert rc == 0
-    texts = _table_texts(console)
-    overview = texts[0]
-    assert overview.count("(est.)") == 3
-    assert "play-all, not ripped" in overview
-    extra_row = next(ln for ln in overview.splitlines() if "1:06:40" in ln)
-    assert "→ extra" in extra_row
-    asks = [c.kwargs["default"] for c in console.prompt.ask.call_args_list
-            if c.args[0] == "Episodes on this disc"]
-    assert asks == ["1-3"]
+    emap = seen["emap"]
+    assert seen["display"] == "Show (2000)"
+    assert emap.assign == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: None, 4: (0, 0)}
+    assert emap.evidence[3] == "≈ sum of 0, 1, 2"
     assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3),
-                                                3: (0, 0), 4: (0, 0)}
-
-
-def test_n_reask_reshows_overview_confirm_table_marks_playall(tmp_path, monkeypatch):
-    """`n` re-shows the overview; the confirm table keeps its columns and
-    renders the play-all "play-all, not ripped" without (est.) marks."""
-    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653)]
-
-    mock_rename_tv, console, rc = _range_flow(
-        tmp_path, monkeypatch, _gk_titles(), episodes,
-        ["", "", "n", "", ""])  # season, range, n at the table, range, Enter=rip
-
-    assert rc == 0
-    texts = _table_texts(console)
-    assert len(texts) == 4  # overview, confirm, overview (the n re-ask), confirm
-    assert texts[0].count("(est.)") == 3
-    assert "play-all, not ripped" in texts[0]
-    confirm = texts[1]
-    assert "play-all, not ripped" in confirm
-    assert "(est.)" not in confirm
-    assert "audit" in confirm and "assignment" in confirm
-    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+                                                4: (0, 0)}
 
 
 def test_no_runtimes_prefill_falls_back_to_count(tmp_path, monkeypatch):
-    """No TMDB runtimes (season-0 shape): the prefill stays today's
-    count-based default — one episode per eligible title from the first
-    unstaged episode — and the overview still prints the positional fill."""
+    """No TMDB runtimes (season-0 shape): the prefill stays the count-based
+    default — one episode per eligible title from the first unstaged
+    episode."""
     episodes = [(1, "special 1", 0), (2, "special 2", 0)]
 
-    mock_rename_tv, console, rc = _range_flow(
-        tmp_path, monkeypatch, _gk_titles(), episodes,
-        ["0", "", ""])  # season 0, accept prefill, Enter=rip
-
-    assert rc == 0
-    asks = [c.kwargs["default"] for c in console.prompt.ask.call_args_list
-            if c.args[0] == "Episodes on this disc"]
-    assert asks == ["1-3"]
-    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
-
-
-def test_range_mismatch_note_printed(tmp_path, monkeypatch):
-    """More eligible titles than the range covers: the tail is extra and a
-    one-line note names the fix-row escape."""
-    titles = [TitleInfo(0, 1260, 1, "dan", "", False),
-              TitleInfo(1, 1300, 1, "dan", "", False),
-              TitleInfo(2, 1250, 1, "dan", "", False),
-              TitleInfo(3, 1290, 1, "dan", "", False)]
-    episodes = [(e, f"ep{e}", 1250) for e in range(1, 5)]
-
-    mock_rename_tv, console, rc = _range_flow(
-        tmp_path, monkeypatch, titles, episodes, ["", "1-3", ""])
-
-    assert rc == 0
-    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
-    printed = " ".join(str(c.args[0]) for c in console.print.call_args_list if c.args)
-    assert "eligible titles: 4 but 1-3 covers 3" in printed
-    assert "title 3 left extra; fix with 3=e" in printed
-
-
-def test_n_command_reasks_range(tmp_path, monkeypatch):
-    """`n` re-asks the range with a fresh pre-fill (`n=5` spells the same).
-
-    First answer 1-2 leaves t2 extra; n re-asks, the user states 5, and the
-    rebuild gives t0=E5 with the rest extra.
-    """
-    episodes = [(e, f"ep{e}", 3600) for e in range(1, 6)]
-
     mock_rename_tv, _console, rc = _range_flow(
-        tmp_path, monkeypatch, _gk_titles(), episodes, ["", "1-2", "n", "5", ""])
+        tmp_path, monkeypatch, _gk_titles(), episodes, ["0"])  # season 0
 
     assert rc == 0
-    assert mock_rename_tv.call_args.args[3] == {0: (5, 5), 1: (0, 0), 2: (0, 0), 3: (0, 0)}
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3)}
 
 
-def test_n_equals_5_spells_bare_n(tmp_path, monkeypatch):
-    """`n=5` at the table spells the same as bare `n`: the =-suffix is ignored
-    and the range prompt follows (season, range, confirm, re-ask range,
-    confirm). Stating 5 there gives t0=E5, the rest extra."""
-    episodes = [(e, f"ep{e}", 3600) for e in range(1, 6)]
-
-    mock_rename_tv, _console, rc = _range_flow(
-        tmp_path, monkeypatch, _gk_titles(), episodes, ["", "1-2", "n=5", "5", ""])
-
-    assert rc == 0
-    assert mock_rename_tv.call_args.args[3][0] == (5, 5)
-
-
-def test_fix_row_double_at_table(tmp_path, monkeypatch):
-    """A fix row may still turn one title into a double (1=1-2).
-
-    Stating range 3-3 leaves t1 extra with E1-E2 free; the double repoints it.
-    """
+def test_accepted_double_reaches_rename(tmp_path, monkeypatch):
+    """The accepted table's double (one title, E01-E02) is the rename's map,
+    kept as one file."""
     titles = [TitleInfo(0, 2400, 1, "dan", "", False),
               TitleInfo(1, 2450, 1, "dan", "", False)]
     episodes = [(e, f"ep{e}", 2400) for e in range(1, 5)]
 
     mock_rename_tv, _console, rc = _range_flow(
-        tmp_path, monkeypatch, titles, episodes, ["", "3", "1=1-2", ""])
+        tmp_path, monkeypatch, titles, episodes,
+        table=lambda display, emap, ls, cs: {0: (3, 3), 1: (1, 2)})
 
     assert rc == 0
     assert mock_rename_tv.call_args.args[3] == {0: (3, 3), 1: (1, 2)}
 
 
-def test_print_table_audit_column_generation_kill(mock_console):
-    """Generation Kill disc 1 renders 0.95/0.96/0.95 green; the play-all's
-    audit cell stays blank."""
-    titles = [(0, 3932, 1), (1, 3897, 1), (2, 3653, 1), (3, 11482, 1)]
-    assignment = {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
-    ep_names = {1: "Get Some", 2: "The Cradle", 3: "Sic(vis)"}
-    ep_runtimes = {1: 4140, 2: 4080, 3: 3840}
+def test_table_quit_rips_nothing_and_exits_1(tmp_path, monkeypatch):
+    from skive.selection import QUIT
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), [(1, "ep1", 3932)],
+        table=lambda *a: QUIT)
 
-    print_table("Generation Kill (2008)", 1, titles, assignment, ep_names, ep_runtimes)
+    assert rc == 1
+    console.rip_titles.assert_not_called()
+    mock_rename_tv.assert_not_called()
 
-    mock_console.print.assert_called()
-    table = next(c.args[0] for c in mock_console.print.call_args_list
-                 if c.args and isinstance(c.args[0], Table))
 
-    plain = Console(record=True, width=100)
-    plain.print(table)
-    text = plain.export_text()
-    assert "audit" in text
-    assert text.count("0.95") == 2 and "0.96" in text  # the three episode rows
-    extra = next(ln for ln in text.splitlines() if "3:11:22" in ln)  # t3 row
-    assert "0.95" not in extra and "0.96" not in extra  # extra audits blank
+def test_run_without_a_terminal_refuses_before_the_table(tmp_path, monkeypatch, capsys):
+    """Non-TTY runs refuse: one stderr line, nonzero exit, nothing spun."""
+    monkeypatch.setattr("skive.ui.terminal_present", lambda: False)
+    table = Mock(side_effect=AssertionError("the table must not launch"))
 
-    styled = Console(record=True, width=100, color_system="standard")
-    styled.print(table)
-    # Exactly the three ratio cells are green; nothing else in the table is.
-    assert styled.export_text(styles=True).count("\x1b[32m") == 3
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), [(1, "ep1", 3932)], table=table)
+
+    assert rc == 1
+    table.assert_not_called()
+    console.rip_titles.assert_not_called()
+    assert "selection table needs a terminal" in capsys.readouterr().err
 
 
 def test_naming_doubles():
@@ -416,115 +343,11 @@ def test_naming_no_clobber():
         assert (stage / "B1_t02.mkv").exists()
 
 
-def test_extras_flow():
-    """Test --extras bypasses season/table and uses suffix e."""
-    from unittest.mock import MagicMock, patch
-    from dataclasses import dataclass
-    from skive.tmdb import TMDBPick
-
-    @dataclass
-    class FakeArgs:
-        titles = "all"
-        extras = True
-        tmdbid = None
-        verified = True
-
-    args = FakeArgs()
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
-                    )):
-                        with patch("skive.rip_tv.rename_staged") as mock_rename:
-                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
-                                        with patch("skive.rip_tv.split_combined") as mock_split:
-                                            with patch("pathlib.Path.unlink"):
-                                                try:
-                                                    rip_tv(args)
-                                                    # Should exit with rc from rip_titles
-                                                except SystemExit as e:
-                                                    assert e.code == 0  # Default rip_titles returns 0
-
-    # Check rename was called with suffix="e"
-    mock_rename.assert_called()
-    call_kwargs = mock_rename.call_args[1]
-    assert call_kwargs.get("suffix") == "e"
-    # The extras path has no episode range — it never reaches the split.
-    mock_split.assert_not_called()
-
-
-def test_rip_only_requested_titles_that_survived_scan():
-    """Requested titles absent from the confirmed scan are not ripped.
-
-    -T 0,2 asks for titles 0 and 2; the scan only confirms t0, so the rip and
-    the table see t0 alone.
-    """
-    from unittest.mock import MagicMock, patch
-    from skive.tmdb import TMDBPick
-    from rich.prompt import Prompt
-
-    @dataclass
-    class FakeArgs:
-        titles = "0,2"
-        extras = False
-        tmdbid = None
-        verified = True
-
-    args = FakeArgs()
-
-    mock_titles = [TitleInfo(0, 1260, 1, "dan", "", False),
-                   TitleInfo(1, 1300, 1, "dan", "", False)]  # Two titles
-    mock_episodes = [(1, "ep1", 0), (2, "ep2", 0)]  # No runtimes
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
-                    )):
-                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
-                            with patch("skive.rip_tv.staged_eps", return_value=set()):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
-                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
-                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog") as mock_log_class:
-                                                    mock_log = MagicMock()
-                                                    mock_log.run = "run-1"  # the validation document's run identity
-                                                    mock_log_class.return_value = mock_log
-                                                    with _prompts() as mock_prompt:
-                                                        # season, then Enter for the range, Enter=rip
-                                                        mock_prompt.ask.side_effect = ["", "", ""]
-                                                        try:
-                                                            rip_tv(args)
-                                                        except SystemExit as e:
-                                                            pass
-
-    # Title 2 was requested but absent from the confirmed scan, so it must not be ripped.
-    assert mock_rip_titles.call_args.args[0] == [0]
-    mock_rename_tv.assert_called()
-
-
 # Test discipline fixtures
 @pytest.fixture(autouse=True)
 def _stage_root(tmp_path, monkeypatch):
     """Keep staging off the real /mnt/videos."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-
-
-@pytest.fixture
-def mock_console():
-    """Mock rich console for print_table tests."""
-    with patch("skive.rip_tv.console") as m:
-        yield m
 
 
 def test_show_staging_scopes_to_one_show(tmp_path):
@@ -545,280 +368,136 @@ def test_show_staging_scopes_to_one_show(tmp_path):
     ]
 
 
-def _clear_staged_flow(tmp_path, monkeypatch, answers):
-    """Run rip tv over a poisoned staging dir; return the poisoned path."""
-    from unittest.mock import MagicMock, patch
-    from dataclasses import dataclass
-    from skive.tmdb import TMDBPick
-    from skive.rip_tv import rip_tv
-
-    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+def _clear_staged_flow(tmp_path, monkeypatch, confirm):
+    """Run rip tv over a poisoned staging dir with a table stand-in that
+    presses `c`: lists the show's staging, and on `confirm` clears it as the
+    real table does after its explicit y. Returns (poisoned path, rc,
+    listed names, staged set after the table)."""
     show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
-
-    @dataclass
-    class FakeArgs:
-        titles = "all"
-        extras = False
-        tmdbid = None
-        verified = True
-
-    mock_titles = [TitleInfo(0, 21 * 60, 1, "dan", "", False),
-                   TitleInfo(1, 22 * 60, 1, "dan", "", False),
-                   TitleInfo(2, 23 * 60, 1, "dan", "", False)]
+    show_dir.mkdir(parents=True, exist_ok=True)
+    poisoned = show_dir / "Show (2000)_S01E01-E02.mkv"
+    poisoned.touch()
+    titles = [TitleInfo(0, 21 * 60, 1, "dan", "", False),
+              TitleInfo(1, 22 * 60, 1, "dan", "", False),
+              TitleInfo(2, 23 * 60, 1, "dan", "", False)]
     # fetch_season is mocked past its minutes->seconds conversion
     episodes = [(1, "ep1", 21 * 60), (2, "ep2", 22 * 60), (3, "ep3", 23 * 60)]
+    seen = {}
 
-    poisoned = show_dir / "Show (2000)_S01E01-E02.mkv"
-    show_dir.mkdir(parents=True, exist_ok=True)
-    poisoned.touch()
+    def table(display, emap, list_staging, clear_staging):
+        doomed = list_staging()
+        seen["listed"] = [f.name for f in doomed]
+        if confirm:
+            seen["staged"] = clear_staging(doomed)
+            return dict(emap.assign)
+        from skive.selection import QUIT
+        return QUIT
 
-    prompt = MagicMock()
-    prompt.ask.side_effect = answers
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                            title="Show", year="2000", original_language="en", type="tv", id="5")):
-                        with _prompts(prompt):
-                            with patch("skive.rip_tv.fetch_season", return_value=episodes):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/absent-test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
-                                        with patch("skive.rip_tv.rename_tv"):
-                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                try:
-                                                    rip_tv(FakeArgs())
-                                                except SystemExit as e:
-                                                    return poisoned, e.code
-    return poisoned, None
+    _rename, _console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes,
+                                        table=table)
+    return poisoned, rc, seen
 
 
 def test_clear_staged_at_table_deletes_and_rips(tmp_path, monkeypatch):
-    """c + y at the table deletes the show's staged files and rips."""
-    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
-                                      ["1", "", "c", "y", ""])  # season, range, clear, yes, Enter=rip
+    """c + confirm at the table deletes the show's staged files, refreshes
+    the staged set, and the run rips."""
+    poisoned, rc, seen = _clear_staged_flow(tmp_path, monkeypatch, confirm=True)
+    assert seen["listed"] == ["Show (2000)_S01E01-E02.mkv"]
     assert not poisoned.exists()
+    assert seen["staged"] == set()
     assert rc == 0
 
 
 def test_clear_staged_declined_keeps_files(tmp_path, monkeypatch):
-    """Declining the clear leaves staging untouched."""
-    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
-                                      ["1", "", "c", "n", "q"])  # season, range, clear, no, quit
+    """Without the table's explicit confirm nothing is deleted."""
+    poisoned, rc, seen = _clear_staged_flow(tmp_path, monkeypatch, confirm=False)
+    assert seen["listed"] == ["Show (2000)_S01E01-E02.mkv"]
     assert poisoned.exists()
     assert rc == 1
 
 
-def test_floor_drops_short_titles_before_rip():
-    """Under-floor titles (30s menu loop) never reach the table or the rip.
+def test_sub_floor_title_is_visible_prefilled_skip_and_not_ripped(tmp_path, monkeypatch):
+    """A 30s menu loop is under the floor: it lists last in the table with
+    its real disc number, prefilled skip, outside the episode guess — and an
+    accepted skip is never ripped (total= still counts the floored titles)."""
+    titles = [TitleInfo(0, 30, 1, "dan", "", False),   # sub-floor, scanned first
+              TitleInfo(1, 2400, 1, "dan", "", False)]
+    seen = {}
 
-    Same patch set as test_n_command_renumbers_in_order; the short title is
-    gone from titles_info before matching, so total= and the assignment the
-    rip renames with only ever see the long title.
-    """
-    from skive.tmdb import TMDBPick
+    def table(display, emap, list_staging, clear_staging):
+        seen["emap"] = emap
+        return dict(emap.assign)
 
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, titles, [(1, "ep1", 2400)], table=table)
 
-    mock_titles = [TitleInfo(0, 2400, 1, "dan", "", False),
-                   TitleInfo(1, 30, 1, "dan", "", False)]  # 30s menu loop
-    mock_episodes = [(1, "ep1", 2400)]
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
-                    )):
-                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
-                            with patch("skive.rip_tv.staged_eps", return_value=set()):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles:
-                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
-                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog") as MockLog:
-                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with _prompts() as mock_prompt:
-                                                        # season, Enter for the range, Enter=rip at the table
-                                                        mock_prompt.ask.side_effect = ["", "", ""]
-                                                        try:
-                                                            rip_tv(FakeArgs())
-                                                        except SystemExit:
-                                                            pass
-
-    # The 30s title is not counted in the rip and gets no assignment row.
-    assert mock_rip_titles.call_args.kwargs["total"] == 1
-    assert mock_rename_tv.call_args.args[3] == {0: (1, 1)}
+    emap = seen["emap"]
+    assert [t.number for t in emap.titles] == [1, 0]  # the sub-floor row sits last
+    assert emap.assign == {0: None, 1: (1, 1)}
+    assert emap.evidence[0] == "below the TV floor"
+    assert console.rip_titles.call_args.args[0] == [1]
+    assert console.rip_titles.call_args.kwargs["total"] == 1
+    assert mock_rename_tv.call_args.args[3] == {1: (1, 1)}
 
 
-def test_playall_forced_to_extra():
-    """A play-all is forced back to extra even when the stated range would
-    cover it.
+def test_sub_floor_rescue_rips_and_joins_the_map(tmp_path, monkeypatch):
+    """Typing an episode at a sub-floor row rescues it: it rips, mapped."""
+    titles = [TitleInfo(0, 30, 1, "dan", "", False),
+              TitleInfo(1, 2400, 1, "dan", "", False)]
 
-    Title 2 (3550s) sits within 120s of t0+t1 (3500s): sum-disqualification
-    pins it to (0, 0) whatever range the user states.
-    """
-    from skive.tmdb import TMDBPick
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, titles, [(1, "ep1", 2400), (2, "ep2", 600)],
+        table=lambda display, emap, ls, cs: {0: (2, 2), 1: (1, 1)})
 
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    mock_titles = [TitleInfo(0, 1800, 1, "dan", "", False),
-                   TitleInfo(1, 1700, 1, "dan", "", False),
-                   TitleInfo(2, 3550, 1, "dan", "", False)]
-    mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
-                    )):
-                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
-                            with patch("skive.rip_tv.staged_eps", return_value=set()):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
-                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
-                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog") as MockLog:
-                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with _prompts() as mock_prompt:
-                                                        # season, then Enter for the range, Enter=rip
-                                                        mock_prompt.ask.side_effect = ["", "", ""]
-                                                        try:
-                                                            rip_tv(FakeArgs())
-                                                        except SystemExit:
-                                                            pass
-
-    assert mock_rename_tv.call_args.args[3][2] == (0, 0)
+    assert console.rip_titles.call_args.args[0] is None  # nothing skipped: all
+    assert mock_rename_tv.call_args.args[3] == {0: (2, 2), 1: (1, 1)}
 
 
-def test_playall_pin_survives_n_reask():
-    """The `n` re-ask re-applies the play-all pin (Generation Kill shape).
+def test_playall_prefilled_skip_is_not_ripped(tmp_path, monkeypatch):
+    """A play-all prefills skip whatever the episode guess says: title 2
+    (3550s) sits within 120s of t0+t1 (3500s), so the rip selection leaves it
+    out and the map never names it."""
+    titles = [TitleInfo(0, 1800, 1, "dan", "", False),
+              TitleInfo(1, 1700, 1, "dan", "", False),
+              TitleInfo(2, 3550, 1, "dan", "", False)]
+    episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
-    The stated range 1-3 maps t0-t2 to E1-E3 and leaves the play-all extra;
-    re-asking with `n` and taking the same pre-fill must not turn the
-    play-all into an episode: t0-t2 -> E1-E3, t3 -> extra.
-    """
-    from skive.tmdb import TMDBPick
+    mock_rename_tv, console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes)
 
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    mock_titles = [TitleInfo(0, 3932, 1, "dan", "", False),
-                   TitleInfo(1, 3897, 1, "dan", "", False),
-                   TitleInfo(2, 3653, 1, "dan", "", False),
-                   TitleInfo(3, 11482, 1, "dan", "", False)]
-    mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653), (4, "ep4", 3600)]
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
-                    )):
-                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
-                            with patch("skive.rip_tv.staged_eps", return_value=set()):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
-                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
-                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog") as MockLog:
-                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with _prompts() as mock_prompt:
-                                                        # season, range 1-3, n re-ask, Enter for pre-fill, Enter=rip
-                                                        mock_prompt.ask.side_effect = ["", "1-3", "n", "", ""]
-                                                        try:
-                                                            rip_tv(FakeArgs())
-                                                        except SystemExit:
-                                                            pass
-
-    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+    assert console.rip_titles.call_args.args[0] == [0, 1]
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2)}
 
 
-def test_fix_row_can_assign_playall_to_episode():
-    """A typed fix row on a play-all sticks — the deliberate escape hatch.
+def test_rescued_playall_rips_with_its_episode(tmp_path, monkeypatch):
+    """Assigning a play-all an episode in the table rescues it: nothing is
+    skipped, so every title rips and the map carries the play-all's episode."""
+    episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653),
+                (4, "ep4", 3600), (5, "ep5", 3700)]
 
-    Same Generation Kill disc as above, but the user accepts the pre-filled
-    range and types `3=5`, deliberately making the play-all E5. Only the
-    automatic rebuilds re-pin; a fix row is never reverted.
-    """
-    from skive.tmdb import TMDBPick
+    def table(display, emap, list_staging, clear_staging):
+        accepted = dict(emap.assign)
+        accepted[3] = (5, 5)
+        return accepted
 
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
+    mock_rename_tv, console, rc = _range_flow(
+        tmp_path, monkeypatch, _gk_titles(), episodes, table=table)
 
-    mock_titles = [TitleInfo(0, 3932, 1, "dan", "", False),
-                   TitleInfo(1, 3897, 1, "dan", "", False),
-                   TitleInfo(2, 3653, 1, "dan", "", False),
-                   TitleInfo(3, 11482, 1, "dan", "", False)]
-    mock_episodes = [(1, "ep1", 3932), (2, "ep2", 3897), (3, "ep3", 3653),
-                     (4, "ep4", 3600), (5, "ep5", 3700)]
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.ensure_mounted"):
-            with patch("skive.rip_common.purge_junk"):
-                with patch("skive.rip_common.require_online"):
-                    with patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                        title="Test Show", year="2020", original_language="en", type="tv", id="123"
-                    )):
-                        with patch("skive.rip_tv.fetch_season", return_value=mock_episodes):
-                            with patch("skive.rip_tv.staged_eps", return_value=set()):
-                                with patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")):
-                                    with patch("skive.rip_tv.rip_titles", return_value=0):
-                                        with patch("skive.rip_tv.rename_tv") as mock_rename_tv:
-                                            with patch("skive.rip_tv.subtitle_note", return_value="subs=dan"):
-                                                with patch("skive.rip_common.RipLog") as MockLog:
-                                                    MockLog.return_value.run = "run-1"  # the validation document's run identity
-                                                    with _prompts() as mock_prompt:
-                                                        # season, then Enter for the range, 3=5 at the table, Enter=rip
-                                                        mock_prompt.ask.side_effect = ["", "", "3=5", ""]
-                                                        try:
-                                                            rip_tv(FakeArgs())
-                                                        except SystemExit:
-                                                            pass
-
+    assert console.rip_titles.call_args.args[0] is None
     assert mock_rename_tv.call_args.args[3] == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (5, 5)}
 
 
-# The play-all-only caption (ADR 0009): recomputed from the final map every
-# confirm-loop iteration, under the table, before the drive spins.
-def test_playall_only_caption_arms_on_fix_row(tmp_path, monkeypatch):
-    """A disc whose only title carries the whole season: the fix row `0=1-3`
-    declares the range and the caption appears under the confirm table,
-    naming the title and the episode range it carries."""
+# The play-all-only caption (ADR 0009): derived from the accepted map, echoed
+# after the accepted table, before the drive spins.
+def test_playall_only_caption_arms_on_accepted_range(tmp_path, monkeypatch):
+    """A disc whose only title carries the whole season: the accepted table's
+    lone `E01-E03` arms the caption, naming the title and the episode range
+    it carries — and the chapter-split trigger sees the same map."""
     titles = [TitleInfo(0, 9643, 1, "dan", "", False)]
     episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
 
     mock_rename_tv, console, rc = _range_flow(
         tmp_path, monkeypatch, titles, episodes,
-        ["", "1", "0=1-3", ""])  # season, range 1, fix row arms it, Enter=rip
+        table=lambda display, emap, ls, cs: {0: (1, 3)})
 
     assert rc == 0
     assert mock_rename_tv.call_args.args[3] == {0: (1, 3)}
@@ -827,30 +506,6 @@ def test_playall_only_caption_arms_on_fix_row(tmp_path, monkeypatch):
     assert "title 0" in captions[0]
     assert "S01E01-E03" in captions[0]
     assert "split after the rip" in captions[0]
-    # Under the table, before the ok? prompt.
-    prints = [c for c in console.print.call_args_list if c.args]
-    cap_idx = next(i for i, c in enumerate(prints)
-                   if "play-all-only disc" in str(c.args[0]))
-    tbl_idx = max(i for i, c in enumerate(prints) if isinstance(c.args[0], Table))
-    assert tbl_idx < cap_idx
-    asked = [c.args[0] for c in console.prompt.ask.call_args_list]
-    assert asked[-1] == "Rip with this map?"  # the prompt follows the caption
-
-
-def test_playall_only_caption_disarms_on_n_reask(tmp_path, monkeypatch):
-    """The caption is recomputed every loop iteration: armed by the fix row,
-    disarmed again within one session by an `n` re-ask restating a single
-    episode for the lone title — the caption prints exactly once."""
-    titles = [TitleInfo(0, 9643, 1, "dan", "", False)]
-    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
-
-    mock_rename_tv, console, rc = _range_flow(
-        tmp_path, monkeypatch, titles, episodes,
-        ["", "1", "0=1-3", "n", "1", ""])  # fix row arms, n re-ask disarms, Enter=rip
-
-    assert rc == 0
-    assert mock_rename_tv.call_args.args[3] == {0: (1, 1)}
-    assert len(_captions(console)) == 1
 
 
 def test_playall_only_caption_hides_on_multi_title_disc(tmp_path, monkeypatch):
@@ -860,30 +515,10 @@ def test_playall_only_caption_hides_on_multi_title_disc(tmp_path, monkeypatch):
                 ((1, 3932), (2, 3897), (3, 3653))]
 
     _mock_rename_tv, console, rc = _range_flow(
-        tmp_path, monkeypatch, _gk_titles(), episodes, ["", "", ""])
+        tmp_path, monkeypatch, _gk_titles(), episodes)
 
     assert rc == 0
     assert _captions(console) == []
-
-
-def test_playall_only_caption_on_title_selection(tmp_path, monkeypatch):
-    """A -T title selection that reduces the table to one eligible title
-    qualifies with no special case: the final map reads one ranged title and
-    the caption names it."""
-    titles = [TitleInfo(0, 3000, 1, "dan", "", False),
-              TitleInfo(1, 9643, 1, "dan", "", False)]
-    episodes = [(1, "ep1", 4020), (2, "ep2", 2820), (3, "ep3", 2820)]
-
-    mock_rename_tv, console, rc = _range_flow(
-        tmp_path, monkeypatch, titles, episodes,
-        ["", "1", "1=1-3", ""], titles_arg="1")  # -T 1, range 1, fix row, Enter=rip
-
-
-    assert rc == 0
-    assert mock_rename_tv.call_args.args[3] == {1: (1, 3)}
-    captions = _captions(console)
-    assert len(captions) == 1
-    assert "title 1" in captions[0] and "S01E01-E03" in captions[0]
 
 
 # --- The chapter split hook (ADR 0009): fires after the rename, before the
@@ -980,7 +615,8 @@ def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
 
     real_post = post_rip_validation
     prompt = MagicMock()
-    prompt.ask.side_effect = ["", "1", "0=1-3", ""]  # season, range, fix row, rip
+    prompt.ask.side_effect = [""]  # season
+    _table_accepts_map(monkeypatch, {0: (1, 3)})
 
     @dataclass
     class FakeArgs:
@@ -1044,7 +680,8 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
 
     real_post = post_rip_validation
     prompt = MagicMock()
-    prompt.ask.side_effect = ["", "1", "0=1-3", ""]
+    prompt.ask.side_effect = [""]
+    _table_accepts_map(monkeypatch, {0: (1, 3)})
 
     @dataclass
     class FakeArgs:
@@ -1113,8 +750,9 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
 
     real_post = post_rip_validation
     prompt = MagicMock()
-    # season, range, fix row, Enter=rip, then Ctrl+C at the split prompt
-    prompt.ask.side_effect = ["", "1", "0=1-3", "", KeyboardInterrupt]
+    # season, then Ctrl+C at the split prompt
+    prompt.ask.side_effect = ["", KeyboardInterrupt]
+    _table_accepts_map(monkeypatch, {0: (1, 3)})
 
     @dataclass
     class FakeArgs:
@@ -1161,105 +799,19 @@ def test_episode_target_singles_doubles_and_seasons():
     assert episode_target(stage, "Show (2000)", 0, 5, 5) == stage / "Show (2000)_S00E05.mkv"
 
 
-def test_full_scan_rip_selection_skips_playall(tmp_path, monkeypatch):
-    """Full path (no play-all escalation needed): the rip selection excludes
-    the play-all pinned extra, plain extras still rip.
+def test_full_scan_rip_selection_skips_playall_and_sub_floor(tmp_path, monkeypatch):
+    """The rip selection excludes every prefilled skip: the play-all (t2,
+    3550s within 120s of t0+t1) and the sub-floor making-of (t3, 300s) — both
+    visible in the table, neither ripped unless the operator rescues them."""
+    titles = [TitleInfo(0, 1800, 1, "dan", "", False),
+              TitleInfo(1, 1700, 1, "dan", "", False),
+              TitleInfo(2, 3550, 1, "dan", "", False),
+              TitleInfo(3, 300, 1, "dan", "", False)]
+    episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
 
-    t2 (3550s) sits within 120s of t0+t1: the selection skips t2 alone. t3
-    (300s) is a making-of below the TV floor — no table row, no assignment,
-    not a play-all — and still rips: the selection comes from the full scan
-    list, not the floored table.
-    """
-    from skive.tmdb import TMDBPick
+    _rename, console, rc = _range_flow(tmp_path, monkeypatch, titles, episodes)
 
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    mock_titles = [TitleInfo(0, 1800, 1, "dan", "", False),
-                   TitleInfo(1, 1700, 1, "dan", "", False),
-                   TitleInfo(2, 3550, 1, "dan", "", False),
-                   TitleInfo(3, 300, 1, "dan", "", False)]
-    mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)), \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Test Show", year="2020", original_language="en", type="tv", id="123")), \
-            patch("skive.rip_tv.fetch_season", return_value=mock_episodes), \
-            patch("skive.rip_tv.staged_eps", return_value=set()), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
-            patch("skive.rip_tv.rename_tv"), \
-            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
-            _prompts() as mock_prompt:
-        # season, then Enter for the range, Enter=rip
-        mock_prompt.ask.side_effect = ["", "", ""]
-        try:
-            rip_tv(FakeArgs())
-        except SystemExit:
-            pass
-
-    assert mock_rip_titles.call_args.args[0] == [0, 1, 3]  # play-all t2 skipped; sub-floor making-of t3 rips
-
-
-def test_fix_row_rescued_playall_rips():
-    """A fix row assigning the play-all an episode empties the skip set: the
-    selection stays None (rip all), so the rescued play-all rips.
-
-    Same disc as above; `2=3` at the table makes t2 E3.
-    """
-    from skive.tmdb import TMDBPick
-
-    @dataclass
-    class FakeArgs:
-        titles = None
-        extras = False
-        tmdbid = None
-        verified = True
-
-    mock_titles = [TitleInfo(0, 1800, 1, "dan", "", False),
-                   TitleInfo(1, 1700, 1, "dan", "", False),
-                   TitleInfo(2, 3550, 1, "dan", "", False)]
-    mock_episodes = [(1, "ep1", 1800), (2, "ep2", 1700), (3, "ep3", 3550)]
-
-    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)), \
-            patch("skive.rip_common.ensure_mounted"), \
-            patch("skive.rip_common.purge_junk"), \
-            patch("skive.rip_common.require_online"), \
-            patch("skive.rip_common.search_loop", return_value=TMDBPick(
-                title="Test Show", year="2020", original_language="en", type="tv", id="123")), \
-            patch("skive.rip_tv.fetch_season", return_value=mock_episodes), \
-            patch("skive.rip_tv.staged_eps", return_value=set()), \
-            patch("skive.rip_tv.inject_profile", return_value=Path("/tmp/test.xml")), \
-            patch("skive.rip_tv.rip_titles", return_value=0) as mock_rip_titles, \
-            patch("skive.rip_tv.rename_tv"), \
-            patch("skive.rip_tv.subtitle_note", return_value="subs=dan"), \
-            patch("skive.rip_tv.console") as mock_console, \
-            _prompts() as mock_prompt:
-        # season, then Enter for the range, the rescue fix row, Enter=rip
-        mock_prompt.ask.side_effect = ["", "", "2=3", ""]
-        try:
-            rip_tv(FakeArgs())
-        except SystemExit:
-            pass
-
-    assert mock_rip_titles.call_args.args[0] is None  # skip set empty: rip all
-
-    # The table must not lie about the rescue: before `2=3` t2 reads skipped,
-    # after it the re-printed confirm table shows E3 for t2 (texts: overview,
-    # confirm before the fix row, confirm after it).
-    texts = _table_texts(mock_console)
-    assert "play-all, not ripped" in texts[1]
-    assert "play-all, not ripped" not in texts[2]
-    assert "→ S01E03 (ep3)" in texts[2]
+    assert console.rip_titles.call_args.args[0] == [0, 1]
 
 
 def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch, capsys):
@@ -1303,9 +855,9 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
     assert err.count("fail  interrupted") == 2  # event plus interrupted result line
 
 
-def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
-    """Ctrl+C at the confirm table (after a previous disc's rips): the exit is
-    130 and the junk the table's run would have re-ripped is left clean."""
+def test_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
+    """Ctrl+C at the selection table (after a previous disc's rips): the exit
+    is 130 and the junk the table's run would have re-ripped is left clean."""
     import json
     from skive.tmdb import TMDBPick
 
@@ -1320,8 +872,10 @@ def test_confirm_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
         verified = True
 
     prompt = MagicMock()
-    # season Enter, range Enter, then Ctrl+C at the confirm table
-    prompt.ask.side_effect = ["", "", KeyboardInterrupt]
+    # season Enter, then Ctrl+C inside the table (the app's INTERRUPT result)
+    prompt.ask.side_effect = [""]
+    from skive.selection import INTERRUPT
+    monkeypatch.setattr("skive.rip_tv.run_episode_table", lambda *a: INTERRUPT)
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
@@ -1747,9 +1301,9 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
 
 
 def test_rip_tv_prompts_print_under_a_seam_view(tmp_path, monkeypatch, capsys):
-    """The season prompt, the episode overview and the confirm table/prompt
-    print to stdout (scrollback) while a seam view is set — every
-    interactive surface suspends the view — and the run completes."""
+    """The season prompt and the accepted table's echo print to stdout
+    (scrollback) while a seam view is set — every interactive surface
+    suspends the view — and the run completes."""
     from skive import ui
 
     view = ui.RunView(tty=True, live=False)
@@ -1760,8 +1314,8 @@ def test_rip_tv_prompts_print_under_a_seam_view(tmp_path, monkeypatch, capsys):
         ui.clear_view()
     assert code == 0
     err = capsys.readouterr().err
-    assert "Show (2000) — season 01" in err  # overview and confirm table
-    assert err.count("assignment") == 2
+    assert "Show (2000) — season 01" in err  # the accepted table's echo
+    assert err.count("action") == 1
 
 
 def test_rip_tv_run_summary_rows_and_count_after_close(tmp_path, monkeypatch, capsys):
@@ -1902,27 +1456,8 @@ def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
 # --- rip tv on the new look (console-polish slice 07) -----------------------
 
 
-def test_print_table_uses_the_shared_borderless_look(mock_console):
-    """The episode map is a SIMPLE_HEAD table: no box verticals, plain text
-    renders every column; the audit cell keeps its band colour."""
-    titles = [(0, 3932, 1), (1, 3897, 1)]
-    print_table("Show (2000)", 1, titles, {0: (1, 1), 1: (0, 0)},
-                {1: "ep1"}, {1: 4140})
-    table = next(c.args[0] for c in mock_console.print.call_args_list
-                 if c.args and isinstance(c.args[0], Table))
-    plain = Console(record=True, width=100)
-    plain.print(table)
-    text = plain.export_text()
-    assert "│" not in text and "┃" not in text
-    for col in ("title", "duration", "size", "audit", "assignment"):
-        assert col in text
-    assert "→ S01E01 (ep1)" in text and "→ extra" in text
-    audit = table.columns[3]._cells[0]
-    assert str(audit.style) == "green"
-
-
 def test_rip_tv_opener_after_map_and_headings_as_titles_start(tmp_path, monkeypatch, capsys):
-    """The run opener prints after the confirmed map, before the rip; each
+    """The run opener prints after the accepted map, before the rip; each
     title's item heading prints when that title starts (between rip
     events), named by its episode; rip_titles gets the footer names and the
     drive."""
@@ -1942,7 +1477,7 @@ def test_rip_tv_opener_after_map_and_headings_as_titles_start(tmp_path, monkeypa
                              "Show (2000) S01E03"]
     assert "device" in seen
     opener = err.index("info  skive rip tv · Show (2000) · season 1 · disc 0")
-    assert err.rindex("assignment") < opener  # after the confirm table
+    assert err.rindex("action") < opener  # after the accepted table's echo
     h1 = err.index("info  1/3  Show (2000) S01E01")
     h2 = err.index("info  2/3  Show (2000) S01E02")
     assert opener < h1 < err.index("ripping 0") < h2 < err.index("ripping 1")
@@ -1953,17 +1488,12 @@ def test_rip_tv_summary_marks_only_the_failed_title(tmp_path, monkeypatch, capsy
     """A selected-title rip reports each title's own rc: only the episode
     whose title failed reads failed; the run still ends on a failure line
     with the run log location."""
-    titles = [TitleInfo(0, 3932, 1, "dan", "", False),
-              TitleInfo(1, 3897, 1, "dan", "", False),
-              TitleInfo(2, 3653, 1, "dan", "", False)]
-
     def rip(*a, **k):
         k["outcomes"].update({0: 0, 1: 2, 2: 0})
         return 2
 
-    # no play-all: the full-scan rip is "all"; -T forces the per-title path
-    monkeypatch.setattr("skive.rip_tv.resolve_titles", lambda *a: [0, 1, 2])
-    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=titles, rip=rip)
+    # the play-all (t3) prefills skip: the per-title rip path
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], rip=rip)
     assert code == 2
     err = capsys.readouterr().err
     rows = {l.split()[0]: l for l in err.splitlines() if l.strip().startswith("S01E0")
@@ -1993,9 +1523,9 @@ def test_rip_tv_summary_includes_this_runs_extras_not_old_files(tmp_path, monkey
 
 
 def test_rip_tv_summary_counts_a_ripped_sub_floor_title_ok(tmp_path, monkeypatch, capsys):
-    """Full scan: a sub-TV-floor making-of (t3, 300s) rips but has no
-    assignment, so the real rename leaves it junk-labeled. It is a
-    successful item, not a failed extra: the result line matches exit 0."""
+    """Full scan: a sub-TV-floor making-of (t3, 300s) rescued as an extra in
+    the table rips and the real rename files it as an Extra. It is a
+    successful item, not a failed one: the result line matches exit 0."""
     from skive.rip_tv import rename_tv as real_rename_tv
     titles = [TitleInfo(0, 3932, 1, "dan", "", False),
               TitleInfo(1, 3897, 1, "dan", "", False),
@@ -2010,12 +1540,19 @@ def test_rip_tv_summary_counts_a_ripped_sub_floor_title_ok(tmp_path, monkeypatch
             (stage / f"B1_t{t:02d}.mkv").write_bytes(b"x" * 1024)
         return 0
 
-    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=titles,
+    def table(display, emap, list_staging, clear_staging):
+        accepted = dict(emap.assign)
+        accepted[3] = (0, 0)  # `e` at the sub-floor row
+        return accepted
+
+    monkeypatch.setattr("skive.rip_tv.run_episode_table", table)
+    code = _view_flow(tmp_path, monkeypatch, [""], titles=titles,
                       rip=rip, rename=real_rename_tv)
     assert code == 0
-    assert ripped == [None]  # all titles, the sub-floor one included
+    assert ripped == [None]  # nothing skipped: all titles, the rescued one included
     err = capsys.readouterr().err
-    assert any("B1_t03" in l and l.rstrip().endswith("ok") for l in err.splitlines())
+    assert any("Show (2000) - Extra 01" in l and l.rstrip().endswith("ok")
+               for l in err.splitlines())
     assert "failed" not in err
     assert err.splitlines()[-1].startswith("ok    4 ok · ")
 
@@ -2030,8 +1567,7 @@ def test_rip_tv_heading_follows_the_started_title_not_the_count(tmp_path, monkey
         k["outcomes"].update({0: 0, 1: 2, 2: 0})
         return 2
 
-    monkeypatch.setattr("skive.rip_tv.resolve_titles", lambda *a: [0, 1, 2])
-    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=_gk_titles()[:3], rip=rip)
+    code = _view_flow(tmp_path, monkeypatch, ["", "", ""], rip=rip)
     assert code == 2
     err = capsys.readouterr().err
     assert "info  1/3  Show (2000) S01E01" in err
@@ -2042,7 +1578,12 @@ def test_rip_tv_heading_follows_the_started_title_not_the_count(tmp_path, monkey
 def test_rip_tv_summary_keeps_a_cleared_path_restaged_by_the_run(tmp_path, monkeypatch, capsys):
     """c + y clears a staged episode; this run re-stages the same path, so
     the summary lists it — a cleared file no longer predates the run."""
-    code = _view_flow(tmp_path, monkeypatch, ["", "1-3", "c", "y", ""],
+    def table(display, emap, list_staging, clear_staging):
+        clear_staging(list_staging())  # c, then the explicit y
+        return {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: None}
+
+    monkeypatch.setattr("skive.rip_tv.run_episode_table", table)
+    code = _view_flow(tmp_path, monkeypatch, [""],
                       staged=["Show (2000)_S01E01.mkv"])
     assert code == 0
     err = capsys.readouterr().err
@@ -2101,19 +1642,3 @@ def test_rip_tv_interrupt_summary_marks_inflight_title_interrupted(tmp_path, mon
                for l in err.splitlines())
     assert err.splitlines()[-1].startswith("fail  interrupted · 0 ok · ")
     assert err.splitlines()[-1].endswith("— partial deleted")
-
-
-def test_clear_staged_enter_defaults_to_no(tmp_path, monkeypatch):
-    """The clear-staged confirm defaults to No: a bare Enter keeps staging."""
-    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
-                                      ["1", "", "c", "", "q"])  # season, range, clear, Enter, quit
-    assert poisoned.exists()
-    assert rc == 1
-
-
-def test_clear_staged_eof_refuses(tmp_path, monkeypatch):
-    """No answer at all (EOF) at the clear-staged confirm is a refusal."""
-    poisoned, rc = _clear_staged_flow(tmp_path, monkeypatch,
-                                      ["1", "", "c", EOFError, "q"])
-    assert poisoned.exists()
-    assert rc == 1

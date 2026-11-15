@@ -1,5 +1,5 @@
-"""TV rip flow: season prompt, episode-range prompt, confirm table, renames,
-staging inspection, post-rip validation record."""
+"""TV rip flow: season prompt, the selection table that decides the episode
+map, renames, staging inspection, post-rip validation record."""
 
 import os
 import re
@@ -7,26 +7,23 @@ import subprocess
 import sys
 from pathlib import Path
 
-from rich.text import Text
-
 from skive import ui
 from skive.chapter_split import split_combined
 from skive.makemkv import (
-    CONFIG_DIR, build_selection, inject_profile, promote_staged, purge_junk,
-    rename_staged, rip_header, subtitle_note, rip_titles, hsize,
+    build_selection, inject_profile, promote_staged, purge_junk,
+    rip_header, subtitle_note, rip_titles, hsize,
 )
 from skive.rip_common import rip_preamble, tv_season_gate
-from skive.scan import resolve_titles
+from skive.selection import (
+    INTERRUPT, QUIT, episode_map, print_accepted_episodes, run_episode_table,
+)
 from skive.tmdb import fetch_season
 from skive.validation import (
     VALIDATION_FILENAME, _double_runtime, load_validation, merge_tv_document,
     tv_document, tv_row, write_validation,
 )
 from skive.tv_match import (
-    tv_floor, parse_range, assign_range,
-    range_mismatch_note, range_past_end_note, apply_fixes, audit_cell,
-    playall_skip, playall_only, prefill_assignment,
-    sum_disqualified_windowed,
+    tv_floor, playall_only, sum_disqualified_windowed,
 )
 
 console = ui.console  # the shared console; a module name tests can swap
@@ -35,7 +32,7 @@ SUMMARY_COLUMNS = ("Episode", "duration", "size", "result")
 
 
 def _hms(secs: int) -> str:
-    """Duration as H:MM:SS (the confirm table's format)."""
+    """Duration as H:MM:SS."""
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
 
 
@@ -83,68 +80,6 @@ def show_staging(show_dir: Path, display: str) -> list[Path]:
     exactly these."""
     return [p for p in sorted(show_dir.glob("*.mkv"))
             if p.name.startswith(display + "_S") or p.name.startswith(display + " - ")]
-
-
-def print_table(display: str, season: int, titles: list[tuple[int, int, int]],
-                assignment: dict[int, tuple[int, int]], ep_names: dict[int, str],
-                ep_runtimes: dict[int, int], estimate: bool = False,
-                playalls: set[int] | None = None) -> None:
-    """Print the confirmation table in title-number order.
-
-    The range prompt reuses this printer as the title overview: estimate=True
-    marks episode cells ` (est.)`, and playalls renders rows still assigned
-    extra "play-all, not ripped" — on the overview and the confirm table
-    alike; a fix row rescuing a play-all shows its episode instead.
-
-    Args:
-        display: Show name
-        season: Season number
-        titles: List of (title, secs, bytes)
-        assignment: title -> (lo, hi) mapping
-        ep_names: episode_number -> name mapping
-        ep_runtimes: episode_number -> TMDB runtime seconds
-        estimate: Mark episode assignments ` (est.)` (the overview's guess)
-        playalls: Title numbers disqualified as play-alls
-    """
-    season_str = f"{season:02d}"
-    console.print(f"\n{display} — season {season_str}")
-
-    table = ui.table("title", "duration", "size", "audit", "assignment")
-
-    for t, secs, size in sorted(titles, key=lambda x: x[0]):
-        # Format duration H:MM:SS
-        h = secs // 3600
-        m = (secs % 3600) // 60
-        s = secs % 60
-        dur = f"{h}:{m:02d}:{s:02d}"
-
-        sz = hsize(size) if size else ""
-
-        lo, hi = assignment.get(t, (0, 0))
-        audit = audit_cell(secs, lo, hi, ep_runtimes)
-        audit_str = Text(audit[0], style=audit[1]) if audit else ""
-
-        # Only a play-all still assigned extra reads skipped: a fix row handing
-        # one an episode must show the rescue here (pin_playalls is not re-applied).
-        if playalls and t in playalls and lo == 0:
-            assign_str = "→ play-all, not ripped"
-        elif lo == 0:
-            assign_str = "→ extra"
-        else:
-            code = f"S{season_str}E{lo:02d}"
-            if hi != lo:
-                code += f"-E{hi:02d}"
-            name = ep_names.get(lo, "")
-            if name:
-                assign_str = f"→ {code} ({name})"
-            else:
-                assign_str = f"→ {code}"
-            if estimate:
-                assign_str += " (est.)"
-
-        table.add_row(Text(str(t), style="bold"), dur, sz, audit_str, assign_str)
-
-    console.print(table)
 
 
 def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) -> Path:
@@ -238,9 +173,9 @@ def chapter_split_hook(preamble, season: int,
     Args:
         preamble: The run's Preamble — title_dir, display, log
         season: Season number the disc belongs to
-        titles_info: The confirm table's floored (title, secs, bytes) list
+        titles_info: The floored (title, secs, bytes) list
         playalls: Title numbers disqualified as play-alls
-        assignment: Final title -> (lo, hi) episode map (post fix rows)
+        assignment: Final title -> (lo, hi) episode map (the accepted table)
         ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
         run: subprocess.run callable for monkeypatching (probe and ffmpeg)
     """
@@ -499,48 +434,6 @@ def rip_tv(args) -> None:
                 ui.item(started, len(order), inflight)
             return on_start
 
-        # --extras: no season, no scan, no table
-        if args.extras:
-            log.note("type", "type=tv extras")
-            titles = resolve_titles(args.titles, titles_full, preamble.media)
-            ui.opener("skive rip tv", f"{display} · extras", f"disc {preamble.disc} · {preamble.device}")
-            log.phase("rip")
-            infos = titles_full if titles is None else [t for t in titles_full if t.number in titles]
-            order = titles if titles is not None else sorted(t.number for t in infos)
-            names = [f"{display} extra"] * len(order)
-            worst_rc = rip_titles(titles, CONFIG_DIR / "custom.mmcp.xml", minlength, stage_tv, disc=preamble.disc,
-                                  total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log,
-                                  device=preamble.device, on_title_start=start_rip(order, names, titles is not None), names=names)
-            inflight = None
-            if worst_rc != 0:
-                log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
-
-            # Promote first so the renames see everything the show folder
-            # already holds; a collision leaves the file in d{disc}/ with a note.
-            promote_staged(stage_tv)
-            rename_staged(display, show_dir, suffix="e", preexisting=preexisting)
-
-            # Subtitle note
-            note = subtitle_note(show_dir)
-            ui.info(note)
-            log.note("subtitle", note)
-
-            # makemkvcon rc 0 with an empty stage is a failed rip (see the
-            # movie guard): rc!=0 keeps the raw log naming the error.
-            staged = [f for f in show_dir.glob("*.mkv") if f not in preexisting]
-            if infos and not staged:
-                worst_rc = worst_rc or 1
-                log.phase_end("FAIL — nothing staged")
-            else:
-                log.phase_end()
-            log.finish(worst_rc)
-            view.close()
-            rows = _summary_rows(show_dir, display, 0, [], preexisting, worst_rc)
-            n_ok = sum(1 for r in rows if r[3] == "ok")
-            ui.run_summary(rows, n_ok, len(rows) - n_ok, columns=SUMMARY_COLUMNS,
-                           replay=view.replay_lines(), log=log, failed=worst_rc != 0)
-            sys.exit(worst_rc)
-
         # Season prompt (ui.ask suspends the view while it asks)
         try:
             season = int(ui.ask("Season", choices="0 = specials", default="1").strip())
@@ -563,36 +456,20 @@ def rip_tv(args) -> None:
             ui.fail("disc scan failed — no titles found")
             sys.exit(1)
 
-        # Bare -T opens the title menu; no -T rips all titles (DVD shows prefer this)
-        user_titles = resolve_titles(args.titles, titles_full, preamble.media)
-        if user_titles is not None:
-            titles_full = [t for t in titles_full if t.number in user_titles]
-            if not titles_full:
-                ui.fail(f"none of the requested titles survived the scan (minlength={minlength})")
-                sys.exit(1)
-
         titles_info = [(t.number, t.seconds, t.size) for t in titles_full]
 
-        # TV floor: menu loops and fragments never make episodes. Dropped
-        # entirely — not eligible, not in the table, not ripped.
+        # TV floor: menu loops and fragments never make episodes. Floored
+        # titles feed the play-all sums and the chapter-split trigger; the
+        # sub-floor ones still list in the table (bottom section, prefilled
+        # skip, rescuable).
         titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
         # Play-alls by window tier: tight ±120s and the soft ±300s window both
-        # disqualify and skip (ADR 0008).
+        # disqualify and prefill skip (ADR 0008).
         disqualified = sum_disqualified_windowed(titles_info)
         playalls = set(disqualified)
-
-
-        def pin_playalls(a: dict[int, tuple[int, int]]) -> dict[int, tuple[int, int]]:
-            """Play-alls pin extra whatever the stated range said — the rip
-            skips them unless a fix row assigns one an episode.
-
-            Re-applied after each automatic rebuild (initial assignment, `n`
-            re-ask). Never applied after a fix row: `t=ep` typed at the table is
-            the deliberate escape hatch.
-            """
-            for t in playalls:
-                a[t] = (0, 0)
-            return a
+        if len(titles_info) == len(playalls):
+            ui.fail("no eligible titles on this disc")
+            sys.exit(1)
 
         # Fetch season from TMDB
         if not pick.id or pick.id == "-":
@@ -608,113 +485,56 @@ def rip_tv(args) -> None:
         # Build episodes dict
         ep_names = {ep: name for ep, name, _ in episodes}
         ep_runtimes = {ep: rt for ep, _, rt in episodes}
-        max_ep = max(ep_names.keys()) if ep_names else 0
 
         # Get staged episodes
         staged = staged_eps(show_dir, display, season)
-        if staged:
-            eps_str = ", ".join(f"E{e:02d}" for e in sorted(staged))
-            ui.info(f"already staged: {eps_str} — c at the prompt clears the show's staging")
 
-        def ask_range() -> tuple[int, int]:
-            """One pre-filled prompt states which episodes this disc carries.
+        def list_staging() -> list[Path]:
+            return show_staging(show_dir, display)
 
-            The title overview prints first — again on every `n` re-ask —
-            showing the positional fill of the pre-filled range, so what Enter
-            accepts is exactly what the overview showed. The pre-fill is the
-            episode guess when the runtimes suggest one, else one episode per
-            eligible title. Unparseable answers re-ask.
-            """
-            eligible = len(titles_info) - len(playalls)
-            if eligible == 0:
-                ui.fail("no eligible titles on this disc")
+        def clear_staging(doomed: list[Path]) -> set[int]:
+            """`c` after its explicit confirm: delete the listed files. They
+            no longer predate the run — a replacement staged at the same path
+            is this run's item. Returns the refreshed staged-episode set."""
+            for f in doomed:
+                f.unlink()
+            preexisting.difference_update(doomed)
+            return staged_eps(show_dir, display, season)
+
+        # The selection table (ADR 0020) decides the whole episode map: the
+        # episode guess prefills every eligible title, the operator restates
+        # actions at the cursor, Enter accepts. The view suspends for it, the
+        # accepted map echoes into scrollback, the view redraws after.
+        # Non-TTY runs refuse before the table — nothing spins.
+        emap = episode_map(season, titles_full, minlength, disqualified,
+                           ep_names, ep_runtimes, staged)
+        with view.suspend():
+            if not view.tty and not ui.terminal_present():
+                ui.fail("selection table needs a terminal")
                 sys.exit(1)
-            prefill = prefill_assignment(titles_info, playalls, ep_runtimes, staged, ep_names)
-            filled = [r for r in prefill.values() if r[0] >= 1]
-            lo, hi = (min(r[0] for r in filled), max(r[1] for r in filled))
-            with ui.suspend():  # the overview + prompt print normally
-                print_table(display, season, titles_info,
-                            assign_range(titles_info, playalls, lo, hi),
-                            ep_names, ep_runtimes, estimate=True, playalls=playalls)
-                prefill = str(lo) if lo == hi else f"{lo}-{hi}"
-                while True:
-                    rng = parse_range(ui.ask("Episodes on this disc", default=prefill).strip())
-                    if rng is not None:
-                        return rng
-
-        def build_note(lo: int, hi: int) -> str | None:
-            """Mismatch and past-the-season-end warnings, joined to one print."""
-            lines = [ln for ln in (range_mismatch_note(titles_info, playalls, lo, hi),
-                                   range_past_end_note(hi, max_ep)) if ln]
-            return "\n".join(lines) if lines else None
-
-        lo, hi = ask_range()
-        assignment = pin_playalls(assign_range(titles_info, playalls, lo, hi))
-        note = build_note(lo, hi)
-
-        # Confirm loop — suspended for the whole interactive phase: the table,
-        # notes, fix prompts and the clear-staged listing print normally
-        # (scrollback); the view redraws after the loop's answer.
-        with ui.suspend():
-            while True:
-                if note:
-                    console.print(note)
-                print_table(display, season, titles_info, assignment, ep_names, ep_runtimes,
-                            playalls=playalls)
-                # Play-all-only caption (ADR 0009), recomputed from the final map
-                # every iteration: fix rows and `n` re-asks arm or disarm it
-                # before the drive spins.
-                lone = playall_only(titles_info, playalls, assignment)
+            result = run_episode_table(display, emap, list_staging, clear_staging)
+            if isinstance(result, dict):
+                print_accepted_episodes(display, emap, result)
+                # Play-all-only caption (ADR 0009): the accepted map arms the
+                # chapter split before the drive spins.
+                lone = playall_only(titles_info, playalls,
+                                    {t: r for t, r in result.items() if r is not None})
                 if lone:
                     t, clo, chi = lone
                     console.print(f"title {t} carries S{season:02d}E{clo:02d}-E{chi:02d}"
                                   f" — play-all-only disc, split after the rip")
-                ans = ui.ask("Rip with this map?",
-                             choices="rip · 3=7 / 1=1-2 / 2=e fix row · n range · c clear staged · q quit",
-                             default="Enter").strip()
+        if result == INTERRUPT:
+            # Textual has restored the terminal; follow the repo Interrupt
+            # through the handler below (exit 130).
+            raise KeyboardInterrupt
+        if result == QUIT or not isinstance(result, dict):
+            ui.info("quit — nothing ripped.")
+            sys.exit(1)
 
-                if ans.lower() in ("", "enter", "rip"):
-                    break
-                elif ans.lower() == "q":
-                    ui.info("quit — nothing ripped.")
-                    sys.exit(1)
-                elif ans.lower().startswith("n"):
-                    # Re-state the range (`n=5` spells the same as bare `n`; any
-                    # =-suffix is ignored): disc order stands, the stated range rules.
-                    lo, hi = ask_range()
-                    assignment = pin_playalls(assign_range(titles_info, playalls, lo, hi))
-                    note = build_note(lo, hi)
-                elif ans.lower() == "c":
-                    doomed = show_staging(show_dir, display)
-                    if not doomed:
-                        ui.info("nothing staged for this show")
-                        continue
-                    for f in doomed:
-                        console.print(f"  {f.name}")
-                    try:
-                        sure = ui.confirm(f"delete {len(doomed)} staged files for {display}?")
-                    except EOFError:  # no answer is a refusal, never a delete
-                        sure = False
-                    if not sure:
-                        continue
-                    for f in doomed:
-                        f.unlink()
-                    # Cleared files no longer predate the run: a replacement
-                    # staged at the same path is this run's item.
-                    preexisting.difference_update(doomed)
-                    # No re-assignment: the map comes from the stated range, not from
-                    # staging. The refreshed set only steers the next pre-fill.
-                    staged = staged_eps(show_dir, display, season)
-                else:
-                    # Apply fixes - rebuild title->ep mapping for clash check
-                    title_to_eps = {}
-                    for t, (elo, ehi) in assignment.items():
-                        if elo != 0:
-                            for e in range(elo, ehi + 1):
-                                title_to_eps[e] = t
-                    apply_fixes(assignment, [t for t, _, _ in titles_info], staged, ans, max_ep, title_to_eps)
-                    # A fix row is the user speaking; the automated note does not repeat.
-                    note = None
+        # The accepted map: ripped titles → (lo, hi), extras (0, 0); a
+        # skipped title is simply not in it and is never ripped.
+        assignment = {t: r for t, r in result.items() if r is not None}
+        skipped = {t for t, r in result.items() if r is None}
 
         ui.opener("skive rip tv", f"{display} · season {season}", f"disc {preamble.disc} · {preamble.device}")
 
@@ -732,17 +552,12 @@ def rip_tv(args) -> None:
         try:
             # Rip phase
             log.phase("rip")
-            # Explicit -T selections may include titles filtered from the confirmed scan.
-            rip_selection = None if user_titles is None else [t for t, _, _ in titles_info]
-            # Play-alls whose final assignment is extra are never ripped
-            # (ADR 0008) — derived after the confirm loop, so a fix row
-            # rescuing one rips it. -T runs stay exactly as they were.
-            if user_titles is None:
-                skip = playall_skip(playalls, assignment)
-                if skip:
-                    # The full scan list, not the floored titles_info: sub-TV-floor
-                    # fragments (120-600s extras) rip too — "all" means all of them.
-                    rip_selection = [t.number for t in titles_full if t.number not in skip]
+            # Skipped titles — prefilled play-alls and sub-floor fragments the
+            # operator left alone, or any title restated `s` — are never
+            # ripped (ADR 0008); a rescued row is not skipped, so it rips.
+            # Nothing skipped rips "all" in one call.
+            rip_selection = (None if not skipped else
+                             [t.number for t in titles_full if t.number not in skipped])
             order = (rip_selection if rip_selection is not None
                      else sorted(t.number for t in titles_full))
             names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
@@ -816,7 +631,7 @@ def rip_tv(args) -> None:
         sys.exit(rc)
     except KeyboardInterrupt:
         # Interrupt outside the rip try (TMDB prompt via rip_preamble, season
-        # prompt, episode range, confirm table, the extras rip): once the
+        # prompt, the selection table): once the
         # preamble exists the partial purge and the interrupt summary still
         # apply; main's fallback prints the one line for the not-yet-started
         # window.

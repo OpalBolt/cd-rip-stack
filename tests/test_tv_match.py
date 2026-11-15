@@ -1,29 +1,17 @@
-"""Tests for TV assignment math: floor, play-alls, range, fix rows, map string, audit."""
+"""Tests for TV assignment math: floor, play-alls, the guess and prefill, the
+table's violation checks, audit."""
 
 import pytest
 
 from skive.tv_match import (
-    parse_range, next_unstaged, assign_range, range_mismatch_note,
-    range_past_end_note, parse_fix_rows, apply_fixes, map_str,
-    tv_floor, sum_disqualified, sum_disqualified_windowed, playall_skip,
-    playall_only, audit_ratio, audit_cell, guess_range, guess_pairing,
-    prefill_assignment, episode_clashes, staged_claims, unfilled_episodes,
-    sub_floor_titles,
+    next_unstaged, assign_range, tv_floor, sum_disqualified,
+    sum_disqualified_windowed, playall_only, audit_ratio, audit_cell,
+    guess_pairing, prefill_assignment, episode_clashes, staged_claims,
+    unfilled_episodes, past_end_claims, sub_floor_titles,
 )
 
 
 # Episode identity: stated range + disc position (ADR 0001)
-def test_parse_range():
-    """Range answers parse to (lo, hi); junk and inverted ranges are None."""
-    assert parse_range("5") == (5, 5)
-    assert parse_range("4-6") == (4, 6)
-    assert parse_range(" 4 - 6 ") == (4, 6)
-    assert parse_range("0") is None
-    assert parse_range("6-4") is None
-    assert parse_range("x") is None
-    assert parse_range("") is None
-
-
 def test_next_unstaged():
     """Pre-fill starts at the smallest named episode not already staged."""
     names = {1: "ep1", 2: "ep2", 3: "ep3"}
@@ -38,161 +26,7 @@ def test_assign_range_generation_kill():
     assert assign_range(titles, {3}, 1, 3) == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
 
 
-def test_assign_range_more_titles_than_range():
-    """Eligible titles past the range size are extras."""
-    titles = [(0, 1000, 1), (1, 1000, 1), (2, 1000, 1), (3, 1000, 1)]
-    assert assign_range(titles, set(), 1, 3) == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
-
-
-def test_assign_range_fewer_titles_than_range():
-    """Fewer eligible titles than the range: only part of it gets covered."""
-    titles = [(0, 1000, 1), (1, 1000, 1)]
-    assert assign_range(titles, set(), 1, 4) == {0: (1, 1), 1: (2, 2)}
-
-
 # The episode guess: durations suggest the range, they never assign (ADR 0008)
-def test_guess_range_downton_s1d1():
-    """Downton S1D1 durations: the play-all (9643s) is out of the pool, the
-    episodes 3940/2855/2852s sit green against runtimes E1=4020, E2=2820,
-    E3=2820 (ratios 0.98, 1.01, 1.01) — the guess is 1-3."""
-    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
-    runtimes = {1: 4020, 2: 2820, 3: 2820}
-    names = {1: "ep1", 2: "ep2", 3: "ep3"}
-    assert guess_range(titles, {3}, runtimes, set(), names) == (1, 3)
-
-
-def test_guess_range_starts_at_first_unstaged():
-    """Disc 2 shape: E1-E3 staged, the walk starts at E4 and lands 4-6."""
-    titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
-    runtimes = {1: 4020, 2: 2820, 3: 2820, 4: 4020, 5: 2820, 6: 2820}
-    names = {e: f"ep{e}" for e in range(1, 7)}
-    assert guess_range(titles, {3}, runtimes, {1, 2, 3}, names) == (4, 6)
-
-
-def test_guess_range_leading_making_of_misconsumed():
-    """Known limit (ADR 0008): a leading making-of that fits E1's runtime is
-    consumed by the walk — the count still lands, but the positional fill the
-    overview shows pins the making-of to E1; the confirm table is the check.
-    Asserted here, not fixed."""
-    titles = [(0, 2820, 1), (1, 2855, 1), (2, 2852, 1)]
-    runtimes = {1: 2820, 2: 2820, 3: 2820}
-    names = {1: "ep1", 2: "ep2", 3: "ep3"}
-    guess = guess_range(titles, set(), runtimes, set(), names)
-    assert guess == (1, 3)  # the count lands ...
-    assert assign_range(titles, set(), *guess)[0] == (1, 1)  # ... as the making-of
-
-
-def test_guess_range_stops_at_first_miss():
-    """E2 finds no fitting title: the guess truncates there instead of
-    skipping the episode ahead."""
-    titles = [(0, 3940, 1), (1, 1800, 1)]  # 1800/2820 = 0.64: no fit for E2
-    assert guess_range(titles, set(), {1: 4020, 2: 2820}, set(),
-                       {1: "ep1", 2: "ep2"}) == (1, 1)
-
-
-def test_guess_range_no_runtimes_returns_none():
-    """No TMDB runtimes (season-0 shape) or a zero runtime: nothing to
-    suggest — the caller falls back to the count-based pre-fill."""
-    titles = [(0, 3940, 1), (1, 2855, 1)]
-    names = {1: "ep1", 2: "ep2"}
-    assert guess_range(titles, set(), {}, set(), names) is None
-    assert guess_range(titles, set(), {1: 0, 2: 0}, set(), names) is None
-
-
-def test_range_mismatch_note():
-    """Matching counts -> None; mismatch -> a one-line note naming the escapes."""
-    titles = [(0, 1000, 1), (1, 1000, 1), (2, 1000, 1)]
-    assert range_mismatch_note(titles, set(), 1, 3) is None
-
-    note = range_mismatch_note(titles, set(), 1, 2)
-    assert note is not None and "\n" not in note
-    # The suggested fix must always apply: 2=3 is refused past the season's
-    # last episode, 2=e is not.
-    assert "2=e" in note and "n to re-ask" in note
-
-    assert range_mismatch_note(titles[:1], set(), 1, 4) is not None
-    assert range_mismatch_note([], set(), 1, 4) is None  # no eligible titles
-
-
-def test_range_past_end_note():
-    """A range past the season's last episode warns; in-range and unknown-size
-    (max_ep=0) do not."""
-    assert range_past_end_note(5, 3) is not None
-    assert "E5" in range_past_end_note(5, 3) and "3" in range_past_end_note(5, 3)
-    assert range_past_end_note(3, 3) is None
-    assert range_past_end_note(3, 5) is None
-    assert range_past_end_note(5, 0) is None
-
-
-def test_parse_fix_rows():
-    """Parse fix row grammar."""
-    rows = parse_fix_rows("1=5,2=1-2,3=e")
-    assert rows == [(1, "ep", 5, 5), (2, "range", 1, 2), (3, "extra", 0, 0)]
-
-    # Empty
-    assert parse_fix_rows("") == []
-
-    # Invalid range
-    with pytest.raises(ValueError, match="bad double-episode range"):
-        parse_fix_rows("1=2-1")
-
-    # Invalid episode
-    with pytest.raises(ValueError, match="bad episode number"):
-        parse_fix_rows("1=0")
-
-    # Bad format
-    with pytest.raises(ValueError, match="bad episode-map entry"):
-        parse_fix_rows("1=x")
-
-
-def test_fix_rows_repoint():
-    """Test fix row re-pointing."""
-    assignment = {0: (1, 1), 1: (2, 2)}
-    titles = [0, 1]
-    staged = set()
-    title_to_eps = {1: 0, 2: 1}
-
-    # E3 is free; title 0 re-points to it, releasing E1
-    ok = apply_fixes(assignment, titles, staged, "0=3", max_ep=5, title_to_eps=title_to_eps)
-
-    assert ok
-    assert assignment[0] == (3, 3)
-    assert 1 not in title_to_eps or title_to_eps[1] != 0
-
-
-def test_fix_rows_clash_rejection():
-    """Reject row claiming already-claimed episode."""
-    assignment = {0: (1, 1)}
-    titles = [0, 1]  # Add title 1 even though it's not assigned yet
-    staged = set()
-    title_to_eps = {1: 0}
-
-    # Try to assign title 1 to E1 (already claimed by title 0)
-    ok = apply_fixes(assignment, titles, staged, "1=1", max_ep=5, title_to_eps=title_to_eps)
-
-    # Should be rejected (E1 already claimed)
-    assert not ok
-
-
-def test_fix_rows_already_staged():
-    """Reject row claiming already-staged episode."""
-    assignment = {0: (1, 1)}
-    titles = [0]
-    staged = {1}  # E1 already staged
-    title_to_eps = {}
-
-    ok = apply_fixes(assignment, titles, staged, "0=1", max_ep=5, title_to_eps=title_to_eps)
-
-    # Should be rejected
-    assert not ok
-
-
-def test_map_str():
-    """Serialize assignment."""
-    assignment = {0: (1, 1), 1: (2, 3), 2: (0, 0)}
-    assert map_str(assignment) == "0=1,1=2-3,2=e"
-
-
 # Durations grade assignments, they never change them (ADR 0001)
 def test_audit_ratio():
     """disc ÷ tmdb at 2dp; unknown sides are None."""
@@ -283,22 +117,6 @@ def test_sum_disqualified_subset_size_cap():
     assert sum_disqualified(titles) == set()
 
 
-# Play-alls are never ripped; a fix row rescuing one rips it (ADR 0008)
-def test_playall_skip():
-    """The skip set holds exactly the play-alls whose final assignment is
-    extra: the rescued play-all (t3=E5) rips, the play-all left extra (t4)
-    skips, and the plain extra (t2) is not a play-all so it still rips."""
-    assignment = {0: (1, 1), 1: (2, 2), 2: (0, 0), 3: (5, 5), 4: (0, 0)}
-    assert playall_skip({3, 4}, assignment) == {4}
-
-
-def test_playall_skip_all_rescued_or_pinned():
-    """Every play-all rescued by fix rows: the skip set is empty (rip all as
-    today); every play-all pinned extra: all of it skips."""
-    assert playall_skip({3, 4}, {3: (1, 2), 4: (5, 5)}) == set()
-    assert playall_skip({3, 4}, {3: (0, 0), 4: (0, 0)}) == {3, 4}
-
-
 # The play-all-only trigger: one eligible title assigned a range (ADR 0009)
 def test_playall_only_fires():
     """One eligible title whose final assignment is a range: the trigger
@@ -334,14 +152,13 @@ def test_playall_only_disarm_extra():
 
 # The engine seams extracted in slice 01
 
-def test_guess_pairing_matches_guess_range():
-    """The pairing is the per-title view of the same walk guess_range reports."""
+def test_guess_pairing_pairs_episodes_with_titles():
+    """The guess walk pairs each walked episode with its own title."""
     titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
     runtimes = {1: 4020, 2: 2820, 3: 2820}
     names = {1: "ep1", 2: "ep2", 3: "ep3"}
     pairing = guess_pairing(titles, {3}, runtimes, set(), names)
     assert pairing == {1: 0, 2: 1, 3: 2}
-    assert guess_range(titles, {3}, runtimes, set(), names) == (1, 3)
 
 
 def test_prefill_assignment_uses_green_fit():
@@ -403,6 +220,15 @@ def test_unfilled_episodes():
     assert unfilled_episodes(1, 2, assignment) == []
     assert unfilled_episodes(1, 3, {0: (1, 2)}) == [3]
     assert unfilled_episodes(1, 4, {0: (0, 0)}) == [1, 2, 3, 4]
+
+
+def test_past_end_claims():
+    """Assignments running past the season's last episode, ascending; an
+    unknown season size (0) never flags."""
+    a = {0: (1, 1), 1: (9, 9), 2: (3, 4), 3: (11, 12)}
+    assert past_end_claims(a, 8) == [(9, 1), (12, 3)]
+    assert past_end_claims(a, 0) == []
+    assert past_end_claims({0: (1, 2)}, 2) == []
 
 
 def test_sub_floor_titles():

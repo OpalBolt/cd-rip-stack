@@ -5,7 +5,7 @@ import argparse
 import sys
 
 from skive import ui
-from skive.common import MENU, install_interrupt_handler, set_verbosity
+from skive.common import install_interrupt_handler, set_verbosity
 
 
 def cmd_rip_movie(args):
@@ -74,10 +74,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # rip tv
     rip_tv_parser = rip_subparsers.add_parser("tv", help="rip TV show")
-    rip_tv_parser.add_argument("-T", "--titles", nargs="?", const=MENU, default=None, metavar="SPEC",
-                               help="title spec: all, N, N-M, or comma list; bare -T opens a menu")
-    rip_tv_parser.add_argument("-E", "--extras", action="store_true",
-                               help="rip bonus disc extras (no season/matching)")
     rip_tv_parser.add_argument("--tmdbid", metavar="tv:N|URL",
                                help="TMDB TV ID or URL (skip prompt)")
     rip_tv_parser.add_argument("-V", "--verified", action="store_true",

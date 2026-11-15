@@ -115,6 +115,18 @@ def _styled() -> bool:
     return console.is_terminal and not _plain_env()
 
 
+def terminal_present() -> bool:
+    """True terminal presence on stderr, ignoring NO_COLOR/TERM: plainness
+    is a rendering choice, not the non-TTY case. The selection table's
+    refusal seam — it needs a real terminal."""
+    try:
+        if sys.stderr is not None and sys.stderr.isatty():
+            return True
+    except ValueError:  # closed stream
+        pass
+    return bool(console.is_terminal)
+
+
 def _emit(text: Text) -> None:
     """One styled line into scrollback (above the footer while it is live)."""
     with _print_lock:
