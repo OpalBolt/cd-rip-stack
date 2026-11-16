@@ -288,13 +288,16 @@ class RipLog:
 def require_mounted(mnt: str) -> None:
     """Require a share the operator mounted — skive never mounts anything.
 
+    A symlink counts: it resolves to the mountpoint it points at (a link
+    to the NAS share is as good as the share).
+
     Args:
         mnt: Mountpoint path (e.g., /mnt/videos)
 
     Raises:
-        SystemExit: If the path is not a mountpoint
+        SystemExit: If the path does not resolve to a mountpoint
     """
-    if Path(mnt).is_mount():
+    if Path(mnt).resolve().is_mount():
         return
     ui.fail(f"{mnt} is not mounted — mount the share first "
             f"(or point VIDEOS_MOUNT/MUSIC_MOUNT at its mountpoint)")

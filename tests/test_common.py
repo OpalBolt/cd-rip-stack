@@ -211,6 +211,15 @@ class TestRequireMounted:
             skive.common.require_mounted(str(share))
         assert exc.value.code == 1
 
+    def test_symlink_to_mountpoint_passes(self, monkeypatch, tmp_path):
+        """A symlink pointing at the mounted share resolves to the
+        mountpoint and passes (a link to the NAS share is as good)."""
+        link = tmp_path / "vid-link"
+        link.symlink_to("/mnt/videos")
+        monkeypatch.setattr(Path, "is_mount",
+                            lambda self: str(self) == "/mnt/videos")
+        skive.common.require_mounted(str(link))
+
 
 def test_set_verbosity_clamps_to_tiers(monkeypatch):
     """set_verbosity stores the console level clamped to 0/1/2."""
