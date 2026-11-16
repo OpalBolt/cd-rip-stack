@@ -11,7 +11,8 @@ from skive import ui
 from skive.chapter_split import split_combined
 from skive.makemkv import (
     build_selection, inject_profile, promote_staged, purge_junk,
-    rip_header, subtitle_note, rip_titles, hsize,
+    rip_header, subtitle_note, rip_titles, hsize, strip_audio_counts,
+    widened_audio,
 )
 from skive.rip_common import rip_preamble, tv_season_gate
 from skive.selection import (
@@ -542,8 +543,13 @@ def rip_tv(args) -> None:
         keep = preamble.keep
         sub_langs = {l for t in titles_full if t.number in assignment
                      for l in t.subtitles.split(",") if l}
-        sel = build_selection(keep, sub_langs)
-        log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
+        audio_langs = strip_audio_counts(
+            [l for t in titles_full if t.number in assignment
+             for l in t.audio.split(",")])
+        widened = widened_audio(keep, audio_langs, args.keep_all)
+        sel = build_selection(keep, sub_langs, audio_langs, args.keep_all)
+        log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'} "
+                 f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}")
 
         profile_path = inject_profile(sel)
         rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0

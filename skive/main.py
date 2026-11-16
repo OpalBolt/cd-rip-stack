@@ -70,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   help="allow recordable media (DVD±R/RW, BD-R)")
     rip_movie_parser.add_argument("-d", "--disc", type=int, default=0, metavar="N",
                                   help="drive number (default 0); use for concurrent rips from two drives")
+    rip_movie_parser.add_argument("-K", "--keep-all", action="store_true",
+                                  help="stage every audio language, ignoring the keep set (one-shot, audio only)")
     rip_movie_parser.set_defaults(func=cmd_rip_movie)
 
     # rip tv
@@ -80,6 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
                                help="allow recordable media (DVD±R/RW, BD-R)")
     rip_tv_parser.add_argument("-d", "--disc", type=int, default=0, metavar="N",
                                help="drive number (default 0); use for concurrent rips from two drives")
+    rip_tv_parser.add_argument("-K", "--keep-all", action="store_true",
+                               help="stage every audio language, ignoring the keep set (one-shot, audio only)")
     rip_tv_parser.set_defaults(func=cmd_rip_tv)
 
     # rip music

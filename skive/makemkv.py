@@ -35,32 +35,67 @@ def xml_escape(s: str) -> str:
     return s.replace("&", "&amp;")
 
 
-def build_selection(keep_lang: str, sub_langs: set[str] | None = None) -> str:
+def strip_audio_counts(langs: list[str]) -> set[str]:
+    """Strip MakeMKV count suffixes from a scanned audio-language list.
+
+    TitleInfo.audio entries look like "jpn(2)" — `_audio_str` appends the
+    track count; language set logic must see the bare code.
+    """
+    return {re.sub(r"\(\d+\)", "", l) for l in langs if l}
+
+
+def widened_audio(keep_lang: str, audio_langs: set[str] | None,
+                  keep_all: bool) -> set[str]:
+    """Audio languages the selection widens to beyond the keep set.
+
+    keep_all stages every scanned audio language; otherwise widening fires
+    only when the rip set's scanned audio languages are non-empty and none
+    intersects {dan, eng} plus the original language (ADR 0022).
+    """
+    scanned = set(audio_langs or ())
+    base = {"dan", "eng"} | ({keep_lang} if keep_lang else set())
+    if keep_all or (scanned and not (scanned & base)):
+        return scanned
+    return set()
+
+
+def build_selection(keep_lang: str, sub_langs: set[str] | None = None,
+                    audio_langs: set[str] | None = None,
+                    keep_all: bool = False) -> str:
     """Build the MakeMKV selection string.
 
     Args:
         keep_lang: ISO 639-2/B code or "" for keep-all
         sub_langs: subtitle languages present in the ripped titles (rip-set
             union); used only by the "union" SUBTITLE_SYNTAX fallback
+        audio_langs: audio languages present in the ripped titles (rip-set
+            union, count suffixes stripped); widens the audio set when none
+            of them intersects the keep set (ADR 0022)
+        keep_all: -K/--keep-all override — stage every scanned audio language
+            regardless of the keep set (one-shot per run, audio only)
 
     Returns:
         Selection string, e.g. BASELINE (per-type form) or the type-agnostic
         union form.
     """
-    if not keep_lang or keep_lang in ("dan", "eng"):
-        audio_langs = "eng|dan|nolang|single"
-    else:
-        # Prepend the film's original language
-        audio_langs = f"{keep_lang}|dan|eng|nolang|single"
+    base = {"dan", "eng"} | ({keep_lang} if keep_lang else set())
+    added = widened_audio(keep_lang, audio_langs, keep_all)
+    langs_set = base | added
+    order = ([] if not keep_lang or keep_lang in ("dan", "eng") else [keep_lang])
+    order += [l for l in ("dan", "eng") if l in langs_set]
+    order += sorted(langs_set - {"dan", "eng", "nolang", "single"}
+                    - ({keep_lang} if keep_lang else set()))
+    order += [l for l in ("nolang", "single")]  # always present (spec: never dropped)
+    audio_langs_str = "|".join(order)
     if SUBTITLE_SYNTAX == "per-type":
-        if not keep_lang or keep_lang in ("dan", "eng"):
+        if not added and (not keep_lang or keep_lang in ("dan", "eng")):
             # Keep exact order for the baseline case
             return BASELINE
-        return (f"-sel:all,+sel:video,+sel:audio&({audio_langs}),"
+        return (f"-sel:all,+sel:video,+sel:audio&({audio_langs_str}),"
                 "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo")
     # Union fallback: type-agnostic list = audio set + every scanned subtitle
     # language, so subtitles are never dropped by language policy.
-    langs = sorted(set(audio_langs.split("|")) | set(sub_langs or ()))
+    langs = sorted(set(audio_langs_str.split("|")) | set(sub_langs or ()))
     return f"-sel:all,+sel:({'|'.join(langs)}),-sel:(havemulti|havecore),-sel:mvcvideo"
 
 

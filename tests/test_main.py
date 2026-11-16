@@ -158,3 +158,20 @@ def test_validate_doc_folder_walk_needs_no_network(tmp_path, monkeypatch, capsys
     out = capsys.readouterr().err
     assert "X (2000)" in out
     assert "unreadable" in out
+
+
+def test_keep_all_flag_parses_on_both_rip_subcommands():
+    """-K/--keep-all exists on rip movie and rip tv, one-shot store_true."""
+    movie_args = build_parser().parse_args(["rip", "movie", "-K"])
+    assert movie_args.keep_all is True
+    tv_args = build_parser().parse_args(["rip", "tv", "--keep-all"])
+    assert tv_args.keep_all is True
+    # Absent by default
+    assert build_parser().parse_args(["rip", "movie"]).keep_all is False
+    assert build_parser().parse_args(["rip", "tv"]).keep_all is False
+
+
+def test_keep_all_flag_not_on_music_subcommand():
+    """Audio keep-all is a disc-language remedy; rip music has no -K."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["rip", "music", "-K"])

@@ -37,10 +37,12 @@ class FakeArgs:
         part=None,
         tmdbid=None,
         verified=False,
+        keep_all=False,
     ):
         self.part = part
         self.tmdbid = tmdbid
         self.verified = verified
+        self.keep_all = keep_all
 
 
 def test_rip_movie_refuses_recordable():
@@ -992,3 +994,51 @@ def test_post_rip_different_id_refuses_and_keeps_old_file(tmp_path, capsys):
     assert path.read_text(encoding="utf-8") == old_text
     assert "records a different film" in capsys.readouterr().err
     log.note.assert_any_call("validation", "existing validation.json names a different film — kept")
+
+
+def _run_rip_movie_capturing_audio_note(args):
+    """Run rip_movie with the standard mocked hardware/network scaffolding and
+    return the RipLog instance so callers can assert on notes."""
+    mock_pick = TMDBPick(title="Audio Note Movie", year="2021",
+                         original_language="en", type="movie", id="42")
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=mock_pick), \
+            patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
+            patch("skive.rip_movie.rip_titles", return_value=0), \
+            patch("skive.rip_movie.rename_staged"), \
+            patch("skive.rip_movie.subtitle_note", return_value="subs=dan"), \
+            patch("pathlib.Path.unlink"), \
+            patch("skive.rip_common.RipLog") as MockLog:
+        log_instance = MockLog.return_value
+        log_instance.run = "run-1"
+        try:
+            rip_movie(args)
+        except SystemExit:
+            pass
+        return log_instance
+
+
+def test_rip_movie_audio_note_records_widened_and_keep_all():
+    """The audio-phase note stays greppable: widened=… and keep-all=… fields
+    are always present on the baseline run (widened=none, keep-all=no)."""
+    log_instance = _run_rip_movie_capturing_audio_note(FakeArgs())
+    audio_notes = [c.args for c in log_instance.note.call_args_list
+                   if c.args and c.args[0] == "audio"]
+    assert len(audio_notes) == 1
+    text = audio_notes[0][1]
+    assert text.startswith("kept=")
+    assert "widened=none" in text
+    assert "keep-all=no" in text
+
+
+def test_rip_movie_audio_note_keep_all_override():
+    """A -K/--keep-all run records keep-all=yes in the audio note."""
+    log_instance = _run_rip_movie_capturing_audio_note(FakeArgs(keep_all=True))
+    audio_notes = [c.args for c in log_instance.note.call_args_list
+                   if c.args and c.args[0] == "audio"]
+    assert len(audio_notes) == 1
+    assert "keep-all=yes" in audio_notes[0][1]

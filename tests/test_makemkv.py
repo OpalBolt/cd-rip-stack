@@ -10,7 +10,7 @@ from skive import common
 from skive.makemkv import (
     BASELINE, SUBTITLE_SYNTAX, build_selection, inject_profile, purge_junk,
     rename_staged, rip_titles, looks_real, subtitle_note, xml_escape,
-    _run_with_progress,
+    _run_with_progress, strip_audio_counts, widened_audio,
 )
 
 
@@ -62,6 +62,68 @@ def test_build_selection_union_fallback():
     finally:
         skive.makemkv.SUBTITLE_SYNTAX = old
     assert SUBTITLE_SYNTAX == "per-type"
+
+
+def test_build_selection_no_widening_intersecting_audio():
+    """Baseline holds when the scanned audio intersects the keep set: keep=jpn
+    with jpn/eng audio gives today's exact per-type and union strings."""
+    import skive.makemkv
+    sel = build_selection("jpn", audio_langs={"jpn", "eng"})
+    assert sel.startswith("-sel:all,+sel:video,+sel:audio&(jpn|dan|eng|nolang|single)")
+    assert "+sel:subtitle" in sel and sel.endswith("-sel:mvcvideo")
+    old = skive.makemkv.SUBTITLE_SYNTAX
+    skive.makemkv.SUBTITLE_SYNTAX = "union"
+    try:
+        sel2 = build_selection("jpn", {"swe"}, {"jpn", "eng"})
+        langs = sorted({"jpn", "dan", "eng", "nolang", "single", "swe"})
+        assert sel2 == (f"-sel:all,+sel:({'|'.join(langs)}),"
+                        "-sel:(havemulti|havecore),-sel:mvcvideo")
+    finally:
+        skive.makemkv.SUBTITLE_SYNTAX = old
+
+
+def test_build_selection_widens_on_nonintersecting_audio():
+    """ADR 0022: scanned audio missing the keep set widens to every scanned
+    audio language, in both syntax modes."""
+    import skive.makemkv
+    sel = build_selection("jpn", audio_langs={"zho", "cmn"})
+    assert "+sel:audio&(jpn|dan|eng|cmn|zho|nolang|single)" in sel
+    assert "+sel:video" in sel and "+sel:subtitle" in sel
+    assert sel.endswith("-sel:mvcvideo")
+    old = skive.makemkv.SUBTITLE_SYNTAX
+    skive.makemkv.SUBTITLE_SYNTAX = "union"
+    try:
+        sel2 = build_selection("", None, {"zho", "cmn"})
+        assert sel2 == "-sel:all,+sel:(cmn|dan|eng|nolang|single|zho),-sel:(havemulti|havecore),-sel:mvcvideo"
+    finally:
+        skive.makemkv.SUBTITLE_SYNTAX = old
+
+
+def test_build_selection_no_scanned_audio_no_widening():
+    """Empty/None scanned audio never widens or crashes."""
+    assert build_selection("") == BASELINE
+    assert build_selection("jpn", audio_langs=set()) == build_selection("jpn")
+
+
+def test_build_selection_keep_all_short_circuit():
+    """keep_all stages every scanned audio language regardless of overlap."""
+    sel = build_selection("", audio_langs={"eng"}, keep_all=True)
+    assert "+sel:audio&(dan|eng|nolang|single)" in sel  # eng already in base
+    sel2 = build_selection("jpn", audio_langs={"jpn", "zho"}, keep_all=True)
+    assert "+sel:audio&(jpn|dan|eng|zho|nolang|single)" in sel2
+
+def test_widened_audio_helper():
+    """widened_audio: only fires on non-intersection or keep-all."""
+    assert widened_audio("jpn", {"jpn", "eng"}, False) == set()
+    assert widened_audio("jpn", {"zho"}, False) == {"zho"}
+    assert widened_audio("jpn", {"eng"}, True) == {"eng"}
+    assert widened_audio("", None, False) == set()
+
+
+def test_strip_audio_counts():
+    """Count suffixes from _audio_str strings are stripped at the caller seam."""
+    assert strip_audio_counts("jpn(2),eng".split(",")) == {"jpn", "eng"}
+    assert strip_audio_counts([]) == set()
 
 
 def test_baseline_xml_escape_contract():

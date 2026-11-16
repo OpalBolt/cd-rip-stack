@@ -9,7 +9,8 @@ from pathlib import Path
 from skive import ui
 from skive.makemkv import (
     build_selection, hsize, inject_profile, promote_staged, purge_junk,
-    rename_staged, rip_header, subtitle_note, rip_titles,
+    rename_staged, rip_header, subtitle_note, rip_titles, strip_audio_counts,
+    widened_audio,
 )
 from skive.rip_common import rip_preamble
 from skive.selection import (
@@ -273,8 +274,12 @@ def rip_movie(args) -> None:
         # Build selection string
         keep = preamble.keep
         sub_langs = {l for t in infos for l in t.subtitles.split(",") if l}
-        sel = build_selection(keep, sub_langs)
-        log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
+        audio_langs = strip_audio_counts(
+            [l for t in infos for l in t.audio.split(",")])
+        widened = widened_audio(keep, audio_langs, args.keep_all)
+        sel = build_selection(keep, sub_langs, audio_langs, args.keep_all)
+        log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'} "
+                 f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}")
 
         # Inject profile
         profile_path = inject_profile(sel)

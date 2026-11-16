@@ -121,6 +121,7 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers=("",)
     class FakeArgs:
         tmdbid = None
         verified = True
+        keep_all = False
 
     prompt = MagicMock()
     prompt.ask.side_effect = list(answers)
@@ -627,6 +628,7 @@ def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
@@ -692,6 +694,7 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
@@ -767,6 +770,7 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
@@ -840,6 +844,7 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     prompt = MagicMock()
     prompt.ask.side_effect = KeyboardInterrupt
@@ -879,6 +884,7 @@ def test_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     prompt = MagicMock()
     # season Enter, then Ctrl+C inside the table (the app's INTERRUPT result)
@@ -1133,6 +1139,7 @@ class _ValidationFakeArgs:
     extras = False
     tmdbid = None
     verified = True
+    keep_all = False
 
 
 def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
@@ -1286,6 +1293,7 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
@@ -1386,6 +1394,7 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
@@ -1438,6 +1447,7 @@ def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
         extras = False
         tmdbid = None
         verified = True
+        keep_all = False
 
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
