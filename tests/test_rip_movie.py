@@ -1124,22 +1124,36 @@ def test_rip_movie_subtitle_shortfall_warns_and_stays_green(tmp_path, monkeypatc
 
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     warning = "Test Movie (2020)_t01.mkv: scan promised dan, staged none of it"
+    title_dir = tmp_path / "rip" / "movies" / "Test Movie (2020)"
+    title_dir.mkdir(parents=True)
+    main = "Test Movie (2020)_t01.mkv"
+    # A scan row whose subtitle track promises dan — the shortfall mapping
+    # must carry the staged main with that promise.
+    scan_row = TitleInfo(1, 5400, 4_300_000_000, "en", "dan", False)
+    captured = {}
+
+    def fake_rename_staged(*_a, **_k):
+        (title_dir / main).write_bytes(b"x" * 1024)
 
     args = FakeArgs(verified=True)
     mock_pick = TMDBPick(title="Test Movie", year="2020", original_language="en",
                          type="movie", id="12345")
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
-            patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [scan_row])), \
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common._confirm", return_value=True), \
             patch("skive.rip_common.search_loop", return_value=mock_pick), \
             patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
             patch("skive.rip_movie.rip_titles", return_value=0), \
-            patch("skive.rip_movie.rename_staged"), \
+            patch("skive.rip_movie.rename_staged", side_effect=fake_rename_staged), \
             patch("skive.rip_movie.subtitle_note", return_value="subs=none"), \
-            patch("skive.rip_movie.subtitle_shortfall", return_value=[warning]), \
+            patch("skive.rip_movie.post_rip_validation",
+                  return_value=[{"file": main, "dur_s": 600}]), \
+            patch("skive.rip_movie.subtitle_shortfall",
+                  lambda files_promises: captured.update(files_promises) or [warning]), \
             patch("skive.ui.warn") as mock_warn, \
             patch("pathlib.Path.unlink"):
         try:
@@ -1147,7 +1161,10 @@ def test_rip_movie_subtitle_shortfall_warns_and_stays_green(tmp_path, monkeypatc
         except SystemExit as e:
             assert e.code == 0  # warn, never fail (ADR 0022)
 
-    mock_warn.assert_called_once_with(warning)
+    captured_expected = {title_dir / main: {"dan"}}
+    assert captured == captured_expected, f"shortfall mapping {captured} != {captured_expected}"
+    assert "Test Movie (2020)_t01.mkv: scan promised dan, staged none of it" in \
+        [c.args[0] for c in mock_warn.call_args_list]
     lines = [line for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     notes = [line for line in lines if '"subtitle"' in line and "scan promised dan" in line]
     assert notes, "shortfall note missing from the subtitle phase in the run log"

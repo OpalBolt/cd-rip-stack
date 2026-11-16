@@ -610,6 +610,8 @@ def rip_tv(args) -> None:
             # promise, honest beats guessing.
             files_promises = {}
             for target, title_num in sorted((renamed or {}).items()):
+                if not target.exists():
+                    continue  # chapter split deleted the combined file; pieces carry the subs
                 if title_num not in assignment:
                     continue
                 info = next((t for t in titles_full if t.number == title_num), None)

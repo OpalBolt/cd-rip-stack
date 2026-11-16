@@ -1279,6 +1279,7 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
     def fake_rename(_display, _dir, _season, _assignment):
         for name in durs:
             (show_dir / name).write_bytes(b"x" * 1024)
+        return {show_dir / name: num for num, name in enumerate(durs)}
 
     def fake_run(cmd, **k):
         return Mock(stdout=f"{durs.get(Path(cmd[-1]).name, 600.0)}\n")
@@ -1699,14 +1700,29 @@ def test_rip_tv_subtitle_shortfall_warns_and_stays_green(tmp_path, monkeypatch, 
     from skive import ui
 
     warning = "Show (2000)_S01E01.mkv: scan promised dan, staged none of it"
-    monkeypatch.setattr("skive.rip_tv.subtitle_shortfall", lambda files_promises, run=None: [warning])
+    # A scan row whose subtitle track promises dan — the shortfall mapping
+    # must carry each renamed episode with that promise.
+    titles = [TitleInfo(0, 3932, 1, "dan", "dan", False),
+              TitleInfo(1, 3897, 1, "dan", "dan", False),
+              TitleInfo(2, 3653, 1, "dan", "dan", False),
+              TitleInfo(3, 11482, 1, "dan", "", False)]
+    captured = {}
+
+    def fake_shortfall(files_promises, run=None):
+        captured.update(files_promises)
+        return [warning]
+
+    monkeypatch.setattr("skive.rip_tv.subtitle_shortfall", fake_shortfall)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        code = _view_flow(tmp_path, monkeypatch, ["", "", ""])
+        code = _view_flow(tmp_path, monkeypatch, ["", "", ""], titles=titles)
     finally:
         ui.clear_view()
     assert code == 0  # warn, never fail (ADR 0022)
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    expected = {show_dir / f"Show (2000)_S01E0{n}.mkv": {"dan"} for n in (1, 2, 3)}
+    assert captured == expected, f"shortfall mapping {captured} != {expected}"
     assert warning in capsys.readouterr().err
     lines = (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
     assert any('"subtitle"' in l and "scan promised dan" in l for l in lines)
