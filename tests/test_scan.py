@@ -19,7 +19,8 @@ def test_iso2b_mapping():
     assert iso2b("xx") == "xx"  # unknown passes through
     assert iso2b("de") == "deu"
     # Full-table sanity: every key 2 lowercase letters, every value 3 lowercase
-    assert iso2b("zh") == "chi"  # ISO 639-2/B form; MakeMKV normalizes zho too
+    assert iso2b("zh") == "chi"
+    assert iso2b("ja") == "jpn"  # ISO 639-2/B form; MakeMKV normalizes zho too
     # full-table sanity: keys are 2 lowercase letters, values 3
     from skive.scan import _ISO2B
     assert all(re.fullmatch(r"[a-z]{2}", k) for k in _ISO2B)
