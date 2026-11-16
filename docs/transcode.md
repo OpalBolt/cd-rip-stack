@@ -27,15 +27,14 @@ encode entrypoint).
 The box carries every tool: RPM Fusion's HandBrakeCLI and MakeMKV,
 mkvtoolnix, ffmpeg, tesseract with eng+dan language data, seconv (pinned
 at v5.3.0 in the script), cyanrip, and skive itself (editable install via
-uv) — it is a universal box: it rips (with drives passed in via
-`--device`), transcodes, tags, and syncs. The shares bind-mount at
+uv) — it is a universal box: it rips (drives arrive with distrobox's
+default `/dev` share), transcodes, tags, and syncs. The shares bind-mount at
 `/mnt/videos` and `/mnt/music`; all skive runs happen inside the box.
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
 distrobox create -n transcode --image fedora:43 \
-  --volume /mnt/videos:/mnt/videos --volume /mnt/music:/mnt/music \
-  --device /dev/sr0 --device /dev/sg0
+  --volume /mnt/videos:/mnt/videos --volume /mnt/music:/mnt/music
 distrobox enter transcode
 bash ~/git/cd-rip-stack/scripts/setup-transcode.sh   # once, inside the box
 ```

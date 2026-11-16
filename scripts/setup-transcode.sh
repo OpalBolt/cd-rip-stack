@@ -3,12 +3,14 @@
 # One box, every skive command: rip movie|tv|music, transcode, tag, sync-sd.
 #
 #   distrobox create -n transcode --image fedora:43 \
-#     --volume /mnt/videos:/mnt/videos --volume /mnt/music:/mnt/music \
-#     --device /dev/sr0 --device /dev/sg0
+#     --volume /mnt/videos:/mnt/videos --volume /mnt/music:/mnt/music
 #     (the shares: NFS mounts on the host, bind-mounted at the same paths
 #     inside — adjust to your mountpoints. A box that works local paths via
 #     exported VIDEOS_MOUNT/MUSIC_MOUNT needs no --volume at all.
-#     One --device pair per optical drive; makemkv enumerates /dev/sg*.)
+#     Drives need nothing: distrobox shares the host's /dev by default, so
+#     /dev/sr* and /dev/sg* (what makemkv enumerates) are already inside.
+#     Only a box created --unshare-devsys/--unshare-all needs
+#     --additional-flags "--device /dev/sr0 --device /dev/sg0".)
 #   distrobox enter transcode
 #   bash ~/git/cd-rip-stack/scripts/setup-transcode.sh
 #
@@ -82,7 +84,7 @@ command -v HandBrakeCLI mkvmerge ffprobe tesseract seconv skive \
   makemkvcon cyanrip metaflac rsync
 tesseract --list-langs   # want eng + dan
 ls /dev/sr* >/dev/null 2>&1 \
-  || echo "note: no /dev/sr* in the box — disc rips need the box created with --device (header above)"
+  || echo "note: no /dev/sr* in the box — no drive on the host, or the box was created --unshare-devsys (drives come with distrobox's default /dev share; header above)"
 va=$(vainfo --display drm 2>&1 || true)
 if grep -q 'VAEntrypointEncSlice' <<<"$va"; then
   echo "VA-API encode: available ($(grep -c 'VAEntrypointEncSlice' <<<"$va") entrypoints)"
