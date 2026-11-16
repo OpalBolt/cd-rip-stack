@@ -14,14 +14,62 @@ from skive.common import RipLog
 from skive.makemkv import _qval
 
 
+# ISO 639-1 → ISO 639-2 table sourced from the ISO 639-2 code list (Library
+# of Congress, https://www.loc.gov/standards/iso639-2/php/code_list.php) and
+# MakeMKV's published language list. B and T forms both work: MakeMKV
+# normalizes 639-2 variants (a `fra` selection matches `fre` tracks, ADR 0022).
+_ISO2B = {
+        "aa": "aar", "ab": "abk", "ae": "ave", "af": "afr",
+        "ak": "aka", "am": "amh", "an": "arg", "ar": "ara",
+        "as": "asm", "av": "ava", "ay": "aym", "az": "aze",
+        "ba": "bak", "be": "bel", "bg": "bul", "bh": "bih",
+        "bi": "bis", "bm": "bam", "bo": "bod", "br": "bre",
+        "bs": "bos", "ca": "cat", "ce": "che", "ch": "cha",
+        "co": "cos", "cr": "cre", "cs": "ces", "cu": "chu",
+        "cv": "chv", "cy": "cym", "da": "dan", "de": "deu",
+        "dv": "div", "dz": "dzo", "el": "gre", "en": "eng",
+        "eo": "epo", "es": "spa", "et": "est", "eu": "eus",
+        "fa": "fas", "ff": "ful", "fi": "fin", "fj": "fij",
+        "fo": "fao", "fr": "fra", "fy": "fry", "ga": "gle",
+        "gd": "gla", "gl": "glg", "gn": "grn", "gu": "guj",
+        "gv": "glv", "ha": "hau", "he": "heb", "hi": "hin",
+        "ho": "hmo", "hr": "hrv", "ht": "hat", "hu": "hun",
+        "hy": "arm", "hz": "her", "id": "ind", "ig": "ibo",
+        "ii": "iii", "ik": "ipk", "io": "ido", "is": "isl",
+        "it": "ita", "iu": "iku", "ja": "jpn", "jv": "jav",
+        "ka": "kat", "kg": "kon", "ki": "kik", "kj": "kua",
+        "kk": "kaz", "kl": "kal", "km": "khm", "kn": "kan",
+        "ko": "kor", "kr": "kau", "ks": "kas", "ku": "kur",
+        "kv": "kom", "kw": "cor", "ky": "kir", "la": "lat",
+        "lb": "ltz", "lg": "lug", "li": "lim", "ln": "lin",
+        "lo": "lao", "lt": "lit", "lu": "lub", "lv": "lav",
+        "mg": "mlg", "mh": "mah", "mi": "mri", "mk": "mkd",
+        "ml": "mal", "mn": "mon", "mr": "mar", "ms": "msa",
+        "mt": "mlt", "my": "mym", "na": "nau", "nb": "nob",
+        "nd": "nde", "ne": "nep", "ng": "ndo", "nl": "nld",
+        "nn": "nno", "no": "nor", "nr": "nbl", "nv": "nav",
+        "ny": "nya", "oc": "oci", "oj": "oji", "om": "orm",
+        "os": "oss", "pa": "pan", "pi": "pli", "pl": "pol",
+        "ps": "pus", "pt": "por", "qu": "que", "rm": "roh",
+        "rn": "run", "ro": "ron", "ru": "rus", "rw": "kin",
+        "sa": "san", "sc": "srd", "sd": "snd", "se": "sme",
+        "sg": "sag", "si": "sin", "sk": "slk", "sl": "slv",
+        "sm": "smo", "sn": "sna", "so": "som", "sq": "alb",
+        "sr": "srp", "ss": "ssw", "st": "sot", "su": "sun",
+        "sv": "swe", "sw": "swa", "ta": "tam", "te": "tel",
+        "tg": "tgk", "th": "tha", "ti": "tir", "tk": "tuk",
+        "tl": "tgl", "tn": "tsn", "to": "ton", "tr": "tur",
+        "ts": "tso", "tt": "tat", "tw": "twi", "ty": "tah",
+        "ug": "uig", "uk": "ukr", "ur": "urd", "uz": "uzb",
+        "ve": "ven", "vi": "vie", "vo": "vol", "wa": "wln",
+        "wo": "wol", "xh": "xho", "yi": "yid", "yo": "yor",
+        "za": "zha", "zh": "chi", "zu": "zul",
+}
+
+
 def iso2b(code: str) -> str:
-    """ISO 639-1 → ISO 639-2/B for MakeMKV."""
-    mapping = {
-        "en": "eng", "de": "deu", "da": "dan", "fr": "fra",
-        "es": "spa", "it": "ita", "sv": "swe", "no": "nor",
-        "fi": "fin", "nl": "nld",
-    }
-    return mapping.get(code, code)
+    """ISO 639-1 → ISO 639-2 for MakeMKV; unmapped codes pass through."""
+    return _ISO2B.get(code, code)
 
 
 def _info(minlength: int | None, run=subprocess.run, disc: int = 0) -> str:

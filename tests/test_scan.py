@@ -1,6 +1,7 @@
 """Tests for disc scanning: media sniff, the one disc scan."""
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -16,6 +17,13 @@ def test_iso2b_mapping():
     assert iso2b("da") == "dan"
     assert iso2b("fr") == "fra"
     assert iso2b("xx") == "xx"  # unknown passes through
+    assert iso2b("de") == "deu"
+    # Full-table sanity: every key 2 lowercase letters, every value 3 lowercase
+    assert iso2b("zh") == "chi"  # ISO 639-2/B form; MakeMKV normalizes zho too
+    # full-table sanity: keys are 2 lowercase letters, values 3
+    from skive.scan import _ISO2B
+    assert all(re.fullmatch(r"[a-z]{2}", k) for k in _ISO2B)
+    assert all(re.fullmatch(r"[a-z]{3}", v) for v in _ISO2B.values())
 
 
 def test_is_recordable_known_recordable():
