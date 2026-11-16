@@ -1661,3 +1661,33 @@ def test_rip_tv_interrupt_summary_marks_inflight_title_interrupted(tmp_path, mon
                for l in err.splitlines())
     assert err.splitlines()[-1].startswith("fail  interrupted · 0 ok · ")
     assert err.splitlines()[-1].endswith("— partial deleted")
+
+
+def test_rip_tv_audio_gate_trips_and_keeps_staged(tmp_path, monkeypatch, capsys):
+    """A silent episode fails the run loudly — note names the file and the
+    -K remedy — and the staged file stays put (ADR 0019/0022)."""
+    show_dir = tmp_path / "rip" / "tv" / "Show (2000)"
+    show_dir.mkdir(parents=True)
+    ep = show_dir / "Show (2000)_S01E01.mkv"
+    ep.touch()
+    gate = Mock(return_value=[ep])
+    monkeypatch.setattr("skive.rip_tv.silent_staged", gate)
+
+    _, _, rc = _range_flow(tmp_path, monkeypatch, _gk_titles(), [(1, "ep1", 3932)])
+
+    assert rc == 1
+    assert ep.exists()
+    err = capsys.readouterr().err
+    assert f"{ep.name}: no audio stream" in err
+    assert "--keep-all" in err
+
+
+def test_rip_tv_audio_gate_healthy_is_silent(tmp_path, monkeypatch, capsys):
+    """Episodes with audio pass with zero new output; rc stays 0."""
+    gate = Mock(return_value=[])
+    monkeypatch.setattr("skive.rip_tv.silent_staged", gate)
+
+    _, _, rc = _range_flow(tmp_path, monkeypatch, _gk_titles(), [(1, "ep1", 3932)])
+
+    assert rc == 0
+    assert "no audio stream" not in capsys.readouterr().err

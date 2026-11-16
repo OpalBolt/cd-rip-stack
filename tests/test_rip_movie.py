@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+import skive.rip_movie
 from skive.rip_movie import rip_movie
 from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
@@ -1006,6 +1007,7 @@ def _run_rip_movie_capturing_audio_note(args):
             patch("skive.rip_common.ensure_mounted"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common._confirm", return_value=True), \
             patch("skive.rip_common.search_loop", return_value=mock_pick), \
             patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
             patch("skive.rip_movie.rip_titles", return_value=0), \
@@ -1042,3 +1044,74 @@ def test_rip_movie_audio_note_keep_all_override():
                    if c.args and c.args[0] == "audio"]
     assert len(audio_notes) == 1
     assert "keep-all=yes" in audio_notes[0][1]
+
+
+def _rip_movie_flow(args, mock_pick, *, gate_return, title_dir, staged):
+    gate = Mock(return_value=gate_return)
+    """Drive rip_movie with the hardware/network mocked; the audio gate is the
+    seam under test. Staged files are created in the title folder first."""
+    # Staged files are created during the rip (files present at rip start are
+    # preexisting and the gate must skip them), so rip_titles' stand-in lays
+    # them down mid-flow.
+    rip_titles_stub = Mock(return_value=0,
+                           side_effect=lambda *a, **k: ([ (title_dir / n).touch() for n in staged ], 0)[1])
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common._confirm", return_value=True), \
+            patch("skive.rip_common.search_loop", return_value=mock_pick), \
+            patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
+            patch("skive.rip_movie.rip_titles", rip_titles_stub), \
+            patch("skive.rip_movie.rename_staged"), \
+            patch("skive.rip_movie.subtitle_note", return_value="subs=dan"), \
+            patch("skive.rip_movie.post_rip_validation", return_value=[{"file": staged[0], "dur_s": 600}] if staged else []), \
+            patch("skive.rip_movie.silent_staged", gate), \
+            patch("pathlib.Path.unlink"):
+        try:
+            rip_movie(args)
+            return None, gate
+        except SystemExit as e:
+            return e.code, gate
+
+
+def test_rip_movie_audio_gate_trips_and_keeps_staged(tmp_path, monkeypatch, capsys):
+    """A silent main fails the run loudly — note names the file and the -K
+    remedy — and the staged files stay put (ADR 0019/0022)."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    title_dir = tmp_path / "rip" / "movies" / "Test Movie (2020)"
+    title_dir.mkdir(parents=True)
+    main, extra = "Test Movie (2020)_t01.mkv", "Test Movie (2020) - Extra 01.mkv"
+    args = FakeArgs(verified=True)
+    mock_pick = TMDBPick(title="Test Movie", year="2020",
+                         original_language="en", type="movie", id="12345")
+
+    rc, gate = _rip_movie_flow(args, mock_pick, gate_return=[title_dir / main],
+                               title_dir=title_dir, staged=[main, extra])
+
+    assert rc == 1
+    assert (title_dir / main).exists() and (title_dir / extra).exists()
+    err = capsys.readouterr().err
+    assert f"{main}: no audio stream" in err
+    assert "--keep-all" in err
+    # Extras are exempt: only the episode-shaped main is ever probed.
+    assert gate.call_args.args[0] == [title_dir / main]
+
+
+def test_rip_movie_audio_gate_healthy_is_silent(tmp_path, monkeypatch, capsys):
+    """A main with audio passes with zero new output; rc stays 0."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    title_dir = tmp_path / "rip" / "movies" / "Test Movie (2020)"
+    title_dir.mkdir(parents=True)
+    main = "Test Movie (2020)_t01.mkv"
+    args = FakeArgs(verified=True)
+    mock_pick = TMDBPick(title="Test Movie", year="2020",
+                         original_language="en", type="movie", id="12345")
+
+    rc, gate = _rip_movie_flow(args, mock_pick, gate_return=[],
+                               title_dir=title_dir, staged=[main])
+
+    assert rc == 0
+    assert (title_dir / main).exists()
+    assert "no audio stream" not in capsys.readouterr().err

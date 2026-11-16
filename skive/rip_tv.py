@@ -12,7 +12,7 @@ from skive.chapter_split import split_combined
 from skive.makemkv import (
     build_selection, inject_profile, promote_staged, purge_junk,
     rip_header, subtitle_note, rip_titles, hsize, strip_audio_counts,
-    widened_audio,
+    silent_staged, widened_audio,
 )
 from skive.rip_common import rip_preamble, tv_season_gate
 from skive.selection import (
@@ -602,6 +602,17 @@ def rip_tv(args) -> None:
             note = subtitle_note(show_dir)
             ui.info(note)
             log.note("subtitle", note)
+
+            # Audio gate (ADR 0019/0022): a silent episode never reaches the
+            # library. Extras are exempt (" - Extra NN" never matches S*E).
+            silent = silent_staged([f for f in sorted(show_dir.glob("*_S*E*.mkv"))
+                                    if f not in preexisting])
+            for f in silent:
+                ui.fail(f"{f.name}: no audio stream")
+                log.note("audio", f"{f.name}: no audio stream — silent rip kept in place; "
+                                  "re-rip with -K/--keep-all")
+            if silent:
+                worst_rc = worst_rc or 1
 
             # Post-rip validation (map.md decision 6): the record beside the
             # subtitle note — this season's staged episodes probed and graded,

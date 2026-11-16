@@ -1,0 +1,11 @@
+Fixture MKVs for the post-rip audio gate (silent_staged, ADR 0019).
+
+Regenerate with:
+
+    ffmpeg -f lavfi -i testsrc=duration=1:size=160x120:rate=10 \
+        -c:v mpeg4 -q:v 31 silent.mkv -y
+    ffmpeg -f lavfi -i testsrc=duration=1:size=160x120:rate=10 \
+        -f lavfi -i anullsrc=duration=1:sample_rate=8000 \
+        -c:v mpeg4 -q:v 31 -c:a aac -shortest withaudio.mkv -y
+
+silent.mkv: video only, ~1s (~3 KB). withaudio.mkv: same + one silent AAC track.

@@ -555,6 +555,28 @@ def subtitle_note(stage_dir: Path, run=subprocess.run) -> str:
         return f"subs={langs_str} (no dan/eng)"
 
 
+def silent_staged(files: list[Path], run=subprocess.run) -> list[Path]:
+    """Post-rip audio gate (ADR 0019): staged mains/episodes with no audio.
+
+    Args:
+        files: Staged files to probe (extras are never passed in)
+        run: subprocess.run callable for monkeypatching
+
+    Returns:
+        The files that carry zero audio streams (empty when all healthy)
+    """
+    silent = []
+    for f in files:
+        cmd = ["ffprobe", "-v", "error", "-select_streams", "a",
+               "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(f)]
+        result = run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            continue  # unreadable file: a probe failure, not a silent rip
+        if not result.stdout.strip():
+            silent.append(f)
+    return silent
+
+
 def hsize(bytes_val: int) -> str:
     """Format bytes to human readable (4.0 GiB)."""
     units = ["B", "KiB", "MiB", "GiB", "TiB"]

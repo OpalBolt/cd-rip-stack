@@ -9,7 +9,7 @@ import pytest
 from skive import common
 from skive.makemkv import (
     BASELINE, SUBTITLE_SYNTAX, build_selection, inject_profile, purge_junk,
-    rename_staged, rip_titles, looks_real, subtitle_note, xml_escape,
+    rename_staged, rip_titles, looks_real, silent_staged, subtitle_note, xml_escape,
     _run_with_progress, strip_audio_counts, widened_audio,
 )
 
@@ -734,3 +734,34 @@ def test_rip_titles_records_each_selected_titles_rc(tmp_path):
                        outcomes=outcomes)
     assert worst == 2
     assert outcomes == {3: 0, 5: 2, 7: 0}
+
+
+# --- silent_staged: the post-rip audio gate (ADR 0019) ----------------------
+
+_MKV_FIXTURES = Path(__file__).parent / "fixtures" / "mkv"
+
+
+def test_silent_staged_trips_on_silent_fixture():
+    """A video-only fixture MKV trips the gate (real ffprobe)."""
+    silent = _MKV_FIXTURES / "silent.mkv"
+    assert silent_staged([silent]) == [silent]
+
+
+def test_silent_staged_passes_fixture_with_audio():
+    """A fixture with an audio track passes silently (real ffprobe)."""
+    withaudio = _MKV_FIXTURES / "withaudio.mkv"
+    assert silent_staged([withaudio]) == []
+
+
+def test_silent_staged_mocked_run():
+    """Empty ffprobe stdout = zero audio streams; healthy stdout passes."""
+    files = [Path("/s/M_t01.mkv"), Path("/s/M_t02.mkv")]
+    outs = iter(["", "audio\n"])
+    run = Mock(side_effect=lambda cmd, **k: Mock(stdout=next(outs), returncode=0))
+    assert silent_staged(files, run=run) == [files[0]]
+
+
+def test_silent_staged_skips_probe_failures():
+    """An unreadable file is a probe failure, not a silent rip — never trips."""
+    run = Mock(return_value=Mock(stdout="", returncode=2))
+    assert silent_staged([Path("/s/M_t01.mkv")], run=run) == []
