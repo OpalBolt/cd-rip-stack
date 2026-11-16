@@ -9,7 +9,7 @@ import pytest
 from skive import common
 from skive.makemkv import (
     BASELINE, SUBTITLE_SYNTAX, build_selection, inject_profile, purge_junk,
-    rename_staged, rip_titles, looks_real, silent_staged, subtitle_note, xml_escape,
+    rename_staged, rip_titles, looks_real, silent_staged, subtitle_note, subtitle_shortfall, xml_escape,
     _run_with_progress, strip_audio_counts, widened_audio,
 )
 
@@ -765,3 +765,40 @@ def test_silent_staged_skips_probe_failures():
     """An unreadable file is a probe failure, not a silent rip — never trips."""
     run = Mock(return_value=Mock(stdout="", returncode=2))
     assert silent_staged([Path("/s/M_t01.mkv")], run=run) == []
+
+
+# --- subtitle_shortfall: the rip-time subtitle shortfall warning (ADR 0022) ---
+
+def test_subtitle_shortfall_fixture_promised_and_staged():
+    """Promised dan, fixture has a dan sub track (real ffprobe) — no warning."""
+    f = _MKV_FIXTURES / "dansub.mkv"
+    assert subtitle_shortfall({f: {"dan"}}) == []
+
+
+def test_subtitle_shortfall_fixture_promised_missing():
+    """Promised dan+eng, fixture stages dan only — the warning names eng."""
+    f = _MKV_FIXTURES / "dansub.mkv"
+    warnings = subtitle_shortfall({f: {"dan", "eng"}})
+    assert warnings == [f"{f.name}: scan promised eng, staged none of it"]
+
+
+def test_subtitle_shortfall_fixture_subless_disc():
+    """Empty promise (genuinely subless disc) — nothing logged, no probe."""
+    f = _MKV_FIXTURES / "silent.mkv"
+    run = Mock(side_effect=AssertionError("must not probe"))
+    assert subtitle_shortfall({f: set()}, run=run) == []
+
+
+def test_subtitle_shortfall_mocked_run():
+    """Per-file ffprobe, one warning per shortfall file naming the missing langs."""
+    files = [Path("/s/M_t01.mkv"), Path("/s/M_t02.mkv")]
+    outs = iter(["eng\n", "dan\neng\n"])
+    run = Mock(side_effect=lambda cmd, **k: Mock(stdout=next(outs), returncode=0))
+    warnings = subtitle_shortfall({files[0]: {"dan", "eng"}, files[1]: {"dan"}}, run=run)
+    assert warnings == ["M_t01.mkv: scan promised dan, staged none of it"]
+
+
+def test_subtitle_shortfall_empty_when_all_delivered():
+    """Every promised keep-set language staged — zero output."""
+    run = Mock(return_value=Mock(stdout="dan\neng\n", returncode=0))
+    assert subtitle_shortfall({Path("/s/M_t01.mkv"): {"dan", "eng"}}, run=run) == []

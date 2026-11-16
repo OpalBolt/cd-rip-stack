@@ -9,7 +9,7 @@ from pathlib import Path
 from skive import ui
 from skive.makemkv import (
     build_selection, hsize, inject_profile, promote_staged, purge_junk,
-    rename_staged, rip_header, subtitle_note, rip_titles, strip_audio_counts,
+    rename_staged, rip_header, subtitle_note, subtitle_shortfall, rip_titles, strip_audio_counts,
     silent_staged,
     widened_audio,
 )
@@ -311,6 +311,23 @@ def rip_movie(args) -> None:
             note = subtitle_note(title_dir)
             ui.info(note)
             log.note("subtitle", note)
+
+            # Subtitle shortfall (ADR 0022): a keep-set language the scan
+            # promised but staging did not deliver. Warn, never fail —
+            # subless outcomes stay shippable.
+            files_promises = {}
+            for f in sorted(title_dir.glob("*_t*.mkv")):
+                if f in preexisting or not _FINAL_T.search(f.stem):
+                    continue
+                info = next((t for t in infos if t.number == int(_FINAL_T.search(f.stem).group(1))), None)
+                if info is None:
+                    continue  # no matching TitleInfo -> no promise -> skip
+                promises = {l for l in info.subtitles.split(",") if l in ("dan", "eng")}
+                if promises:
+                    files_promises[f] = promises
+            for warning in subtitle_shortfall(files_promises):
+                ui.warn(warning)
+                log.note("subtitle", warning)
 
             # Audio gate (ADR 0019/0022): a silent main never reaches the
             # library. Extras are exempt (" - Extra NN" never matches _tNN).

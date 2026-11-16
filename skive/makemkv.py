@@ -555,6 +555,40 @@ def subtitle_note(stage_dir: Path, run=subprocess.run) -> str:
         return f"subs={langs_str} (no dan/eng)"
 
 
+def subtitle_shortfall(files_promises: dict[Path, set[str]], run=subprocess.run) -> list[str]:
+    """Rip-time subtitle shortfall check (ADR 0022): promised-but-missing subs.
+
+    Compares each staged file's keep-set subtitle languages against what its
+    scan promised; warns, never fails — subless outcomes stay shippable.
+
+    Args:
+        files_promises: staged file -> keep-set languages its TitleInfo promised
+            ({"dan", "eng"} subset); empty promise = skip silently
+        run: subprocess.run callable for monkeypatching
+
+    Returns:
+        One warning string per shortfall file, naming the file and the missing
+        language(s); empty list = no shortfall, no noise.
+    """
+    shortfalls = []
+    for mkv, promised in sorted(files_promises.items()):
+        if not promised:
+            continue
+        cmd = ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream_tags=language", "-of", "csv=p=0", str(mkv)]
+        result = run(cmd, capture_output=True, text=True)
+        staged = set()
+        for line in result.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                line = "und"
+            staged.add(line)
+        missing = promised - staged
+        if missing:
+            shortfalls.append(
+                f"{mkv.name}: scan promised {','.join(sorted(missing))}, staged none of it")
+    return shortfalls
+
+
 def silent_staged(files: list[Path], run=subprocess.run) -> list[Path]:
     """Post-rip audio gate (ADR 0019): staged mains/episodes with no audio.
 

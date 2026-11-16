@@ -1115,3 +1115,68 @@ def test_rip_movie_audio_gate_healthy_is_silent(tmp_path, monkeypatch, capsys):
     assert rc == 0
     assert (title_dir / main).exists()
     assert "no audio stream" not in capsys.readouterr().err
+
+
+def test_rip_movie_subtitle_shortfall_warns_and_stays_green(tmp_path, monkeypatch):
+    """A scan-promised keep-set language missing from the staged main warns
+    (stderr + "subtitle" phase note in the run log) and never fails the run."""
+    from skive import ui
+
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+    warning = "Test Movie (2020)_t01.mkv: scan promised dan, staged none of it"
+
+    args = FakeArgs(verified=True)
+    mock_pick = TMDBPick(title="Test Movie", year="2020", original_language="en",
+                         type="movie", id="12345")
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=mock_pick), \
+            patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
+            patch("skive.rip_movie.rip_titles", return_value=0), \
+            patch("skive.rip_movie.rename_staged"), \
+            patch("skive.rip_movie.subtitle_note", return_value="subs=none"), \
+            patch("skive.rip_movie.subtitle_shortfall", return_value=[warning]), \
+            patch("skive.ui.warn") as mock_warn, \
+            patch("pathlib.Path.unlink"):
+        try:
+            rip_movie(args)
+        except SystemExit as e:
+            assert e.code == 0  # warn, never fail (ADR 0022)
+
+    mock_warn.assert_called_once_with(warning)
+    lines = [line for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    notes = [line for line in lines if '"subtitle"' in line and "scan promised dan" in line]
+    assert notes, "shortfall note missing from the subtitle phase in the run log"
+
+
+def test_rip_movie_subtitle_shortfall_quiet_when_nothing_promised(tmp_path, monkeypatch):
+    """No keep-set subtitles promised — zero shortfall output, rc 0."""
+    monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
+
+    args = FakeArgs(verified=True)
+    mock_pick = TMDBPick(title="Test Movie", year="2020", original_language="en",
+                         type="movie", id="12345")
+
+    with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
+            patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])), \
+            patch("skive.rip_common.ensure_mounted"), \
+            patch("skive.rip_common.purge_junk"), \
+            patch("skive.rip_common.require_online"), \
+            patch("skive.rip_common.search_loop", return_value=mock_pick), \
+            patch("skive.rip_movie.inject_profile", return_value=Path("/tmp/test.xml")), \
+            patch("skive.rip_movie.rip_titles", return_value=0), \
+            patch("skive.rip_movie.rename_staged"), \
+            patch("skive.rip_movie.subtitle_note", return_value="subs=none"), \
+            patch("skive.rip_movie.subtitle_shortfall", return_value=[]), \
+            patch("skive.ui.warn") as mock_warn, \
+            patch("pathlib.Path.unlink"):
+        try:
+            rip_movie(args)
+        except SystemExit as e:
+            assert e.code == 0
+
+    mock_warn.assert_not_called()

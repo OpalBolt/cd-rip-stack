@@ -1691,3 +1691,39 @@ def test_rip_tv_audio_gate_healthy_is_silent(tmp_path, monkeypatch, capsys):
 
     assert rc == 0
     assert "no audio stream" not in capsys.readouterr().err
+
+
+def test_rip_tv_subtitle_shortfall_warns_and_stays_green(tmp_path, monkeypatch, capsys):
+    """A scan-promised keep-set language missing from a staged episode warns
+    (stderr + "subtitle" phase note in the run log) and never fails the run."""
+    from skive import ui
+
+    warning = "Show (2000)_S01E01.mkv: scan promised dan, staged none of it"
+    monkeypatch.setattr("skive.rip_tv.subtitle_shortfall", lambda files_promises, run=None: [warning])
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        code = _view_flow(tmp_path, monkeypatch, ["", "", ""])
+    finally:
+        ui.clear_view()
+    assert code == 0  # warn, never fail (ADR 0022)
+    assert warning in capsys.readouterr().err
+    lines = (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    assert any('"subtitle"' in l and "scan promised dan" in l for l in lines)
+
+
+def test_rip_tv_subtitle_shortfall_quiet_when_nothing_promised(tmp_path, monkeypatch, capsys):
+    """No keep-set subtitles promised — zero shortfall output, rc 0."""
+    from skive import ui
+
+    monkeypatch.setattr("skive.rip_tv.subtitle_shortfall", lambda files_promises, run=None: [])
+    view = ui.RunView(tty=True, live=False)
+    ui.set_view(view)
+    try:
+        code = _view_flow(tmp_path, monkeypatch, ["", "", ""])
+    finally:
+        ui.clear_view()
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "staged none of it" not in err
+    assert "warn " not in err

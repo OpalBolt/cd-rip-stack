@@ -9,3 +9,16 @@ Regenerate with:
         -c:v mpeg4 -q:v 31 -c:a aac -shortest withaudio.mkv -y
 
 silent.mkv: video only, ~1s (~3 KB). withaudio.mkv: same + one silent AAC track.
+
+dansub.mkv: silent.mkv plus one dan SRT subtitle track (for the subtitle
+shortfall probe, subtitle_shortfall). Regenerate with:
+
+    mkvmerge -o dansub.mkv silent.mkv --language 0:dan sub.srt
+
+where sub.srt is a one-cue SRT, e.g.:
+
+    1
+    00:00:00,000 --> 00:00:00,500
+    hi
+
+silent.mkv (video only) doubles as the no-subtitle-track fixture.

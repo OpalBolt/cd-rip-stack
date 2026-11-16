@@ -11,7 +11,7 @@ from skive import ui
 from skive.chapter_split import split_combined
 from skive.makemkv import (
     build_selection, inject_profile, promote_staged, purge_junk,
-    rip_header, subtitle_note, rip_titles, hsize, strip_audio_counts,
+    rip_header, subtitle_note, subtitle_shortfall, rip_titles, hsize, strip_audio_counts,
     silent_staged, widened_audio,
 )
 from skive.rip_common import rip_preamble, tv_season_gate
@@ -602,6 +602,25 @@ def rip_tv(args) -> None:
             note = subtitle_note(show_dir)
             ui.info(note)
             log.note("subtitle", note)
+
+            # Subtitle shortfall (ADR 0022): a keep-set language the scan
+            # promised but staging did not deliver — episodes and extras both
+            # checked against their own TitleInfo. Warn, never fail. Files
+            # with no title mapping (chapter splits) are skipped: no known
+            # promise, honest beats guessing.
+            files_promises = {}
+            for target, title_num in sorted((renamed or {}).items()):
+                if title_num not in assignment:
+                    continue
+                info = next((t for t in titles_full if t.number == title_num), None)
+                if info is None:
+                    continue
+                promises = {l for l in info.subtitles.split(",") if l in ("dan", "eng")}
+                if promises:
+                    files_promises[target] = promises
+            for warning in subtitle_shortfall(files_promises):
+                ui.warn(warning)
+                log.note("subtitle", warning)
 
             # Audio gate (ADR 0019/0022): a silent episode never reaches the
             # library. Extras are exempt (" - Extra NN" never matches S*E).
