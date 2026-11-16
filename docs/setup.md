@@ -25,6 +25,10 @@ sudo pacman -S --needed flac mkvtoolnix-cli rsync tesseract tesseract-data-eng t
 paru -S --needed makemkv cyanrip
 ```
 
+(The universal distrobox gets the same stack from
+`scripts/setup-transcode.sh` — on Fedora, MakeMKV comes from RPM Fusion
+nonfree; see [transcode](transcode.md).)
+
 - `makemkv` — needs a MakeMKV key in `~/.MakeMKV/settings.conf` as
   `app_Key = "..."`; the free beta key rotates every 30 days — an expired key
   refuses BD rips with the fix instructions (ADR 0016), DVD and CD rips are

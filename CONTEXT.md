@@ -116,7 +116,7 @@ A staged file still wearing a MakeMKV-chosen name — the bare drive pattern (`B
 _Avoid_: label, code
 
 **Transcode box**:
-The machine that runs `skive transcode` over the NAS mount — the Ryzen AI 7 350 laptop in its distrobox, the only transcode box: the BC-250 no longer transcodes. Encodes via ffmpeg `hevc_vaapi` on the laptop's VCN hardware (`-e auto`'s resolution; ADR 0010 records the path and its 2026-11 hardware revision). The box is self-contained: every tool it needs — ffmpeg, mkvmerge, tesseract, seconv, and skive itself — lives in the container, built by the repo's `scripts/setup-transcode.sh`; mise stays a rip-box tool.
+The machine that runs `skive transcode` over the NAS mount — the Ryzen AI 7 350 laptop in its distrobox, the only transcode box: the BC-250 no longer transcodes. Encodes via ffmpeg `hevc_vaapi` on the laptop's VCN hardware (`-e auto`'s resolution; ADR 0010 records the path and its 2026-11 hardware revision). The box is self-contained and universal — every tool, rip and transcode both (ffmpeg, mkvmerge, tesseract, seconv, makemkvcon, cyanrip, and skive itself), lives in the container, built by the repo's `scripts/setup-transcode.sh`; mise stays a rip-box tool.
 _Avoid_: encoder box, GPU box, BC-250
 
 **Prefetch**:

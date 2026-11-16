@@ -24,17 +24,27 @@ Running it needs two things on the laptop: a `fedora:43`-era image
 performs (Fedora strips H.264/H.265 from its Mesa for patents; without
 the freeworld build vainfo lists only JPEG/VP9/AV1 and there is no HEVC
 encode entrypoint).
-The box carries every tool: RPM Fusion's HandBrakeCLI, mkvtoolnix, ffmpeg,
-tesseract with eng+dan language data, seconv (pinned at v5.3.0 in the
-script), and skive itself (editable install via uv). The videos share
-bind-mounts at `/mnt/videos`; all skive runs happen inside the box.
+The box carries every tool: RPM Fusion's HandBrakeCLI and MakeMKV,
+mkvtoolnix, ffmpeg, tesseract with eng+dan language data, seconv (pinned
+at v5.3.0 in the script), cyanrip, and skive itself (editable install via
+uv) — it is a universal box: it rips (with drives passed in via
+`--device`), transcodes, tags, and syncs. The shares bind-mount at
+`/mnt/videos` and `/mnt/music`; all skive runs happen inside the box.
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
-distrobox create -n transcode --image fedora:43 --volume /mnt/videos:/mnt/videos
+distrobox create -n transcode --image fedora:43 \
+  --volume /mnt/videos:/mnt/videos --volume /mnt/music:/mnt/music \
+  --device /dev/sr0 --device /dev/sg0
 distrobox enter transcode
 bash ~/git/cd-rip-stack/scripts/setup-transcode.sh   # once, inside the box
 ```
+
+A box that works local paths instead of the shares needs no `--volume` —
+just exported `VIDEOS_MOUNT`/`MUSIC_MOUNT` (see [setup](setup.md)). A BD
+rip needs a MakeMKV `app_Key` in `~/.MakeMKV/settings.conf`; the setup
+script notes its absence and the rip-time scan re-warns with fix
+instructions (ADR 0016).
 
 The script is idempotent — a `git pull` plus a re-run heals a broken box.
 Updating skive is just `git pull` inside `~/git/cd-rip-stack`; the editable

@@ -18,7 +18,7 @@ skive rip movie     # insert the disc, pick from TMDB, set the table
 ```
 
 Env keys, dependencies, drives and logs: [setup](docs/setup.md). The
-transcode box is a separate build — [transcode](docs/transcode.md).
+universal distrobox build — [transcode](docs/transcode.md).
 
 ## Commands
 
@@ -80,7 +80,8 @@ One page per job:
   mirrors, logs.
 - [video](docs/video.md) — `rip movie` / `rip tv` end to end: TMDB picks,
   episode ranges, play-all-only discs.
-- [transcode](docs/transcode.md) — the laptop-only transcode box and `skive transcode`:
+- [transcode](docs/transcode.md) — the universal distrobox (rip + encode)
+  and `skive transcode`:
   subtitle pass, crop gate, quarantine, retry.
 - [music](docs/music.md) — `rip music`, `tag`, `sync-sd`: CD to library to
   SD card.
