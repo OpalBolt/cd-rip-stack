@@ -22,7 +22,7 @@ Two modes, both run from the repo root with real tools and no disc:
       (DVD+R-DL) trips the recordable gate, hence --verified.
 
       VIDEOS_MOUNT must already be a mounted directory (skive.common
-      .ensure_mounted checks /proc/mounts and this box has no sudo), so the
+      .require_mounted refuses anything that is not a mountpoint), so the
       script picks the first of $XDG_RUNTIME_DIR, /tmp, /dev/shm — all
       tmpfs: nothing real is touched and it is gone at reboot. Everything
       the replay creates under the mount is removed afterwards.
@@ -230,10 +230,9 @@ CAPTION = "title 0 carries S04E01-E03 — play-all-only disc, split after the ri
 def _temp_mount_root() -> Path | None:
     """A directory the real flow accepts as VIDEOS_MOUNT.
 
-    ensure_mounted only proceeds when the path is an already-mounted
-    filesystem (/proc/mounts) and this box has no sudo, so a plain temp dir
-    cannot be used. The candidates are tmpfs mounts: nothing written there
-    survives reboot, so the replay touches nothing real.
+    require_mounted only accepts an actual mountpoint, so a plain temp
+    dir cannot be used. The candidates are tmpfs mounts: nothing written
+    there survives reboot, so the replay touches nothing real.
     """
     mounted = {parts[1]
                for line in Path("/proc/mounts").read_text().splitlines()

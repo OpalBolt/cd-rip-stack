@@ -68,7 +68,7 @@ def test_preamble_interrupt_logs_interrupted_and_reraises(tmp_path, monkeypatch)
     closing interrupted line — the run log is never left dangling — and passes
     the interrupt up for the one-line exit."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
+    monkeypatch.setattr(rip_common, "require_mounted", Mock())
     monkeypatch.setattr(rip_common, "sniff_disc",
                         Mock(return_value=("DVD-ROM", "", "")))
     monkeypatch.setattr(rip_common, "scan_disc",
@@ -88,7 +88,7 @@ def _mock_preamble_seams(monkeypatch, media="DVD-ROM", real_log=False):
     log = None if real_log else Mock()
     if not real_log:
         monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))
-    monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
+    monkeypatch.setattr(rip_common, "require_mounted", Mock())
     monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=(media, "", "")))
     monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=(media, "", [])))
     monkeypatch.setattr(rip_common, "purge_junk", Mock())
@@ -195,7 +195,7 @@ def test_preamble_junk_purge_scoped_to_title_folder(tmp_path, monkeypatch):
     this run's d{disc}. A sibling title's junk and a parallel drive's d{disc}
     junk survive (show-scoped purge, spec: Share layout)."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    monkeypatch.setattr(rip_common, "ensure_mounted", Mock())
+    monkeypatch.setattr(rip_common, "require_mounted", Mock())
     monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
     monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=("DVD-ROM", "", [])))
     monkeypatch.setattr(rip_common, "require_online", Mock())

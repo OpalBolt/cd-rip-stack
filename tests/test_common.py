@@ -189,70 +189,27 @@ class TestRipLog:
         assert (tmp_path / "logs" / "scan" / f"{log.run}_disc.txt").exists()
 
 
-class TestEnsureMounted:
-    """NFS mount-on-demand tests."""
+class TestRequireMounted:
+    """Share-mount check tests — skive verifies, the operator mounts."""
 
-    def test_already_mounted_no_mount(self, tmp_path, monkeypatch):
-        """Already mounted -> no mkdir, no mount."""
-        mnt = "/mnt/videos"
-        export = "host:/videos"
-        monkeypatch.setattr(Path, "read_text", lambda self: "none /proc proc rw 0 0\nhost:/videos /mnt/videos nfs rw 0 0")
-        mkdir_called, mount_called = False, False
+    def test_mountpoint_passes(self, monkeypatch):
+        """Path is a mountpoint -> returns quietly, nothing spawned."""
+        def no_run(cmd, *args, **kwargs):
+            raise AssertionError(f"no command may run, got {cmd}")
 
-        def fake_mkdir_p(parents, exist_ok):
-            nonlocal mkdir_called
-            mkdir_called = True
+        monkeypatch.setattr(Path, "is_mount", lambda self: True)
+        monkeypatch.setattr(subprocess, "run", no_run)
+        skive.common.require_mounted("/mnt/videos")
 
-        def fake_run(cmd, *args, **kwargs):
-            nonlocal mount_called
-            mount_called = True
-            return subprocess.CompletedProcess(cmd, 0)
-
-        monkeypatch.setattr(Path, "mkdir", fake_mkdir_p)
-        monkeypatch.setattr(subprocess, "run", fake_run)
-        # Call should exit early without error
-        skive.common.ensure_mounted(mnt, export)
-        assert not mkdir_called
-        assert not mount_called
-
-    def test_not_mounted_empty_export_errors(self, tmp_path, monkeypatch):
-        """Unmounted but export empty -> clear error, exits 1."""
-        mnt = "/mnt/videos"
-        monkeypatch.setattr(Path, "read_text", lambda self: "none /proc proc rw 0 0")
-        mkdir_called = False
-
-        def fake_mkdir_p(parents, exist_ok):
-            nonlocal mkdir_called
-            mkdir_called = True
-
-        monkeypatch.setattr(Path, "mkdir", fake_mkdir_p)
+    def test_plain_directory_errors(self, monkeypatch, tmp_path):
+        """Path exists but is not a mountpoint (e.g. a leftover empty dir)
+        -> one-line error, exit 1."""
+        share = tmp_path / "leftover-empty-dir"
+        share.mkdir()
+        monkeypatch.setattr(Path, "is_mount", lambda self: False)
         with pytest.raises(SystemExit) as exc:
-            skive.common.ensure_mounted(mnt, "")
+            skive.common.require_mounted(str(share))
         assert exc.value.code == 1
-        assert not mkdir_called
-
-    def test_not_mounted_mounts(self, tmp_path, monkeypatch):
-        """Unmounted + export -> mkdir + mount called."""
-        mnt = "/mnt/videos"
-        export = "host:/videos"
-        monkeypatch.setattr(Path, "read_text", lambda self: "none /proc proc rw 0 0")
-        mkdir_called, mount_called = False, []
-
-        def fake_mkdir(self, parents=False, exist_ok=False):
-            nonlocal mkdir_called
-            mkdir_called = True
-
-        def fake_run(cmd, *args, **kwargs):
-            nonlocal mount_called
-            mount_called.append(cmd)
-            return subprocess.CompletedProcess(cmd, 0)
-
-        monkeypatch.setattr(Path, "mkdir", fake_mkdir)
-        monkeypatch.setattr(subprocess, "run", fake_run)
-        skive.common.ensure_mounted(mnt, export)
-        assert mkdir_called
-        assert mount_called
-        assert mount_called[0] == ["sudo", "mount", "-t", "nfs", "host:/videos", "/mnt/videos"]
 
 
 def test_set_verbosity_clamps_to_tiers(monkeypatch):

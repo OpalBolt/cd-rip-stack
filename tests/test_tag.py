@@ -22,8 +22,8 @@ def test_mount_before_beets():
 
         mock_ensure = Mock()
 
-        with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir, "NFS_MUSIC": ""}):
-            with patch("skive.tag.ensure_mounted", mock_ensure):
+        with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir}):
+            with patch("skive.tag.require_mounted", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
                     try:
                         tag_cmd(FakeArgs())
@@ -47,7 +47,7 @@ def test_nothing_to_import(tmp_path, monkeypatch):
 
     mock_ensure = Mock()
 
-    with patch("skive.tag.ensure_mounted", mock_ensure):
+    with patch("skive.tag.require_mounted", mock_ensure):
         with patch("pathlib.Path.exists", new=selective_exists):
             try:
                 tag_cmd(FakeArgs())
@@ -76,8 +76,8 @@ def test_beets_invoked_correctly():
         mock_run = Mock(return_value=Mock(returncode=0))
         mock_ensure = Mock()
 
-        with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir, "NFS_MUSIC": ""}):
-            with patch("skive.tag.ensure_mounted", mock_ensure):
+        with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir}):
+            with patch("skive.tag.require_mounted", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
                     with patch("sys.executable", "/fake/python"):
                         tag_cmd(FakeArgs(), run=mock_run)
@@ -91,7 +91,6 @@ def test_beets_invoked_correctly():
 def test_beets_child_gets_repo_on_pythonpath(tmp_path, monkeypatch):
     """The local filing plugin is importable regardless of subprocess cwd."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
     (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
     captured = {}
 
@@ -100,7 +99,7 @@ def test_beets_child_gets_repo_on_pythonpath(tmp_path, monkeypatch):
         captured["env"] = env
         return Mock(returncode=0)
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     repo_root = str(Path(__file__).parent.parent.resolve())
@@ -115,22 +114,21 @@ def test_music_mount_env_override():
 
         mock_ensure = Mock()
 
-        with patch.dict(os.environ, {"MUSIC_MOUNT": "/custom/music", "NFS_MUSIC": ""}):
-            with patch("skive.tag.ensure_mounted", mock_ensure):
+        with patch.dict(os.environ, {"MUSIC_MOUNT": "/custom/music"}):
+            with patch("skive.tag.require_mounted", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
                     try:
                         tag_cmd(FakeArgs())
                     except SystemExit:
                         pass
 
-        # Check ensure_mounted was called with custom mount
-        mock_ensure.assert_called_once_with("/custom/music", "")
+        # Check require_mounted was called with custom mount
+        mock_ensure.assert_called_once_with("/custom/music")
 
 
 def test_three_sources_order_and_flags(tmp_path, monkeypatch):
     """Test three sources mean three calls with the right flags and order."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
 
     # Populate albums in cd, bandcamp, other
     for source in ("cd", "bandcamp", "other"):
@@ -142,7 +140,7 @@ def test_three_sources_order_and_flags(tmp_path, monkeypatch):
         calls.append(cmd)
         return Mock(returncode=0)
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     assert len(calls) == 3
@@ -163,7 +161,6 @@ def test_three_sources_order_and_flags(tmp_path, monkeypatch):
 def test_tag_single_source_bandcamp(tmp_path, monkeypatch):
     """Test `tag bandcamp` means one call with -A flag."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
 
     for source in ("cd", "bandcamp", "other"):
         sdir = tmp_path / "rip" / source / "Album"
@@ -177,7 +174,7 @@ def test_tag_single_source_bandcamp(tmp_path, monkeypatch):
     args = FakeArgs()
     args.source = "bandcamp"
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(args, run=fake_run)
 
     assert len(calls) == 1
@@ -188,7 +185,6 @@ def test_tag_single_source_bandcamp(tmp_path, monkeypatch):
 def test_tag_single_source_cd(tmp_path, monkeypatch):
     """Test `tag cd` means one call without -A flag."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
 
     sdir = tmp_path / "rip" / "cd" / "Album"
     sdir.mkdir(parents=True)
@@ -201,7 +197,7 @@ def test_tag_single_source_cd(tmp_path, monkeypatch):
     args = FakeArgs()
     args.source = "cd"
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(args, run=fake_run)
 
     assert len(calls) == 1
@@ -212,7 +208,6 @@ def test_tag_single_source_cd(tmp_path, monkeypatch):
 def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
     """Test empty source folders mean a clean exit 0 with 'nothing to import'."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
 
     # Create empty source dirs
     for source in ("cd", "bandcamp", "other"):
@@ -220,7 +215,7 @@ def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
 
     mock_run = Mock()
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         try:
             tag_cmd(FakeArgs(), run=mock_run)
         except SystemExit as e:
@@ -233,7 +228,6 @@ def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
 def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
     """Test non-empty folders run, empty ones are skipped."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
 
     # cd is empty, bandcamp has album, other does not exist
     (tmp_path / "rip" / "cd").mkdir(parents=True)
@@ -244,7 +238,7 @@ def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
         calls.append(cmd)
         return Mock(returncode=0)
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     assert len(calls) == 1
@@ -254,7 +248,6 @@ def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
 def test_tag_nonzero_exit_if_beets_fails(tmp_path, monkeypatch):
     """Test nonzero exit if any beets invocation fails."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
 
     (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
     (tmp_path / "rip" / "other" / "Album").mkdir(parents=True)
@@ -264,7 +257,7 @@ def test_tag_nonzero_exit_if_beets_fails(tmp_path, monkeypatch):
         calls.append(cmd)
         return Mock(returncode=42)
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         try:
             tag_cmd(FakeArgs(), run=fake_run)
             assert False, "Should have exited"
@@ -283,7 +276,6 @@ def _tag_log_lines(root):
 def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
     """A moved album is filed, a remaining audio file is left, and raw stays."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
     filed = tmp_path / "rip" / "cd" / "Filed"
     left = tmp_path / "rip" / "cd" / "Left"
     filed.mkdir(parents=True)
@@ -296,7 +288,7 @@ def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
         filed.rmdir()
         return Mock(returncode=0, stdout="beets imported\n")
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     lines = _tag_log_lines(tmp_path)
@@ -310,7 +302,6 @@ def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
 def test_clean_tag_deletes_raw_log(tmp_path, monkeypatch):
     """When all album folders lose their audio, a clean raw log is removed."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
     album = tmp_path / "rip" / "cd" / "Album"
     album.mkdir(parents=True)
 
@@ -318,7 +309,7 @@ def test_clean_tag_deletes_raw_log(tmp_path, monkeypatch):
         album.rmdir()
         return Mock(returncode=0, stdout="done\n")
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     lines = _tag_log_lines(tmp_path)
@@ -329,13 +320,12 @@ def test_clean_tag_deletes_raw_log(tmp_path, monkeypatch):
 def test_tag_interrupt_records_130_and_keeps_raw(tmp_path, monkeypatch):
     """An interrupted beets session is logged and its raw transcript remains."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
     (tmp_path / "rip" / "cd" / "Album").mkdir(parents=True)
 
     def fake_run(cmd):
         raise KeyboardInterrupt
 
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         try:
             tag_cmd(FakeArgs(), run=fake_run)
         except SystemExit as exc:
@@ -361,9 +351,8 @@ def test_tag_argparse_unknown_source():
 def _tag_stderr(tmp_path, monkeypatch, capsys, fake_run):
     """Run tag over a temporary share; return (exit code, stderr lines)."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setenv("NFS_MUSIC", "")
     code = 0
-    with patch("skive.tag.ensure_mounted"):
+    with patch("skive.tag.require_mounted"):
         try:
             tag_cmd(FakeArgs(), run=fake_run)
         except SystemExit as exc:

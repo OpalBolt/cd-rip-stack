@@ -301,7 +301,7 @@ def test_sync_sd_failed_run_keeps_rsync_diagnostics_in_raw_log(tmp_path, capsys)
     card.mkdir()
     (tmp_path / "library").mkdir()
     out = b"rsync: send_files failed to open /lib/x: Permission denied (13)\n"
-    with stub(find_mounted_cards=Mock(return_value=[str(card)]), ensure_mounted=Mock(),
+    with stub(find_mounted_cards=Mock(return_value=[str(card)]), require_mounted=Mock(),
               rsync_library=lambda src, card, log=None: rsync_library(
                   src, card, popen=FakePopen(out, returncode=23), log=log)):
         with pytest.raises(SystemExit) as e:
@@ -329,7 +329,7 @@ def test_sync_sd_live_tty_view_has_no_perf_sampler(tmp_path, monkeypatch):
     card = tmp_path / "card"
     card.mkdir()
     (tmp_path / "library").mkdir()
-    with stub(find_mounted_cards=Mock(return_value=[str(card)]), ensure_mounted=Mock(),
+    with stub(find_mounted_cards=Mock(return_value=[str(card)]), require_mounted=Mock(),
               rsync_library=fake_rsync):
         with pytest.raises(SystemExit):
             sync_sd(FakeArgs())
@@ -348,7 +348,7 @@ def test_sync_sd_mountpoint_argument_bypasses_detection(tmp_path):
     with stub(
         find_mounted_cards=detect,
         list_unmounted_disks=detect,
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=Mock(return_value=(0, 0)),
     ):
         try:
@@ -365,7 +365,7 @@ def test_sync_sd_mounted_card_used(tmp_path):
     rsync = Mock(return_value=(0, 0))
     with stub(
         find_mounted_cards=Mock(return_value=[str(card)]),
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=rsync,
     ):
         try:
@@ -385,7 +385,7 @@ def test_sync_sd_several_mounted_prompt_list_and_pick(capsys, tmp_path, ask):
     rsync = Mock(return_value=(0, 0))
     with stub(
         find_mounted_cards=Mock(return_value=[str(a), str(b)]),
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=rsync,
     ):
         try:
@@ -431,7 +431,7 @@ def test_sync_sd_unmounted_pick_then_mount_then_unmount(capsys, tmp_path, ask):
         resolve_partition=Mock(return_value="sdb1"),
         mount_card=Mock(return_value=True),
         unmount_card=umount,
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=Mock(return_value=(0, 0)),
         tempfile=Mock(mkdtemp=Mock(return_value=str(cardmnt))),
     ):
@@ -456,7 +456,7 @@ def test_sync_sd_unmount_on_rsync_failure(tmp_path, ask):
         resolve_partition=Mock(return_value="sdb1"),
         mount_card=Mock(return_value=True),
         unmount_card=umount,
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=Mock(return_value=(5, 100)),
         tempfile=Mock(mkdtemp=Mock(return_value=str(cardmnt))),
     ):
@@ -478,7 +478,7 @@ def test_sync_sd_unmount_on_keyboard_interrupt(tmp_path, ask):
         resolve_partition=Mock(return_value="sdb1"),
         mount_card=Mock(return_value=True),
         unmount_card=umount,
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=Mock(side_effect=KeyboardInterrupt),
         tempfile=Mock(mkdtemp=Mock(return_value=str(cardmnt))),
     ):
@@ -515,7 +515,7 @@ def test_sync_sd_preexisting_card_never_unmounted(tmp_path):
     umount = Mock()
     with stub(
         find_mounted_cards=Mock(return_value=[str(card)]),
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=Mock(return_value=(0, 0)),
         unmount_card=umount,
     ):
@@ -531,7 +531,7 @@ def test_sync_sd_no_library_dir(tmp_path):
     card.mkdir()
     with stub(
         find_mounted_cards=Mock(return_value=[str(card)]),
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
     ):
         with pytest.raises(SystemExit) as e:
             sync_sd(FakeArgs())
@@ -552,7 +552,7 @@ def test_sync_sd_end_to_end_copies_files(tmp_path):
 
     with stub(
         find_mounted_cards=Mock(return_value=[str(card)]),
-        ensure_mounted=Mock(),
+        require_mounted=Mock(),
         rsync_library=Mock(side_effect=fake_rsync),
     ):
         try:
@@ -578,7 +578,7 @@ def _run_with_rsync(tmp_path, capsys, outcome):
     card.mkdir()
     (tmp_path / "library").mkdir()
     with stub(find_mounted_cards=Mock(return_value=[str(card)]),
-              ensure_mounted=Mock(), rsync_library=outcome):
+              require_mounted=Mock(), rsync_library=outcome):
         with pytest.raises(SystemExit) as e:
             sync_sd(FakeArgs())
     return e.value.code, capsys.readouterr().err.splitlines()
@@ -610,7 +610,7 @@ def test_sync_sd_interrupt_result_line(tmp_path, capsys):
 
 def test_sync_sd_no_result_line_when_rsync_never_ran(tmp_path, capsys):
     (tmp_path / "card").mkdir()
-    with stub(ensure_mounted=Mock()):
+    with stub(require_mounted=Mock()):
         with pytest.raises(SystemExit):
             sync_sd(FakeArgs(mountpoint=str(tmp_path / "card")))  # no library dir
     err = capsys.readouterr().err

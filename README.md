@@ -12,8 +12,9 @@ SRT sidecars. Eight commands below; each docs page is one job.
 ```bash
 git clone <this repo> && cd cd-rip-stack
 mise run install    # skive on PATH, editable from this repo (or: uv tool install --editable .)
-export TMDB_API_KEY=... NFS_VIDEOS=host:/export/videos NFS_MUSIC=host:/export/music
-skive rip movie     # shares mount on demand; insert the disc, pick from TMDB, set the table
+export TMDB_API_KEY=...
+# mount the shares at /mnt/videos and /mnt/music — skive never mounts for you
+skive rip movie     # insert the disc, pick from TMDB, set the table
 ```
 
 Env keys, dependencies, drives and logs: [setup](docs/setup.md). The
@@ -74,7 +75,7 @@ table](docs/video.md#the-selection-table), not at a prompt. The
 One page per job:
 
 - [setup](docs/setup.md) — once per ripping machine: dependencies, env vars,
-  NFS mounts, drives, logs.
+  share mounts, drives, logs.
 - [nas-layout](docs/nas-layout.md) — the two share trees: staging, libraries,
   mirrors, logs.
 - [video](docs/video.md) — `rip movie` / `rip tv` end to end: TMDB picks,

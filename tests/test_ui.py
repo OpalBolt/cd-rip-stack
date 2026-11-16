@@ -21,8 +21,8 @@ def test_info_renders_tagged_line_on_stderr(capsys):
 
 
 def test_warn_renders_tagged_line_on_stderr(capsys):
-    ui.warn("cannot mount music share; skipping")
-    assert capsys.readouterr().err == "warn  cannot mount music share; skipping\n"
+    ui.warn("music share not mounted; skipping")
+    assert capsys.readouterr().err == "warn  music share not mounted; skipping\n"
 
 
 def test_fail_renders_tagged_line_on_stderr(capsys):

@@ -10,7 +10,7 @@ import time
 import pty
 from pathlib import Path
 
-from skive.common import RipLog, ensure_mounted, kill_child_after_grace
+from skive.common import RipLog, require_mounted, kill_child_after_grace
 from skive import ui
 
 SOURCES = ("cd", "other", "bandcamp")
@@ -183,9 +183,8 @@ def tag(args, run=None) -> None:
     ``run`` is an injectable subprocess seam for tests.  The normal path uses
     a pty so beets retains its interactive prompts while its output is logged.
     """
-    nfs_music = os.environ.get("NFS_MUSIC", "")
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
-    ensure_mounted(music_mnt, nfs_music)
+    require_mounted(music_mnt)
 
     config_path = Path(__file__).parent.parent / "config" / "beets-config.yaml"
     if not config_path.exists():

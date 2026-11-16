@@ -44,14 +44,12 @@ box, or beets fails at start-up.
 
 Keys come from the process environment — skive never reads a `.env` file.
 Export them in your shell profile or `mise env`; `.env.example` records the
-three primary keys.
+the key.
 
 | Variable | Meaning |
 |---|---|
 | `TMDB_API_KEY` | TMDB API key, for movie/TV naming on `rip movie` / `rip tv` |
-| `NFS_VIDEOS` | NFS export for the videos share, e.g. `192.168.103.4:/export/videos` |
-| `NFS_MUSIC` | NFS export for the music share, e.g. `192.168.103.4:/export/music` |
-| `VIDEOS_MOUNT` / `MUSIC_MOUNT` | override the mountpoints (default `/mnt/videos` / `/mnt/music`) |
+| `VIDEOS_MOUNT` / `MUSIC_MOUNT` | override the share mountpoints (default `/mnt/videos` / `/mnt/music`) |
 | `RIP_MINLENGTH` | title-scan minimum length in seconds (default `120`) |
 
 Three names the code reads that are never operator config: `MAKEMKV_INFO`
@@ -60,13 +58,12 @@ below); `SKIVE_TAG_RUN` / `SKIVE_TAG_MODE` are set and restored by `skive
 tag` around its beets child; `VIDEOS` is a default in the legacy
 `scripts/backfill.py` only.
 
-## NFS mounts
+## Share mounts
 
-Both shares mount on demand: before a command touches the share, skive checks
-`/proc/mounts` and, if the mountpoint is not mounted, runs
-`sudo mount -t nfs <export> <mountpoint>`. skive never unmounts. The export
-comes from `NFS_VIDEOS` / `NFS_MUSIC`; an empty export or a failed mount is a
-one-line error and exit 1.
+skive never mounts. Mount both shares before running — by hand, or from
+`fstab` or a systemd automount. Before a command touches a share, skive
+checks the mountpoint is mounted; a missing mount is a one-line error and
+exit 1. `VIDEOS_MOUNT` / `MUSIC_MOUNT` point skive at a different mountpoint.
 
 ## Drives
 

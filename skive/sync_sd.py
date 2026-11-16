@@ -18,7 +18,7 @@ from pathlib import Path
 
 from rich.text import Text
 
-from skive.common import RipLog, ensure_mounted, kill_child_after_grace
+from skive.common import RipLog, require_mounted, kill_child_after_grace
 from skive import ui
 
 
@@ -308,8 +308,8 @@ def sync_sd(args) -> None:
                 sys.exit(1)
             log.name = Path(card).name
 
-        # Only pay the NFS mount cost once a card is in hand.
-        ensure_mounted(mnt, os.environ.get("NFS_MUSIC", ""))
+        # Only check the share once a card is in hand.
+        require_mounted(mnt)
         if not src.is_dir():
             ui.fail(f"no library at {src} (run tag first)")
             sys.exit(1)

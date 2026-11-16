@@ -13,7 +13,7 @@ from typing import NamedTuple
 
 from rich.text import Text
 
-from skive.common import ensure_mounted
+from skive.common import require_mounted
 from skive import ui
 from skive.tag import SOURCES
 
@@ -174,15 +174,15 @@ def music_suggestions(query: str, music_mnt: Path) -> list[str]:
         query.casefold(), list(names), n=3, cutoff=0.6)]
 
 
-def _mount_or_note(mount: str, export: str, label: str) -> bool:
-    """Mount a scoped share, converting mount failures into one note line."""
-    # ensure_mounted prints its own diagnostics before raising SystemExit. Keep
+def _require_or_note(mount: str, label: str) -> bool:
+    """Require a scoped share mounted, converting a miss into one note line."""
+    # require_mounted prints its own diagnostics before raising SystemExit. Keep
     # the search contract to one note by capturing that implementation detail.
     try:
         with redirect_stderr(io.StringIO()):
-            ensure_mounted(mount, export)
+            require_mounted(mount)
     except (SystemExit, OSError, RuntimeError):
-        ui.warn(f"cannot mount {label} share; skipping")
+        ui.warn(f"{label} share not mounted; skipping")
         return False
     return True
 
@@ -199,12 +199,12 @@ def run_search(args) -> None:
     searched_any = False
     if scope in video_kinds or scope == "all":
         kinds = video_kinds.get(scope, ("movies", "tv"))
-        if _mount_or_note(videos_mnt, os.environ.get("NFS_VIDEOS", ""), "video"):
+        if _require_or_note(videos_mnt, "video"):
             searched_any = True
             hits.extend(find_hits(args.query, Path(videos_mnt), kinds))
             near.extend(suggestions(args.query, Path(videos_mnt), kinds))
     if scope in ("music", "all"):
-        if _mount_or_note(music_mnt, os.environ.get("NFS_MUSIC", ""), "music"):
+        if _require_or_note(music_mnt, "music"):
             searched_any = True
             hits.extend(find_music_hits(args.query, Path(music_mnt)))
             near.extend(music_suggestions(args.query, Path(music_mnt)))

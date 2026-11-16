@@ -1,4 +1,4 @@
-"""Common helpers: title-spec parser, NFS mount-on-demand, JSONL run/raw logs,
+"""Common helpers: title-spec parser, share mount checks, JSONL run/raw logs,
 the shared interrupt (Ctrl+C) machinery."""
 
 import json
@@ -285,27 +285,17 @@ class RipLog:
             self._raw_log.unlink(missing_ok=True)
 
 
-def ensure_mounted(mnt: str, export: str) -> None:
-    """Mount an NFS export on demand, never unmount.
+def require_mounted(mnt: str) -> None:
+    """Require a share the operator mounted — skive never mounts anything.
 
     Args:
         mnt: Mountpoint path (e.g., /mnt/videos)
-        export: NFS export (e.g., host:/path)
 
     Raises:
-        SystemExit: If mount fails or export is empty
+        SystemExit: If the path is not a mountpoint
     """
-    # Check if already mounted by parsing /proc/mounts
-    for line in Path("/proc/mounts").read_text().splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[1] == mnt:
-            return  # Already mounted
-
-    if not export:
-        ui.fail(f"{mnt} not mounted and no export given (set NFS_MUSIC/NFS_VIDEOS?)")
-        sys.exit(1)
-
-    Path(mnt).mkdir(parents=True, exist_ok=True)
-    if subprocess.run(["sudo", "mount", "-t", "nfs", export, mnt]).returncode != 0:
-        ui.fail(f"mount {export} -> {mnt} failed (export unreachable, or no sudo / nfs client on the host?)")
-        sys.exit(1)
+    if Path(mnt).is_mount():
+        return
+    ui.fail(f"{mnt} is not mounted — mount the share first "
+            f"(or point VIDEOS_MOUNT/MUSIC_MOUNT at its mountpoint)")
+    sys.exit(1)

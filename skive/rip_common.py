@@ -8,7 +8,7 @@ from skive import ui
 from dataclasses import dataclass
 from pathlib import Path
 
-from skive.common import RipLog, ensure_mounted, sanitize
+from skive.common import RipLog, require_mounted, sanitize
 from skive.makemkv import purge_junk
 from skive.scan import (
     TitleInfo, is_recordable, iso2b, scan_disc, sniff_disc,
@@ -39,10 +39,9 @@ class Preamble:
 def rip_preamble(kind: str, script: str, args) -> Preamble:
     """Mount staging, gate the disc, resolve common TMDB metadata, then create
     the title's staging tree and purge its junk labels (CONTEXT.md: Staging)."""
-    nfs_videos = os.environ.get("NFS_VIDEOS", "")
     videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
 
-    ensure_mounted(videos_mnt, nfs_videos)
+    require_mounted(videos_mnt)
     disc = getattr(args, "disc", 0)
 
     log = RipLog(script, "makemkvcon", "-")
