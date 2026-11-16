@@ -52,7 +52,7 @@ def test_rip_movie_refuses_recordable():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     try:
@@ -76,7 +76,7 @@ def test_rip_movie_allows_recordable_with_verified():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -98,7 +98,7 @@ def test_rip_movie_no_disc():
 
     with patch("skive.rip_common.sniff_disc", return_value=("", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             try:
                 rip_movie(args)
                 assert False, "Should have exited"
@@ -112,7 +112,7 @@ def test_rip_movie_tmdbid():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     mock_pick = TMDBPick(
@@ -148,7 +148,7 @@ def test_rip_movie_part():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -181,7 +181,7 @@ def test_rip_movie_worst_rc_exits():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -210,7 +210,7 @@ def test_rip_movie_rip_failure_notes():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -239,7 +239,7 @@ def test_rip_movie_runtime_note_when_known():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -267,7 +267,7 @@ def test_rip_movie_no_runtime_note_when_unknown():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -294,7 +294,7 @@ def test_rip_movie_clean_rip_exits_0():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -316,7 +316,7 @@ def test_rip_movie_partial_rip_exits_1():
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=mock_pick):
@@ -359,7 +359,7 @@ def test_rip_movie_interrupt_purges_partial_keeps_renamed_exits_130(tmp_path, ca
     with patch("builtins.input", return_value="y"), \
             patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=mock_pick), \
             patch("skive.rip_movie.inject_profile", return_value=tmp_path / "absent-profile.xml"), \
@@ -402,7 +402,7 @@ def test_rip_movie_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, caps
         with patch("builtins.input", return_value="y"), \
                 patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
                 patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
-                patch("skive.rip_common.require_mounted"), \
+                patch("skive.rip_common.ensure_share"), \
                 patch("skive.rip_common.require_online"), \
                 patch("skive.rip_common.search_loop", return_value=mock_pick), \
                 patch("skive.rip_movie.inject_profile", return_value=tmp_path / "absent-profile.xml"), \
@@ -452,7 +452,7 @@ def test_rip_movie_preamble_interrupt_exits_130_with_one_line(tmp_path, capsys):
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", side_effect=KeyboardInterrupt):
         with pytest.raises(KeyboardInterrupt):
@@ -661,7 +661,7 @@ def _movie_flow(monkeypatch, titles, pick=MAMMA, table_actions=None, root=None):
     monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))
     monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
     monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=("DVD-ROM", "", titles)))
-    monkeypatch.setattr(rip_common, "require_mounted", Mock())
+    monkeypatch.setattr(rip_common, "ensure_share", Mock())
     monkeypatch.setattr(rip_common, "purge_junk", Mock())
     monkeypatch.setattr(rip_common, "require_online", Mock())
     monkeypatch.setattr(rip_common, "search_loop", Mock(return_value=pick))
@@ -1004,7 +1004,7 @@ def _run_rip_movie_capturing_audio_note(args):
                          original_language="en", type="movie", id="42")
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common._confirm", return_value=True), \
@@ -1057,7 +1057,7 @@ def _rip_movie_flow(args, mock_pick, *, gate_return, title_dir, staged):
                            side_effect=lambda *a, **k: ([ (title_dir / n).touch() for n in staged ], 0)[1])
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common._confirm", return_value=True), \
@@ -1141,7 +1141,7 @@ def test_rip_movie_subtitle_shortfall_warns_and_stays_green(tmp_path, monkeypatc
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", [scan_row])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common._confirm", return_value=True), \
@@ -1180,7 +1180,7 @@ def test_rip_movie_subtitle_shortfall_quiet_when_nothing_promised(tmp_path, monk
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD+R", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD+R", "", [])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=mock_pick), \

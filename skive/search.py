@@ -13,7 +13,7 @@ from typing import NamedTuple
 
 from rich.text import Text
 
-from skive.common import require_mounted
+from skive.common import ensure_share
 from skive import ui
 from skive.tag import SOURCES
 
@@ -176,11 +176,11 @@ def music_suggestions(query: str, music_mnt: Path) -> list[str]:
 
 def _require_or_note(mount: str, label: str) -> bool:
     """Require a scoped share mounted, converting a miss into one note line."""
-    # require_mounted prints its own diagnostics before raising SystemExit. Keep
+    # ensure_share prints its own diagnostics before raising SystemExit. Keep
     # the search contract to one note by capturing that implementation detail.
     try:
         with redirect_stderr(io.StringIO()):
-            require_mounted(mount)
+            ensure_share(mount)
     except (SystemExit, OSError, RuntimeError):
         ui.warn(f"{label} share not mounted; skipping")
         return False

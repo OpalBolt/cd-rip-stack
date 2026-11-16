@@ -64,8 +64,10 @@ tag` around its beets child; `VIDEOS` is a default in the legacy
 
 skive never mounts. Mount both shares before running — by hand, or from
 `fstab` or a systemd automount. Before a command touches a share, skive
-checks the mountpoint is mounted; a missing mount is a one-line error and
-exit 1. `VIDEOS_MOUNT` / `MUSIC_MOUNT` point skive at a different mountpoint.
+checks the root: a mountpoint passes silently, an existing local
+directory passes with a one-line warning, and a missing path is a one-line
+error and exit 1. `VIDEOS_MOUNT` / `MUSIC_MOUNT` point skive at a different
+root (a symlink to the mounted share is as good).
 
 ## Drives
 

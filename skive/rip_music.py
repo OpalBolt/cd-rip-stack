@@ -12,7 +12,7 @@ from pathlib import Path
 
 from skive import common, ui
 from skive.discid import track_lengths
-from skive.common import RipLog, require_mounted, kill_child_after_grace
+from skive.common import RipLog, ensure_share, kill_child_after_grace
 from skive.scan import sniff_disc
 from skive.cyanrip_log import (
     album_header_field,
@@ -77,7 +77,7 @@ def rip_music(args) -> None:
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
 
     # Staging dir on the share
-    require_mounted(music_mnt, "MUSIC_MOUNT")
+    ensure_share(music_mnt, "MUSIC_MOUNT")
     rip_dir = Path(music_mnt) / "rip" / "cd"
     rip_dir.mkdir(parents=True, exist_ok=True)
 

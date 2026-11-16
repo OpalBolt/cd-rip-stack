@@ -10,7 +10,7 @@ import time
 import pty
 from pathlib import Path
 
-from skive.common import RipLog, require_mounted, kill_child_after_grace
+from skive.common import RipLog, ensure_share, kill_child_after_grace
 from skive import ui
 
 SOURCES = ("cd", "other", "bandcamp")
@@ -184,7 +184,7 @@ def tag(args, run=None) -> None:
     a pty so beets retains its interactive prompts while its output is logged.
     """
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
-    require_mounted(music_mnt, "MUSIC_MOUNT")
+    ensure_share(music_mnt, "MUSIC_MOUNT")
 
     config_path = Path(__file__).parent.parent / "config" / "beets-config.yaml"
     if not config_path.exists():

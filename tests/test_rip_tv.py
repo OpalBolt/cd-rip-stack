@@ -135,7 +135,7 @@ def _range_flow(tmp_path, monkeypatch, mock_titles, mock_episodes, answers=("",)
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", mock_titles)):
-        with patch("skive.rip_common.require_mounted"):
+        with patch("skive.rip_common.ensure_share"):
             with patch("skive.rip_common.purge_junk"):
                 with patch("skive.rip_common.require_online"):
                     with patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -633,7 +633,7 @@ def test_split_hook_cuts_after_rename_before_subtitles_full_scan(
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -699,7 +699,7 @@ def test_split_decline_keeps_combined_and_validation_grades_it(
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -775,7 +775,7 @@ def test_split_interrupt_stays_contained_run_continues(tmp_path, monkeypatch,
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", [TitleInfo(0, 9643, 1, "dan", "", False)])), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -851,7 +851,7 @@ def test_season_prompt_interrupt_purges_logs_and_exits_130(tmp_path, monkeypatch
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
@@ -894,7 +894,7 @@ def test_table_interrupt_drops_inflight_partial(tmp_path, monkeypatch):
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
@@ -1173,7 +1173,7 @@ def test_full_scan_flow_writes_validation_beside_subtitle_note(tmp_path):
     real_post = post_rip_validation
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -1232,7 +1232,7 @@ def test_interrupt_midrip_writes_no_validation(tmp_path, capsys):
 
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc", return_value=("DVD-ROM", "", _gk_titles())), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
                 title="Show", year="2000", original_language="en", type="tv", id="5")), \
@@ -1299,7 +1299,7 @@ def _view_flow(tmp_path, monkeypatch, answers, episodes=None, titles=None,
     with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
             patch("skive.rip_common.scan_disc",
                   return_value=("DVD-ROM", "", titles or _gk_titles())), \
-            patch("skive.rip_common.require_mounted"), \
+            patch("skive.rip_common.ensure_share"), \
             patch("skive.rip_common.purge_junk"), \
             patch("skive.rip_common.require_online"), \
             patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -1403,7 +1403,7 @@ def test_rip_tv_interrupt_fail_line_survives_a_closed_tty_view(tmp_path, monkeyp
         with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
                 patch("skive.rip_common.scan_disc",
                       return_value=("DVD-ROM", "", _gk_titles())), \
-                patch("skive.rip_common.require_mounted"), \
+                patch("skive.rip_common.ensure_share"), \
                 patch("skive.rip_common.purge_junk"), \
                 patch("skive.rip_common.require_online"), \
                 patch("skive.rip_common.search_loop", return_value=TMDBPick(
@@ -1456,7 +1456,7 @@ def test_rip_tv_prompt_interrupt_closes_the_view(tmp_path, monkeypatch, capsys):
         with patch("skive.rip_common.sniff_disc", return_value=("DVD-ROM", "", "")), \
                 patch("skive.rip_common.scan_disc",
                       return_value=("DVD-ROM", "", _gk_titles())), \
-                patch("skive.rip_common.require_mounted"), \
+                patch("skive.rip_common.ensure_share"), \
                 patch("skive.rip_common.purge_junk"), \
                 patch("skive.rip_common.require_online"), \
                 patch("skive.rip_common.search_loop", return_value=TMDBPick(

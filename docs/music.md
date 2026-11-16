@@ -50,7 +50,8 @@ table echoes into scrollback. Manual skips leave the main cyanrip pass
 through its `-l` exclusion list and merge with the stall guard's — a
 continuation pass never re-rips them either.
 
-The share must be mounted and cyanrip runs inside `/mnt/music/rip/cd/`,
+The music share must exist (mounted NAS share, or a local path — skive
+warns) and cyanrip runs inside `$MUSIC_MOUNT/rip/cd/`,
 writing each album as final-named FLACs into its own `<album>/` subfolder.
 On a terminal the console opens with one line (`skive rip music · <album> · offset 6`), then a
 `▸ 7/12  <title>` heading per track with its events indented beneath.

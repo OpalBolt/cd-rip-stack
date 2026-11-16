@@ -98,7 +98,7 @@ def test_search_music_walks_only_music_mount(tmp_path, monkeypatch, capsys):
     (video / "library/movies/Album (2020)").mkdir(parents=True)
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
     monkeypatch.setenv("VIDEOS_MOUNT", str(video))
-    monkeypatch.setattr("skive.search.require_mounted", lambda *_args: None)
+    monkeypatch.setattr("skive.search.ensure_share", lambda *_args: None)
 
     run_search(SimpleNamespace(scope="music", query="album"))
 
@@ -109,7 +109,7 @@ def test_search_music_walks_only_music_mount(tmp_path, monkeypatch, capsys):
 
 
 def test_search_mount_failure_is_one_note_and_successful_exit(monkeypatch, capsys):
-    monkeypatch.setattr("skive.search.require_mounted", lambda *_args: (_ for _ in ()).throw(SystemExit(1)))
+    monkeypatch.setattr("skive.search.ensure_share", lambda *_args: (_ for _ in ()).throw(SystemExit(1)))
 
     run_search(SimpleNamespace(scope="music", query="album"))
 
@@ -133,7 +133,7 @@ def _video_share(tmp_path, monkeypatch):
     _mkv(tmp_path / f"rip/tv/{base}/{base}_S02E01.mkv")
     _mkv(tmp_path / "lossless/movies/Andor Rising (2020)/Andor Rising (2020).mkv")
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-    monkeypatch.setattr("skive.search.require_mounted", lambda *_args: None)
+    monkeypatch.setattr("skive.search.ensure_share", lambda *_args: None)
 
 
 def test_search_piped_prints_plain_data_lines_on_stdout(tmp_path, monkeypatch, capsys):

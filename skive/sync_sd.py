@@ -18,7 +18,7 @@ from pathlib import Path
 
 from rich.text import Text
 
-from skive.common import RipLog, require_mounted, kill_child_after_grace
+from skive.common import RipLog, ensure_share, kill_child_after_grace
 from skive import ui
 
 
@@ -309,7 +309,7 @@ def sync_sd(args) -> None:
             log.name = Path(card).name
 
         # Only check the share once a card is in hand.
-        require_mounted(mnt, "MUSIC_MOUNT")
+        ensure_share(mnt, "MUSIC_MOUNT")
         if not src.is_dir():
             ui.fail(f"no library at {src} (run tag first)")
             sys.exit(1)

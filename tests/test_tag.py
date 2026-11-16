@@ -23,7 +23,7 @@ def test_mount_before_beets():
         mock_ensure = Mock()
 
         with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir}):
-            with patch("skive.tag.require_mounted", mock_ensure):
+            with patch("skive.tag.ensure_share", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
                     try:
                         tag_cmd(FakeArgs())
@@ -47,7 +47,7 @@ def test_nothing_to_import(tmp_path, monkeypatch):
 
     mock_ensure = Mock()
 
-    with patch("skive.tag.require_mounted", mock_ensure):
+    with patch("skive.tag.ensure_share", mock_ensure):
         with patch("pathlib.Path.exists", new=selective_exists):
             try:
                 tag_cmd(FakeArgs())
@@ -77,7 +77,7 @@ def test_beets_invoked_correctly():
         mock_ensure = Mock()
 
         with patch.dict(os.environ, {"MUSIC_MOUNT": tmpdir}):
-            with patch("skive.tag.require_mounted", mock_ensure):
+            with patch("skive.tag.ensure_share", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
                     with patch("sys.executable", "/fake/python"):
                         tag_cmd(FakeArgs(), run=mock_run)
@@ -99,7 +99,7 @@ def test_beets_child_gets_repo_on_pythonpath(tmp_path, monkeypatch):
         captured["env"] = env
         return Mock(returncode=0)
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     repo_root = str(Path(__file__).parent.parent.resolve())
@@ -115,14 +115,14 @@ def test_music_mount_env_override():
         mock_ensure = Mock()
 
         with patch.dict(os.environ, {"MUSIC_MOUNT": "/custom/music"}):
-            with patch("skive.tag.require_mounted", mock_ensure):
+            with patch("skive.tag.ensure_share", mock_ensure):
                 with patch("pathlib.Path.exists", return_value=True):
                     try:
                         tag_cmd(FakeArgs())
                     except SystemExit:
                         pass
 
-        # Check require_mounted was called with custom mount
+        # Check ensure_share was called with custom mount
         mock_ensure.assert_called_once_with("/custom/music", "MUSIC_MOUNT")
 
 
@@ -140,7 +140,7 @@ def test_three_sources_order_and_flags(tmp_path, monkeypatch):
         calls.append(cmd)
         return Mock(returncode=0)
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     assert len(calls) == 3
@@ -174,7 +174,7 @@ def test_tag_single_source_bandcamp(tmp_path, monkeypatch):
     args = FakeArgs()
     args.source = "bandcamp"
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(args, run=fake_run)
 
     assert len(calls) == 1
@@ -197,7 +197,7 @@ def test_tag_single_source_cd(tmp_path, monkeypatch):
     args = FakeArgs()
     args.source = "cd"
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(args, run=fake_run)
 
     assert len(calls) == 1
@@ -215,7 +215,7 @@ def test_tag_empty_folders_clean_exit(tmp_path, monkeypatch, capsys):
 
     mock_run = Mock()
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         try:
             tag_cmd(FakeArgs(), run=mock_run)
         except SystemExit as e:
@@ -238,7 +238,7 @@ def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
         calls.append(cmd)
         return Mock(returncode=0)
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     assert len(calls) == 1
@@ -257,7 +257,7 @@ def test_tag_nonzero_exit_if_beets_fails(tmp_path, monkeypatch):
         calls.append(cmd)
         return Mock(returncode=42)
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         try:
             tag_cmd(FakeArgs(), run=fake_run)
             assert False, "Should have exited"
@@ -288,7 +288,7 @@ def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
         filed.rmdir()
         return Mock(returncode=0, stdout="beets imported\n")
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     lines = _tag_log_lines(tmp_path)
@@ -309,7 +309,7 @@ def test_clean_tag_deletes_raw_log(tmp_path, monkeypatch):
         album.rmdir()
         return Mock(returncode=0, stdout="done\n")
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         tag_cmd(FakeArgs(), run=fake_run)
 
     lines = _tag_log_lines(tmp_path)
@@ -325,7 +325,7 @@ def test_tag_interrupt_records_130_and_keeps_raw(tmp_path, monkeypatch):
     def fake_run(cmd):
         raise KeyboardInterrupt
 
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         try:
             tag_cmd(FakeArgs(), run=fake_run)
         except SystemExit as exc:
@@ -352,7 +352,7 @@ def _tag_stderr(tmp_path, monkeypatch, capsys, fake_run):
     """Run tag over a temporary share; return (exit code, stderr lines)."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
     code = 0
-    with patch("skive.tag.require_mounted"):
+    with patch("skive.tag.ensure_share"):
         try:
             tag_cmd(FakeArgs(), run=fake_run)
         except SystemExit as exc:

@@ -189,27 +189,26 @@ class TestRipLog:
         assert (tmp_path / "logs" / "scan" / f"{log.run}_disc.txt").exists()
 
 
-class TestRequireMounted:
-    """Share-mount check tests — skive verifies, the operator mounts."""
+class TestEnsureShare:
+    """Share-root checks — mountpoint silently, local dir with a warning."""
 
-    def test_mountpoint_passes(self, monkeypatch):
+    def test_mountpoint_passes_silently(self, monkeypatch, capsys):
         """Path is a mountpoint -> returns quietly, nothing spawned."""
         def no_run(cmd, *args, **kwargs):
             raise AssertionError(f"no command may run, got {cmd}")
 
         monkeypatch.setattr(Path, "is_mount", lambda self: True)
         monkeypatch.setattr(subprocess, "run", no_run)
-        skive.common.require_mounted("/mnt/videos")
+        skive.common.ensure_share("/mnt/videos")
+        assert capsys.readouterr().err == ""
 
-    def test_plain_directory_errors(self, monkeypatch, tmp_path):
-        """Path exists but is not a mountpoint (e.g. a leftover empty dir)
-        -> one-line error, exit 1."""
-        share = tmp_path / "leftover-empty-dir"
+    def test_local_directory_warns_and_passes(self, monkeypatch, tmp_path, capsys):
+        """Existing local directory -> one-line warning, no exit."""
+        share = tmp_path / "local-share"
         share.mkdir()
         monkeypatch.setattr(Path, "is_mount", lambda self: False)
-        with pytest.raises(SystemExit) as exc:
-            skive.common.require_mounted(str(share))
-        assert exc.value.code == 1
+        skive.common.ensure_share(str(share))
+        assert "not a mountpoint" in capsys.readouterr().err
 
     def test_symlink_to_mountpoint_passes(self, monkeypatch, tmp_path):
         """A symlink pointing at the mounted share resolves to the
@@ -218,15 +217,21 @@ class TestRequireMounted:
         link.symlink_to("/mnt/videos")
         monkeypatch.setattr(Path, "is_mount",
                             lambda self: str(self) == "/mnt/videos")
-        skive.common.require_mounted(str(link))
+        skive.common.ensure_share(str(link))
 
-    def test_env_var_unset_names_the_missing_export(self, monkeypatch, capsys):
-        """Override env var not set -> the error says which export is
-        missing, not just that the default path is unmounted."""
-        monkeypatch.delenv("VIDEOS_MOUNT", raising=False)
-        monkeypatch.setattr(Path, "is_mount", lambda self: False)
+    def test_missing_path_errors(self, monkeypatch, tmp_path):
+        """Path absent and the override set -> one-line error, exit 1."""
+        monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path / "gone"))
         with pytest.raises(SystemExit) as exc:
-            skive.common.require_mounted("/mnt/videos", "VIDEOS_MOUNT")
+            skive.common.ensure_share(str(tmp_path / "gone"), "VIDEOS_MOUNT")
+        assert exc.value.code == 1
+
+    def test_env_var_unset_names_the_missing_export(self, monkeypatch, tmp_path, capsys):
+        """Override env var not set and the default path missing -> the
+        error says which export is missing, not just the bare path."""
+        monkeypatch.delenv("VIDEOS_MOUNT", raising=False)
+        with pytest.raises(SystemExit) as exc:
+            skive.common.ensure_share(str(tmp_path / "absent"), "VIDEOS_MOUNT")
         assert exc.value.code == 1
         assert "VIDEOS_MOUNT is not set" in capsys.readouterr().err
 

@@ -21,8 +21,8 @@ Two modes, both run from the repo root with real tools and no disc:
       (default /tmp/orchestrator/04-dump-replay.log). The dump's media token
       (DVD+R-DL) trips the recordable gate, hence --verified.
 
-      VIDEOS_MOUNT must already be a mounted directory (skive.common
-      .require_mounted refuses anything that is not a mountpoint), so the
+      VIDEOS_MOUNT points somewhere throwaway (the replay writes real
+      staging trees through the real flow), so
       script picks the first of $XDG_RUNTIME_DIR, /tmp, /dev/shm — all
       tmpfs: nothing real is touched and it is gone at reboot. Everything
       the replay creates under the mount is removed afterwards.
@@ -228,11 +228,11 @@ CAPTION = "title 0 carries S04E01-E03 — play-all-only disc, split after the ri
 
 
 def _temp_mount_root() -> Path | None:
-    """A directory the real flow accepts as VIDEOS_MOUNT.
+    """A directory the replay can use as VIDEOS_MOUNT.
 
-    require_mounted only accepts an actual mountpoint, so a plain temp
-    dir cannot be used. The candidates are tmpfs mounts: nothing written
-    there survives reboot, so the replay touches nothing real.
+    ensure_share accepts any directory (warning on non-mountpoints), but
+    the replay writes real staging trees — keep them on tmpfs: nothing
+    written there survives reboot, so the replay touches nothing real.
     """
     mounted = {parts[1]
                for line in Path("/proc/mounts").read_text().splitlines()

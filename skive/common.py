@@ -285,28 +285,33 @@ class RipLog:
             self._raw_log.unlink(missing_ok=True)
 
 
-def require_mounted(mnt: str, env_var: str = "") -> None:
-    """Require a share the operator mounted — skive never mounts anything.
+def ensure_share(mnt: str, env_var: str = "") -> None:
+    """Verify the share root — a mountpoint passes, a local dir warns.
 
-    A symlink counts: it resolves to the mountpoint it points at (a link
-    to the NAS share is as good as the share).
+    skive never mounts anything; this only reports what the operator
+    provided. A symlink counts: it resolves to the mountpoint it points
+    at (a link to the NAS share is as good as the share).
 
     Args:
-        mnt: Mountpoint path (e.g., /mnt/videos)
+        mnt: Share root path (e.g., /mnt/videos)
         env_var: the override the caller read (e.g. VIDEOS_MOUNT); when it
             is not set at all, the error names the missing export
 
     Raises:
-        SystemExit: If the path does not resolve to a mountpoint
+        SystemExit: If the path does not exist
     """
-    if Path(mnt).resolve().is_mount():
+    path = Path(mnt).resolve()
+    if path.is_mount():
+        return
+    if path.is_dir():
+        ui.warn(f"{mnt} is not a mountpoint — using it as a local share")
         return
     if env_var and env_var not in os.environ:
-        ui.fail(f"{env_var} is not set in skive's environment, so skive tried the "
-                f"default {mnt} and it is not mounted — export it in the shell "
-                f"skive runs from (env | grep {env_var} there; echo ${env_var} "
-                f"shows unexported shell variables too and proves nothing)")
+        ui.fail(f"{env_var} is not set in skive's environment, so skive tried "
+                f"the default {mnt}, which does not exist — export it in the "
+                f"shell skive runs from (env | grep {env_var} there; "
+                f"echo ${env_var} shows unexported shell variables too)")
         sys.exit(1)
-    ui.fail(f"{mnt} is not mounted — mount the share first "
-            f"(or point VIDEOS_MOUNT/MUSIC_MOUNT at its mountpoint)")
+    ui.fail(f"{mnt} does not exist — mount the share there first, or point "
+            f"VIDEOS_MOUNT/MUSIC_MOUNT at it")
     sys.exit(1)

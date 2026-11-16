@@ -8,7 +8,7 @@ from skive import ui
 from dataclasses import dataclass
 from pathlib import Path
 
-from skive.common import RipLog, require_mounted, sanitize
+from skive.common import RipLog, ensure_share, sanitize
 from skive.makemkv import purge_junk
 from skive.scan import (
     TitleInfo, is_recordable, iso2b, scan_disc, sniff_disc,
@@ -41,7 +41,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     the title's staging tree and purge its junk labels (CONTEXT.md: Staging)."""
     videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
 
-    require_mounted(videos_mnt, "VIDEOS_MOUNT")
+    ensure_share(videos_mnt, "VIDEOS_MOUNT")
     disc = getattr(args, "disc", 0)
 
     log = RipLog(script, "makemkvcon", "-")
