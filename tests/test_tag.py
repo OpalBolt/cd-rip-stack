@@ -123,7 +123,7 @@ def test_music_mount_env_override():
                         pass
 
         # Check require_mounted was called with custom mount
-        mock_ensure.assert_called_once_with("/custom/music")
+        mock_ensure.assert_called_once_with("/custom/music", "MUSIC_MOUNT")
 
 
 def test_three_sources_order_and_flags(tmp_path, monkeypatch):

@@ -41,7 +41,7 @@ def rip_preamble(kind: str, script: str, args) -> Preamble:
     the title's staging tree and purge its junk labels (CONTEXT.md: Staging)."""
     videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
 
-    require_mounted(videos_mnt)
+    require_mounted(videos_mnt, "VIDEOS_MOUNT")
     disc = getattr(args, "disc", 0)
 
     log = RipLog(script, "makemkvcon", "-")

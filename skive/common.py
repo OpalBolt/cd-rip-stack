@@ -285,7 +285,7 @@ class RipLog:
             self._raw_log.unlink(missing_ok=True)
 
 
-def require_mounted(mnt: str) -> None:
+def require_mounted(mnt: str, env_var: str = "") -> None:
     """Require a share the operator mounted — skive never mounts anything.
 
     A symlink counts: it resolves to the mountpoint it points at (a link
@@ -293,12 +293,20 @@ def require_mounted(mnt: str) -> None:
 
     Args:
         mnt: Mountpoint path (e.g., /mnt/videos)
+        env_var: the override the caller read (e.g. VIDEOS_MOUNT); when it
+            is not set at all, the error names the missing export
 
     Raises:
         SystemExit: If the path does not resolve to a mountpoint
     """
     if Path(mnt).resolve().is_mount():
         return
+    if env_var and env_var not in os.environ:
+        ui.fail(f"{env_var} is not set in skive's environment, so skive tried the "
+                f"default {mnt} and it is not mounted — export it in the shell "
+                f"skive runs from (env | grep {env_var} there; echo ${env_var} "
+                f"shows unexported shell variables too and proves nothing)")
+        sys.exit(1)
     ui.fail(f"{mnt} is not mounted — mount the share first "
             f"(or point VIDEOS_MOUNT/MUSIC_MOUNT at its mountpoint)")
     sys.exit(1)

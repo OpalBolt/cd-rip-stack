@@ -77,7 +77,7 @@ def rip_music(args) -> None:
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
 
     # Staging dir on the share
-    require_mounted(music_mnt)
+    require_mounted(music_mnt, "MUSIC_MOUNT")
     rip_dir = Path(music_mnt) / "rip" / "cd"
     rip_dir.mkdir(parents=True, exist_ok=True)
 

@@ -184,7 +184,7 @@ def tag(args, run=None) -> None:
     a pty so beets retains its interactive prompts while its output is logged.
     """
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
-    require_mounted(music_mnt)
+    require_mounted(music_mnt, "MUSIC_MOUNT")
 
     config_path = Path(__file__).parent.parent / "config" / "beets-config.yaml"
     if not config_path.exists():

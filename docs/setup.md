@@ -43,8 +43,10 @@ box, or beets fails at start-up.
 ## Environment variables
 
 Keys come from the process environment — skive never reads a `.env` file.
-Export them in your shell profile or `mise env`; `.env.example` records the
-the key.
+Export them in your shell profile or `mise env`; `.env.example` records
+the key. `source .env` reaches skive only when the lines carry `export` —
+`echo $VAR` also shows unexported shell variables, so check with
+`env | grep VAR` in the shell skive runs from.
 
 | Variable | Meaning |
 |---|---|

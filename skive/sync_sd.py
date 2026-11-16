@@ -309,7 +309,7 @@ def sync_sd(args) -> None:
             log.name = Path(card).name
 
         # Only check the share once a card is in hand.
-        require_mounted(mnt)
+        require_mounted(mnt, "MUSIC_MOUNT")
         if not src.is_dir():
             ui.fail(f"no library at {src} (run tag first)")
             sys.exit(1)

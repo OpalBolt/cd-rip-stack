@@ -220,6 +220,16 @@ class TestRequireMounted:
                             lambda self: str(self) == "/mnt/videos")
         skive.common.require_mounted(str(link))
 
+    def test_env_var_unset_names_the_missing_export(self, monkeypatch, capsys):
+        """Override env var not set -> the error says which export is
+        missing, not just that the default path is unmounted."""
+        monkeypatch.delenv("VIDEOS_MOUNT", raising=False)
+        monkeypatch.setattr(Path, "is_mount", lambda self: False)
+        with pytest.raises(SystemExit) as exc:
+            skive.common.require_mounted("/mnt/videos", "VIDEOS_MOUNT")
+        assert exc.value.code == 1
+        assert "VIDEOS_MOUNT is not set" in capsys.readouterr().err
+
 
 def test_set_verbosity_clamps_to_tiers(monkeypatch):
     """set_verbosity stores the console level clamped to 0/1/2."""
