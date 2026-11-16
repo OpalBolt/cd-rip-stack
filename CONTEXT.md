@@ -166,6 +166,36 @@ _Avoid_: library search, catalog, index
 The duplicate gate fired once the run's name is settled — after the movie pick (inside the identity gates) and after the TV season prompt: an exact-name title folder on disk escalates the confirm to default-No (bare Enter refuses, explicit `y` rips anyway). TV staging never escalates — staged episodes are the interrupted-re-rip path; a TV show on disk with other seasons only informs; adding extras to an owned title is the normal case and takes the explicit `y`.
 _Avoid_: duplicate check, pre-scan
 
+### Languages
+
+**Keep set**:
+Danish and English — the languages this library is built around. The subtitle pass filters to exactly this; audio selection starts here and only widens.
+_Avoid_: language list, wanted langs
+
+**Original language**:
+The pick's `original_language` from TMDB, widened into the audio selection as a three-letter MakeMKV code. `-` or an unmapped code contributes nothing.
+_Avoid_: source language, origlang
+
+**Selection string**:
+MakeMKV's track picker at rip time, injected per run: audio limited to the keep set plus the title's own languages, subtitles unfiltered.
+_Avoid_: selection rule, sel string
+
+**Scan-driven selection**:
+A selection string built from the scan's reported track languages, not TMDB alone. Guarantees the rip keeps a title's audio when none of it matches the keep set or the original language.
+_Avoid_: smart selection
+
+**Audio gate**:
+The post-rip check that a staged main or episode holds at least one audio stream. A trip fails the item loudly; the remedy is a keep-all re-rip. Extras are unchecked — galleries and menu videos legitimately carry no audio.
+_Avoid_: audio check, silent-rip guard
+
+**Keep-all re-rip**:
+The remedy rip for a tripped audio gate: `rip movie`/`rip tv` run with `-K/--keep-all` so every audio language stages, that run only. Subtitles are unfiltered by then regardless.
+_Avoid_: force rip
+
+**Subtitle shortfall**:
+A staged title missing keep-set subtitle languages its scan promised. A warning in the run log, never a failure.
+_Avoid_: sub gap, missing subs
+
 ### Subtitles
 
 **Sidecar**:
