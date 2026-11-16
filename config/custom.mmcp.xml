@@ -7,27 +7,35 @@
   changed from the GUI preference value ($app_DefaultSelectionString) to a
   hardcoded one, so a rip is independent of whoever is logged in.
 
-  Selection string operators (MakeMKV docs):
+  Selection string operators (MakeMKV docs, https://makemkv.com/developers/):
     +sel:<lang|keyword>   select tracks matching a language or keyword
     -sel:<keyword>        deselect
+      sel:video | sel:audio | sel:subtitle   per-type qualifiers; a language
+                          list can be scoped per type with &, e.g.
+                          sel:audio&(eng|dan)
       nolang              tracks with no language tag
       single              the only track of its type (safety net)
       havemulti | havecore  redundant multi-channel / core duplicates
       mvcvideo            MVC (3D) video
 
-  BASELINE selection string: keep English + Danish audio and subtitles (plus
-  no-lang and single tracks), drop MVC and duplicate multi/core tracks.
+  BASELINE selection string: keep all video, English + Danish audio (plus
+  no-lang and single tracks), and every subtitle track regardless of language
+  (so no keep-set subtitle can be lost and subtitle policy never forces a
+  re-rip — ADR 0022); drop MVC and duplicate multi/core tracks.
 
   skive (rip movie/tv) does NOT hand-edit this file — it reads it, replaces the
-  BASELINE literal below with a per-movie language list (original-language audio +
-  Danish/English subtitles), and feeds that temp copy to makemkvcon as its
-  profile.
-  MakeMKV's selection string is type-agnostic: one list covers every track type
-  (audio(lang)/subtitle(lang) qualifiers are invalid tokens), so the list is the
-  union of what audio and subtitles each need. This BASELINE is BOTH the manual-use
-  default AND the substitution target (skive.makemkv.BASELINE must stay
-  byte-identical to it). Edit the one string in each defaultSelection attribute
-  below (and the app_DefaultSelectionString line).
+  escaped BASELINE literal below (& must be &amp; here; skive escapes both
+  sides of the substitution the same way), and feeds that temp copy to
+  makemkvcon as its profile. In the file, & in the selection string is the
+  XML-escaped attribute form of the per-type audio&(…) scoping token. If the
+  per-type tokens are rejected on a real disc (junk-disc check), skive flips
+  SUBTITLE_SYNTAX in skive/makemkv.py to "union": the selection becomes the
+  old type-agnostic shape with every scanned subtitle language added to the
+  language union — same effect, no new syntax. This BASELINE is BOTH the
+  manual-use default AND the substitution target (skive.makemkv.xml_escape(skive.makemkv.BASELINE)
+  must stay byte-identical to it). Edit the one string in each defaultSelection
+  attribute below (and the app_DefaultSelectionString line), escaping & as
+  &amp;.
 -->
 <profile>
     <!-- profile name -->
@@ -45,7 +53,7 @@
 
     <!-- Ignored by MakeMKV 1.12.4+; selection is driven by defaultSelection below. -->
     <profileSettings
-        app_DefaultSelectionString="-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo"
+        app_DefaultSelectionString="-sel:all,+sel:video,+sel:audio&amp;(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo"
     />
 
     <!-- Output formats currently supported by MakeMKV -->
@@ -78,21 +86,21 @@
     <!-- Default rule - copy as is -->
     <trackSettings input="default">
         <output outputSettingsName="copy"
-                defaultSelection="-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo">
+                defaultSelection="-sel:all,+sel:video,+sel:audio&amp;(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo">
         </output>
     </trackSettings>
 
     <!-- Save LPCM mono or stereo as raw LPCM -->
     <trackSettings input="LPCM-stereo">
         <output outputSettingsName="lpcm"
-                defaultSelection="-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo">
+                defaultSelection="-sel:all,+sel:video,+sel:audio&amp;(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo">
         </output>
     </trackSettings>
 
     <!-- Put multi-channel LPCM into WAVEX container-->
     <trackSettings input="LPCM-multi">
         <output outputSettingsName="wavex"
-                defaultSelection="-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo">
+                defaultSelection="-sel:all,+sel:video,+sel:audio&amp;(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo">
         </output>
     </trackSettings>
 

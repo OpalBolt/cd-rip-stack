@@ -8,8 +8,9 @@ import pytest
 
 from skive import common
 from skive.makemkv import (
-    BASELINE, build_selection, inject_profile, purge_junk, rename_staged,
-    rip_titles, looks_real, subtitle_note, _run_with_progress,
+    BASELINE, SUBTITLE_SYNTAX, build_selection, inject_profile, purge_junk,
+    rename_staged, rip_titles, looks_real, subtitle_note, xml_escape,
+    _run_with_progress,
 )
 
 
@@ -19,10 +20,20 @@ def test_build_selection_empty():
     assert sel == BASELINE
 
 
+def test_build_selection_per_type_shape():
+    """Test the per-type form: audio language-scoped, subtitles unfiltered,
+    video explicitly kept."""
+    sel = build_selection("")
+    assert sel == ("-sel:all,+sel:video,+sel:audio&(eng|dan|nolang|single),"
+                   "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo")
+    assert "+sel:subtitle" in sel
+    assert sel.endswith("-sel:mvcvideo")
+
+
 def test_build_selection_origlang():
     """Test build_selection with original language."""
     sel = build_selection("jpn")
-    assert sel.startswith("-sel:all,+sel:(jpn|dan|eng|nolang|single)")
+    assert sel.startswith("-sel:all,+sel:video,+sel:audio&(jpn|dan|eng|nolang|single)")
 
 
 def test_build_selection_dup_guard():
@@ -33,15 +44,44 @@ def test_build_selection_dup_guard():
     assert "dan" in sel and "eng" in sel
 
 
+def test_build_selection_union_fallback():
+    """Test the union fallback: every scanned subtitle language joins the
+    type-agnostic language union."""
+    import skive.makemkv
+    old = skive.makemkv.SUBTITLE_SYNTAX
+    skive.makemkv.SUBTITLE_SYNTAX = "union"
+    try:
+        sel = build_selection("", {"jpn", "swe"})
+        langs = set("eng|dan|nolang|single".split("|")) | {"jpn", "swe"}
+        assert sel == (f"-sel:all,+sel:({'|'.join(sorted(langs))}),"
+                       "-sel:(havemulti|havecore),-sel:mvcvideo")
+        # Baseline callers with no sub langs keep today's exact union
+        sel2 = build_selection("", None)
+        assert sel2.startswith("-sel:all,+sel:(dan|eng|nolang|single),")
+        assert sel2.endswith(",-sel:(havemulti|havecore),-sel:mvcvideo")
+    finally:
+        skive.makemkv.SUBTITLE_SYNTAX = old
+    assert SUBTITLE_SYNTAX == "per-type"
+
+
+def test_baseline_xml_escape_contract():
+    """Test that the file's escaped BASELINE literal is byte-identical to the
+    escaped Python constant (the injection target)."""
+    from skive.makemkv import CONFIG_DIR
+    content = (CONFIG_DIR / "custom.mmcp.xml").read_text(encoding="utf-8")
+    escaped = xml_escape(BASELINE)
+    assert content.count(escaped) == 4  # app_DefaultSelectionString + 3 trackSettings
+
+
 def test_inject_profile(tmp_path, monkeypatch):
-    """Test profile injection replaces BASELINE outside the repo directory."""
+    """Test profile injection replaces the escaped BASELINE outside the repo."""
     monkeypatch.chdir(tmp_path)
-    new_sel = "-sel:all,+sel:(jpn|dan|eng|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo"
+    new_sel = "-sel:all,+sel:video,+sel:audio&(jpn|dan|eng|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo"
     tmp_profile = inject_profile(new_sel)
 
     content = tmp_profile.read_text()
-    assert new_sel in content
-    assert BASELINE not in content
+    assert xml_escape(new_sel) in content
+    assert xml_escape(BASELINE) not in content
 
     tmp_profile.unlink()
 

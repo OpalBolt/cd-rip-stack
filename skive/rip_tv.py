@@ -540,7 +540,9 @@ def rip_tv(args) -> None:
 
         # Selection string + profile injection
         keep = preamble.keep
-        sel = build_selection(keep)
+        sub_langs = {l for t in titles_full if t.number in assignment
+                     for l in t.subtitles.split(",") if l}
+        sel = build_selection(keep, sub_langs)
         log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
 
         profile_path = inject_profile(sel)

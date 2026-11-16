@@ -272,7 +272,8 @@ def rip_movie(args) -> None:
 
         # Build selection string
         keep = preamble.keep
-        sel = build_selection(keep)
+        sub_langs = {l for t in infos for l in t.subtitles.split(",") if l}
+        sel = build_selection(keep, sub_langs)
         log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'}")
 
         # Inject profile

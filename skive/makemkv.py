@@ -15,30 +15,61 @@ from rich.console import Console
 from skive import common, ui  # ui: event lines only — no view logic here
 
 
-# Port of bash constants
-BASELINE = '-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo'
+# Per-type selection string (audio keeps its language set, subtitles are
+# unfiltered by language). The per-type tokens (sel:video/sel:audio&(...)/
+# sel:subtitle) follow MakeMKV's selection-string grammar
+# (https://makemkv.com/developers/selection-strings/ — token grammar verified
+# only on a real disc; flip SUBTITLE_SYNTAX to "union" if the junk-disc check
+# rejects them). BASELINE is the manual-use default AND the substitution
+# target; it must stay byte-identical (after &-escaping) to the literal in
+# config/custom.mmcp.xml.
+BASELINE = '-sel:all,+sel:video,+sel:audio&(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo'
+# "per-type" uses the MakeMKV per-type tokens above; "union" falls back to the
+# type-agnostic shape with every scanned subtitle language added to the union.
+SUBTITLE_SYNTAX = "per-type"
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 
-def build_selection(keep_lang: str) -> str:
+def xml_escape(s: str) -> str:
+    """Escape a selection string for use inside an XML attribute (& only)."""
+    return s.replace("&", "&amp;")
+
+
+def build_selection(keep_lang: str, sub_langs: set[str] | None = None) -> str:
     """Build the MakeMKV selection string.
 
     Args:
         keep_lang: ISO 639-2/B code or "" for keep-all
+        sub_langs: subtitle languages present in the ripped titles (rip-set
+            union); used only by the "union" SUBTITLE_SYNTAX fallback
 
     Returns:
-        Selection string like "-sel:all,+sel:(eng|dan|nolang|single),-sel:(havemulti|havecore),-sel:mvcvideo"
+        Selection string, e.g. BASELINE (per-type form) or the type-agnostic
+        union form.
     """
     if not keep_lang or keep_lang in ("dan", "eng"):
-        # Keep exact order for the baseline case
-        return BASELINE
-    # Prepend the film's original language
-    langs = f"{keep_lang}|dan|eng|nolang|single"
-    return f"-sel:all,+sel:({langs}),-sel:(havemulti|havecore),-sel:mvcvideo"
+        audio_langs = "eng|dan|nolang|single"
+    else:
+        # Prepend the film's original language
+        audio_langs = f"{keep_lang}|dan|eng|nolang|single"
+    if SUBTITLE_SYNTAX == "per-type":
+        if not keep_lang or keep_lang in ("dan", "eng"):
+            # Keep exact order for the baseline case
+            return BASELINE
+        return (f"-sel:all,+sel:video,+sel:audio&({audio_langs}),"
+                "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo")
+    # Union fallback: type-agnostic list = audio set + every scanned subtitle
+    # language, so subtitles are never dropped by language policy.
+    langs = sorted(set(audio_langs.split("|")) | set(sub_langs or ()))
+    return f"-sel:all,+sel:({'|'.join(langs)}),-sel:(havemulti|havecore),-sel:mvcvideo"
 
 
 def inject_profile(selection: str) -> Path:
-    """Copy config/custom.mmcp.xml and replace BASELINE with selection.
+    """Copy config/custom.mmcp.xml and replace the escaped BASELINE with the
+    escaped selection.
+
+    The file carries XML-escaped literals (& -> &amp;); both sides are escaped
+    the same way so the replace always hits (byte-identity contract).
 
     Args:
         selection: The selection string to inject
@@ -48,7 +79,7 @@ def inject_profile(selection: str) -> Path:
     """
     profile_path = CONFIG_DIR / "custom.mmcp.xml"
     content = profile_path.read_text(encoding="utf-8")
-    modified = content.replace(BASELINE, selection)
+    modified = content.replace(xml_escape(BASELINE), xml_escape(selection))
 
     fd, tmp_path = tempfile.mkstemp(suffix=".mmcp.xml")
     os.write(fd, modified.encode("utf-8"))
