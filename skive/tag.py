@@ -97,20 +97,21 @@ def _run_beets_pty(cmd: list[str], log: RipLog, env: dict[str, str] | None = Non
     it has a terminal.  The runner is deliberately separate so unit tests can
     inject a fake beets process without requiring a terminal or beets itself.
     """
-    master, slave = pty.openpty()
+    master, slave_fd = pty.openpty()
+    slave: int | None = slave_fd
     process = None
     selector = selectors.DefaultSelector()
     stdin_fd = None
     try:
         process = subprocess.Popen(
             cmd,
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
             close_fds=True,
             env=env,
         )
-        os.close(slave)
+        os.close(slave_fd)
         slave = None
 
         try:
@@ -126,6 +127,7 @@ def _run_beets_pty(cmd: list[str], log: RipLog, env: dict[str, str] | None = Non
             events = selector.select(timeout=0.1)
             for key, _ in events:
                 if key.data == "stdin":
+                    assert stdin_fd is not None  # registered only with a real fd
                     try:
                         data = os.read(stdin_fd, 4096)
                     except OSError:

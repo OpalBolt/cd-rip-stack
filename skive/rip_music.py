@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from skive import common, ui
 from skive.common import RipLog, ensure_share, kill_child_after_grace
@@ -167,6 +168,7 @@ def rip_music(args) -> None:
                     log.fail_open_phase("FAIL(quit)")
                     ui.info("quit — nothing ripped.")
                     sys.exit(1)
+                assert isinstance(result, dict)  # INTERRUPT/QUIT exited above
                 skipped = {n for n, a in result.items() if a == "skip"}
                 if skipped:
                     header["_skipped"] = sorted(skipped)
@@ -185,6 +187,7 @@ def rip_music(args) -> None:
             pass_flags = list(flags)
             if skipped:
                 operator_l = _operator_l_tracks(args.cyanrip_flags or [])
+                assert durations is not None  # a table that skipped tracks had durations
                 universe = (
                     operator_l if operator_l is not None else set(range(1, max(durations) + 1))
                 )
@@ -321,9 +324,7 @@ def rip_music(args) -> None:
             rows = [
                 (
                     str(number),
-                    _summary_hms(dur_by_number[number])
-                    if dur_by_number.get(number) is not None
-                    else "?",
+                    _summary_hms(d) if (d := dur_by_number.get(number)) is not None else "?",
                     result,
                 )
                 for number, result in sorted(header.get("_tracks", {}).items())
@@ -388,6 +389,7 @@ def rip_music(args) -> None:
             if args.disc:
                 rerun += ["-d", str(args.disc)]
             ui.musicbrainz_miss(miss, shlex.join(rerun + [args.offset, "--", *flags]) + " -R <n>")
+            assert log._start is not None  # a failed run had opened
             ui.result_line(
                 "fail", _miss_result(miss), elapsed=int((log._now() - log._start).total_seconds())
             )
@@ -442,7 +444,7 @@ def _write_cd_record(
     if not log_files or not cue_files:
         log.note("rip", f"artifacts missing in {folder}: found {files}")
 
-    parsed = {"offset": None, "tracks": []}
+    parsed: dict[str, Any] = {"offset": None, "tracks": []}
     disc_number = "1"
     if log_files:
         # cyanrip appends each rip's report to the same album folder.  The
@@ -647,7 +649,7 @@ def _cyanrip_run(
     on_tty = view is not None and view.tty
     track_total = None
     eta = None  # cyanrip's disc ETA from the last progress line
-    raw_kept = (None, -1, 0.0)  # (track, whole percent, monotonic time) last raw-logged
+    raw_kept: tuple[int | None, int, float] = (None, -1, 0.0)  # (track, %, mono ts) last raw-logged
     raw_held = None  # (track, line): the newest progress line not raw-logged yet
     pending_track = None  # completed, its title line not seen yet
     headed_tracks: set[int] = set()

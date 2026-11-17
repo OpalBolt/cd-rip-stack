@@ -20,8 +20,9 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from rich.table import Table
 from rich.text import Text
@@ -109,7 +110,7 @@ def album_document(
         discs = {
             str(number): dict(entry) for number, entry in discs.items() if isinstance(entry, dict)
         }
-    doc = {
+    doc: dict[str, Any] = {
         "kind": "album",
         "source": source,
         "release": release,
@@ -861,7 +862,7 @@ def _unreadable_finding(rel: str, relpath: str) -> Finding:
     return Finding(rel, "unreadable", f"{relpath}: duration unreadable", path=relpath)
 
 
-def _double_runtime(runtimes: dict[int, int | None], lo: int, hi: int) -> int | None:
+def _double_runtime(runtimes: Mapping[int, int | None], lo: int, hi: int) -> int | None:
     """The runtime a double-episode file grades against: the summed runtimes
     over lo..hi when every episode in the range has a known runtime, else the
     single lo runtime. A range the sources cannot fully price grades at lo
@@ -875,8 +876,9 @@ def _double_runtime(runtimes: dict[int, int | None], lo: int, hi: int) -> int | 
     Returns:
         Summed runtime in seconds, the lo runtime alone, or None
     """
-    if all(runtimes.get(ep) for ep in range(lo, hi + 1)):
-        return sum(runtimes[ep] for ep in range(lo, hi + 1))
+    values = [runtimes.get(ep) for ep in range(lo, hi + 1)]
+    if all(bool(v) for v in values):
+        return sum(v for v in values if v is not None)  # truthy above: no Nones flow
     return runtimes.get(lo)
 
 
@@ -925,10 +927,16 @@ def _movie_ratio_findings(
     row; sub-floor extras are never graded. Probe failures are "unreadable"
     rows, not crashes.
     """
-    main = folder / f"{folder.name}.mkv"
-    if not main.is_file():
-        root_mkvs = [p for p in folder.glob("*.mkv") if p.is_file()]
-        main = max(root_mkvs, key=lambda p: p.stat().st_size, default=None)
+    named = folder / f"{folder.name}.mkv"
+    main: Path | None = (
+        named
+        if named.is_file()
+        else max(
+            (p for p in folder.glob("*.mkv") if p.is_file()),
+            key=lambda p: p.stat().st_size,
+            default=None,
+        )
+    )
     others = [p for p in sorted(folder.rglob("*.mkv")) if p.is_file() and p != main]
     findings: list[Finding] = []
     for path in ([main] if main is not None else []) + others:
@@ -968,8 +976,8 @@ def check_movie_folder(
     identity = _doc_identity(doc.get("tmdb")) if doc else None
     findings: list[Finding] = []
     if identity is not None:
-        kind, id_, runtime = identity
-        return _movie_ratio_findings(folder, rel, runtime, run) + staging, (kind, id_)
+        kind, id_doc, runtime = identity
+        return _movie_ratio_findings(folder, rel, runtime, run) + staging, (kind, id_doc)
     id_ = _search_identity("movie", rel, folder.name, search, findings)
     if id_ is None:
         return findings + staging, None
@@ -1021,7 +1029,9 @@ def _tv_season_findings(
     source it skips — never guesses. A season-list fetch failure degrades to
     the doc source with one stderr warning.
     """
-    season = int(SEASON_DIR.match(season_dir.name).group(1) or "00")
+    season_match = SEASON_DIR.match(season_dir.name)
+    assert season_match is not None  # the caller passes Season dirs only
+    season = int(season_match.group(1) or "00")
     findings: list[Finding] = []
     doc_rows: dict[int, dict] = {}
     if doc is not None:
@@ -1216,6 +1226,7 @@ def is_issue(finding: Finding) -> bool:
 
 def _ratio_action(r: Finding) -> str:
     """One manual-review sentence for a ratio issue row."""
+    assert r.delta is not None  # a banded ratio row always has its delta
     where = r.path or r.detail
     is_movie_main = r.folder.startswith("movies/") and not (r.path or "").startswith("extras/")
     reading = f"{'main ' if is_movie_main else ''}{where} reads {r.ratio:.2f}"
@@ -1313,7 +1324,7 @@ def recommendations(findings: list[Finding]) -> list[dict]:
     for f in findings:
         if is_issue(f):
             by_folder.setdefault(f.folder, []).append(f)
-    plan = []
+    plan: list[dict[str, Any]] = []
     for folder, rows in by_folder.items():
         prio = "note"
         for r in rows:

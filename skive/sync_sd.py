@@ -170,6 +170,7 @@ def format_bytes(n: int) -> str:
         if size < 1000 or unit == "GB":
             return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1000
+    raise AssertionError("unreachable — the GB branch always returns")
 
 
 def rsync_library(

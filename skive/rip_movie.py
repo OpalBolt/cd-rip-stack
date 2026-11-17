@@ -386,6 +386,7 @@ def rip_movie(args) -> None:
         if result == QUIT or not isinstance(result, dict):
             _quit_nothing_ripped()
 
+        assert isinstance(result, dict)  # the guard above quit otherwise
         actions = result
         main_number = next((n for n, a in actions.items() if a == MAIN_ACTION), None)
         extra_numbers = sorted(n for n, a in actions.items() if a == EXTRA_ACTION)
@@ -401,6 +402,7 @@ def rip_movie(args) -> None:
             infos = titles_full
             log.note("titles", "rip set: all — no main on the disc")
         else:
+            assert main_number is not None  # chosen_main above is derived from it
             titles = [main_number] + extra_numbers
             infos = [t for t in titles_full if t.number in titles]
             log.note("titles", rip_set_line(actions))
@@ -478,9 +480,8 @@ def rip_movie(args) -> None:
             for f in sorted(title_dir.glob("*_t*.mkv")):
                 if f in preexisting or not _FINAL_T.search(f.stem):
                     continue
-                info = next(
-                    (t for t in infos if t.number == int(_FINAL_T.search(f.stem).group(1))), None
-                )
+                m = _FINAL_T.search(f.stem)
+                info = next((t for t in infos if m and t.number == int(m.group(1))), None)
                 if info is None:
                     continue  # no matching TitleInfo -> no promise -> skip
                 promises = {l for l in info.subtitles.split(",") if l in ("dan", "eng")}

@@ -73,7 +73,7 @@ def suggest_boundaries(
     ep_runtimes: dict[int, int],
     lo: int,
     hi: int,
-) -> tuple[list[tuple[int, int]] | None, str | None]:
+) -> tuple[list[tuple[int, int]], set[int]] | tuple[None, str]:
     """The suggested boundary layout — a chapter span per episode plus the
     doubtful-boundary flags — or (None, decline reason) with no layout.
 
@@ -283,7 +283,7 @@ class _EpisodeRow:
     number: int
 
 
-class BoundaryTable(_Table):
+class BoundaryTable(_Table["_EpisodeRow"]):
     """The chapter-split boundary table (ADR 0009, the selection component's
     fourth consumer): one row per episode — episode, runtime, chapter start
     — prefilled from `suggest_boundaries`' graded layout.
@@ -561,6 +561,7 @@ def split_combined(
         if confirmed == QUIT:
             log.note("split", "skipped: declined at the boundary table — combined kept")
             return
+        assert isinstance(confirmed, list)  # INTERRUPT/QUIT returned above
         print_accepted_boundaries(
             display, season, lo, confirmed, chapter_starts, duration_s, ep_runtimes
         )

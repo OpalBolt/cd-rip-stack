@@ -9,6 +9,7 @@ import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from skive import ui
 from skive.common import RipLog
@@ -382,7 +383,7 @@ def _parse_titles(out: str) -> list[TitleInfo]:
 
     A title counts only when both duration (TINFO 9) and size (TINFO 10) are present.
     """
-    data = {}  # number -> per-title accumulators
+    data: dict[int, dict[str, Any]] = {}  # number -> per-title accumulators
     for line in out.splitlines():
         if line.startswith("TINFO:"):
             f = line.split(",")

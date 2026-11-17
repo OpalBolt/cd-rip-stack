@@ -273,7 +273,7 @@ def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
     return ""
 
 
-def _align_orders(parts: list[Item], ffprobe_exe: str) -> list[list[int]] | None:
+def _align_orders(parts: list[Item], ffprobe_exe: str) -> list[list[int] | None] | None:
     """Per-part track orders that align every part's streams with part 1's
     (mkvmerge --track-order form: one 0-based source-index list per part,
     part 1's None). None when the parts' signatures differ beyond order --
@@ -447,7 +447,7 @@ _PROBES = 6  # sample points over 10-90% of the duration
 _FRAMES = 30  # frames decoded per probe window
 
 
-def _probe_frame(src: str, ffprobe_exe: str) -> tuple[int, int, str, float | None]:
+def _probe_frame(src: str, ffprobe_exe: str) -> tuple[int, int, str, float | None] | None:
     """(width, height, field_order, duration_s) of the first video stream, in
     the trial oracle's one-JSON-probe shape (the float duration feeds the
     probe stamps -- integer seconds shifts them onto different frames);
@@ -551,9 +551,11 @@ def _detect_crop(src: str, ffprobe_exe: str) -> tuple[tuple[int, int, int, int] 
     try:
         frame = _probe_frame(src, ffprobe_exe)
         ff = _find_tool("ffmpeg")
-        if frame is None or frame[3] is None or ff is None:
+        if frame is None or ff is None:
             return None, "no crop -- detection failed"
         w, h, _field, dur = frame
+        if dur is None:
+            return None, "no crop -- detection failed"
         stamps = [dur * (0.1 + 0.8 * i / (_PROBES - 1)) for i in range(_PROBES)]
         readings = [
             r for r in (_probe_bars(ff, src, t, _FRAMES, w, h) for t in stamps) if r is not None
@@ -656,6 +658,7 @@ def _encode_vaapi(
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
     last_prog = 0.0  # monotonic ts of the last console progress line
     duration_s = 0.0  # the input's Duration: banner line (0 = not seen yet)
+    assert proc.stdout is not None  # PIPE was requested
     try:
         for line in proc.stdout:
             stripped = line.rstrip()
@@ -768,6 +771,7 @@ def _encode(
     verbose = common.VERBOSITY
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
     last_prog = 0.0  # monotonic ts of the last console progress line
+    assert proc.stdout is not None  # PIPE was requested
     try:
         for line in proc.stdout:
             stripped = line.rstrip()
@@ -823,6 +827,7 @@ def _mkvtool(cmd: list[str], log: common.RipLog | None = None) -> int:
     still usable, so no replay)."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     hidden: list[str] = []  # console-suppressed lines, replayed on failure
+    assert proc.stdout is not None  # PIPE was requested
     try:
         for line in proc.stdout:
             stripped = line.rstrip()
@@ -1623,7 +1628,7 @@ def run_transcode(args) -> int:
     mains_started = 0  # session cap counter (CONTEXT.md: Session cap)
     n_ok = 0
     n_failed = 0
-    rows: list[tuple[str, list[str], bool]] = []  # summary-table accumulation
+    rows: list[tuple[str, list[str], str]] = []  # summary-table accumulation
     handled: set[str] = set()
     missing_warned: set[str] = set()  # movies whose no-staged-main note already printed
     # The in-flight item's local temp files (CONTEXT.md: Interrupt): the
@@ -1819,6 +1824,7 @@ def run_transcode(args) -> int:
         for s, order, lb in zip(siblings[1:], align[1:], local_parts[1:]):
             ab = os.path.join(tmp_dir, f"{s.name}.aligned.mkv")
             inflight.append(ab)  # BEFORE the remux: a mid-remux interrupt drops the partial
+            assert order is not None  # only part 1's slot is None (no reorder)
             rrc = _remux_part(ab, lb, mkv_exe, order, log, parts)
             if rrc > 1:  # tool failure: sources stay in place, retry next run
                 log.note("align", f"FAILED mkvmerge ({rrc}): {s.name} -- sources left in place")
@@ -2104,6 +2110,7 @@ def run_transcode(args) -> int:
                 show_dir = os.path.join(lib_dir, "tv", safe)
                 episode = i.sfx == "S"
                 if episode:
+                    assert i.sn is not None  # an episode always carries its season number
                     season = "Specials" if int(i.sn) == 0 else f"Season {i.sn}"
                     dest_dir = os.path.join(show_dir, season)
                     dest = os.path.join(dest_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}.mkv")
@@ -2124,7 +2131,7 @@ def run_transcode(args) -> int:
                             "ok", "skip (already in library)", _hms(int(time.monotonic() - item_t0))
                         )
                     continue
-                parts: list[str] = []
+                parts = []
                 os.makedirs(dest_dir, exist_ok=True)
                 # the local copy is registered in `inflight` AS CREATED so an
                 # interrupt during the copy window drops the partial too
@@ -2269,12 +2276,12 @@ def run_transcode(args) -> int:
                 )
                 dest_dir = os.path.join(lib_dir, "movies", safe)
                 dest = os.path.join(dest_dir, safe + ".mkv")
-                parts: list[str] = []
+                parts = []
                 # cleanup removes this item's temps AFTER the encode; every
                 # entry is also registered in `inflight` AS CREATED so an
                 # interrupt during the copy/merge window drops it too
                 # (CONTEXT.md: Interrupt)
-                cleanup: list[str] = []
+                cleanup = []
                 if len(siblings) > 1:
                     # track guard: a mismatched part set never merges or
                     # encodes -- all parts quarantine whole for a human.
@@ -2455,9 +2462,9 @@ def run_transcode(args) -> int:
             ext = f".p{i.part}" if i.part >= 0 else ""
             dest_dir = os.path.join(lib_dir, "movies", safe, "extras")
             dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
-            parts: list[str] = []
+            parts = []
             os.makedirs(dest_dir, exist_ok=True)
-            cleanup: list[str] = []
+            cleanup = []
             local_src = os.path.join(tmp_dir, i.name)
             pf = _pf_take(i.path, log, parts)
             inflight.append(local_src)  # BEFORE the copy (or the prefetched file's ownership move)
