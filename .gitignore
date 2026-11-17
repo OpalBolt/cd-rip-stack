@@ -37,4 +37,5 @@ HandBreakCLI-help.txt
 # python
 .venv/
 .pytest_cache/
+.mypy_cache/
 __pycache__/
