@@ -18,10 +18,11 @@ from skive import ui
 from skive.scan import TitleInfo, _parse_titles
 from skive.selection import (
     COLUMNS, EXTRA_ACTION, INTERRUPT, QUIT, SKIP_ACTION, EpisodeTable,
-    SelectionTable, episode_map, graded_rows, parse_episode, prefill,
-    print_accepted, print_accepted_episodes, rip_set_line,
+    SelectionTable, decoy_numbers, episode_map, graded_rows, parse_episode,
+    prefill, print_accepted, print_accepted_episodes, rip_set_line,
 )
-from skive.tv_match import sum_disqualified_windowed
+from skive.tv_match import playall_only, sum_disqualified_windowed
+from skive.tv_match import tv_floor
 from skive.ui import THEME
 from skive.validation import MAIN_ACTION
 
@@ -462,6 +463,87 @@ def test_episode_map_prefill_guess_playall_and_sub_floor():
     assert emap.assign == {0: (1, 1), 1: (2, 2), 2: (3, 3), 3: None, 4: None}
     assert [t.number for t in emap.titles] == [0, 1, 2, 3, 4]
     assert emap.evidence == {3: "≈ sum of 0, 1, 2", 4: "below the TV floor"}
+
+
+# --- TV: decoys leave eligibility before sums and the guess (slice 03) -------
+
+def _rip_fed_map(titles, eps=GK_EPS, runtimes=GK_RUNTIMES):
+    """episode_map fed exactly as rip_tv does: the floored, decoy-free list
+    drives the play-all sums; the guess pool is floored AND non-decoy."""
+    decoys = decoy_numbers(titles)
+    info = [(t.number, t.seconds, t.size) for t in titles
+            if t.seconds >= tv_floor(120) and t.number not in decoys]
+    return episode_map(1, titles, 120, sum_disqualified_windowed(info),
+                       eps, runtimes, set())
+
+
+def test_decoys_with_greener_fit_get_none_and_the_decoy_note():
+    """Decoy rows never take an episode however green their ratio; clean
+    titles take the episodes; a sub-floor decoy names the cluster, not the
+    floor, and still lists last."""
+    titles = [TitleInfo(0, 3932, 1_000_000_000, "dan", "", False),
+              TitleInfo(1, 3897, 1_000_000_000, "dan", "", False),
+              TitleInfo(2, 4100, 2_000_000_000, "dan", "", False,
+                        decoy_cluster=3),   # 4100/4140 = 0.99 — greener than t0
+              TitleInfo(3, 3900, 2_000_000_000, "dan", "", True),
+              TitleInfo(4, 300, 100_000_000, "dan", "", False,
+                        decoy_cluster=2)]
+    emap = _rip_fed_map(titles, runtimes={1: 3932, 2: 3897})
+    assert emap.assign == {0: (1, 1), 1: (2, 2), 2: None, 3: None, 4: None}
+    assert emap.evidence == {2: "decoy cluster ×3", 3: "shuffled map",
+                             4: "decoy cluster ×2"}
+    assert [t.number for t in emap.titles] == [0, 1, 2, 3, 4]
+
+
+def test_decoy_durations_never_sum_disqualify_the_real_title():
+    """A real title whose duration equals the sum of decoy durations keeps
+    its episode — the decoys never reach the sums."""
+    titles = [TitleInfo(0, 3000, 1_000_000_000, "dan", "", False),
+              TitleInfo(1, 1500, 1_000_000_000, "dan", "", False,
+                        decoy_cluster=2),
+              TitleInfo(2, 1500, 1_000_000_000, "dan", "", False,
+                        decoy_cluster=2)]
+    decoys = decoy_numbers(titles)
+    info = [(t.number, t.seconds, t.size) for t in titles
+            if t.seconds >= tv_floor(120) and t.number not in decoys]
+    # The decoy-inclusive shape WOULD sum-match t0; the decoy-free one must not.
+    assert sum_disqualified_windowed(
+        [(t.number, t.seconds, t.size) for t in titles if t.seconds >= 600]) == {
+        0: ("tight", [1, 2])}
+    assert sum_disqualified_windowed(info) == {}
+    emap = _rip_fed_map(titles, runtimes={1: 3000})
+    assert emap.assign[0] == (1, 1)
+    assert all("≈ sum of" not in e for e in emap.evidence.values())
+
+
+def test_all_decoys_input_prefills_every_row_none_with_notes():
+    titles = [TitleInfo(0, 3932, 1_000_000_000, "dan", "", False,
+                        decoy_cluster=2),
+              TitleInfo(1, 3897, 1_000_000_000, "dan", "", True)]
+    emap = _rip_fed_map(titles)
+    assert emap.assign == {0: None, 1: None}
+    assert emap.evidence == {0: "decoy cluster ×2", 1: "shuffled map"}
+
+
+def test_playall_only_fires_on_the_decoy_free_list_beside_a_cluster():
+    """The chapter-split trigger judges decoy-free eligibility: a lone clean
+    title beside a decoy cluster still fires."""
+    titles = [(0, 6000, 1), (1, 1500, 1), (2, 1500, 1)]  # 1, 2 decoy-excluded
+    decoy_free = [t for t in titles if t[0] not in {1, 2}]
+    assert playall_only(decoy_free, set(), {0: (1, 2)}) == (0, 1, 2)
+
+
+def test_accepted_echo_renders_the_decoy_note(monkeypatch):
+    out = io.StringIO()
+    con = Console(file=out, width=80, theme=THEME, highlight=False,
+                  emoji=False, force_terminal=False)
+    monkeypatch.setattr(ui, "console", con)
+    titles = [TitleInfo(0, 3932, 1_000_000_000, "dan", "", False,
+                        decoy_cluster=3),
+              TitleInfo(1, 3897, 1_000_000_000, "dan", "", False)]
+    emap = _rip_fed_map(titles, runtimes={1: 3897})
+    print_accepted_episodes("Show (2000)", emap, {0: None, 1: (1, 1)})
+    assert "decoy cluster ×3" in out.getvalue()
 
 
 def test_sub_floor_rows_list_last_even_when_scanned_first():

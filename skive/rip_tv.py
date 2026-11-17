@@ -16,7 +16,8 @@ from skive.makemkv import (
 )
 from skive.rip_common import rip_preamble, tv_season_gate
 from skive.selection import (
-    INTERRUPT, QUIT, episode_map, print_accepted_episodes, run_episode_table,
+    INTERRUPT, QUIT, decoy_numbers, episode_map, print_accepted_episodes,
+    run_episode_table,
 )
 from skive.tmdb import fetch_season
 from skive.validation import (
@@ -464,11 +465,22 @@ def rip_tv(args) -> None:
         # sub-floor ones still list in the table (bottom section, prefilled
         # skip, rescuable).
         titles_info = [t for t in titles_info if t[1] >= tv_floor(minlength)]
+        floored = len(titles_info)
+        # Decoy exclusion: decoy-cluster members and scrambled titles leave
+        # eligibility here — the play-all sums, the chapter-split trigger and
+        # the episode guess all see a decoy-free list, however green a
+        # decoy's disc÷TMDB fit. A row assigned an episode at the table
+        # still rips (the rescue path).
+        decoys = decoy_numbers(titles_full)
+        titles_info = [t for t in titles_info if t[0] not in decoys]
         # Play-alls by window tier: tight ±120s and the soft ±300s window both
         # disqualify and prefill skip (ADR 0008).
         disqualified = sum_disqualified_windowed(titles_info)
         playalls = set(disqualified)
-        if len(titles_info) == len(playalls):
+        if floored and not titles_info:
+            ui.warn("every eligible title on this disc is a decoy — nothing prefilled; assign episodes at the cursor")
+            log.note("decoy", f"all {floored} eligible titles decoy-clustered — nothing prefilled, operator assigns at the cursor")
+        elif len(titles_info) == len(playalls):
             ui.fail("no eligible titles on this disc")
             sys.exit(1)
 

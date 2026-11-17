@@ -445,6 +445,14 @@ class EpisodeMap:
         return row
 
 
+def decoy_numbers(titles: list[TitleInfo]) -> set[int]:
+    """Title numbers carrying a decoy fact: decoy-cluster members and
+    scrambled-map titles. They never enter the episode guess's pool and
+    prefill skip with the decoy note — but a row assigned an episode at the
+    table still rips."""
+    return {t.number for t in titles if t.decoy_cluster or t.scrambled}
+
+
 def episode_map(season: int, titles: list[TitleInfo], minlength: int,
                 playalls: dict[int, tuple[str, list[int]]],
                 ep_names: dict[int, str], ep_runtimes: dict[int, int],
@@ -465,7 +473,9 @@ def episode_map(season: int, titles: list[TitleInfo], minlength: int,
         staged: Episode numbers already staged
     """
     floor = tv_floor(minlength)
-    info = [(t.number, t.seconds, t.size) for t in titles if t.seconds >= floor]
+    decoys = decoy_numbers(titles)
+    info = [(t.number, t.seconds, t.size) for t in titles
+            if t.seconds >= floor and t.number not in decoys]
     guessed = prefill_assignment(info, set(playalls), ep_runtimes, staged,
                                  ep_names)
     below = set(sub_floor_titles([(t.number, t.seconds, t.size) for t in titles],
@@ -474,7 +484,11 @@ def episode_map(season: int, titles: list[TitleInfo], minlength: int,
     evidence: dict[int, str] = {}
     for t in titles:
         n = t.number
-        if n in below:
+        if n in decoys:
+            assign[n] = None
+            evidence[n] = (f"decoy cluster ×{t.decoy_cluster}"
+                           if t.decoy_cluster else "shuffled map")
+        elif n in below:
             assign[n] = None
             evidence[n] = "below the TV floor"
         elif n in playalls:

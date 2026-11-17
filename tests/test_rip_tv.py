@@ -248,6 +248,34 @@ def test_accepted_double_reaches_rename(tmp_path, monkeypatch):
     assert mock_rename_tv.call_args.args[3] == {0: (3, 3), 1: (1, 2)}
 
 
+def test_all_decoys_disc_prefills_nothing_warns_and_still_rips_an_assignment(
+        tmp_path, monkeypatch):
+    """Every eligible title decoy-clustered: the table opens prefilled with
+    NOTHING, the warn says so loudly, no exit — and a decoy row the operator
+    assigns an episode at the cursor still rips (the rescue path)."""
+    titles = [TitleInfo(0, 3932, 1_000_000_000, "dan", "", False,
+                        decoy_cluster=2),
+              TitleInfo(1, 3897, 1_000_000_000, "dan", "", True)]
+    episodes = [(1, "ep1", 3932), (2, "ep2", 3897)]
+    warns: list[str] = []
+    monkeypatch.setattr("skive.rip_tv.ui.warn",
+                        lambda text, **k: warns.append(text))
+    seen = {}
+
+    def table(display, emap, ls, cs):
+        seen["emap"] = emap
+        return {0: (1, 1), 1: None}  # the operator assigns the decoy at t0
+
+    mock_rename_tv, _console, rc = _range_flow(
+        tmp_path, monkeypatch, titles, episodes, table=table)
+
+    assert rc == 0
+    assert seen["emap"].assign == {0: None, 1: None}
+    assert seen["emap"].evidence == {0: "decoy cluster ×2", 1: "shuffled map"}
+    assert len(warns) == 1 and "decoy" in warns[0]
+    assert mock_rename_tv.call_args.args[3] == {0: (1, 1)}
+
+
 def test_table_quit_rips_nothing_and_exits_1(tmp_path, monkeypatch):
     from skive.selection import QUIT
     mock_rename_tv, console, rc = _range_flow(
