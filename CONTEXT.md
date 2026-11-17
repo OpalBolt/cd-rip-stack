@@ -33,12 +33,16 @@ The `app_Key` activation string in `~/.MakeMKV/settings.conf` on the rip box. Th
 _Avoid_: license, registration, serial
 
 **Eligible title**:
-A disc title that can become an episode by default: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s) and not sum-disqualified. Feeds the episode guess's matching pool and the position assignment; sub-floor titles still list in the table's bottom section, dropped by default and rescued only by a table row.
+A disc title that can become an episode by default: at or above the TV floor (`max(RIP_MINLENGTH, 600)`, default 600s), not sum-disqualified, and not a decoy-cluster member or scrambled map. Feeds the episode guess's matching pool and the position assignment; sub-floor titles still list in the table's bottom section, dropped by default and rescued only by a table row.
 _Avoid_: candidate title
 
 **Play-all title**:
 A disc title whose duration equals the sum of a subset of other eligible titles — a compilation, never an episode, never ripped. A tight-window match (±120s) auto-skips; a wider soft-window match auto-skips too, shown with its evidence as `≈ sum of …` — both overridable: a table row assigning it an episode still rips it. The lone title of a play-all-only disc never matches this sum — it is not this term.
 _Avoid_: compilation, sum title
+
+**Decoy cluster**:
+Three or more disc titles sharing one identical segment map — mass-duplicated playlist obfuscation (Flame & Citron: 82 copies; scrambled cell playback makes durations differ and flags lie). Every member row carries a loud note and the prefill skips them — overridable at the table, like any action.
+_Avoid_: duplicate titles, fake titles
 
 **Season**:
 A TMDB-numbered season of a TV show. Season 0 is specials. Never inferred from disc structure.
