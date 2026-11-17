@@ -48,8 +48,7 @@ _DISC = re.compile(r"^d\d+$")  # rip/<type>/<Name (Year)>/d{disc} staging subdir
 _GLUED = re.compile(r"-[A-Z][0-9]+$")  # MakeMKV disc tag glued onto the title
 
 # parse order matches migrate_layout.parse_name: EP, EXTRA, TITLE
-_RXS = ((transcode._RX_EP, "ep"), (transcode._RX_EXTRA, "extra"),
-        (transcode._RX_TITLE, "title"))
+_RXS = ((transcode._RX_EP, "ep"), (transcode._RX_EXTRA, "extra"), (transcode._RX_TITLE, "title"))
 
 
 def _part(m: re.Match) -> str:
@@ -100,8 +99,7 @@ def find_groups(root: Path) -> dict[tuple[str, str], list[tuple[Path, str]]]:
             for f in files:
                 parsed = parse_yearless(f.name)
                 if parsed:
-                    groups.setdefault((typedir.name, parsed[0]), []).append(
-                        (f, parsed[1]))
+                    groups.setdefault((typedir.name, parsed[0]), []).append((f, parsed[1]))
     return groups
 
 
@@ -170,8 +168,8 @@ def run_backfill(root: Path, apply_mode: bool, picker=None) -> int:
         # itself (the stem equals its own title); the year is the point.
         while not (pick.year and pick.year != "-"):
             manual = input(
-                f'  TMDB has no year for "{title}" -- type one '
-                "(4 digits; Enter skips this group): ").strip()
+                f'  TMDB has no year for "{title}" -- type one (4 digits; Enter skips this group): '
+            ).strip()
             if not manual:
                 pick = None
                 break
@@ -181,14 +179,12 @@ def run_backfill(root: Path, apply_mode: bool, picker=None) -> int:
                 print("  year must be 4 digits")
         if pick is None:
             no_year += 1
-            print(f'skip group "{title}" ({len(files)} file(s), no year '
-                  "-- left in place)")
+            print(f'skip group "{title}" ({len(files)} file(s), no year -- left in place)')
             continue
         stem = staged_stem(pick)
         picks[(type_name, title)] = stem
         print(f'pick "{title}" -> {stem}')
-    renames, skips = _plan_renames(
-        {k: v for k, v in groups.items() if k in picks}, picks)
+    renames, skips = _plan_renames({k: v for k, v in groups.items() if k in picks}, picks)
     if apply_mode:
         done = 0
         for src, dst in renames:
@@ -205,8 +201,10 @@ def run_backfill(root: Path, apply_mode: bool, picker=None) -> int:
     for p, reason in skips:
         print(f"skip {p} ({reason} -- left in place)")
     print(f"backfill report -- {root}")
-    print(f"{len(renames)} rename(s), {len(skips)} skipped"
-          + (f", {no_year} group(s) skipped (no year)" if no_year else ""))
+    print(
+        f"{len(renames)} rename(s), {len(skips)} skipped"
+        + (f", {no_year} group(s) skipped (no year)" if no_year else "")
+    )
     if not apply_mode:
         print("dry-run: nothing changed (picks discarded -- re-run with --apply)")
     elif renames:
@@ -218,13 +216,19 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="backfill_years.py",
         description="One-off backfill: per-title TMDB pick for staged rip leftovers "
-                    "whose rename never wrote the year, renaming them in place to "
-                    "the canonical <Name (Year)> staged names. Dry-run by default.",
+        "whose rename never wrote the year, renaming them in place to "
+        "the canonical <Name (Year)> staged names. Dry-run by default.",
     )
-    p.add_argument("--apply", action="store_true",
-                   help="execute the planned renames (default: dry-run)")
-    p.add_argument("--root", metavar="PATH", type=Path, default=None,
-                   help="videos share root (default: $VIDEOS_MOUNT, else /mnt/videos)")
+    p.add_argument(
+        "--apply", action="store_true", help="execute the planned renames (default: dry-run)"
+    )
+    p.add_argument(
+        "--root",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help="videos share root (default: $VIDEOS_MOUNT, else /mnt/videos)",
+    )
     return p.parse_args(argv)
 
 

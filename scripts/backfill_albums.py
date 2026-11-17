@@ -26,7 +26,6 @@ sys.path.insert(0, str(_repo))
 from skive.tag import AUDIO_EXTENSIONS
 from skive.validation import VALIDATION_FILENAME, album_document, write_validation
 
-
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 # Tests replace this callable; keeping it at module scope also keeps all file
 # decoding behind one seam, so the script never needs a real audio fixture.
@@ -61,8 +60,9 @@ def _first(audio, *names):
 def _release(audio_files: list) -> str | None:
     """Use the MusicBrainz id, or a Bandcamp URL in comment/url tags."""
     for audio in audio_files:
-        value = _first(audio, "musicbrainz_albumid", "mb_albumid",
-                       "mb_release_id", "musicbrainz release id")
+        value = _first(
+            audio, "musicbrainz_albumid", "mb_albumid", "mb_release_id", "musicbrainz release id"
+        )
         if value:
             return str(value)
     for audio in audio_files:
@@ -95,7 +95,7 @@ def _track(path: Path, audio) -> dict:
     info = getattr(audio, "info", None)
     length = getattr(info, "length", None)
     try:
-        duration = int(round(float(length))) if length is not None else None
+        duration = round(float(length)) if length is not None else None
     except (TypeError, ValueError):
         duration = None
     fmt = getattr(audio, "format", None)
@@ -115,8 +115,11 @@ def build_album_document(folder: Path, reader=None) -> dict:
     tracks = []
     audio_files = []
     for path in sorted(folder.rglob("*")):
-        if not path.is_file() or path.name == VALIDATION_FILENAME \
-                or path.suffix.lower() not in AUDIO_EXTENSIONS:
+        if (
+            not path.is_file()
+            or path.name == VALIDATION_FILENAME
+            or path.suffix.lower() not in AUDIO_EXTENSIONS
+        ):
             continue
         try:
             audio = read(path, easy=True)
@@ -134,9 +137,15 @@ def build_album_document(folder: Path, reader=None) -> dict:
     disctotal = _total(first, "disctotal", "discnumber") if first else None
     # These are deliberately beside (not in place of) the tag totals: a gap
     # is visible as e.g. tracks_found=11, tracktotal=12.
-    return album_document("unknown", _release(audio_files), tracks,
-                          reconstructed=True, tracks_found=len(tracks),
-                          tracktotal=tracktotal, disctotal=disctotal)
+    return album_document(
+        "unknown",
+        _release(audio_files),
+        tracks,
+        reconstructed=True,
+        tracks_found=len(tracks),
+        tracktotal=tracktotal,
+        disctotal=disctotal,
+    )
 
 
 def backfill_album(folder: Path, reader=None) -> dict:
@@ -159,12 +168,17 @@ def _albums(library: Path):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="backfill_albums.py",
-        description="Reconstruct missing album validation.json files (dry-run by default).")
-    parser.add_argument("--apply", action="store_true",
-                        help="write records; default is to print the plan")
-    parser.add_argument("--root", metavar="PATH",
-                        default=os.environ.get("MUSIC_MOUNT", "/mnt/music"),
-                        help="music mount (default: $MUSIC_MOUNT or /mnt/music)")
+        description="Reconstruct missing album validation.json files (dry-run by default).",
+    )
+    parser.add_argument(
+        "--apply", action="store_true", help="write records; default is to print the plan"
+    )
+    parser.add_argument(
+        "--root",
+        metavar="PATH",
+        default=os.environ.get("MUSIC_MOUNT", "/mnt/music"),
+        help="music mount (default: $MUSIC_MOUNT or /mnt/music)",
+    )
     args = parser.parse_args(argv)
 
     planned = skipped = 0
@@ -177,8 +191,10 @@ def main(argv=None) -> int:
             continue
         doc = backfill_album(folder)
         release = doc["release"] or "no release reference"
-        print(f"write  {rel}: {doc['tracks_found']} of "
-              f"{doc['tracktotal'] if doc['tracktotal'] is not None else '?'} tracks, {release}")
+        print(
+            f"write  {rel}: {doc['tracks_found']} of "
+            f"{doc['tracktotal'] if doc['tracktotal'] is not None else '?'} tracks, {release}"
+        )
         if args.apply:
             write_validation(destination, doc)
         planned += 1

@@ -10,24 +10,31 @@ from skive.validation import album_document, merge_album_document
 
 
 def test_album_document_shape():
-    doc = album_document("bandcamp", "https://x.bandcamp.com/y",
-                         [{"file": "01.flac", "dur_s": 12, "format": "FLAC"}],
-                         disc_number=1, tag_run="tag1", filing_date="2025-01-02",
-                         mode="as-is")
+    doc = album_document(
+        "bandcamp",
+        "https://x.bandcamp.com/y",
+        [{"file": "01.flac", "dur_s": 12, "format": "FLAC"}],
+        disc_number=1,
+        tag_run="tag1",
+        filing_date="2025-01-02",
+        mode="as-is",
+    )
     assert list(doc) == ["kind", "source", "release", "tracks", "discs", "reconstructed"]
-    assert doc["discs"] == {"1": {"tag_run": "tag1", "filed_at": "2025-01-02",
-                                   "mode": "as-is"}}
+    assert doc["discs"] == {"1": {"tag_run": "tag1", "filed_at": "2025-01-02", "mode": "as-is"}}
     assert doc["reconstructed"] is False
 
 
 def test_merge_album_document_replaces_one_disc_and_keeps_another():
-    old = album_document("cd", "mb-old", [], disc_number=1, tag_run="one",
-                         filing_date="2025-01-01")
-    old["discs"]["2"] = {"tag_run": "two", "filed_at": "2025-01-01",
-                           "mode": "autotag"}
-    new = album_document("cd", "mb-new", [{"file": "02.flac", "dur_s": 20,
-                                             "format": "FLAC"}], disc_number=1,
-                         tag_run="replacement", filing_date="2025-01-03")
+    old = album_document("cd", "mb-old", [], disc_number=1, tag_run="one", filing_date="2025-01-01")
+    old["discs"]["2"] = {"tag_run": "two", "filed_at": "2025-01-01", "mode": "autotag"}
+    new = album_document(
+        "cd",
+        "mb-new",
+        [{"file": "02.flac", "dur_s": 20, "format": "FLAC"}],
+        disc_number=1,
+        tag_run="replacement",
+        filing_date="2025-01-03",
+    )
     merged = merge_album_document(old, new)
     assert merged["discs"]["1"]["tag_run"] == "replacement"
     assert merged["discs"]["2"]["tag_run"] == "two"
@@ -38,8 +45,12 @@ def _task(source: Path, destination: Path, name="01.flac"):
     destination.mkdir(parents=True, exist_ok=True)
     item_path = destination / name
     item_path.write_bytes(b"audio")
-    item = SimpleNamespace(path=str(item_path), length=123.4, format="FLAC",
-                           comment="https://artist.bandcamp.com/album/release")
+    item = SimpleNamespace(
+        path=str(item_path),
+        length=123.4,
+        format="FLAC",
+        comment="https://artist.bandcamp.com/album/release",
+    )
     return SimpleNamespace(paths=[str(source)], items=[item])
 
 
@@ -70,11 +81,18 @@ def test_plugin_second_disc_uses_consistent_cd_sidecar_names(tmp_path):
     second = tmp_path / "rip" / "cd" / "Album-2"
     for source, number in ((first, "1"), (second, "2")):
         source.mkdir(parents=True)
-        (source / "validation.json").write_text(json.dumps({
-            "kind": "album", "source": "cd", "release": "mbid",
-            "tracks": [], "discs": {number: {"rip_run": "rip-" + number}},
-            "reconstructed": False,
-        }))
+        (source / "validation.json").write_text(
+            json.dumps(
+                {
+                    "kind": "album",
+                    "source": "cd",
+                    "release": "mbid",
+                    "tracks": [],
+                    "discs": {number: {"rip_run": "rip-" + number}},
+                    "reconstructed": False,
+                }
+            )
+        )
         (source / "cyanrip.log").write_text(number)
     handle_import_task_files(_task(first, destination), tag_run="tag-1")
     handle_import_task_files(_task(second, destination, name="02.flac"), tag_run="tag-2")
@@ -92,16 +110,27 @@ def test_plugin_multiple_source_dirs_merges_discs_and_sidecars(tmp_path):
     second = tmp_path / "rip" / "bandcamp" / "Album" / "disc2"
     for source, number in ((first, "1"), (second, "2")):
         source.mkdir(parents=True)
-        (source / "validation.json").write_text(json.dumps({
-            "kind": "album", "source": "bandcamp", "release": "url",
-            "tracks": [], "discs": {number: {"rip_run": "rip-" + number}},
-            "reconstructed": False,
-        }))
+        (source / "validation.json").write_text(
+            json.dumps(
+                {
+                    "kind": "album",
+                    "source": "bandcamp",
+                    "release": "url",
+                    "tracks": [],
+                    "discs": {number: {"rip_run": "rip-" + number}},
+                    "reconstructed": False,
+                }
+            )
+        )
         (source / "cyanrip.log").write_text(number)
         (source / "disc.cue").write_text(number)
     task = _task(first, destination)
-    second_item = SimpleNamespace(path=str(destination / "02.flac"), length=124,
-                                  format="FLAC", comment="https://artist.bandcamp.com/album/release")
+    second_item = SimpleNamespace(
+        path=str(destination / "02.flac"),
+        length=124,
+        format="FLAC",
+        comment="https://artist.bandcamp.com/album/release",
+    )
     second_item_path = Path(second_item.path)
     second_item_path.write_bytes(b"audio")
     task.paths = [str(first), str(second)]

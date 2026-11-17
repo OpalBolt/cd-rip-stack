@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date
 import os
-from pathlib import Path
 import re
+from datetime import date
+from pathlib import Path
 from urllib.parse import urlparse
 
 from beets.plugins import BeetsPlugin
@@ -39,7 +39,11 @@ def _path(value) -> Path:
 
 
 def _item_paths(task) -> list[Path]:
-    items = task.imported_items() if callable(getattr(task, "imported_items", None)) else getattr(task, "items", [])
+    items = (
+        task.imported_items()
+        if callable(getattr(task, "imported_items", None))
+        else getattr(task, "items", [])
+    )
     return [_path(item.path) for item in items if getattr(item, "path", None)]
 
 
@@ -82,7 +86,7 @@ def _track(item) -> dict:
     duration = _value(item, "length", "duration", "duration_s")
     if duration is not None:
         try:
-            duration = int(round(float(duration)))
+            duration = round(float(duration))
         except (TypeError, ValueError):
             duration = None
     fmt = _value(item, "format") or path.suffix.lstrip(".").upper() or None
@@ -106,8 +110,7 @@ def _release(items, source_doc: dict | None, source: str) -> str | None:
     return None
 
 
-def _disc_number(source_doc: dict | None, items,
-                 source: Path | None = None) -> str:
+def _disc_number(source_doc: dict | None, items, source: Path | None = None) -> str:
     if source_doc and isinstance(source_doc.get("discs"), dict) and source_doc["discs"]:
         return str(next(reversed(source_doc["discs"])))
     if source is not None:
@@ -150,8 +153,7 @@ def _rename_unmarked_sidecars(destination: Path) -> None:
             sidecar.replace(_unique_sidecar_target(destination, target_name))
 
 
-def _file_sidecars(source: Path, destination: Path, disc_number: str,
-                   disc_count: int) -> None:
+def _file_sidecars(source: Path, destination: Path, disc_number: str, disc_count: int) -> None:
     if not source.is_dir():
         return
     for suffix in (".log", ".cue"):
@@ -162,12 +164,15 @@ def _file_sidecars(source: Path, destination: Path, disc_number: str,
             sidecar.replace(_unique_sidecar_target(destination, name))
 
 
-def handle_import_task_files(task, *, tag_run: str | None = None,
-                             mode: str | None = None) -> None:
+def handle_import_task_files(task, *, tag_run: str | None = None, mode: str | None = None) -> None:
     """Write one album record after beets has moved an import task's files."""
     sources = _source_paths(task)
     destination = _destination(task)
-    items = list(task.imported_items()) if callable(getattr(task, "imported_items", None)) else list(getattr(task, "items", []))
+    items = (
+        list(task.imported_items())
+        if callable(getattr(task, "imported_items", None))
+        else list(getattr(task, "items", []))
+    )
     # The folder directly under rip is authoritative; never use the album
     # folder (or stale metadata) as the music source.
     source_kind = _source_kind(sources[0])
@@ -184,8 +189,13 @@ def handle_import_task_files(task, *, tag_run: str | None = None,
         disc_number = _disc_number(source_doc, items, source)
         source_discs = source_doc.get("discs") if source_doc else None
         if isinstance(source_discs, dict):
-            discs.update({str(number): dict(entry) for number, entry in source_discs.items()
-                          if isinstance(entry, dict)})
+            discs.update(
+                {
+                    str(number): dict(entry)
+                    for number, entry in source_discs.items()
+                    if isinstance(entry, dict)
+                }
+            )
         entry = dict(discs.get(disc_number, {}))
         entry.update({"tag_run": run, "filed_at": filed, "mode": beets_mode})
         discs[disc_number] = entry
@@ -193,8 +203,11 @@ def handle_import_task_files(task, *, tag_run: str | None = None,
             release = _release(items, source_doc, source_kind)
 
     doc = album_document(
-        source_kind, release, [_track(item) for item in items],
-        reconstructed=False, discs=discs,
+        source_kind,
+        release,
+        [_track(item) for item in items],
+        reconstructed=False,
+        discs=discs,
     )
     merged = merge_album_document(old, doc)
     destination.mkdir(parents=True, exist_ok=True)
@@ -203,8 +216,7 @@ def handle_import_task_files(task, *, tag_run: str | None = None,
     if disc_count > 1:
         _rename_unmarked_sidecars(destination)
     for source in sources:
-        disc_number = _disc_number(load_validation(source / VALIDATION_FILENAME),
-                                   items, source)
+        disc_number = _disc_number(load_validation(source / VALIDATION_FILENAME), items, source)
         _file_sidecars(source, destination, disc_number, disc_count)
 
 
@@ -218,5 +230,5 @@ class SkiveAlbumPlugin(BeetsPlugin):
     def _import_task_files(self, session, task):
         try:
             handle_import_task_files(task)
-        except Exception:
+        except Exception:  # noqa: BLE001 — one bad album never kills the import
             self._log.exception("could not write album validation record")

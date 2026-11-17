@@ -6,8 +6,13 @@ import pytest
 
 from skive.main import build_parser
 from skive.search import (
-    find_hits, find_music_hits, folder_states, fmt_seasons, run_search,
-    seasons_in, suggestions,
+    find_hits,
+    find_music_hits,
+    fmt_seasons,
+    folder_states,
+    run_search,
+    seasons_in,
+    suggestions,
 )
 
 
@@ -109,7 +114,9 @@ def test_search_music_walks_only_music_mount(tmp_path, monkeypatch, capsys):
 
 
 def test_search_mount_failure_is_one_note_and_successful_exit(monkeypatch, capsys):
-    monkeypatch.setattr("skive.search.ensure_share", lambda *_args: (_ for _ in ()).throw(SystemExit(1)))
+    monkeypatch.setattr(
+        "skive.search.ensure_share", lambda *_args: (_ for _ in ()).throw(SystemExit(1))
+    )
 
     run_search(SimpleNamespace(scope="music", query="album"))
 
@@ -144,11 +151,13 @@ def test_search_piped_prints_plain_data_lines_on_stdout(tmp_path, monkeypatch, c
     run_search(SimpleNamespace(scope="video", query="andor"))
 
     captured = capsys.readouterr()
-    assert captured.out == ("Andor (2022) — tv\n"
-                            "  staging   S02\n"
-                            "  library   S01\n"
-                            "Andor Rising (2020) — movie\n"
-                            "  lossless\n")
+    assert captured.out == (
+        "Andor (2022) — tv\n"
+        "  staging   S02\n"
+        "  library   S01\n"
+        "Andor Rising (2020) — movie\n"
+        "  lossless\n"
+    )
     assert captured.err == ""
 
     run_search(SimpleNamespace(scope="video", query="zzz"))
@@ -159,7 +168,9 @@ def test_search_tty_shows_hit_headings_and_state_symbols(tmp_path, monkeypatch):
     """On a terminal: a bold heading per hit, indented state rows with
     symbols (✓ filed, · staged/lossless); nothing on stdout."""
     import io
+
     from rich.console import Console
+
     from skive import ui
 
     class _Tty(io.StringIO):
@@ -168,9 +179,11 @@ def test_search_tty_shows_hit_headings_and_state_symbols(tmp_path, monkeypatch):
 
     _video_share(tmp_path, monkeypatch)
     screen, stdout = io.StringIO(), _Tty()
-    monkeypatch.setattr(ui, "console", Console(file=screen, force_terminal=True,
-                                               theme=ui.THEME, color_system=None,
-                                               width=80))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(file=screen, force_terminal=True, theme=ui.THEME, color_system=None, width=80),
+    )
     monkeypatch.setattr("sys.stdout", stdout)
 
     run_search(SimpleNamespace(scope="video", query="andor"))

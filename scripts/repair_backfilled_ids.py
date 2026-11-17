@@ -29,7 +29,10 @@ sys.path.insert(0, str(_repo))  # the skive package
 
 from skive.tmdb import fetch_by_id, search_first, title_matches
 from skive.validation import (
-    VALIDATION_FILENAME, YEAR_SUFFIX, load_validation, write_validation,
+    VALIDATION_FILENAME,
+    YEAR_SUFFIX,
+    load_validation,
+    write_validation,
 )
 
 
@@ -43,8 +46,12 @@ def repair_folder(folder: Path, apply: bool) -> str | None:
     """
     doc = load_validation(folder / VALIDATION_FILENAME)
     tmdb = doc.get("tmdb") if doc else None
-    if (not isinstance(tmdb, dict) or tmdb.get("type") != "movie"
-            or doc.get("run") is not None or doc.get("volume_label") is not None):
+    if (
+        not isinstance(tmdb, dict)
+        or tmdb.get("type") != "movie"
+        or doc.get("run") is not None
+        or doc.get("volume_label") is not None
+    ):
         return None
     m = YEAR_SUFFIX.match(folder.name)
     if m is None:
@@ -63,9 +70,12 @@ def repair_folder(folder: Path, apply: bool) -> str | None:
         print(f"skip  {folder.name}: TMDB search failed ({e})", file=sys.stderr)
         return None
     if pick is None or not title_matches(name, pick.title):
-        print(f"skip  {folder.name}: id {tmdb['id']} looks wrong "
-              f"({recorded.title} ({recorded.year}) on record) and no hit "
-              f"titled {name!r} ({year}) — needs eyes", file=sys.stderr)
+        print(
+            f"skip  {folder.name}: id {tmdb['id']} looks wrong "
+            f"({recorded.title} ({recorded.year}) on record) and no hit "
+            f"titled {name!r} ({year}) — needs eyes",
+            file=sys.stderr,
+        )
         return None
     if pick.id == str(tmdb["id"]):
         return None  # same id back: the year was right, the fetch lied about it
@@ -78,13 +88,17 @@ def repair_folder(folder: Path, apply: bool) -> str | None:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="repair_backfilled_ids.py",
-        description="Re-check the ids the validation backfill recorded "
-                    "(dry-run by default).")
-    p.add_argument("--apply", action="store_true",
-                   help="rewrite mismatched ids (default: print the plan only)")
-    p.add_argument("--root", metavar="PATH",
-                   default=os.environ.get("VIDEOS_MOUNT", "/mnt/videos"),
-                   help="share root (default: $VIDEOS_MOUNT or /mnt/videos)")
+        description="Re-check the ids the validation backfill recorded (dry-run by default).",
+    )
+    p.add_argument(
+        "--apply", action="store_true", help="rewrite mismatched ids (default: print the plan only)"
+    )
+    p.add_argument(
+        "--root",
+        metavar="PATH",
+        default=os.environ.get("VIDEOS_MOUNT", "/mnt/videos"),
+        help="share root (default: $VIDEOS_MOUNT or /mnt/videos)",
+    )
     args = p.parse_args(argv)
     root = Path(args.root)
 

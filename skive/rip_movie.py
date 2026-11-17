@@ -8,25 +8,47 @@ from pathlib import Path
 
 from skive import ui
 from skive.makemkv import (
-    build_selection, hsize, inject_profile, promote_staged, purge_junk,
-    rename_staged, rip_header, subtitle_note, subtitle_shortfall, rip_titles, strip_audio_counts,
+    build_selection,
+    hsize,
+    inject_profile,
+    promote_staged,
+    purge_junk,
+    rename_staged,
+    rip_header,
+    rip_titles,
     silent_staged,
+    strip_audio_counts,
+    subtitle_note,
+    subtitle_shortfall,
     widened_audio,
 )
 from skive.rip_common import rip_preamble
 from skive.selection import (
-    INTERRUPT, QUIT, EXTRA_ACTION, graded_rows as build_graded_rows, hms,
-    print_accepted, rip_set_line, run_selection_table,
+    EXTRA_ACTION,
+    INTERRUPT,
+    QUIT,
+    hms,
+    print_accepted,
+    rip_set_line,
+    run_selection_table,
+)
+from skive.selection import (
+    graded_rows as build_graded_rows,
 )
 from skive.validation import (
-    MAIN_ACTION, merge_movie_document, movie_document, movie_row, resolve_main,
-    set_extras_marker, VALIDATION_FILENAME, load_validation, write_validation,
+    MAIN_ACTION,
+    VALIDATION_FILENAME,
+    load_validation,
+    merge_movie_document,
+    movie_document,
+    movie_row,
+    resolve_main,
+    set_extras_marker,
+    write_validation,
 )
 
 
-
-def _interrupted(log, stage_dirs: list[Path], view,
-                 preexisting: set[Path] | None = None) -> None:
+def _interrupted(log, stage_dirs: list[Path], view, preexisting: set[Path] | None = None) -> None:
     """Close a movie run with its summary after Ctrl+C.
 
     Files left by this run with final names are completed rows; files that
@@ -51,12 +73,19 @@ def _interrupted(log, stage_dirs: list[Path], view,
     view.close()
     log.interrupted()
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
-    ui.run_summary(rows, len(rows), 0, columns=("Title", "duration", "size", "result"),
-                   replay=replay, interrupt_note="partial deleted", log=log)
+    ui.run_summary(
+        rows,
+        len(rows),
+        0,
+        columns=("Title", "duration", "size", "result"),
+        replay=replay,
+        interrupt_note="partial deleted",
+        log=log,
+    )
     sys.exit(130)
 
 
-_FINAL_T = re.compile(r'_t(\d+)(?:\.p\d+)?$')
+_FINAL_T = re.compile(r"_t(\d+)(?:\.p\d+)?$")
 """A staged file's final title number — parsed from the FINAL name, never
 the scan table (renames roll numbers
 forward past collisions). An optional trailing .pN part suffix (multi-part
@@ -74,8 +103,9 @@ def _staged_mkv_paths(title_dir: Path, preexisting: set[Path]):
             yield mkv, int(m.group(1))
 
 
-def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
-                 run=subprocess.run) -> list[dict]:
+def probe_staged(
+    title_dir: Path, preexisting: set[Path], runtime_s: int | None, run=subprocess.run
+) -> list[dict]:
     """Probe this run's staged *_tNN.mkv files for the validation record.
 
     Glob *_t*.mkv and parse the final _tNN (a .pN part suffix may trail it:
@@ -97,8 +127,7 @@ def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
     Returns:
         titles rows [{"file", "t", "dur_s", "ratio", "band"}] in t order
     """
-    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                   "-of", "csv=p=0"]
+    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]
     rows = []
     for mkv, n in _staged_mkv_paths(title_dir, preexisting):
         result = run(ffprobe_cmd + [str(mkv)], capture_output=True, text=True)
@@ -126,9 +155,22 @@ def _aspect_lie(mkv: Path, run=subprocess.run) -> tuple[int, int, int, int] | No
     active_h, display_w, display_h) for the mkvpropedit remedy, anything
     honest or unmeasurable returns None — this check never crashes the
     validation and never touches the file."""
-    info = run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=width,height,sample_aspect_ratio",
-                "-of", "csv=p=0", str(mkv)], capture_output=True, text=True)
+    info = run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,sample_aspect_ratio",
+            "-of",
+            "csv=p=0",
+            str(mkv),
+        ],
+        capture_output=True,
+        text=True,
+    )
     try:
         w_s, h_s, sar = info.stdout.strip().split(",")
         w, h = int(w_s), int(h_s)
@@ -139,18 +181,36 @@ def _aspect_lie(mkv: Path, run=subprocess.run) -> tuple[int, int, int, int] | No
         return None
     if abs((w * sn) / (h * sd) - 4 / 3) > 0.02:  # only a 4:3 flag can lie here
         return None
-    dur = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-               "-of", "csv=p=0", str(mkv)], capture_output=True, text=True)
+    dur = run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(mkv)],
+        capture_output=True,
+        text=True,
+    )
     try:
         length = float(dur.stdout.strip())
     except ValueError:
         return None
     heights = []
     for frac in (0.1, 0.3, 0.5, 0.7, 0.9):
-        probe = run(["ffmpeg", "-hide_banner", "-ss", str(int(length * frac)),
-                     "-i", str(mkv), "-t", "2",
-                     "-vf", "cropdetect=limit=24:round=2", "-f", "null", "-"],
-                    capture_output=True, text=True)
+        probe = run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-ss",
+                str(int(length * frac)),
+                "-i",
+                str(mkv),
+                "-t",
+                "2",
+                "-vf",
+                "cropdetect=limit=24:round=2",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+        )
         crops = re.findall(r"crop=(\d+):(\d+):\d+:\d+", probe.stderr)
         if crops:
             heights.append(int(crops[-1][1]))
@@ -166,8 +226,13 @@ def _aspect_lie(mkv: Path, run=subprocess.run) -> tuple[int, int, int, int] | No
     return (w, active_h, _DVD_FRAMES[(w, h)], h)
 
 
-def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | None,
-                        graded_rows: list[dict], run=subprocess.run) -> list[dict]:
+def post_rip_validation(
+    preamble,
+    preexisting: set[Path],
+    chosen_main: str | None,
+    graded_rows: list[dict],
+    run=subprocess.run,
+) -> list[dict]:
     """The post-rip record (map.md decision 5), run beside the subtitle note:
     probe what actually staged, grade it, resolve the main to a real file
     number, report one line per file, and write validation.json at the
@@ -218,17 +283,25 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
         if lie is None:
             continue
         fw, active_h, dw, dh = lie
-        ui.warn(f"{mkv.name}: aspect flag lies — {fw}\u00d7{dh} flagged 4:3, "
-                f"content ~{fw}\u00d7{active_h} (scope under 16:9) — players "
-                f"squeeze it thin")
-        ui.warn(f"  fix: mkvpropedit '{mkv}' --edit track:v1 "
-                f"--set display-width={dw} --set display-height={dh}")
-        log.note("aspect", f"{mkv.name}: misflagged anamorphic — 4:3 flag on "
-                           f"{fw}\u00d7{active_h} scope content; remedy: "
-                           f"mkvpropedit display {dw}\u00d7{dh}")
+        ui.warn(
+            f"{mkv.name}: aspect flag lies — {fw}\u00d7{dh} flagged 4:3, "
+            f"content ~{fw}\u00d7{active_h} (scope under 16:9) — players "
+            f"squeeze it thin"
+        )
+        ui.warn(
+            f"  fix: mkvpropedit '{mkv}' --edit track:v1 "
+            f"--set display-width={dw} --set display-height={dh}"
+        )
+        log.note(
+            "aspect",
+            f"{mkv.name}: misflagged anamorphic — 4:3 flag on "
+            f"{fw}\u00d7{active_h} scope content; remedy: "
+            f"mkvpropedit display {dw}\u00d7{dh}",
+        )
 
-    doc = movie_document(pick.id, preamble.display, pick.runtime_secs,
-                         preamble.label, log.run, main, rows)
+    doc = movie_document(
+        pick.id, preamble.display, pick.runtime_secs, preamble.label, log.run, main, rows
+    )
     path = title_dir / VALIDATION_FILENAME
     old = load_validation(path)
     if old is not None:
@@ -300,8 +373,7 @@ def rip_movie(args) -> None:
             if not view.tty and not ui.terminal_present():
                 ui.fail("selection table needs a terminal")
                 sys.exit(1)
-            result = run_selection_table(log, display, titles_full,
-                                         pick.runtime_secs)
+            result = run_selection_table(log, display, titles_full, pick.runtime_secs)
             if isinstance(result, dict):
                 print_accepted(display, titles_full, result, pick.runtime_secs)
                 if result:  # an empty scan names no rip set line
@@ -315,10 +387,8 @@ def rip_movie(args) -> None:
             _quit_nothing_ripped()
 
         actions = result
-        main_number = next((n for n, a in actions.items() if a == MAIN_ACTION),
-                           None)
-        extra_numbers = sorted(n for n, a in actions.items()
-                               if a == EXTRA_ACTION)
+        main_number = next((n for n, a in actions.items() if a == MAIN_ACTION), None)
+        extra_numbers = sorted(n for n, a in actions.items() if a == EXTRA_ACTION)
         chosen_main = f"t{main_number}" if main_number is not None else None
         graded_rows = build_graded_rows(titles_full, pick.runtime_secs)
 
@@ -352,12 +422,14 @@ def rip_movie(args) -> None:
         # Build selection string
         keep = preamble.keep
         sub_langs = {l for t in infos for l in t.subtitles.split(",") if l}
-        audio_langs = strip_audio_counts(
-            [l for t in infos for l in t.audio.split(",")])
+        audio_langs = strip_audio_counts([l for t in infos for l in t.audio.split(",")])
         widened = widened_audio(keep, audio_langs, args.keep_all)
         sel = build_selection(keep, sub_langs, audio_langs, args.keep_all)
-        log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'} "
-                 f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}")
+        log.note(
+            "audio",
+            f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'} "
+            f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}",
+        )
 
         # Inject profile
         profile_path = inject_profile(sel)
@@ -368,9 +440,19 @@ def rip_movie(args) -> None:
             run_preexisting = set(title_dir.glob("*.mkv"))
             preexisting = run_preexisting
             log.phase("rip")
-            worst_rc = rip_titles(titles, profile_path, minlength, stage_movie, disc=preamble.disc,
-                                  total=len(titles_full), infos=infos, header=rip_header(display, infos), log=log,
-                                  device=preamble.device, on_title_start=title_started)
+            worst_rc = rip_titles(
+                titles,
+                profile_path,
+                minlength,
+                stage_movie,
+                disc=preamble.disc,
+                total=len(titles_full),
+                infos=infos,
+                header=rip_header(display, infos),
+                log=log,
+                device=preamble.device,
+                on_title_start=title_started,
+            )
 
             if worst_rc != 0:
                 log.note("rip", f"makemkvcon rc={worst_rc} — partial rip, renaming what completed")
@@ -396,7 +478,9 @@ def rip_movie(args) -> None:
             for f in sorted(title_dir.glob("*_t*.mkv")):
                 if f in preexisting or not _FINAL_T.search(f.stem):
                     continue
-                info = next((t for t in infos if t.number == int(_FINAL_T.search(f.stem).group(1))), None)
+                info = next(
+                    (t for t in infos if t.number == int(_FINAL_T.search(f.stem).group(1))), None
+                )
                 if info is None:
                     continue  # no matching TitleInfo -> no promise -> skip
                 promises = {l for l in info.subtitles.split(",") if l in ("dan", "eng")}
@@ -408,12 +492,20 @@ def rip_movie(args) -> None:
 
             # Audio gate (ADR 0019/0022): a silent main never reaches the
             # library. Extras are exempt (" - Extra NN" never matches _tNN).
-            silent = silent_staged([f for f in sorted(title_dir.glob("*_t*.mkv"))
-                                    if f not in preexisting and _FINAL_T.search(f.stem)])
+            silent = silent_staged(
+                [
+                    f
+                    for f in sorted(title_dir.glob("*_t*.mkv"))
+                    if f not in preexisting and _FINAL_T.search(f.stem)
+                ]
+            )
             for f in silent:
                 ui.fail(f"{f.name}: no audio stream")
-                log.note("audio", f"{f.name}: no audio stream — silent rip kept in place; "
-                                  "re-rip with -K/--keep-all")
+                log.note(
+                    "audio",
+                    f"{f.name}: no audio stream — silent rip kept in place; "
+                    "re-rip with -K/--keep-all",
+                )
             if silent:
                 worst_rc = worst_rc or 1
 
@@ -422,14 +514,14 @@ def rip_movie(args) -> None:
             # resolved to a real final file number, validation.json at the
             # title-folder root. Interrupts exit above and never reach this.
             probed = post_rip_validation(preamble, preexisting, chosen_main, graded_rows)
-            if extra_numbers and _doc_is_this_film(preamble.pick.id,
-                                                   title_dir / VALIDATION_FILENAME):
+            if extra_numbers and _doc_is_this_film(
+                preamble.pick.id, title_dir / VALIDATION_FILENAME
+            ):
                 # Accepted extra rows (the table's -i replacement): the
                 # extras marker only — never forced over a manual keep-edit,
                 # and never into a foreign film's record (post_rip_validation
                 # leaves a different-film document untouched).
-                set_extras_marker(title_dir / VALIDATION_FILENAME, True,
-                                  "superfast")
+                set_extras_marker(title_dir / VALIDATION_FILENAME, True, "superfast")
 
             if infos and not probed:
                 # makemkvcon exits 0 even when every title save aborts (BD-RE
@@ -463,8 +555,14 @@ def rip_movie(args) -> None:
                 size = hsize(f.stat().st_size)
             except OSError:
                 size = "?"
-            summary_rows.append((f.stem, hms(r["dur_s"]) if r["dur_s"] is not None else "?",
-                                 size, "ok" if worst_rc == 0 else "FAILED"))
+            summary_rows.append(
+                (
+                    f.stem,
+                    hms(r["dur_s"]) if r["dur_s"] is not None else "?",
+                    size,
+                    "ok" if worst_rc == 0 else "FAILED",
+                )
+            )
         # Extras are renamed by their descriptive name rather than _tNN, so
         # they intentionally do not appear in validation titles. They are
         # still this run's completed items and belong in the rip summary.
@@ -477,9 +575,15 @@ def rip_movie(args) -> None:
                 size = "?"
             summary_rows.append((f.stem, "?", size, "ok" if worst_rc == 0 else "FAILED"))
         n_ok = sum(1 for r in summary_rows if r[3] == "ok")
-        ui.run_summary(summary_rows, n_ok, len(summary_rows) - n_ok,
-                       columns=("Title", "duration", "size", "result"),
-                       replay=view.replay_lines(), log=log, failed=worst_rc != 0)
+        ui.run_summary(
+            summary_rows,
+            n_ok,
+            len(summary_rows) - n_ok,
+            columns=("Title", "duration", "size", "result"),
+            replay=view.replay_lines(),
+            log=log,
+            failed=worst_rc != 0,
+        )
         sys.exit(worst_rc)
     except KeyboardInterrupt:
         # Interrupt outside the rip try (TMDB prompt via rip_preamble, scan,
@@ -488,8 +592,12 @@ def rip_movie(args) -> None:
         # the full interrupt exit still apply. main's fallback prints the
         # one line for the not-yet-started window.
         if preamble is not None:
-            _interrupted(preamble.log, [preamble.title_dir, preamble.stage], view,
-                          preexisting=run_preexisting)
+            _interrupted(
+                preamble.log,
+                [preamble.title_dir, preamble.stage],
+                view,
+                preexisting=run_preexisting,
+            )
         raise
     finally:
         view.close()

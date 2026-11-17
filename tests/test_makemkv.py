@@ -8,9 +8,21 @@ import pytest
 
 from skive import common
 from skive.makemkv import (
-    BASELINE, SUBTITLE_SYNTAX, build_selection, inject_profile, purge_junk,
-    rename_staged, rip_titles, looks_real, silent_staged, subtitle_note, subtitle_shortfall, xml_escape,
-    _run_with_progress, strip_audio_counts, widened_audio,
+    BASELINE,
+    SUBTITLE_SYNTAX,
+    _run_with_progress,
+    build_selection,
+    inject_profile,
+    looks_real,
+    purge_junk,
+    rename_staged,
+    rip_titles,
+    silent_staged,
+    strip_audio_counts,
+    subtitle_note,
+    subtitle_shortfall,
+    widened_audio,
+    xml_escape,
 )
 
 
@@ -24,8 +36,10 @@ def test_build_selection_per_type_shape():
     """Test the per-type form: audio language-scoped, subtitles unfiltered,
     video explicitly kept."""
     sel = build_selection("")
-    assert sel == ("-sel:all,+sel:video,+sel:audio&(eng|dan|nolang|single),"
-                   "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo")
+    assert sel == (
+        "-sel:all,+sel:video,+sel:audio&(eng|dan|nolang|single),"
+        "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo"
+    )
     assert "+sel:subtitle" in sel
     assert sel.endswith("-sel:mvcvideo")
 
@@ -48,13 +62,15 @@ def test_build_selection_union_fallback():
     """Test the union fallback: every scanned subtitle language joins the
     type-agnostic language union."""
     import skive.makemkv
+
     old = skive.makemkv.SUBTITLE_SYNTAX
     skive.makemkv.SUBTITLE_SYNTAX = "union"
     try:
         sel = build_selection("", {"jpn", "swe"})
-        langs = set("eng|dan|nolang|single".split("|")) | {"jpn", "swe"}
-        assert sel == (f"-sel:all,+sel:({'|'.join(sorted(langs))}),"
-                       "-sel:(havemulti|havecore),-sel:mvcvideo")
+        langs = {"eng", "dan", "nolang", "single"} | {"jpn", "swe"}
+        assert sel == (
+            f"-sel:all,+sel:({'|'.join(sorted(langs))}),-sel:(havemulti|havecore),-sel:mvcvideo"
+        )
         # Baseline callers with no sub langs keep today's exact union
         sel2 = build_selection("", None)
         assert sel2.startswith("-sel:all,+sel:(dan|eng|nolang|single),")
@@ -68,6 +84,7 @@ def test_build_selection_no_widening_intersecting_audio():
     """Baseline holds when the scanned audio intersects the keep set: keep=jpn
     with jpn/eng audio gives today's exact per-type and union strings."""
     import skive.makemkv
+
     sel = build_selection("jpn", audio_langs={"jpn", "eng"})
     assert sel.startswith("-sel:all,+sel:video,+sel:audio&(jpn|dan|eng|nolang|single)")
     assert "+sel:subtitle" in sel and sel.endswith("-sel:mvcvideo")
@@ -76,8 +93,9 @@ def test_build_selection_no_widening_intersecting_audio():
     try:
         sel2 = build_selection("jpn", {"swe"}, {"jpn", "eng"})
         langs = sorted({"jpn", "dan", "eng", "nolang", "single", "swe"})
-        assert sel2 == (f"-sel:all,+sel:({'|'.join(langs)}),"
-                        "-sel:(havemulti|havecore),-sel:mvcvideo")
+        assert sel2 == (
+            f"-sel:all,+sel:({'|'.join(langs)}),-sel:(havemulti|havecore),-sel:mvcvideo"
+        )
     finally:
         skive.makemkv.SUBTITLE_SYNTAX = old
 
@@ -86,6 +104,7 @@ def test_build_selection_widens_on_nonintersecting_audio():
     """ADR 0022: scanned audio missing the keep set widens to every scanned
     audio language, in both syntax modes."""
     import skive.makemkv
+
     sel = build_selection("jpn", audio_langs={"zho", "cmn"})
     assert "+sel:audio&(jpn|dan|eng|cmn|zho|nolang|single)" in sel
     assert "+sel:video" in sel and "+sel:subtitle" in sel
@@ -94,7 +113,10 @@ def test_build_selection_widens_on_nonintersecting_audio():
     skive.makemkv.SUBTITLE_SYNTAX = "union"
     try:
         sel2 = build_selection("", None, {"zho", "cmn"})
-        assert sel2 == "-sel:all,+sel:(cmn|dan|eng|nolang|single|zho),-sel:(havemulti|havecore),-sel:mvcvideo"
+        assert (
+            sel2
+            == "-sel:all,+sel:(cmn|dan|eng|nolang|single|zho),-sel:(havemulti|havecore),-sel:mvcvideo"
+        )
     finally:
         skive.makemkv.SUBTITLE_SYNTAX = old
 
@@ -112,6 +134,7 @@ def test_build_selection_keep_all_short_circuit():
     sel2 = build_selection("jpn", audio_langs={"jpn", "zho"}, keep_all=True)
     assert "+sel:audio&(jpn|dan|eng|zho|nolang|single)" in sel2
 
+
 def test_widened_audio_helper():
     """widened_audio: only fires on non-intersection or keep-all."""
     assert widened_audio("jpn", {"jpn", "eng"}, False) == set()
@@ -122,7 +145,7 @@ def test_widened_audio_helper():
 
 def test_strip_audio_counts():
     """Count suffixes from _audio_str strings are stripped at the caller seam."""
-    assert strip_audio_counts("jpn(2),eng".split(",")) == {"jpn", "eng"}
+    assert strip_audio_counts(["jpn(2)", "eng"]) == {"jpn", "eng"}
     assert strip_audio_counts([]) == set()
 
 
@@ -130,6 +153,7 @@ def test_baseline_xml_escape_contract():
     """Test that the file's escaped BASELINE literal is byte-identical to the
     escaped Python constant (the injection target)."""
     from skive.makemkv import CONFIG_DIR
+
     content = (CONFIG_DIR / "custom.mmcp.xml").read_text(encoding="utf-8")
     escaped = xml_escape(BASELINE)
     assert content.count(escaped) == 4  # app_DefaultSelectionString + 3 trackSettings
@@ -175,6 +199,7 @@ def test_rip_titles_list():
 
 def test_rip_titles_worst_rc():
     """Test rip_titles collects worst return code."""
+
     def side_effect(cmd):
         if "0" in cmd:
             return Mock(returncode=0)
@@ -231,6 +256,7 @@ def test_rename_staged():
 def test_rename_staged_preexisting():
     """Files present before the rip are never renamed, even by extras."""
     import shutil
+
     stage = Path("/tmp/test_rename_pre")
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir()
@@ -304,15 +330,15 @@ def test_subtitle_note():
     """Test subtitle_note parses ffprobe output."""
     stage = Path("/tmp/test_sub")
     stage.mkdir(exist_ok=True)
-    
+
     # Create a dummy mkv file so glob finds it
     (stage / "test.mkv").touch()
-    
+
     mock_output = "dan\neng\n"
     mock_run = Mock(return_value=Mock(stdout=mock_output))
-    
+
     note = subtitle_note(stage, run=mock_run)
-    
+
     assert note.startswith("subs=dan langs=")
 
 
@@ -320,14 +346,14 @@ def test_subtitle_note_no_dan():
     """Test subtitle_note with no dan subtitles."""
     stage = Path("/tmp/test_sub_nodan")
     stage.mkdir(exist_ok=True)
-    
+
     (stage / "test.mkv").touch()
-    
+
     mock_output = "eng\nfra\n"
     mock_run = Mock(return_value=Mock(stdout=mock_output))
-    
+
     note = subtitle_note(stage, run=mock_run)
-    
+
     assert "subs=eng" in note
     assert "(no dan)" in note
 
@@ -394,6 +420,7 @@ def test_rename_staged_extras_real_looking():
 def test_rip_header():
     from skive.makemkv import rip_header
     from skive.scan import TitleInfo
+
     infos = [
         TitleInfo(0, 5000, 30 * 1024**3, "eng,dan(2)", "eng,dan", False),
         TitleInfo(1, 600, 1024**3, "eng", "", False),
@@ -404,9 +431,8 @@ def test_rip_header():
     assert "audio: dan,eng" in h and "subs:  dan,eng" in h
 
 
-
-
 # -- verbosity tiers on the _run_with_progress console prints ------------------
+
 
 def _mkvcon(lines, rc=0):
     """A fake makemkvcon Popen: stdout iterates lines, wait returns rc."""
@@ -418,16 +444,20 @@ def _mkvcon(lines, rc=0):
 @pytest.fixture
 def verbosity(monkeypatch):
     """Set the module console verbosity for one test, restore afterwards."""
+
     def set_level(level):
         monkeypatch.setattr(common, "VERBOSITY", level)
+
     return set_level
 
 
 def test_run_with_progress_quiet_at_default(verbosity, capsys):
     """Level 0: MSG and raw lines stay hidden; the skive header still shows."""
     verbosity(0)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-            "PRGV:100,200,65536", 'MSG:1007,"Working"', "drive chatter"])):
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        return_value=_mkvcon(["PRGV:100,200,65536", 'MSG:1007,"Working"', "drive chatter"]),
+    ):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test", header="Movie (2020)")
     assert rc == 0
     err = capsys.readouterr().err
@@ -439,8 +469,10 @@ def test_run_with_progress_quiet_at_default(verbosity, capsys):
 def test_run_with_progress_msg_shown_at_v1(verbosity, capsys):
     """Level 1: MSG lines stream (parsed value); raw/unknown lines stay hidden."""
     verbosity(1)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-            'MSG:1007,"Working"', "drive chatter"])):
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        return_value=_mkvcon(['MSG:1007,"Working"', "drive chatter"]),
+    ):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 0
     err = capsys.readouterr().err
@@ -451,8 +483,10 @@ def test_run_with_progress_msg_shown_at_v1(verbosity, capsys):
 def test_run_with_progress_raw_passthrough_at_v2(verbosity, capsys):
     """Level 2: raw/unknown lines pass through; PRGV still only drives the bar."""
     verbosity(2)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-            "PRGV:100,200,65536", 'MSG:1007,"Working"', "drive chatter"])):
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        return_value=_mkvcon(["PRGV:100,200,65536", 'MSG:1007,"Working"', "drive chatter"]),
+    ):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 0
     err = capsys.readouterr().err
@@ -464,8 +498,10 @@ def test_run_with_progress_raw_passthrough_at_v2(verbosity, capsys):
 def test_run_with_progress_failure_replays_hidden_lines(verbosity, capsys):
     """Failure at level 0: hidden output replays verbatim (story 7)."""
     verbosity(0)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
-            ['MSG:1007,"Working"', "drive chatter"], rc=2)):
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        return_value=_mkvcon(['MSG:1007,"Working"', "drive chatter"], rc=2),
+    ):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 2
     err = capsys.readouterr().err
@@ -476,8 +512,7 @@ def test_run_with_progress_failure_replays_hidden_lines(verbosity, capsys):
 def test_run_with_progress_success_replays_nothing(verbosity, capsys):
     """Success at level 0 stays silent: the raw log alone records the output."""
     verbosity(0)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
-            ["drive chatter"])):
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(["drive chatter"])):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 0
     assert "drive chatter" not in capsys.readouterr().err
@@ -485,23 +520,33 @@ def test_run_with_progress_success_replays_nothing(verbosity, capsys):
 
 # -- three-line status block ---------------------------------------------------
 
+
 def test_status_block_renders_both_lines():
     """Lines 1/2: what + drive, then phase · title x/y · sizes · disc · ETA."""
     from skive.makemkv import status_block
+
     line1, line2 = status_block(
-        what="Movie (2020)", drive="disc:0", phase="Saving to MKV file 1/3",
-        title_x=2, title_y=5, cur="1.2 GiB", total="4.0 GiB",
-        disc="6.4 GiB/31.0 GiB", eta="3:07")
+        what="Movie (2020)",
+        drive="disc:0",
+        phase="Saving to MKV file 1/3",
+        title_x=2,
+        title_y=5,
+        cur="1.2 GiB",
+        total="4.0 GiB",
+        disc="6.4 GiB/31.0 GiB",
+        eta="3:07",
+    )
     assert line1 == "Movie (2020) — disc:0"
-    assert line2 == ("Saving to MKV file 1/3 · title 2/5"
-                     " · 1.2 GiB / 4.0 GiB · disc 6.4 GiB/31.0 GiB · ETA 3:07")
+    assert line2 == (
+        "Saving to MKV file 1/3 · title 2/5 · 1.2 GiB / 4.0 GiB · disc 6.4 GiB/31.0 GiB · ETA 3:07"
+    )
 
 
 def test_status_block_omits_unknown_segments():
     """Without size/ETA inputs the segments disappear (fast scans, sizeless rips)."""
     from skive.makemkv import status_block
-    line1, line2 = status_block(what="Show (2021)", drive="disc:1",
-                                phase="", title_x=0, title_y=1)
+
+    line1, line2 = status_block(what="Show (2021)", drive="disc:1", phase="", title_x=0, title_y=1)
     assert line1 == "Show (2021) — disc:1"
     assert line2 == "starting · title 0/1"
 
@@ -509,6 +554,7 @@ def test_status_block_omits_unknown_segments():
 def test_fmt_eta():
     """_fmt_eta: m:ss under an hour, h:mm:ss above, never negative."""
     from skive.makemkv import _fmt_eta
+
     assert _fmt_eta(0) == "0:00"
     assert _fmt_eta(187) == "3:07"
     assert _fmt_eta(3723) == "1:02:03"
@@ -518,10 +564,15 @@ def test_fmt_eta():
 def test_run_with_progress_leaves_final_summary_line(verbosity, capsys):
     """On exit the Live region clears; one static line records the outcome."""
     verbosity(0)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
-            ["PRGV:32768,65536,65536"], rc=0)):
-        rc = _run_with_progress(["makemkvcon", "mkv", "disc:1"], "all titles",
-                                total_titles=2, sizes=[30 * 1024**3, 1024**3])
+    with patch(
+        "skive.makemkv.subprocess.Popen", return_value=_mkvcon(["PRGV:32768,65536,65536"], rc=0)
+    ):
+        rc = _run_with_progress(
+            ["makemkvcon", "mkv", "disc:1"],
+            "all titles",
+            total_titles=2,
+            sizes=[30 * 1024**3, 1024**3],
+        )
     assert rc == 0
     err = capsys.readouterr().err
     assert "all titles: done · title 0/2 · disc 31.0 GiB/31.0 GiB" in err
@@ -532,10 +583,17 @@ def test_run_with_progress_what_and_title_offset(verbosity, capsys):
     """what/title_offset: the fallback transition event and the summary line
     name the rip and show true x/y."""
     verbosity(0)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
-                ['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:32768,65536,65536"])):
-        rc = _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 12 (2/5)",
-                                total_titles=5, what="Movie (2020)", title_offset=1)
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        return_value=_mkvcon(['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:32768,65536,65536"]),
+    ):
+        rc = _run_with_progress(
+            ["makemkvcon", "mkv", "disc:0"],
+            "title 12 (2/5)",
+            total_titles=5,
+            what="Movie (2020)",
+            title_offset=1,
+        )
     assert rc == 0
     err = capsys.readouterr().err
     assert "info  title 12 (2/5): Saving to MKV file 1 of 1 · title 2/5" in err
@@ -547,10 +605,15 @@ def test_rip_titles_per_title_threads_header_and_position(verbosity, capsys):
     true x/y, while the static header still prints exactly once."""
     verbosity(0)
     header = "Movie (2020)\n  titles: 2  est total: 31.0 GiB\n  audio: eng\n  subs:  none"
-    with patch("skive.makemkv.subprocess.Popen", side_effect=lambda cmd, **kw: _mkvcon(
-                ['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:32768,65536,65536"])):
-        rc = rip_titles([12, 14], Path("/tmp/p.xml"), 120, Path("/tmp/stage"),
-                        disc=0, header=header)
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        side_effect=lambda cmd, **kw: _mkvcon(
+            ['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:32768,65536,65536"]
+        ),
+    ):
+        rc = rip_titles(
+            [12, 14], Path("/tmp/p.xml"), 120, Path("/tmp/stage"), disc=0, header=header
+        )
     assert rc == 0
     err = capsys.readouterr().err
     assert err.count("titles: 2") == 1  # header printed once
@@ -565,16 +628,28 @@ def test_run_with_progress_seam_view_carries_status_block(verbosity, capsys):
     """With a seam view set the footer carries status_block's lines and the
     bar's pct; the summary lands in scrollback as an event (ADR 0013)."""
     from skive import ui
+
     verbosity(0)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-                'PRGC:50,"Saving to MKV file 1 of 1"',
-                "PRGV:32768,65536,65536", "PRGV:65535,65536,65536"])):
-            rc = _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 12 (2/5)",
-                                    total_titles=5, what="Movie (2020)",
-                                    title_offset=1)  # no sizes: line 2 fits the 80-col render
+        with patch(
+            "skive.makemkv.subprocess.Popen",
+            return_value=_mkvcon(
+                [
+                    'PRGC:50,"Saving to MKV file 1 of 1"',
+                    "PRGV:32768,65536,65536",
+                    "PRGV:65535,65536,65536",
+                ]
+            ),
+        ):
+            rc = _run_with_progress(
+                ["makemkvcon", "mkv", "disc:0"],
+                "title 12 (2/5)",
+                total_titles=5,
+                what="Movie (2020)",
+                title_offset=1,
+            )  # no sizes: line 2 fits the 80-col render
     finally:
         ui.clear_view()
     assert rc == 0
@@ -591,15 +666,16 @@ def test_run_with_progress_fallback_progress_line_cadence(verbosity, capsys):
     """Fallback: a plain makemkv progress line every PRGV at -vv, none quiet
     inside the 60 s throttle window."""
     verbosity(0)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
-            ["PRGV:32768,65536,65536", "PRGV:65535,65536,65536"])):
+    with patch(
+        "skive.makemkv.subprocess.Popen",
+        return_value=_mkvcon(["PRGV:32768,65536,65536", "PRGV:65535,65536,65536"]),
+    ):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 0
     assert "%" not in capsys.readouterr().err
 
     verbosity(2)
-    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(
-            ["PRGV:32768,65536,65536"])):
+    with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon(["PRGV:32768,65536,65536"])):
         rc = _run_with_progress(["makemkvcon", "mkv"], "test")
     assert rc == 0
     err = capsys.readouterr().err
@@ -608,11 +684,14 @@ def test_run_with_progress_fallback_progress_line_cadence(verbosity, capsys):
 
 # -- Interrupt (Ctrl+C) mid-rip (CONTEXT.md: Interrupt) ------------------------
 
+
 def _stdout_then_interrupt(lines):
     """A fake makemkvcon stdout that streams lines, then the interrupt lands."""
+
     def gen():
         yield from lines
         raise common.Interrupted()
+
     return gen()
 
 
@@ -651,16 +730,24 @@ def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
     """names: when the title at a rip position starts saving, the footer
     names it (rip tv: the episode) and keeps the drive."""
     from skive import ui
+
     verbosity(0)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-                'PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:100,65536,65536"])):
-            _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 5 (3/6)",
-                               total_titles=6, what="Andor (2022)", title_offset=2,
-                               device="/dev/sr0",
-                               names=["a", "b", "Andor (2022) S01E04"])
+        with patch(
+            "skive.makemkv.subprocess.Popen",
+            return_value=_mkvcon(['PRGC:50,"Saving to MKV file 1 of 1"', "PRGV:100,65536,65536"]),
+        ):
+            _run_with_progress(
+                ["makemkvcon", "mkv", "disc:0"],
+                "title 5 (3/6)",
+                total_titles=6,
+                what="Andor (2022)",
+                title_offset=2,
+                device="/dev/sr0",
+                names=["a", "b", "Andor (2022) S01E04"],
+            )
     finally:
         ui.clear_view()
     # the full lane text is read from the view (the render may still
@@ -670,25 +757,47 @@ def test_run_with_progress_footer_names_the_title_being_ripped(verbosity):
     assert "title 3/6" in out
 
 
-@pytest.mark.parametrize("rc, last, phase", [
-    (0, "\u2570\u2500 \u2713 done 0s ", "\u2502 \u2713 rip       all titles: done \u00b7 title 2/2"),
-    (2, "\u2570\u2500 \u2717 failed: rip (rc=2) 0s ",
-     "\u2502 \u2717 rip       all titles: failed (rc=2) \u00b7 title 2/2")])
-def test_run_with_progress_closes_each_title_frame_with_result_and_time(verbosity, capsys, rc, last, phase):
+@pytest.mark.parametrize(
+    "rc, last, phase",
+    [
+        (
+            0,
+            "\u2570\u2500 \u2713 done 0s ",
+            "\u2502 \u2713 rip       all titles: done \u00b7 title 2/2",
+        ),
+        (
+            2,
+            "\u2570\u2500 \u2717 failed: rip (rc=2) 0s ",
+            "\u2502 \u2717 rip       all titles: failed (rc=2) \u00b7 title 2/2",
+        ),
+    ],
+)
+def test_run_with_progress_closes_each_title_frame_with_result_and_time(
+    verbosity, capsys, rc, last, phase
+):
     """Each title the caller framed (on_title_start opens ui.item) closes
     neutrally when the next title starts (its outcome is never reported, so a
     title that failed partway must not read done) after a timed neutral rip
     phase line, and at the end with the call's outcome; the last frame
     carries the timed ✓/✗ rip phase line."""
     from skive import ui
+
     verbosity(0)
     ui.set_view(ui.RunView(tty=True, live=False))
     try:
-        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-                'PRGC:50,"Saving to MKV file 1 of 2"', 'PRGC:50,"Saving to MKV file 2 of 2"'],
-                rc=rc)):
-            _run_with_progress(["makemkvcon", "mkv", "disc:0"], "all titles", total_titles=2,
-                               on_title_start=lambda n: ui.item(n, 2, f"title {n}"))
+        with patch(
+            "skive.makemkv.subprocess.Popen",
+            return_value=_mkvcon(
+                ['PRGC:50,"Saving to MKV file 1 of 2"', 'PRGC:50,"Saving to MKV file 2 of 2"'],
+                rc=rc,
+            ),
+        ):
+            _run_with_progress(
+                ["makemkvcon", "mkv", "disc:0"],
+                "all titles",
+                total_titles=2,
+                on_title_start=lambda n: ui.item(n, 2, f"title {n}"),
+            )
     finally:
         ui.clear_view()
     lines = capsys.readouterr().err.splitlines()
@@ -710,13 +819,19 @@ def test_run_with_progress_plain_keeps_summary_without_phase_line(verbosity, cap
     """Plain mode: the per-call summary keeps today's wording; no phase line,
     no frame rules."""
     from skive import ui
+
     verbosity(0)
     ui.set_view(ui.RunView(tty=False, live=False))
     try:
-        with patch("skive.makemkv.subprocess.Popen", return_value=_mkvcon([
-                'PRGC:50,"Saving to MKV file 1 of 1"'])):
-            _run_with_progress(["makemkvcon", "mkv", "disc:0"], "title 3 (1/1)",
-                               on_title_start=lambda n: ui.item(n, 1, f"title {n}"))
+        with patch(
+            "skive.makemkv.subprocess.Popen",
+            return_value=_mkvcon(['PRGC:50,"Saving to MKV file 1 of 1"']),
+        ):
+            _run_with_progress(
+                ["makemkvcon", "mkv", "disc:0"],
+                "title 3 (1/1)",
+                on_title_start=lambda n: ui.item(n, 1, f"title {n}"),
+            )
     finally:
         ui.clear_view()
     err = capsys.readouterr().err
@@ -730,8 +845,7 @@ def test_rip_titles_records_each_selected_titles_rc(tmp_path):
     rcs = iter([0, 2, 0])
     run = Mock(side_effect=lambda cmd: Mock(returncode=next(rcs)))
     outcomes = {}
-    worst = rip_titles([3, 5, 7], tmp_path / "p.xml", 600, tmp_path, run=run,
-                       outcomes=outcomes)
+    worst = rip_titles([3, 5, 7], tmp_path / "p.xml", 600, tmp_path, run=run, outcomes=outcomes)
     assert worst == 2
     assert outcomes == {3: 0, 5: 2, 7: 0}
 
@@ -768,6 +882,7 @@ def test_silent_staged_skips_probe_failures():
 
 
 # --- subtitle_shortfall: the rip-time subtitle shortfall warning (ADR 0022) ---
+
 
 def test_subtitle_shortfall_fixture_promised_and_staged():
     """Promised dan, fixture has a dan sub track (real ffprobe) — no warning."""

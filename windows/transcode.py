@@ -47,15 +47,9 @@ import subs  # beside this script; a script's dir is on sys.path when run direct
 
 # Staged names: <Movie (Year)>_tNN[.pN].mkv (titles), <Movie (Year)> - Extra NN[.pN].mkv
 # (extras disc), <Show (Year)>_SNNENN[-ENN].mkv (TV, incl. doubles).
-_RX_TITLE = re.compile(
-    r"^(?P<movie>.+)_(?P<sfx>[te])(?P<num>\d+)(?P<part>\.p(?P<pn>\d+))?\.mkv$"
-)
-_RX_EXTRA = re.compile(
-    r"^(?P<movie>.+) - Extra (?P<num>\d+)(?P<part>\.p(?P<pn>\d+))?\.mkv$"
-)
-_RX_EP = re.compile(
-    r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$"
-)
+_RX_TITLE = re.compile(r"^(?P<movie>.+)_(?P<sfx>[te])(?P<num>\d+)(?P<part>\.p(?P<pn>\d+))?\.mkv$")
+_RX_EXTRA = re.compile(r"^(?P<movie>.+) - Extra (?P<num>\d+)(?P<part>\.p(?P<pn>\d+))?\.mkv$")
+_RX_EP = re.compile(r"^(?P<movie>.+)_S(?P<sn>\d{2})E(?P<en>\d{2})(?P<tail>-E\d{2})?\.mkv$")
 _RX_MAIN = re.compile(r"^t\d+$")  # validation.json's recorded main: "tNN"
 _RX_DDIR = re.compile(r"^d\d+$")  # rip/<type>/<Name (Year)>/d<disc> staging subdir
 _TV_ROOTS = ("TV", "tv")  # rip\TV (legacy ps1 staging) and rip\tv (SPEC layout)
@@ -184,25 +178,31 @@ class RipLog:
         self._interrupted = False
 
     def _emit(self, now, phase: str, status: str, elapsed_s: int) -> None:
-        _append_jsonl(self._run_log, {
-            "ts": now.isoformat(timespec="seconds"),
-            "run": self.run,
-            "script": self.SCRIPT,
-            "software": self.SOFT,
-            "name": self.name,
-            "phase": phase,
-            "status": status,
-            "elapsed_s": elapsed_s,
-        })
+        _append_jsonl(
+            self._run_log,
+            {
+                "ts": now.isoformat(timespec="seconds"),
+                "run": self.run,
+                "script": self.SCRIPT,
+                "software": self.SOFT,
+                "name": self.name,
+                "phase": phase,
+                "status": status,
+                "elapsed_s": elapsed_s,
+            },
+        )
 
     def raw(self, tool: str, line: str) -> None:
         """One verbatim tool output line into this run's raw log."""
-        _append_jsonl(self._raw_log, {
-            "ts": self._now().isoformat(timespec="seconds"),
-            "run": self.run,
-            "tool": tool,
-            "line": line,
-        })
+        _append_jsonl(
+            self._raw_log,
+            {
+                "ts": self._now().isoformat(timespec="seconds"),
+                "run": self.run,
+                "tool": tool,
+                "line": line,
+            },
+        )
 
     def start(self) -> None:
         now = self._now()
@@ -216,8 +216,7 @@ class RipLog:
     def phase_end(self) -> None:
         now = self._now()
         self._phases += 1
-        self._emit(now, self._phase_name, "ok",
-                   int((now - self._phase_t0).total_seconds()))
+        self._emit(now, self._phase_name, "ok", int((now - self._phase_t0).total_seconds()))
 
     def note(self, phase: str, status: str) -> None:
         """Untimed detail line (elapsed_s 0); mirrors Linux RipLog.note."""
@@ -232,8 +231,7 @@ class RipLog:
             return
         self._interrupted = True
         now = self._now()
-        self._emit(now, "total", "interrupted",
-                   int((now - self._t0).total_seconds()))
+        self._emit(now, "total", "interrupted", int((now - self._t0).total_seconds()))
 
     def finish(self, rc: int) -> None:
         if self._interrupted:
@@ -276,8 +274,10 @@ def _find_tool(exe: str, fallback_rel: str) -> str | None:
     pf = os.environ.get("ProgramFiles")
     if pf and os.path.isfile(os.path.join(pf, fallback_rel)):
         return os.path.join(pf, fallback_rel)
-    print(f"{exe} not found on PATH nor at %ProgramFiles%\\{fallback_rel} -- see README (Installing the tools).",
-          file=sys.stderr)
+    print(
+        f"{exe} not found on PATH nor at %ProgramFiles%\\{fallback_rel} -- see README (Installing the tools).",
+        file=sys.stderr,
+    )
     return None
 
 
@@ -285,24 +285,42 @@ def _find_on_path(exe: str) -> str | None:
     """seconv/tesseract: PATH only (README install spec puts them there)."""
     found = shutil.which(exe)
     if not found:
-        print(f"{exe} not found on PATH -- see README (Windows transcode box: Install)",
-              file=sys.stderr)
+        print(
+            f"{exe} not found on PATH -- see README (Windows transcode box: Install)",
+            file=sys.stderr,
+        )
     return found
 
 
 def _stream_sig(src: str, ffprobe_exe: str) -> list[tuple[str, str, str]] | None:
     """(codec_type, codec_name, language-or-'und') per stream, in order; None if unreadable."""
     r = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-show_entries",
-         "stream=codec_type,codec_name:stream_tags=language", "-of", "json", src],
-        capture_output=True, text=True,
+        [
+            ffprobe_exe,
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name:stream_tags=language",
+            "-of",
+            "json",
+            src,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if r.returncode != 0:
         return None
     try:
         streams = json.loads(r.stdout).get("streams", [])
-        return [(s.get("codec_type") or "", s.get("codec_name") or "",
-                 (s.get("tags") or {}).get("language") or "und") for s in streams]
+        return [
+            (
+                s.get("codec_type") or "",
+                s.get("codec_name") or "",
+                (s.get("tags") or {}).get("language") or "und",
+            )
+            for s in streams
+        ]
     except (ValueError, AttributeError):
         return None
 
@@ -326,8 +344,7 @@ def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
             a = sig[k] if k < len(sig) else None
             b = first[k] if k < len(first) else None
             if a != b:
-                return (f"{p.name} stream {k} ({fmt(a)}) != "
-                        f"{parts[0].name} stream {k} ({fmt(b)})")
+                return f"{p.name} stream {k} ({fmt(a)}) != {parts[0].name} stream {k} ({fmt(b)})"
     return ""
 
 
@@ -365,7 +382,7 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             part = -1
             sn, en = m.group("sn"), m.group("en")
             tail = m.group("tail") or ""
-        elif (m := _RX_EXTRA.match(f.name)):
+        elif m := _RX_EXTRA.match(f.name):
             movie = m.group("movie")
             sfx = "e"
             num_str = m.group("num")
@@ -385,20 +402,44 @@ def _scan(input_dir: str, want: list[str]) -> tuple[list[Item], set[str]]:
             for ws, w in want_s.items():
                 if f.name.startswith(ws):
                     want_hit.add(w)
-        items.append(Item(
-            path=str(f), name=f.name, base=f.stem, movie=movie, sfx=sfx,
-            num=num, num_str=num_str, part=part, size=f.stat().st_size,
-            is_tv=is_tv, sn=sn, en=en, tail=tail,
-        ))
+        items.append(
+            Item(
+                path=str(f),
+                name=f.name,
+                base=f.stem,
+                movie=movie,
+                sfx=sfx,
+                num=num,
+                num_str=num_str,
+                part=part,
+                size=f.stat().st_size,
+                is_tv=is_tv,
+                sn=sn,
+                en=en,
+                tail=tail,
+            )
+        )
     return items, want_hit
 
 
 def _probe_height(src: str, ffprobe_exe: str) -> int:
     """Height of the first video stream; 0 if unreadable."""
     r = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=height", "-of", "csv=p=0", src],
-        capture_output=True, text=True,
+        [
+            ffprobe_exe,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=height",
+            "-of",
+            "csv=p=0",
+            src,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     try:
         return int(r.stdout.strip().splitlines()[0])
@@ -410,9 +451,10 @@ def _probe_duration(src: str, ffprobe_exe: str) -> int | None:
     """Whole-second duration of src (format=duration, the rip flow's probe
     shape); None when the probe can't read it."""
     r = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-show_entries", "format=duration",
-         "-of", "csv=p=0", src],
-        capture_output=True, text=True,
+        [ffprobe_exe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     try:
         return int(float(r.stdout.strip()))
@@ -433,8 +475,15 @@ def _preset(height: int) -> str:
     return "H.265 MKV 2160p60 4K"
 
 
-def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
-            no_subs: bool = False, log: RipLog | None = None) -> bool:
+def _encode(
+    src: str,
+    out: str,
+    encoder: str,
+    hb_exe: str,
+    ffprobe_exe: str,
+    no_subs: bool = False,
+    log: RipLog | None = None,
+) -> bool:
     """HandBrake pass-through re-encode at native resolution. GPU encoders override the encoder.
     no_subs selects zero subtitle tracks (features/TV); extras keep today's pass-through.
     Every HandBrake output line is written verbatim to the run's raw log (log.raw),
@@ -451,9 +500,13 @@ def _encode(src: str, out: str, encoder: str, hb_exe: str, ffprobe_exe: str,
     if 0 < height <= 576:
         cmd += ["--detelecine", "--decomb"]  # DVD: kill telecine/interlace combing
     cmd += [
-        "--all-audio", "--aencoder", "copy",
-        "--audio-copy-mask", _COPY_MASK,
-        "--audio-fallback", "ac3",
+        "--all-audio",
+        "--aencoder",
+        "copy",
+        "--audio-copy-mask",
+        _COPY_MASK,
+        "--audio-fallback",
+        "ac3",
     ]
     if no_subs:
         # --all-subtitles respects the language list, so a language no track
@@ -557,7 +610,10 @@ def _archive(src: str, item: Item, lossless_root: str, keep: bool) -> None:
     os.makedirs(d, exist_ok=True)
     dest = os.path.join(d, os.path.basename(src))
     if os.path.exists(dest):
-        print(f"--keep: {dest} already exists -- source left in {os.path.dirname(src)}", file=sys.stderr)
+        print(
+            f"--keep: {dest} already exists -- source left in {os.path.dirname(src)}",
+            file=sys.stderr,
+        )
     else:
         shutil.move(src, dest)
 
@@ -643,8 +699,7 @@ def _extra_name(dest_dir: str, safe: str, num: int, ext: str) -> str:
     titles keep their disc number when it is free; a staging label never
     reaches the library."""
     n = num
-    while os.path.exists(os.path.join(
-            dest_dir, f"{safe} - Extra {n:02d}{ext}.mkv")):
+    while os.path.exists(os.path.join(dest_dir, f"{safe} - Extra {n:02d}{ext}.mkv")):
         n += 1
     return f"{safe} - Extra {n:02d}{ext}.mkv"
 
@@ -662,14 +717,18 @@ def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> 
     doc = _load_validation(doc_path)
     if doc is None:
         return
-    entry = {"file": os.path.basename(dest), "src": f"t{src_num}",
-             "dur_s": _probe_duration(dest, ffprobe_exe)}
+    entry = {
+        "file": os.path.basename(dest),
+        "src": f"t{src_num}",
+        "dur_s": _probe_duration(dest, ffprobe_exe),
+    }
     encodes = doc.get("encodes")
     if not isinstance(encodes, list):
         encodes = []
     # append-once: this dest file's old entry is replaced, never doubled
-    doc["encodes"] = [e for e in encodes
-                      if not (isinstance(e, dict) and e.get("file") == entry["file"])]
+    doc["encodes"] = [
+        e for e in encodes if not (isinstance(e, dict) and e.get("file") == entry["file"])
+    ]
     doc["encodes"].append(entry)
     try:
         # skive.validation.write_validation's shape: UTF-8, 2-space indent,
@@ -679,8 +738,7 @@ def _record_encode(doc_path: str, dest: str, src_num: int, ffprobe_exe: str) -> 
     except OSError:
         return
     try:  # the doc's final copy lands beside the encode — simple overwrite
-        shutil.copyfile(doc_path,
-                        os.path.join(os.path.dirname(dest), _VALIDATION_FILENAME))
+        shutil.copyfile(doc_path, os.path.join(os.path.dirname(dest), _VALIDATION_FILENAME))
     except OSError:
         pass
 
@@ -706,15 +764,22 @@ def _copy_show_doc(src_path: str, dest_dir: str) -> None:
         pass
 
 
-def _sub_pass(local_src: str, side_dir: str, base: str, seconv_exe: str,
-              ffprobe_exe: str, log: RipLog | None = None):
+def _sub_pass(
+    local_src: str,
+    side_dir: str,
+    base: str,
+    seconv_exe: str,
+    ffprobe_exe: str,
+    log: RipLog | None = None,
+):
     """Inline subtitle pass on the local copy/merge; the caller creates the
     sidecar dir (and registers it as the interrupt path's temp) and sidecars
     only move beside the encode once it succeeds. Captured ffprobe/seconv
     output lines go to the run's raw log via log.raw (and pass through to the
     console at -vv). Returns (sidecar dir, PassResult)."""
-    res = subs.run_pass(local_src, side_dir, base, seconv_exe, ffprobe_exe,
-                        log=log, verbose=VERBOSITY)
+    res = subs.run_pass(
+        local_src, side_dir, base, seconv_exe, ffprobe_exe, log=log, verbose=VERBOSITY
+    )
     for n in res.notes:
         print(n)
     return side_dir, res
@@ -726,15 +791,19 @@ def _ship_sidecars(side_dir: str, dest_dir: str, res) -> None:
     shutil.rmtree(side_dir, ignore_errors=True)
 
 
-def _fail_quarantine(log: RipLog, items: list[Item], issues_root: str,
-                     label: str, notes: list[str]) -> None:
+def _fail_quarantine(
+    log: RipLog, items: list[Item], issues_root: str, label: str, notes: list[str]
+) -> None:
     """Pass failed but the encode shipped subless: sources wait in their
     issues/<type>/<Name (Year)> folder with the run's evidence."""
     fails = "; ".join(n for n in notes if n.startswith("FAIL"))
     log.note("subs", f"FAIL subtitle pass: {label} -- {fails}")
     folder = os.path.join(issues_root, "tv" if items[0].is_tv else "movies", items[0].movie)
-    print(f"FAILED (subtitle pass): {label} -- encode shipped subless, "
-          f"sources quarantined to {folder}", file=sys.stderr)
+    print(
+        f"FAILED (subtitle pass): {label} -- encode shipped subless, "
+        f"sources quarantined to {folder}",
+        file=sys.stderr,
+    )
     for item in items:
         _quarantine(item.path, item, issues_root, log)
 
@@ -757,7 +826,11 @@ def run_transcode(args) -> int:
     lib_dir = os.path.join(vid, "library")
     lossless_root = os.path.join(vid, "lossless")
     issues_root = os.path.join(vid, "issues")
-    tmp_dir = args.workdir or os.environ.get("VIDEO_WORK_DIR") or os.path.join(tempfile.gettempdir(), "video-work")
+    tmp_dir = (
+        args.workdir
+        or os.environ.get("VIDEO_WORK_DIR")
+        or os.path.join(tempfile.gettempdir(), "video-work")
+    )
     os.makedirs(tmp_dir, exist_ok=True)
 
     hb_exe = _find_tool(_HB, os.path.join("HandBrake", _HB))
@@ -801,12 +874,13 @@ def run_transcode(args) -> int:
     # stands (legacy folders, shorts). A recorded main with no staged _tNN
     # (hand-edit typo, moved files) skips the movie's main encode loudly —
     # never a silent bytes fallback (that is the Mamma Mia failure mode).
-    doc_path: dict[str, str] = {}      # movie -> its validation.json (append + copy)
-    rec_missing: dict[str, str] = {}   # movie -> recorded main with no staged title
+    doc_path: dict[str, str] = {}  # movie -> its validation.json (append + copy)
+    rec_missing: dict[str, str] = {}  # movie -> recorded main with no staged title
     for movie in sorted({i.movie for i in items if i.sfx == "t" and not i.is_tv}):
-        dpath = os.path.join(os.path.dirname(
-            next(i.path for i in items if i.movie == movie and i.sfx == "t")),
-            _VALIDATION_FILENAME)
+        dpath = os.path.join(
+            os.path.dirname(next(i.path for i in items if i.movie == movie and i.sfx == "t")),
+            _VALIDATION_FILENAME,
+        )
         doc = _load_validation(dpath)
         if doc is None:
             continue
@@ -815,8 +889,10 @@ def run_transcode(args) -> int:
         if rec is None:
             continue  # the record says no candidate main existed: bytes fallback
         if not isinstance(rec, str) or not _RX_MAIN.match(rec):
-            print(f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback",
-                  file=sys.stderr)
+            print(
+                f"validation: {dpath}: unreadable main {rec!r} -- biggest-bytes fallback",
+                file=sys.stderr,
+            )
             continue
         num = int(rec[1:])
         if any(i.num == num for i in items if i.movie == movie and i.sfx == "t"):
@@ -874,10 +950,22 @@ def run_transcode(args) -> int:
                     side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                     inflight_side = side_dir
                     side_dir, res = _sub_pass(
-                        local_src, side_dir, f"{safe} - S{i.sn}E{i.en}{i.tail}",
-                        seconv_exe, ffprobe_exe, log=log)
-                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                           no_subs=episode, log=log):
+                        local_src,
+                        side_dir,
+                        f"{safe} - S{i.sn}E{i.en}{i.tail}",
+                        seconv_exe,
+                        ffprobe_exe,
+                        log=log,
+                    )
+                if _encode(
+                    local_src,
+                    local_out,
+                    args.encoder,
+                    hb_exe,
+                    ffprobe_exe,
+                    no_subs=episode,
+                    log=log,
+                ):
                     shutil.move(local_out, dest)
                     if side_dir is not None:
                         _ship_sidecars(side_dir, dest_dir, res)
@@ -908,9 +996,11 @@ def run_transcode(args) -> int:
             if i.sfx == "t" and i.movie in rec_missing:
                 if i.movie not in missing_warned:
                     missing_warned.add(i.movie)
-                    msg = (f"{i.movie}: recorded main {rec_missing[i.movie]} has no "
-                           f"staged title -- main encode skipped, staged titles "
-                           f"left for a human")
+                    msg = (
+                        f"{i.movie}: recorded main {rec_missing[i.movie]} has no "
+                        f"staged title -- main encode skipped, staged titles "
+                        f"left for a human"
+                    )
                     print(f"validation: {msg}", file=sys.stderr)
                     log.note("validation", msg)
                 continue
@@ -935,7 +1025,9 @@ def run_transcode(args) -> int:
                     # track guard: a mismatched part set never merges or encodes
                     bad = _split_mismatch(siblings, ffprobe_exe)
                     if bad:
-                        log.note("guard", f"FAIL tracks differ: {bad} -- all parts to issues/movies")
+                        log.note(
+                            "guard", f"FAIL tracks differ: {bad} -- all parts to issues/movies"
+                        )
                         print(f"FAILED (track guard): {bad} -- parts quarantined", file=sys.stderr)
                         for s in siblings:
                             _quarantine(s.path, s, issues_root, log)
@@ -953,15 +1045,21 @@ def run_transcode(args) -> int:
                         local_parts.append(lb)
                         cleanup.append(lb)
                     local_src = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.merged.mkv")
-                    inflight.append(local_src)  # BEFORE the merge: mid-merge interrupt drops the partial
+                    inflight.append(
+                        local_src
+                    )  # BEFORE the merge: mid-merge interrupt drops the partial
                     mrc = _merge(local_src, local_parts, mkv_exe, log=log)
                     if mrc <= 1:  # 0 ok, 1 warning (still usable)
                         cleanup.append(local_src)
                     else:  # 2+ failure: sources left, run continues
                         names = " ".join(s.name for s in siblings)
-                        log.note("encode", f"FAILED mkvmerge ({mrc}): {names} -- sources left in place")
-                        print(f"FAILED mkvmerge ({mrc}): {names} -- sources left in place",
-                              file=sys.stderr)
+                        log.note(
+                            "encode", f"FAILED mkvmerge ({mrc}): {names} -- sources left in place"
+                        )
+                        print(
+                            f"FAILED mkvmerge ({mrc}): {names} -- sources left in place",
+                            file=sys.stderr,
+                        )
                         for p in cleanup:
                             _rmf(p)
                         for s in siblings:
@@ -982,11 +1080,14 @@ def run_transcode(args) -> int:
                 # mid-pass drops it — CONTEXT.md: Interrupt)
                 side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                 inflight_side = side_dir
-                side_dir, res = _sub_pass(local_src, side_dir, safe, seconv_exe, ffprobe_exe, log=log)
+                side_dir, res = _sub_pass(
+                    local_src, side_dir, safe, seconv_exe, ffprobe_exe, log=log
+                )
                 local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
                 inflight = list(cleanup) + [local_out]
-                if _encode(local_src, local_out, args.encoder, hb_exe, ffprobe_exe,
-                           no_subs=True, log=log):
+                if _encode(
+                    local_src, local_out, args.encoder, hb_exe, ffprobe_exe, no_subs=True, log=log
+                ):
                     shutil.move(local_out, dest)
                     _ship_sidecars(side_dir, dest_dir, res)
                     # the doc that picked this main gets the encode appended
@@ -1018,7 +1119,8 @@ def run_transcode(args) -> int:
                         # issues folder, and then this run's evidence lands
                         # beside it like every other quarantine
                         _copy_run_evidence(
-                            log, os.path.join(issues_root, "tv" if i.is_tv else "movies", i.movie))
+                            log, os.path.join(issues_root, "tv" if i.is_tv else "movies", i.movie)
+                        )
                     for s in siblings:
                         handled.add(s.path)
                     failed = 1
@@ -1061,10 +1163,12 @@ def run_transcode(args) -> int:
         if inflight_side is not None:
             shutil.rmtree(inflight_side, ignore_errors=True)
         log.interrupted()
-        print("transcode: interrupted -- partial temp output deleted, source left in staging",
-              file=sys.stderr)
+        print(
+            "transcode: interrupted -- partial temp output deleted, source left in staging",
+            file=sys.stderr,
+        )
         return 130
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — the run-level guard reports and exits
         failed = 1
         print(f"FATAL: {e}", file=sys.stderr)
     finally:
@@ -1080,19 +1184,44 @@ def parse_args(argv=None):
         prog="transcode.py",
         description="Batch-transcode staged lossless MKVs to native-resolution H.265 for the Jellyfin library.",
     )
-    p.add_argument("-k", "--keep", action="store_true",
-                   help="move lossless sources to lossless/<type>/<Name> instead of deleting them (verify, then clean by hand)")
-    p.add_argument("--retry", action="store_true",
-                   help="re-run items from the issues folder instead of rip staging: success ships/archives "
-                        "normally and moves the source out, failure stays quarantined")
-    p.add_argument("-e", "--encoder", choices=["x265", "nvenc", "qsv", "vce"], default="x265",
-                   help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)")
-    p.add_argument("-w", "--workdir", metavar="DIR",
-                   help="local temp work dir (default: $VIDEO_WORK_DIR or %%TEMP%%\\video-work)")
-    p.add_argument("-v", "--verbose", action="count", default=0,
-                   help="console verbosity: -v adds HandBrake error lines, -vv passes tool output through raw")
-    p.add_argument("prefixes", nargs="*", metavar="NAME",
-                   help="transcode only movies whose staged filename starts with this prefix")
+    p.add_argument(
+        "-k",
+        "--keep",
+        action="store_true",
+        help="move lossless sources to lossless/<type>/<Name> instead of deleting them (verify, then clean by hand)",
+    )
+    p.add_argument(
+        "--retry",
+        action="store_true",
+        help="re-run items from the issues folder instead of rip staging: success ships/archives "
+        "normally and moves the source out, failure stays quarantined",
+    )
+    p.add_argument(
+        "-e",
+        "--encoder",
+        choices=["x265", "nvenc", "qsv", "vce"],
+        default="x265",
+        help="video encoder: x265 (default, software) or a GPU encoder (nvenc/qsv/vce)",
+    )
+    p.add_argument(
+        "-w",
+        "--workdir",
+        metavar="DIR",
+        help="local temp work dir (default: $VIDEO_WORK_DIR or %%TEMP%%\\video-work)",
+    )
+    p.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="console verbosity: -v adds HandBrake error lines, -vv passes tool output through raw",
+    )
+    p.add_argument(
+        "prefixes",
+        nargs="*",
+        metavar="NAME",
+        help="transcode only movies whose staged filename starts with this prefix",
+    )
     return p.parse_args(argv)
 
 

@@ -57,21 +57,35 @@ def _accept(display, season, lo, hi, spans, starts, duration, runtimes):
     """The scripted boundary table: Enter — accept the suggested spans."""
     return spans
 
+
 def _ffprobe(path: Path, entries: str, stream: str | None = None) -> str:
     cmd = ["ffprobe", "-v", "error"]
     if stream:
         cmd += ["-select_streams", stream]
     cmd += ["-show_entries", entries, "-of", "csv=p=0", str(path)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def _keyframe_times(path: Path) -> list[float]:
     """Video keyframe PTS times, from ffprobe packet flags."""
     r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True)
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     times = []
     for line in r.stdout.splitlines():
         parts = line.split(",")
@@ -86,7 +100,7 @@ def _keyframe_times(path: Path) -> list[float]:
 def verify_real_file_cut() -> bool:
     """Synthesize a chaptered MKV, cut it through the real split, probe pieces."""
     sys.path.insert(0, str(REPO))
-    import skive.chapter_split as chapter_split
+    from skive import chapter_split
     from skive.chapter_split import probe_chapters, split_combined
     from skive.common import RipLog
 
@@ -107,45 +121,93 @@ def verify_real_file_cut() -> bool:
     meta = [";FFMETADATA1"]
     ends = CHAPTER_STARTS[1:] + [TOTAL_S]
     for start_s, end_s in zip(CHAPTER_STARTS, ends):
-        meta += ["[CHAPTER]", "TIMEBASE=1/1000",
-                 f"START={int(start_s * 1000)}", f"END={int(end_s * 1000)}"]
+        meta += [
+            "[CHAPTER]",
+            "TIMEBASE=1/1000",
+            f"START={int(start_s * 1000)}",
+            f"END={int(end_s * 1000)}",
+        ]
     meta_file = work / "chapters.txt"
     meta_file.write_text("\n".join(meta) + "\n", encoding="utf-8")
     key_frames = ",".join(str(int(s)) for s in CHAPTER_STARTS)
 
     synth = subprocess.run(
-        ["ffmpeg", "-y", "-v", "error",
-         "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
-         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
-         "-f", "ffmetadata", "-i", str(meta_file),
-         "-map", "0:v", "-map", "1:a",
-         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
-         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k",
-         "-force_key_frames", key_frames, "-t", str(TOTAL_S),
-         "-map_chapters", "2", str(combined)],
-        capture_output=True, text=True)
-    check("synthesized 3-chapter MKV with real ffmpeg",
-          synth.returncode == 0 and combined.exists(), synth.stderr.strip())
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-f",
+            "ffmetadata",
+            "-i",
+            str(meta_file),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+            "-force_key_frames",
+            key_frames,
+            "-t",
+            str(TOTAL_S),
+            "-map_chapters",
+            "2",
+            str(combined),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    check(
+        "synthesized 3-chapter MKV with real ffmpeg",
+        synth.returncode == 0 and combined.exists(),
+        synth.stderr.strip(),
+    )
     if synth.returncode != 0 or not combined.exists():
         return _report(checks, work)
 
     probed = probe_chapters(combined, run=subprocess.run)
-    ok = (probed is not None and len(probed[0]) == len(CHAPTER_STARTS)
-          and all(abs(a - b) <= CHAPTER_TOL_S
-                  for a, b in zip(probed[0], CHAPTER_STARTS))
-          and TOTAL_S - 1 <= probed[1] <= TOTAL_S + 1)
-    check("chapter probe reads the synthesized chapters", ok,
-          f"starts={probed[0] if probed else None}, "
-          f"duration={probed[1] if probed else None}s")
+    ok = (
+        probed is not None
+        and len(probed[0]) == len(CHAPTER_STARTS)
+        and all(abs(a - b) <= CHAPTER_TOL_S for a, b in zip(probed[0], CHAPTER_STARTS))
+        and TOTAL_S - 1 <= probed[1] <= TOTAL_S + 1
+    )
+    check(
+        "chapter probe reads the synthesized chapters",
+        ok,
+        f"starts={probed[0] if probed else None}, duration={probed[1] if probed else None}s",
+    )
     if probed is None:
         return _report(checks, work)
-    chapter_starts, duration_s = probed
+    _chapter_starts, duration_s = probed
 
     keys = _keyframe_times(combined)
-    at_starts = all(any(abs(k - s) <= KEYFRAME_TOL_S for k in keys)
-                    for s in CHAPTER_STARTS)
-    check("keyframes sit at the chapter starts (stream-copy cuts will be exact)",
-          at_starts, f"keyframes at {keys}")
+    at_starts = all(any(abs(k - s) <= KEYFRAME_TOL_S for k in keys) for s in CHAPTER_STARTS)
+    check(
+        "keyframes sit at the chapter starts (stream-copy cuts will be exact)",
+        at_starts,
+        f"keyframes at {keys}",
+    )
 
     # The REAL split path: real probe, real ffmpeg cuts (run=subprocess.run);
     # only the boundary table seam is scripted — Enter accepts the suggestion
@@ -158,8 +220,7 @@ def verify_real_file_cut() -> bool:
     chapter_split.sys.stdin.isatty = lambda: True
     chapter_split.run_boundary_table = _accept
     try:
-        split_combined(combined, targets, SEASON, 1, 3, EP_RUNTIMES, log,
-                       run=subprocess.run)
+        split_combined(combined, targets, SEASON, 1, 3, EP_RUNTIMES, log, run=subprocess.run)
     finally:
         chapter_split.sys.stdin.isatty = real_isatty
         chapter_split.run_boundary_table = real_table
@@ -173,38 +234,50 @@ def verify_real_file_cut() -> bool:
         piece = targets[e]
         want_s = spans[e - 1][1] - spans[e - 1][0]
         if not piece.exists():
-            check(f"S{SEASON:02d}E{e:02d} duration matches its chapter span",
-                  False, "piece missing")
+            check(
+                f"S{SEASON:02d}E{e:02d} duration matches its chapter span", False, "piece missing"
+            )
             continue
         dur_raw = _ffprobe(piece, "format=duration")
         try:
             dur = float(dur_raw)
         except ValueError:
             dur = None
-        check(f"S{SEASON:02d}E{e:02d} duration matches its chapter span "
-              f"({want_s:.0f}s ±{DURATION_TOL_S:.0f}s)",
-              dur is not None and abs(dur - want_s) <= DURATION_TOL_S,
-              f"ffprobe duration={dur}s")
+        check(
+            f"S{SEASON:02d}E{e:02d} duration matches its chapter span "
+            f"({want_s:.0f}s ±{DURATION_TOL_S:.0f}s)",
+            dur is not None and abs(dur - want_s) <= DURATION_TOL_S,
+            f"ffprobe duration={dur}s",
+        )
         vcodec = _ffprobe(piece, "stream=codec_name", "v:0")
         acodec = _ffprobe(piece, "stream=codec_name", "a:0")
-        check(f"S{SEASON:02d}E{e:02d} is stream-copy clean (h264/aac)",
-              vcodec == "h264" and acodec == "aac", f"codecs={vcodec}/{acodec}")
+        check(
+            f"S{SEASON:02d}E{e:02d} is stream-copy clean (h264/aac)",
+            vcodec == "h264" and acodec == "aac",
+            f"codecs={vcodec}/{acodec}",
+        )
 
-    notes = [obj.get("status") for line in (work / "logs" / "rip.jsonl").read_text().splitlines()
-             if line for obj in [json.loads(line)] if obj.get("phase") == "split"]
-    check("run log records the split success",
-          notes == ["3 episodes cut — combined deleted"], str(notes))
+    notes = [
+        obj.get("status")
+        for line in (work / "logs" / "rip.jsonl").read_text().splitlines()
+        if line
+        for obj in [json.loads(line)]
+        if obj.get("phase") == "split"
+    ]
+    check(
+        "run log records the split success",
+        notes == ["3 episodes cut — combined deleted"],
+        str(notes),
+    )
     return _report(checks, work)
 
 
-def _report(checks: list[tuple[str, bool, str]],
-            own_workdir: Path | None = None) -> bool:
+def _report(checks: list[tuple[str, bool, str]], own_workdir: Path | None = None) -> bool:
     """The summary. own_workdir is verification 1's own temp workdir, removed
     on success and kept on failure — NEVER the replay's mount."""
     failed = [name for name, ok, _ in checks if not ok]
     if failed:
-        where = (f" — synthetic work kept for inspection at {own_workdir}"
-                 if own_workdir else "")
+        where = f" — synthetic work kept for inspection at {own_workdir}" if own_workdir else ""
         print(f"FAIL: {len(failed)} of {len(checks)} checks failed{where}")
         return False
     if own_workdir is not None:
@@ -234,15 +307,17 @@ def _temp_mount_root() -> Path | None:
     the replay writes real staging trees — keep them on tmpfs: nothing
     written there survives reboot, so the replay touches nothing real.
     """
-    mounted = {parts[1]
-               for line in Path("/proc/mounts").read_text().splitlines()
-               if len(parts := line.split()) >= 3 and parts[2] == "tmpfs"}
+    mounted = {
+        parts[1]
+        for line in Path("/proc/mounts").read_text().splitlines()
+        if len(parts := line.split()) >= 3 and parts[2] == "tmpfs"
+    }
     for cand in [os.environ.get("XDG_RUNTIME_DIR"), "/tmp", "/dev/shm"]:
         if not cand or cand not in mounted or not os.access(cand, os.W_OK):
             continue
-        probe = Path(cand) / ".skive-replay-probe"   # access bits can lie
-        try:                                        # (sandboxes, ro tmpfs) —
-            probe.mkdir()                           # prove the dir writable
+        probe = Path(cand) / ".skive-replay-probe"  # access bits can lie
+        try:  # (sandboxes, ro tmpfs) —
+            probe.mkdir()  # prove the dir writable
             probe.rmdir()
             return Path(cand)
         except OSError:
@@ -271,8 +346,7 @@ def verify_dump_replay(log_path: Path, dump: Path) -> bool:
         print(f"{'PASS' if ok else 'FAIL'}: {name}" + (f" — {detail}" if detail else ""))
 
     mount = _temp_mount_root()
-    check("temp VIDEOS_MOUNT found (tmpfs, already-mounted)", mount is not None,
-          str(mount))
+    check("temp VIDEOS_MOUNT found (tmpfs, already-mounted)", mount is not None, str(mount))
     key = _tmdb_key()
     check("TMDB_API_KEY available (env or repo .env)", bool(key))
     check("captured dump present", dump.exists(), str(dump))
@@ -281,39 +355,58 @@ def verify_dump_replay(log_path: Path, dump: Path) -> bool:
 
     before = set(mount.rglob("*"))
     env = dict(os.environ)
-    env["MAKEMKV_INFO"] = f"cat {dump}"   # scan.py's replay contract: no disc
+    env["MAKEMKV_INFO"] = f"cat {dump}"  # scan.py's replay contract: no disc
     env["VIDEOS_MOUNT"] = str(mount)
     env["TMDB_API_KEY"] = key
     try:
         proc = subprocess.run(
             ["uv", "run", "skive", "rip", "tv", "--verified"],
-            input=ANSWERS, capture_output=True, text=True,
-            env=env, cwd=REPO, timeout=300)
+            input=ANSWERS,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=REPO,
+            timeout=300,
+            check=False,
+        )
         out = proc.stdout + "\n--- stderr ---\n" + proc.stderr
         rc = proc.returncode
     except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b"").decode(errors="replace") + \
-              "\n--- stderr ---\n" + (e.stderr or b"").decode(errors="replace") + \
-              "\nREPLAY TIMED OUT"
+        out = (
+            (e.stdout or b"").decode(errors="replace")
+            + "\n--- stderr ---\n"
+            + (e.stderr or b"").decode(errors="replace")
+            + "\nREPLAY TIMED OUT"
+        )
         rc = None
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(out, encoding="utf-8")
     print(f"replay output saved to {log_path}")
 
-    check("run quit at the confirm prompt (rc=1, nothing ripped)",
-          rc == 1 and "quit — nothing ripped" in out, f"rc={rc}")
+    check(
+        "run quit at the confirm prompt (rc=1, nothing ripped)",
+        rc == 1 and "quit — nothing ripped" in out,
+        f"rc={rc}",
+    )
     last_header = out.rfind(SEASON_HEADER)
     last_ok = out.rfind("ok? (Enter=rip")
-    check("confirm table printed under the season header",
-          last_header != -1 and last_ok != -1 and last_header < last_ok,
-          "season header above the final ok? prompt"
-          if last_header != -1 and last_ok != -1
-          else "season header or ok? prompt missing")
+    check(
+        "confirm table printed under the season header",
+        last_header != -1 and last_ok != -1 and last_header < last_ok,
+        "season header above the final ok? prompt"
+        if last_header != -1 and last_ok != -1
+        else "season header or ok? prompt missing",
+    )
     caption_at = out.find(CAPTION)
-    check("play-all-only caption names the lone title and its episode range",
-          caption_at != -1, CAPTION if caption_at != -1 else "caption missing")
-    check("caption sits under the confirm table",
-          caption_at != -1 and last_header < caption_at < last_ok)
+    check(
+        "play-all-only caption names the lone title and its episode range",
+        caption_at != -1,
+        CAPTION if caption_at != -1 else "caption missing",
+    )
+    check(
+        "caption sits under the confirm table",
+        caption_at != -1 and last_header < caption_at < last_ok,
+    )
     if rc is None:
         keep = {log_path.resolve(), *log_path.resolve().parents}
         after = set(mount.rglob("*"))
@@ -321,26 +414,35 @@ def verify_dump_replay(log_path: Path, dump: Path) -> bool:
         return _report(checks)
 
     after = set(mount.rglob("*"))
-    scan_dumps = [p for p in after - before
-                  if p.parent.name == "scan" and p.suffix == ".txt"]
-    check("the scanner replayed the dump and persisted its scan dump",
-          bool(scan_dumps), str(scan_dumps[0]) if scan_dumps else "no scan dump written")
+    scan_dumps = [p for p in after - before if p.parent.name == "scan" and p.suffix == ".txt"]
+    check(
+        "the scanner replayed the dump and persisted its scan dump",
+        bool(scan_dumps),
+        str(scan_dumps[0]) if scan_dumps else "no scan dump written",
+    )
     mkvs = list((mount / "rip").rglob("*.mkv")) if (mount / "rip").exists() else []
-    check("nothing ripped — no .mkv anywhere under the temp mount", not mkvs,
-          f"{len(mkvs)} mkv file(s)")
+    check(
+        "nothing ripped — no .mkv anywhere under the temp mount",
+        not mkvs,
+        f"{len(mkvs)} mkv file(s)",
+    )
 
     # The replay log itself (often under the same tmpfs mount) must survive
     # the cleanup — exempt it and its parent chain.
     keep = {log_path.resolve(), *log_path.resolve().parents}
     _cleanup_new(mount, before, after, keep)
     left = {p for p in set(mount.rglob("*")) - before if p not in keep}
-    check("temp mount cleaned back to its prior state", not left,
-          f"left behind: {sorted(left)}" if left else "replay artifacts removed")
+    check(
+        "temp mount cleaned back to its prior state",
+        not left,
+        f"left behind: {sorted(left)}" if left else "replay artifacts removed",
+    )
     return _report(checks)
 
 
-def _cleanup_new(root: Path, before: set[Path], after: set[Path],
-                 keep: set[Path] = frozenset()) -> None:
+def _cleanup_new(
+    root: Path, before: set[Path], after: set[Path], keep: set[Path] = frozenset()
+) -> None:
     """Remove exactly what the replay created under the mount — deepest first,
     files before dirs; anything that pre-existed (or is exempted via keep)
     stays untouched."""
@@ -355,15 +457,23 @@ def _cleanup_new(root: Path, before: set[Path], after: set[Path],
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Real-file sanity + dump-replay verification for the "
-                    "chapter split (ADR 0009)")
-    parser.add_argument("--replay", action="store_true",
-                        help="replay the captured Downton scan dump through the "
-                             "real `skive rip tv` instead of the real-file cut")
-    parser.add_argument("replay_log", nargs="?", default=None,
-                        help=f"replay output log (default {DEFAULT_REPLAY_LOG})")
-    parser.add_argument("--dump", default=str(DUMP),
-                        help=f"captured scan dump to replay (default {DUMP})")
+        description="Real-file sanity + dump-replay verification for the chapter split (ADR 0009)"
+    )
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="replay the captured Downton scan dump through the "
+        "real `skive rip tv` instead of the real-file cut",
+    )
+    parser.add_argument(
+        "replay_log",
+        nargs="?",
+        default=None,
+        help=f"replay output log (default {DEFAULT_REPLAY_LOG})",
+    )
+    parser.add_argument(
+        "--dump", default=str(DUMP), help=f"captured scan dump to replay (default {DUMP})"
+    )
     args = parser.parse_args()
     if args.replay:
         log = Path(args.replay_log) if args.replay_log else DEFAULT_REPLAY_LOG

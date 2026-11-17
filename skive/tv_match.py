@@ -52,7 +52,9 @@ def _summing_subset(components: list[int], target: int, tol: int) -> list[int] |
     return dfs(0, 0, 0, [])
 
 
-def sum_disqualified_windowed(titles: list[tuple[int, int, int]]) -> dict[int, tuple[str, list[int]]]:
+def sum_disqualified_windowed(
+    titles: list[tuple[int, int, int]],
+) -> dict[int, tuple[str, list[int]]]:
     """Play-alls by window tier: title -> ("tight"|"soft", component titles).
 
     A play-all's duration matches the sum of a subset of 2..6 of the OTHER
@@ -94,8 +96,9 @@ def sum_disqualified(titles: list[tuple[int, int, int]]) -> set[int]:
     return set(sum_disqualified_windowed(titles))
 
 
-def playall_only(titles: list[tuple[int, int, int]], playalls: set[int],
-                 assignment: dict[int, tuple[int, int]]) -> tuple[int, int, int] | None:
+def playall_only(
+    titles: list[tuple[int, int, int]], playalls: set[int], assignment: dict[int, tuple[int, int]]
+) -> tuple[int, int, int] | None:
     """The play-all-only trigger: the lone eligible title carrying a range.
 
     Fires — returning (title, lo, hi) — when exactly one eligible title
@@ -142,7 +145,9 @@ def next_unstaged(ep_names: dict[int, str], staged: set[int]) -> int:
     return max(staged, default=0) + 1
 
 
-def assign_range(titles: list[tuple[int, int, int]], playalls: set[int], lo: int, hi: int) -> dict[int, tuple[int, int]]:
+def assign_range(
+    titles: list[tuple[int, int, int]], playalls: set[int], lo: int, hi: int
+) -> dict[int, tuple[int, int]]:
     """Assign eligible titles, in disc order, to the stated episode range.
 
     Eligible titles are `titles` minus the play-alls; the i-th one gets
@@ -173,9 +178,13 @@ def assign_range(titles: list[tuple[int, int, int]], playalls: set[int], lo: int
     return assignment
 
 
-def guess_pairing(titles: list[tuple[int, int, int]], playalls: set[int],
-                  ep_runtimes: dict[int, int], staged: set[int],
-                  ep_names: dict[int, str]) -> dict[int, int]:
+def guess_pairing(
+    titles: list[tuple[int, int, int]],
+    playalls: set[int],
+    ep_runtimes: dict[int, int],
+    staged: set[int],
+    ep_names: dict[int, str],
+) -> dict[int, int]:
     """The episode guess walk, kept per-title: episode -> title.
 
     The greedy walk that suggests the disc's episodes, with the pairing
@@ -200,9 +209,14 @@ def guess_pairing(titles: list[tuple[int, int, int]], playalls: set[int],
         rt = ep_runtimes.get(ep, 0)
         if rt <= 0:
             break
-        fit = next((i for i, t in enumerate(remaining)
-                    if secs[t] > 0 and RATIO_GREEN[0] <= secs[t] / rt <= RATIO_GREEN[1]),
-                   None)
+        fit = next(
+            (
+                i
+                for i, t in enumerate(remaining)
+                if secs[t] > 0 and RATIO_GREEN[0] <= secs[t] / rt <= RATIO_GREEN[1]
+            ),
+            None,
+        )
         if fit is None:
             break
         pairing[ep] = remaining.pop(fit)
@@ -210,9 +224,13 @@ def guess_pairing(titles: list[tuple[int, int, int]], playalls: set[int],
     return pairing
 
 
-def prefill_assignment(titles: list[tuple[int, int, int]], playalls: set[int],
-                       ep_runtimes: dict[int, int], staged: set[int],
-                       ep_names: dict[int, str]) -> dict[int, tuple[int, int]]:
+def prefill_assignment(
+    titles: list[tuple[int, int, int]],
+    playalls: set[int],
+    ep_runtimes: dict[int, int],
+    staged: set[int],
+    ep_names: dict[int, str],
+) -> dict[int, tuple[int, int]]:
     """The full per-title prefill: title -> (lo, hi), extras as (0, 0).
 
     Green-ratio fit wins: the guess walk pairs each walked episode with its
@@ -259,8 +277,9 @@ def episode_clashes(assignment: dict[int, tuple[int, int]]) -> list[tuple[int, l
     return [(e, ts) for e, ts in sorted(claimed.items()) if len(ts) > 1]
 
 
-def staged_claims(assignment: dict[int, tuple[int, int]],
-                  staged: set[int]) -> list[tuple[int, int]]:
+def staged_claims(
+    assignment: dict[int, tuple[int, int]], staged: set[int]
+) -> list[tuple[int, int]]:
     """Assignments that claim an already-staged episode, ascending by episode.
 
     Args:
@@ -279,8 +298,7 @@ def staged_claims(assignment: dict[int, tuple[int, int]],
     return sorted(out)
 
 
-def unfilled_episodes(lo: int, hi: int,
-                      assignment: dict[int, tuple[int, int]]) -> list[int]:
+def unfilled_episodes(lo: int, hi: int, assignment: dict[int, tuple[int, int]]) -> list[int]:
     """Holes inside the covered range: episodes lo..hi no title claims.
 
     Args:
@@ -299,8 +317,7 @@ def unfilled_episodes(lo: int, hi: int,
     return [e for e in range(lo, hi + 1) if e not in filled]
 
 
-def past_end_claims(assignment: dict[int, tuple[int, int]],
-                    max_ep: int) -> list[tuple[int, int]]:
+def past_end_claims(assignment: dict[int, tuple[int, int]], max_ep: int) -> list[tuple[int, int]]:
     """Assignments that run past the TMDB season's last episode.
 
     Args:
@@ -316,8 +333,7 @@ def past_end_claims(assignment: dict[int, tuple[int, int]],
     return sorted((hi, t) for t, (_lo, hi) in assignment.items() if hi > max_ep)
 
 
-def sub_floor_titles(titles: list[tuple[int, int, int]],
-                     minlength: int) -> list[int]:
+def sub_floor_titles(titles: list[tuple[int, int, int]], minlength: int) -> list[int]:
     """The sub-floor titles — duration below tv_floor(minlength) — in disc
     order, numbers intact. The listing set the table and rip flow use for
     titles too short to count as episode material.

@@ -11,12 +11,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 from rich.text import Text
 from textual.widgets import Static
 
 from skive import ui
-from skive.selection import INTERRUPT, QUIT, _Table, Binding
+from skive.selection import INTERRUPT, QUIT, Binding, _Table
 
 BOUNDARY_WINDOW = 120
 """Seconds a suggested boundary may sit from its summed-runtime target and
@@ -41,8 +42,16 @@ def probe_chapters(path: Path, run=subprocess.run) -> tuple[list[float], float] 
     Returns:
         (chapter_starts, duration_s) in seconds, or None when unreadable
     """
-    cmd = ["ffprobe", "-v", "error", "-show_entries",
-           "format=duration:chapter=start_time", "-of", "json", str(path)]
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration:chapter=start_time",
+        "-of",
+        "json",
+        str(path),
+    ]
     try:
         result = run(cmd, capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired):
@@ -58,9 +67,13 @@ def probe_chapters(path: Path, run=subprocess.run) -> tuple[list[float], float] 
     return (starts, duration)
 
 
-def suggest_boundaries(chapter_starts: list[float], duration_s: float,
-                       ep_runtimes: dict[int, int], lo: int, hi: int,
-                       ) -> tuple[list[tuple[int, int]] | None, str | None]:
+def suggest_boundaries(
+    chapter_starts: list[float],
+    duration_s: float,
+    ep_runtimes: dict[int, int],
+    lo: int,
+    hi: int,
+) -> tuple[list[tuple[int, int]] | None, str | None]:
     """The suggested boundary layout — a chapter span per episode plus the
     doubtful-boundary flags — or (None, decline reason) with no layout.
 
@@ -99,8 +112,7 @@ def suggest_boundaries(chapter_starts: list[float], duration_s: float,
     flagged: set[int] = set()
     for e in range(lo, hi):
         target = sum(ep_runtimes[x] for x in range(lo, e + 1))
-        ch = min(range(len(chapter_starts)),
-                 key=lambda k: abs(chapter_starts[k] - target)) + 1
+        ch = min(range(len(chapter_starts)), key=lambda k: abs(chapter_starts[k] - target)) + 1
         if abs(chapter_starts[ch - 1] - target) > BOUNDARY_WINDOW:
             flagged.add(e + 1)
         start_chs.append(ch)
@@ -118,7 +130,7 @@ def suggest_boundaries(chapter_starts: list[float], duration_s: float,
 
 def _hms(secs: float) -> str:
     """Seconds as H:MM:SS — the confirm table's duration shape."""
-    total = int(round(secs))
+    total = round(secs)
     return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
 
 
@@ -135,12 +147,15 @@ def spans_from_starts(start_chs: list[int], n_chapters: int) -> list[tuple[int, 
     Returns:
         One (start chapter, end chapter) span per episode
     """
-    return [(start_chs[i], start_chs[i + 1] - 1 if i + 1 < len(start_chs)
-             else n_chapters) for i in range(len(start_chs))]
+    return [
+        (start_chs[i], start_chs[i + 1] - 1 if i + 1 < len(start_chs) else n_chapters)
+        for i in range(len(start_chs))
+    ]
 
 
-def boundary_flags(start_chs: list[int], chapter_starts: list[float],
-                   ep_runtimes: dict[int, int], lo: int, hi: int) -> set[int]:
+def boundary_flags(
+    start_chs: list[int], chapter_starts: list[float], ep_runtimes: dict[int, int], lo: int, hi: int
+) -> set[int]:
     """The episodes whose start boundary grades outside the window.
 
     The same grading suggest_boundaries applies to its own suggestions, run
@@ -181,26 +196,36 @@ def boundary_note(flagged: set[int]) -> str | None:
     if not flagged:
         return None
     eps = ", ".join(f"E{e:02d}" for e in sorted(flagged))
-    return (f"boundary suggestion outside ±{BOUNDARY_WINDOW}s of the summed "
-            f"runtimes: {eps} — check before splitting")
+    return (
+        f"boundary suggestion outside ±{BOUNDARY_WINDOW}s of the summed "
+        f"runtimes: {eps} — check before splitting"
+    )
 
 
-def boundary_row_cells(season: int, lo: int, i: int, start_chs: list[int],
-                       chapter_starts: list[float], duration_s: float,
-                       ep_runtimes: dict[int, int], notes: str,
-                       blocked: bool) -> tuple:
+def boundary_row_cells(
+    season: int,
+    lo: int,
+    i: int,
+    start_chs: list[int],
+    chapter_starts: list[float],
+    duration_s: float,
+    ep_runtimes: dict[int, int],
+    notes: str,
+    blocked: bool,
+) -> tuple:
     """One boundary row's four cells: episode code, span duration (graded
     against that episode's TMDB runtime), the start chapter as the editable
     action, and the notes cell (a block reason or a window flag warning).
     A blocked row renders red whole, its reason named in the notes cell."""
     e = lo + i
     start_s = chapter_starts[start_chs[i] - 1]
-    end_s = (chapter_starts[start_chs[i + 1] - 1] if i + 1 < len(start_chs)
-             else duration_s)
-    cells = (Text(f"S{season:02d}E{e:02d}", style="bold"),
-             Text(_hms(end_s - start_s)),
-             Text(str(start_chs[i]), style="bold green"),
-             Text(notes))
+    end_s = chapter_starts[start_chs[i + 1] - 1] if i + 1 < len(start_chs) else duration_s
+    cells = (
+        Text(f"S{season:02d}E{e:02d}", style="bold"),
+        Text(_hms(end_s - start_s)),
+        Text(str(start_chs[i]), style="bold green"),
+        Text(notes),
+    )
     if blocked:
         for cell in cells:
             cell.stylize("red")
@@ -214,10 +239,15 @@ def boundary_note_cell(flagged: set[int], e: int) -> str:
     return ""
 
 
-def print_accepted_boundaries(display: str, season: int, lo: int,
-                              spans: list[tuple[int, int]],
-                              chapter_starts: list[float], duration_s: float,
-                              ep_runtimes: dict[int, int]) -> None:
+def print_accepted_boundaries(
+    display: str,
+    season: int,
+    lo: int,
+    spans: list[tuple[int, int]],
+    chapter_starts: list[float],
+    duration_s: float,
+    ep_runtimes: dict[int, int],
+) -> None:
     """Echo the accepted boundary table as plain lines into scrollback,
     before the cut — the print_accepted pattern the three main flows share.
     Built through ui.table, so it is pipe-safe and NO_COLOR-safe by
@@ -229,11 +259,19 @@ def print_accepted_boundaries(display: str, season: int, lo: int,
     table = ui.table(*BoundaryTable.COLUMNS)
     for i in range(len(spans)):
         e = lo + i
-        table.add_row(*boundary_row_cells(season, lo, i, start_chs,
-                                         chapter_starts, duration_s,
-                                         ep_runtimes,
-                                         boundary_note_cell(flagged, e),
-                                         False))
+        table.add_row(
+            *boundary_row_cells(
+                season,
+                lo,
+                i,
+                start_chs,
+                chapter_starts,
+                duration_s,
+                ep_runtimes,
+                boundary_note_cell(flagged, e),
+                False,
+            )
+        )
     ui.console.print(table)
 
 
@@ -241,6 +279,7 @@ def print_accepted_boundaries(display: str, season: int, lo: int,
 class _EpisodeRow:
     """One boundary-table row: the episode number the shared _Table keys
     rows and refreshes by."""
+
     number: int
 
 
@@ -260,17 +299,24 @@ class BoundaryTable(_Table):
 
     COLUMNS = ("episode", "runtime", "chapter start", "notes")
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("backspace", "backspace", show=False),
         *[Binding(d, f"type('{d}')", show=False) for d in "0123456789"],
     ]
 
-    HINT = ("↑/↓ j/k move · digits type a chapter start, Enter sets · "
-            "Enter accept · q keep combined")
+    HINT = "↑/↓ j/k move · digits type a chapter start, Enter sets · Enter accept · q keep combined"
 
-    def __init__(self, display: str, season: int, lo: int, hi: int,
-                 start_chs: list[int], chapter_starts: list[float],
-                 duration_s: float, ep_runtimes: dict[int, int]):
+    def __init__(
+        self,
+        display: str,
+        season: int,
+        lo: int,
+        hi: int,
+        start_chs: list[int],
+        chapter_starts: list[float],
+        duration_s: float,
+        ep_runtimes: dict[int, int],
+    ):
         rows = [_EpisodeRow(lo + i) for i in range(hi - lo + 1)]
         super().__init__(display, rows)
         self.season = season
@@ -293,25 +339,32 @@ class BoundaryTable(_Table):
         out: dict[int, str] = {}
         for i in range(1, len(self.start_chs)):
             e = self.lo + i
-            why = fix_rejection((e, self.start_chs[i]), self.start_chs, n,
-                                self.lo, self.hi)
+            why = fix_rejection((e, self.start_chs[i]), self.start_chs, n, self.lo, self.hi)
             if why:
                 out[e] = why
         return out
 
     def _flagged(self) -> set[int]:
-        return boundary_flags(self.start_chs, self.chapter_starts,
-                              self.ep_runtimes, self.lo, self.hi)
+        return boundary_flags(
+            self.start_chs, self.chapter_starts, self.ep_runtimes, self.lo, self.hi
+        )
 
     def _cells(self, t: _EpisodeRow) -> tuple:
         e = t.number
         notes = self._blocks.get(e)
         if notes is None:
             notes = boundary_note_cell(self._flagged(), e)
-        return boundary_row_cells(self.season, self.lo, e - self.lo,
-                                  self.start_chs, self.chapter_starts,
-                                  self.duration_s, self.ep_runtimes,
-                                  notes, e in self._blocks)
+        return boundary_row_cells(
+            self.season,
+            self.lo,
+            e - self.lo,
+            self.start_chs,
+            self.chapter_starts,
+            self.duration_s,
+            self.ep_runtimes,
+            notes,
+            e in self._blocks,
+        )
 
     def _status_widgets(self) -> list:
         return [Static(self._status_text(), id="status")]
@@ -320,13 +373,13 @@ class BoundaryTable(_Table):
         lines = []
         if self._blocks:
             rows = ", ".join(f"E{e:02d}" for e in sorted(self._blocks))
-            lines.append(Text(f"✗ blocked: fix the red rows ({rows}) — "
-                              "Enter refused", style="bold red"))
+            lines.append(
+                Text(f"✗ blocked: fix the red rows ({rows}) — Enter refused", style="bold red")
+            )
         flagged = self._flagged() - set(self._blocks)
         note = boundary_note(flagged)
         if note:
-            lines.append(Text(f"! {note} — Enter still accepts",
-                              style="bold yellow"))
+            lines.append(Text(f"! {note} — Enter still accepts", style="bold yellow"))
         if self.pending:
             lines.append(Text(f"chapter ▸ {self.pending}▏  (Enter sets it)"))
         if self.message:
@@ -364,8 +417,7 @@ class BoundaryTable(_Table):
             self._regrade(f"✗ '{typed}' is not a chapter number")
             return True
         ch = int(typed)
-        why = fix_rejection((e, ch), self.start_chs, len(self.chapter_starts),
-                            self.lo, self.hi)
+        why = fix_rejection((e, ch), self.start_chs, len(self.chapter_starts), self.lo, self.hi)
         if why:
             self._regrade(f"✗ E{e:02d}: {why}")
         else:
@@ -379,26 +431,32 @@ class BoundaryTable(_Table):
         if self._blocks:
             self._regrade("✗ Enter refused — the red rows must be fixed first")
         else:
-            self.exit(spans_from_starts(self.start_chs,
-                                        len(self.chapter_starts)))
+            self.exit(spans_from_starts(self.start_chs, len(self.chapter_starts)))
 
 
-def run_boundary_table(display: str, season: int, lo: int, hi: int,
-                       spans: list[tuple[int, int]],
-                       chapter_starts: list[float], duration_s: float,
-                       ep_runtimes: dict[int, int],
-                       ) -> list[tuple[int, int]] | str:
+def run_boundary_table(
+    display: str,
+    season: int,
+    lo: int,
+    hi: int,
+    spans: list[tuple[int, int]],
+    chapter_starts: list[float],
+    duration_s: float,
+    ep_runtimes: dict[int, int],
+) -> list[tuple[int, int]] | str:
     """Run the boundary table over the suggested spans and return the
     confirmed spans, QUIT (the operator declined — the combined file stays)
     or INTERRUPT (the caller re-raises KeyboardInterrupt once Textual has
     restored the terminal, so split_combined's handler sweeps and keeps the
     combined file)."""
-    return BoundaryTable(display, season, lo, hi, [s for s, _ in spans],
-                         chapter_starts, duration_s, ep_runtimes).run()
+    return BoundaryTable(
+        display, season, lo, hi, [s for s, _ in spans], chapter_starts, duration_s, ep_runtimes
+    ).run()
 
 
-def fix_rejection(fix: tuple[int, int], start_chs: list[int], n_chapters: int,
-                  lo: int, hi: int) -> str | None:
+def fix_rejection(
+    fix: tuple[int, int], start_chs: list[int], n_chapters: int, lo: int, hi: int
+) -> str | None:
     """Why a chapter number cannot be episode e's start; None when it can.
     The table's blocking state: the same rules grade the layout that stands
     (red rows block Enter) and every typed value before it lands.
@@ -422,17 +480,28 @@ def fix_rejection(fix: tuple[int, int], start_chs: list[int], n_chapters: int,
         return f"no chapter {ch} — the file has {n_chapters}"
     i = e - lo
     if ch <= start_chs[i - 1]:
-        return (f"boundaries must increase: E{e - 1:02d} starts at chapter "
-                f"{start_chs[i - 1]}, so E{e:02d} needs a later one")
+        return (
+            f"boundaries must increase: E{e - 1:02d} starts at chapter "
+            f"{start_chs[i - 1]}, so E{e:02d} needs a later one"
+        )
     if i < len(start_chs) - 1 and ch >= start_chs[i + 1]:
-        return (f"chapter {ch} leaves E{e:02d} no chapters — "
-                f"E{e + 1:02d} starts at chapter {start_chs[i + 1]}")
+        return (
+            f"chapter {ch} leaves E{e:02d} no chapters — "
+            f"E{e + 1:02d} starts at chapter {start_chs[i + 1]}"
+        )
     return None
 
 
-def split_combined(combined: Path, targets: dict[int, Path], season: int,
-                   lo: int, hi: int, ep_runtimes: dict[int, int], log,
-                   run=subprocess.run) -> None:
+def split_combined(
+    combined: Path,
+    targets: dict[int, Path],
+    season: int,
+    lo: int,
+    hi: int,
+    ep_runtimes: dict[int, int],
+    log,
+    run=subprocess.run,
+) -> None:
     """The chapter split phase for one play-all-only rip (ADR 0009): probe
     the combined file, suggest boundaries, confirm them at the table, then
     cut per-episode files with input seek, span duration, all streams, stream
@@ -471,8 +540,7 @@ def split_combined(combined: Path, targets: dict[int, Path], season: int,
             log.note("split", "skipped: chapter probe unreadable — combined kept")
             return
         chapter_starts, duration_s = probed
-        suggested = suggest_boundaries(chapter_starts, duration_s, ep_runtimes,
-                                       lo, hi)
+        suggested = suggest_boundaries(chapter_starts, duration_s, ep_runtimes, lo, hi)
         if suggested[0] is None:
             log.note("split", f"skipped: {suggested[1]} — combined kept")
             return
@@ -485,41 +553,54 @@ def split_combined(combined: Path, targets: dict[int, Path], season: int,
             return
         display = combined.name
         with ui.suspend():
-            confirmed = run_boundary_table(display, season, lo, hi,
-                                           suggested[0], chapter_starts,
-                                           duration_s, ep_runtimes)
+            confirmed = run_boundary_table(
+                display, season, lo, hi, suggested[0], chapter_starts, duration_s, ep_runtimes
+            )
         if confirmed == INTERRUPT:
             raise KeyboardInterrupt  # Textual restored the terminal; sweep below
         if confirmed == QUIT:
-            log.note("split",
-                     "skipped: declined at the boundary table — combined kept")
+            log.note("split", "skipped: declined at the boundary table — combined kept")
             return
-        print_accepted_boundaries(display, season, lo, confirmed,
-                                  chapter_starts, duration_s, ep_runtimes)
-        existing = next((targets[e] for e in range(lo, hi + 1)
-                         if targets[e].exists()), None)
+        print_accepted_boundaries(
+            display, season, lo, confirmed, chapter_starts, duration_s, ep_runtimes
+        )
+        existing = next((targets[e] for e in range(lo, hi + 1) if targets[e].exists()), None)
         if existing is not None:
-            log.note("split",
-                     f"skipped: {existing.name} already exists — combined kept")
+            log.note("split", f"skipped: {existing.name} already exists — combined kept")
             return
         for i, (start_ch, end_ch) in enumerate(confirmed):
             e = lo + i
             target = targets[e]
             start_s = chapter_starts[start_ch - 1]
-            end_s = (chapter_starts[end_ch] if end_ch < len(chapter_starts)
-                     else duration_s)
-            cmd = ["ffmpeg", "-v", "error", "-ss", f"{start_s:.3f}",
-                   "-i", str(combined), "-t", f"{end_s - start_s:.3f}",
-                   "-map", "0", "-c", "copy", str(target)]
+            end_s = chapter_starts[end_ch] if end_ch < len(chapter_starts) else duration_s
+            cmd = [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                f"{start_s:.3f}",
+                "-i",
+                str(combined),
+                "-t",
+                f"{end_s - start_s:.3f}",
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                str(target),
+            ]
             try:
                 result = run(cmd, capture_output=True, text=True)
             except (OSError, subprocess.TimeoutExpired):
                 result = None
             if result is None or result.returncode != 0 or not target.exists():
                 sweep()
-                log.note("split", f"skipped: ffmpeg failed on "
-                         f"S{season:02d}E{e:02d} — partials deleted, "
-                         "combined kept")
+                log.note(
+                    "split",
+                    f"skipped: ffmpeg failed on "
+                    f"S{season:02d}E{e:02d} — partials deleted, "
+                    "combined kept",
+                )
                 return
             cut.append(target)
         combined.unlink()

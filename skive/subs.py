@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Shared subtitle pass — extract + OCR embedded bitmap subs into SRT sidecars.
 
 Library encodes must ship with zero subtitle tracks: bitmap VobSub/PGS forces
@@ -13,9 +12,9 @@ runs on a clean Windows python.exe.
 import json
 import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from skive import ui
@@ -90,11 +89,14 @@ def settle(per_language: list[tuple[Track, int]]) -> tuple[list[Keep], list[str]
             keeps.append(Keep(t, "sdh"))
             sdh = t
         elif sdh is None:
-            notes.append(f"drop {t.lang} track {t.index} ({n} events): "
-                         f"below 30% of track {win.index} ({wn} events)")
+            notes.append(
+                f"drop {t.lang} track {t.index} ({n} events): "
+                f"below 30% of track {win.index} ({wn} events)"
+            )
         else:
-            notes.append(f"drop {t.lang} track {t.index} ({n} events): "
-                         f"sdh taken by track {sdh.index}")
+            notes.append(
+                f"drop {t.lang} track {t.index} ({n} events): sdh taken by track {sdh.index}"
+            )
     return keeps, notes
 
 
@@ -118,16 +120,14 @@ def _track_numbers(mkv: str, log=None, verbose: int = 0) -> dict[int, int]:
     exe = shutil.which("mkvmerge")
     if not exe:
         return {}
-    r = subprocess.run([exe, "-J", mkv], capture_output=True, text=True)
+    r = subprocess.run([exe, "-J", mkv], capture_output=True, text=True, check=False)
     _raw(log, "mkvmerge", r.stdout + r.stderr, verbose)
     try:
         if r.returncode > 1:
             raise ValueError(f"rc={r.returncode}")
-        return {t["id"]: t["properties"]["number"]
-                for t in json.loads(r.stdout)["tracks"]}
+        return {t["id"]: t["properties"]["number"] for t in json.loads(r.stdout)["tracks"]}
     except (ValueError, KeyError, TypeError):
-        ui.warn(f"mkvmerge track numbers unavailable for {mkv}; "
-                f"falling back to ffprobe index + 1")
+        ui.warn(f"mkvmerge track numbers unavailable for {mkv}; falling back to ffprobe index + 1")
         return {}
 
 
@@ -135,10 +135,21 @@ def inventory(mkv: str, ffprobe_exe: str, log=None, verbose: int = 0) -> list[Tr
     """ffprobe the file's subtitle streams: index, codec, language tag, forced.
     verbose: -vv passes the captured ffprobe output through to the console."""
     r = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-select_streams", "s",
-         "-show_entries", "stream=index,codec_name:stream_tags=language:stream_disposition=forced",
-         "-of", "json", mkv],
-        capture_output=True, text=True,
+        [
+            ffprobe_exe,
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream=index,codec_name:stream_tags=language:stream_disposition=forced",
+            "-of",
+            "json",
+            mkv,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     _raw(log, "ffprobe", r.stdout + r.stderr, verbose)
     if r.returncode != 0:
@@ -164,8 +175,9 @@ def count_events(srt_path: str) -> int:
         return sum(1 for line in fh if " --> " in line)
 
 
-def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
-            verbose: int = 0) -> str | None:
+def convert(
+    mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None, verbose: int = 0
+) -> str | None:
     """OCR one track into a FRESH temp subdir of out_dir (seconv names its
     output `<stem>.<lang>[.forced].srt`, so same-language tracks would collide
     in one dir). Returns the produced SRT path, BARREN when the track's OCR
@@ -178,18 +190,27 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
     r = subprocess.run(
         # seconv --track-number selects the Matroska TrackNumber, which
         # MakeMKV does not keep contiguous -- never guess index + 1
-        [seconv_exe, mkv, "subrip",
-         f"--track-number:{track.number or track.index + 1}", f"--ocr-language:{track.lang}",
-         f"--output-folder:{work}"],
-        capture_output=True, text=True,
+        [
+            seconv_exe,
+            mkv,
+            "subrip",
+            f"--track-number:{track.number or track.index + 1}",
+            f"--ocr-language:{track.lang}",
+            f"--output-folder:{work}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     _raw(log, "seconv", r.stdout + r.stderr, verbose)
     produced = sorted(f for f in os.listdir(work) if f.endswith(".srt"))
     if r.returncode != 0 or not produced:
         # full replay, not just the stderr tail -- the Conan diagnosis lived in
         # seconv's stdout ("N image(s) produced no OCR text and were dropped")
-        ui.warn(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
-                f"rc={r.returncode}\n{(r.stdout + r.stderr).strip()}")
+        ui.warn(
+            f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
+            f"rc={r.returncode}\n{(r.stdout + r.stderr).strip()}"
+        )
         if "No subtitle tracks matched" in r.stdout + r.stderr:
             return BARREN
         return None
@@ -199,8 +220,9 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
 _OCR_WORKERS = 4
 
 
-def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
-             ffprobe_exe: str, log=None, verbose: int = 0) -> PassResult:
+def run_pass(
+    mkv: str, out_dir: str, base: str, seconv_exe: str, ffprobe_exe: str, log=None, verbose: int = 0
+) -> PassResult:
     """The whole pass, orchestration only: inventory -> decide -> OCR each keep
     in its own temp dir -> settle full tracks per language -> move winners into
     out_dir under their final sidecar names. ok=False if any selected track
@@ -212,8 +234,11 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
     # spill: step lines live in the run view's live box (console-frames slice 01)
-    ui.step(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
-            f"{os.path.basename(mkv)}", verbose=verbose > 0)
+    ui.step(
+        f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
+        f"{os.path.basename(mkv)}",
+        verbose=verbose > 0,
+    )
     if not keeps:
         return PassResult(True, [], notes)
 
@@ -225,8 +250,9 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
 
         def _ocr(k: Keep) -> str:
-            label = (f"OCR {k.track.lang} track {k.track.index}"
-                     f"{' (forced)' if k.track.forced else ''}")
+            label = (
+                f"OCR {k.track.lang} track {k.track.index}{' (forced)' if k.track.forced else ''}"
+            )
             v = ui.view()  # TTY: one live-box lane per concurrent OCR track
             if v is not None and v.tty:
                 v.bg(label, "")
@@ -246,8 +272,9 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
             if srt == BARREN:
                 # CONTEXT.md: Barren track -- zero cues is a property of the
                 # disc, not a failure; a note, never a quarantine
-                notes.append(f"barren {k.track.lang} (track {k.track.index}): "
-                             f"OCR yielded 0 cues -- dropped")
+                notes.append(
+                    f"barren {k.track.lang} (track {k.track.index}): OCR yielded 0 cues -- dropped"
+                )
                 continue
             if srt is None:
                 ok = False
@@ -255,8 +282,9 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
                 continue
             n = count_events(srt)
             if n == 0:
-                notes.append(f"barren {k.track.lang} (track {k.track.index}): "
-                             f"OCR yielded 0 cues -- dropped")
+                notes.append(
+                    f"barren {k.track.lang} (track {k.track.index}): OCR yielded 0 cues -- dropped"
+                )
                 continue
             done.append((k, srt, n))
 

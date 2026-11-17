@@ -22,14 +22,26 @@ backfill = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(backfill)
 subs = backfill.subs
 
-INV_ENG = {"streams": [
-    {"index": 3, "codec_name": "dvd_subtitle",
-     "disposition": {"forced": 0}, "tags": {"language": "eng"}},
-]}
-INV_NOR = {"streams": [
-    {"index": 2, "codec_name": "dvd_subtitle",
-     "disposition": {"forced": 0}, "tags": {"language": "nor"}},
-]}
+INV_ENG = {
+    "streams": [
+        {
+            "index": 3,
+            "codec_name": "dvd_subtitle",
+            "disposition": {"forced": 0},
+            "tags": {"language": "eng"},
+        },
+    ]
+}
+INV_NOR = {
+    "streams": [
+        {
+            "index": 2,
+            "codec_name": "dvd_subtitle",
+            "disposition": {"forced": 0},
+            "tags": {"language": "nor"},
+        },
+    ]
+}
 
 
 class R:
@@ -40,17 +52,27 @@ class R:
 def write_srt(path, cues=3):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "".join(f"{i}\n00:00:{i:02d},000 --> 00:00:{i + 1:02d},000\ncue {i}\n\n"
-                for i in range(1, cues + 1)),
+        "".join(
+            f"{i}\n00:00:{i:02d},000 --> 00:00:{i + 1:02d},000\ncue {i}\n\n"
+            for i in range(1, cues + 1)
+        ),
         encoding="utf-8",
     )
 
 
-def make_run(calls, *, inv=INV_ENG, seconv_rc=0, mkvmerge_rc=0,
-             temp_counts="video\naudio\n", tess_langs="dan\neng\nosd\n"):
+def make_run(
+    calls,
+    *,
+    inv=INV_ENG,
+    seconv_rc=0,
+    mkvmerge_rc=0,
+    temp_counts="video\naudio\n",
+    tess_langs="dan\neng\nosd\n",
+):
     """Fake subprocess.run dispatching on the tool basename, recording every
     invocation as (exe, cmd). ffprobe answers json inventories for originals
     and csv type counts otherwise (the stripped temp's counts = temp_counts)."""
+
     def run(cmd, capture_output=False, text=False, **kw):
         exe = pathlib.Path(cmd[0]).name
         calls.append((exe, list(cmd)))
@@ -74,6 +96,7 @@ def make_run(calls, *, inv=INV_ENG, seconv_rc=0, mkvmerge_rc=0,
         if exe == "tesseract":
             return R(0, f"List of languages (3):\n{tess_langs}", "")
         raise AssertionError(f"unexpected tool: {cmd}")
+
     return run
 
 
@@ -105,7 +128,9 @@ def touch(path, content=b"orig-mkv"):
 
 
 def tool_names(state):
-    return [exe for exe, cmd in state["calls"] if "-J" not in cmd]  # -J = track-number lookup, not a merge
+    return [
+        exe for exe, cmd in state["calls"] if "-J" not in cmd
+    ]  # -J = track-number lookup, not a merge
 
 
 # -- startup probes ---------------------------------------------------------------
@@ -113,8 +138,9 @@ def test_missing_tool_exits_before_touching_library(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(shutil, "which", lambda name: None if name == "seconv" else f"/fake/{name}")
     video = touch(tmp_path / "lib" / "M" / "M.mkv")
     calls: list = []
-    monkeypatch.setattr(backfill.subprocess, "run",
-                        lambda cmd, **kw: calls.append(cmd) or R(0, "", ""))
+    monkeypatch.setattr(
+        backfill.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or R(0, "", "")
+    )
     rc = backfill.run_backfill(str(tmp_path / "lib"))
     assert rc == 1
     err = capsys.readouterr().err
@@ -156,7 +182,10 @@ def test_subless_file_skipped_fast(lib, stub, capsys):
     rc = backfill.run_backfill(str(lib))
     assert rc == 0
     assert "skip M.mkv (no subtitle streams)" in capsys.readouterr().out
-    assert sorted(set(tool_names(stub))) == ["ffprobe", "tesseract"]  # one probe, no seconv/mkvmerge
+    assert sorted(set(tool_names(stub))) == [
+        "ffprobe",
+        "tesseract",
+    ]  # one probe, no seconv/mkvmerge
     assert video.read_bytes() == b"orig-mkv"
 
 
@@ -165,7 +194,9 @@ def test_straggler_only_not_stripped_and_reported(lib, stub, capsys):
     stub["run"] = make_run(stub["calls"], inv=INV_NOR)
     rc = backfill.run_backfill(str(lib))
     assert rc == 0  # skips are not failures
-    assert "skip M.mkv (straggler-only: nor -- no eng/dan, never stripped)" in capsys.readouterr().out
+    assert (
+        "skip M.mkv (straggler-only: nor -- no eng/dan, never stripped)" in capsys.readouterr().out
+    )
     assert "mkvmerge" not in tool_names(stub)
     report = (lib / "backfill-report.txt").read_text(encoding="utf-8")
     assert "M.mkv" in report and "nor" in report
@@ -203,7 +234,10 @@ def test_pass_failure_keeps_tracks_and_reports(lib, stub, capsys):
     stub["run"] = make_run(stub["calls"], seconv_rc=1)
     rc = backfill.run_backfill(str(lib))
     assert rc == 1
-    assert "FAIL M.mkv (eng (track 3): seconv failed) -- embedded tracks kept" in capsys.readouterr().out
+    assert (
+        "FAIL M.mkv (eng (track 3): seconv failed) -- embedded tracks kept"
+        in capsys.readouterr().out
+    )
     assert "mkvmerge" not in tool_names(stub)
     assert video.read_bytes() == b"orig-mkv"
     report = (lib / "backfill-report.txt").read_text(encoding="utf-8")
@@ -215,8 +249,10 @@ def test_strip_verify_failure_leaves_original_intact(lib, stub, capsys):
     stub["run"] = make_run(stub["calls"], temp_counts="video\naudio\nsubtitle\n")
     rc = backfill.run_backfill(str(lib))
     assert rc == 1
-    assert "FAIL M.mkv (strip verify failed: 1 subtitle stream(s) left) -- sidecars kept" \
+    assert (
+        "FAIL M.mkv (strip verify failed: 1 subtitle stream(s) left) -- sidecars kept"
         in capsys.readouterr().out
+    )
     assert video.read_bytes() == b"orig-mkv"
     assert not list(lib.rglob("*.tmp.mkv"))  # temp deleted
     assert (lib / "M" / "M.eng.srt").exists()  # good sidecars stay
@@ -251,6 +287,5 @@ def test_happy_path_sidecars_beside_video_and_replace(lib, stub, capsys, monkeyp
 def spy_replace(monkeypatch):
     seen = []
     real = os.replace
-    monkeypatch.setattr(backfill.os, "replace",
-                        lambda a, b: seen.append((a, b)) or real(a, b))
+    monkeypatch.setattr(backfill.os, "replace", lambda a, b: seen.append((a, b)) or real(a, b))
     return seen

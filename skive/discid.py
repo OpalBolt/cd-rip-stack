@@ -67,18 +67,16 @@ def discid_info(discid: str, timeout: int = 10) -> dict | None:
     """The ws/2 discid lookup (with recordings, so release tracks carry
     durations) as parsed JSON. None on any failure — a failed resolve is
     the caller's blank audit column, never an error."""
-    url = (f"https://musicbrainz.org/ws/2/discid/{discid}"
-           "?fmt=json&inc=recordings")
+    url = f"https://musicbrainz.org/ws/2/discid/{discid}?fmt=json&inc=recordings"
     request = urllib.request.Request(url, headers={"User-Agent": "skive"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
-    except Exception:  # urllib.error, JSON, OSError: resolve failed, not fatal
+    except Exception:  # noqa: BLE001 — urllib/JSON/OS failure resolves to None, never fatal
         return None
 
 
-def release_track_lengths(info: dict,
-                          track_count: int | None = None) -> dict[int, int] | None:
+def release_track_lengths(info: dict, track_count: int | None = None) -> dict[int, int] | None:
     """Per-track seconds from the lookup's first release (recording length
     preferred). On a multi-disc release the medium whose track count matches
     ``track_count`` (the pre-pass ``tracks=``) grades the table; without a

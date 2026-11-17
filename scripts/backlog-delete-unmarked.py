@@ -34,8 +34,7 @@ from pathlib import Path
 _repo = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo))  # the skive package
 
-from skive.validation import (VALIDATION_FILENAME, load_validation,
-                              read_extras_marker)
+from skive.validation import VALIDATION_FILENAME, load_validation, read_extras_marker
 
 
 def _main_t(doc: dict) -> int | None:
@@ -112,8 +111,10 @@ def main() -> int:
                 if not p.is_file():
                     continue
                 mb = p.stat().st_size // 1048576
-                print(f"{folder.name}: {'delete' if args.go else 'would delete'} "
-                      f"extras/{p.name} ({mb} MB)")
+                print(
+                    f"{folder.name}: {'delete' if args.go else 'would delete'} "
+                    f"extras/{p.name} ({mb} MB)"
+                )
                 if args.go:
                     p.unlink()
                     deleted += 1

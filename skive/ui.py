@@ -21,8 +21,8 @@ layer only.
 """
 
 import contextlib
-import os
 import io
+import os
 import re
 import sys
 import threading
@@ -38,19 +38,36 @@ from rich.text import Text
 from rich.theme import Theme
 
 # Kanagawa (wave) palette: github.com/rebelot/kanagawa.nvim
-THEME = Theme({"ok": "#98BB6C", "warn": "#FF9E3B", "fail": "#E82424",
-               "hot": "bold #E82424", "dim": "#727169", "item": "bold #DCD7BA",
-               "phase.copy": "#7E9CD8", "phase.merge": "#E6C384",
-               "phase.subs": "#957FB8", "phase.crop": "#7AA89F",
-               "phase.prefetch": "#658594", "phase.encode": "#98BB6C",
-               "phase.rip": "#98BB6C",
-               # frame and border match: the live box's top joins an open frame
-               "frame": "#7E9CD8", "border": "#7E9CD8", "title": "bold #DCD7BA",
-               # ratio bands are style names too (tv_match.audit_cell, grade_main)
-               "green": "#98BB6C", "yellow": "#FF9E3B", "red": "#E82424"})
+THEME = Theme(
+    {
+        "ok": "#98BB6C",
+        "warn": "#FF9E3B",
+        "fail": "#E82424",
+        "hot": "bold #E82424",
+        "dim": "#727169",
+        "item": "bold #DCD7BA",
+        "phase.copy": "#7E9CD8",
+        "phase.merge": "#E6C384",
+        "phase.subs": "#957FB8",
+        "phase.crop": "#7AA89F",
+        "phase.prefetch": "#658594",
+        "phase.encode": "#98BB6C",
+        "phase.rip": "#98BB6C",
+        # frame and border match: the live box's top joins an open frame
+        "frame": "#7E9CD8",
+        "border": "#7E9CD8",
+        "title": "bold #DCD7BA",
+        # ratio bands are style names too (tv_match.audit_cell, grade_main)
+        "green": "#98BB6C",
+        "yellow": "#FF9E3B",
+        "red": "#E82424",
+    }
+)
 # the live box's top while an item frame is open: tees join the frame's sides
 JOINED = Box("\u251c\u2500\u252c\u2524" + str(ROUNDED)[4:])
-PLAIN_HEAD = Box(str(SIMPLE_HEAD).replace("\u2500", "-"), ascii=True)  # piped tables: no box characters
+PLAIN_HEAD = Box(
+    str(SIMPLE_HEAD).replace("\u2500", "-"), ascii=True
+)  # piped tables: no box characters
 PHASE_WIDTH = len("prefetch")  # the phase column pads to its longest name
 
 # The one shared console. stderr=True resolves sys.stderr at write time (a
@@ -151,8 +168,7 @@ def _framed(line: Text) -> Text:
     return Text.assemble(("\u2502 ", "frame"), line, (" \u2502", "frame"))
 
 
-def _event_text(kind: str, text: str, phase: str | None = None,
-                elapsed: str | None = None) -> Text:
+def _event_text(kind: str, text: str, phase: str | None = None, elapsed: str | None = None) -> Text:
     """`│ ✓ copy      3664 MB at 19 MB/s      3m06s`: gutter while a frame
     is open, symbol, the phase in its colour, detail, elapsed right-aligned
     at the frame width."""
@@ -225,8 +241,7 @@ class RunView:
 
     BAR_WIDTH = 20
 
-    def __init__(self, tty: bool | None = None, live: bool = True,
-                 perf: bool = True):
+    def __init__(self, tty: bool | None = None, live: bool = True, perf: bool = True):
         """tty=None detects stderr; live=False forces the TTY render path
         without ever constructing a Live (the test seam — a real Live must
         never exist under pytest). perf=False skips the perf sampler, so the
@@ -259,18 +274,22 @@ class RunView:
 
     def _start_live(self) -> None:
         from rich.live import Live
+
         # the Live renders this view (__rich__) at each refresh, so setters
         # only change state; no update call, no lock shared with the refresher
-        self._live = Live(self, console=console, refresh_per_second=4,
-                          transient=True)
+        self._live = Live(self, console=console, refresh_per_second=4, transient=True)
         self._live.start()
 
     def __rich_console__(self, console, options):
         width = options.max_width
-        yield Panel(self._footer(width - 4), box=JOINED if _frame_open else ROUNDED,
-                    width=width,
-                    title=Text("now", style="title"), title_align="left",
-                    border_style="border")
+        yield Panel(
+            self._footer(width - 4),
+            box=JOINED if _frame_open else ROUNDED,
+            width=width,
+            title=Text("now", style="title"),
+            title_align="left",
+            border_style="border",
+        )
 
     def _footer(self, width: int) -> Group:
         """The live box's lanes at `width` inner columns: the item lane
@@ -296,9 +315,11 @@ class RunView:
                     row.add_column(no_wrap=True, width=5)
                     if rate:
                         row.add_column(no_wrap=True, width=len(rate))
-                    cells: list = [Text(f"{k} {name}", style="dim"),
-                                   ProgressBar(total=100, completed=pct, width=bar),
-                                   Text(f"{pct:.0f}%", style="dim")]
+                    cells: list = [
+                        Text(f"{k} {name}", style="dim"),
+                        ProgressBar(total=100, completed=pct, width=bar),
+                        Text(f"{pct:.0f}%", style="dim"),
+                    ]
                     if rate:
                         cells.append(Text(rate, style="dim"))
                     row.add_row(*cells)
@@ -307,15 +328,17 @@ class RunView:
                     ready = " \u2713 ready"
                     if str(entry).endswith(ready):
                         title = Text(f"{k} ")
-                        name = Text(str(entry)[:-len(ready)], style="dim")
-                        name.truncate(max(width - title.cell_len - len(ready), 1),
-                                      overflow="ellipsis")
+                        name = Text(str(entry)[: -len(ready)], style="dim")
+                        name.truncate(
+                            max(width - title.cell_len - len(ready), 1), overflow="ellipsis"
+                        )
                         title.append_text(name)
                         title.append(ready, style="dim")
                         lanes.append(title)
                     else:
-                        lanes.append(Text(f"{k} {entry}", style="dim", no_wrap=True,
-                                          overflow="ellipsis"))
+                        lanes.append(
+                            Text(f"{k} {entry}", style="dim", no_wrap=True, overflow="ellipsis")
+                        )
         if perf and width >= 60:
             text, hot = perf
             line = Text(no_wrap=True, overflow="ellipsis")
@@ -325,8 +348,7 @@ class RunView:
                 line.append(seg, style="hot" if seg in hot else "dim")
             lanes.append(line)
         if not lanes:
-            lanes.append(Text(_scope or "skive", style="dim", no_wrap=True,
-                              overflow="ellipsis"))
+            lanes.append(Text(_scope or "skive", style="dim", no_wrap=True, overflow="ellipsis"))
         return Group(*lanes)
 
     def _item_lane(self, width: int) -> Table | None:
@@ -338,8 +360,9 @@ class RunView:
         if self._phase_len:
             label, phase = label.divide([len(label.plain) - self._phase_len])
         step = Text(f" {self._step}" if self._step else "", style="dim")
-        right = [s for s in (None if pct is None else f"{pct:.0f}%",
-                             f"ETA {eta}" if eta else None) if s]
+        right = [
+            s for s in (None if pct is None else f"{pct:.0f}%", f"ETA {eta}" if eta else None) if s
+        ]
         fixed = sum(len(s) + 2 for s in right)
         bar = 0 if pct is None else self.BAR_WIDTH if width >= 44 else 10
         room = width - fixed - (bar + 2 if bar else 0)
@@ -348,8 +371,9 @@ class RunView:
             bar = max(bar - (keep - room), 0)
             room = width - fixed - (bar + 2 if bar else 0)
         # the name gives way to the phase and the step; the step to the phase
-        label.truncate(max(room - phase.cell_len - step.cell_len, len(self._pos) + 2, 1),
-                       overflow="ellipsis")
+        label.truncate(
+            max(room - phase.cell_len - step.cell_len, len(self._pos) + 2, 1), overflow="ellipsis"
+        )
         left = room - label.cell_len - phase.cell_len
         if left < 3:  # no room for even ` x…`
             step = Text()
@@ -396,22 +420,24 @@ class RunView:
         self._pct = None if pct is None else float(pct)
         self._eta = eta
 
-    def perf(self, text: str, hot=set()) -> None:
+    def perf(self, text: str, hot=None) -> None:
         """The perf lane (transcode only). No-op in fallback;
         an empty text drops it."""
+        if hot is None:
+            hot = set()
         if not self.tty:
             return
         self._perf = (text, set(hot)) if text else None
 
-    def bg(self, key: str, text: str, pct: float | None = None,
-           rate: str | None = None) -> None:
+    def bg(self, key: str, text: str, pct: float | None = None, rate: str | None = None) -> None:
         """One background-activity entry per concurrent activity, keyed; it
         updates in place. A percentage adds its own bar and optional rate.
         No-op in fallback mode (plain prints remain)."""
         if not self.tty:
             return
         value: str | tuple[str, float, str | None] = (
-            str(text) if pct is None else (str(text), float(pct), rate))
+            str(text) if pct is None else (str(text), float(pct), rate)
+        )
         self._bg = {**self._bg, key: value}
 
     def bg_clear(self, key: str) -> None:
@@ -429,8 +455,9 @@ class RunView:
         else:
             _plain(f"{name}  {line}")
 
-    def event(self, kind: str, text: str, phase: str | None = None,
-              elapsed: str | None = None) -> None:
+    def event(
+        self, kind: str, text: str, phase: str | None = None, elapsed: str | None = None
+    ) -> None:
         """An ok/info/warn/fail event line; ui._print routes here while the
         view is open."""
         if self.tty:
@@ -443,6 +470,7 @@ class RunView:
     def suspend(self):
         """Pause the Live footer while a prompt prints normally (scrollback);
         redraw after. A no-op `with` when no Live runs (fallback, seam)."""
+
         @contextlib.contextmanager
         def _ctx():
             if self._live is None or self._closed:
@@ -454,6 +482,7 @@ class RunView:
                 yield
             finally:
                 self._start_live()
+
         return _ctx()
 
     def close(self) -> None:
@@ -475,16 +504,22 @@ class RunView:
         """The live box as plain text at `width` columns, no terminal
         (deterministic; colour-free)."""
         out = io.StringIO()
-        Console(file=out, width=width, theme=THEME, color_system=None,
-                highlight=False).print(self)
+        Console(file=out, width=width, theme=THEME, color_system=None, highlight=False).print(self)
         return out.getvalue()
 
 
 def _box(body, title: Text | None = None, subtitle: Text | None = None) -> Panel:
     """The one closed-box look: rounded, blue border, bold title in the top
     border, at the shared width."""
-    return Panel(body, box=ROUNDED, width=_width(), title=title, title_align="left",
-                 subtitle=subtitle, border_style="border")
+    return Panel(
+        body,
+        box=ROUNDED,
+        width=_width(),
+        title=title,
+        title_align="left",
+        subtitle=subtitle,
+        border_style="border",
+    )
 
 
 def opener(title: str, *lines: str) -> None:
@@ -495,8 +530,9 @@ def opener(title: str, *lines: str) -> None:
     _neutral_close()
     _scope = lines[0] if lines else title
     if _styled():
-        box = (_box(Text("\n".join(lines)), Text(title, style="title")) if lines
-               else _box(Text(title)))
+        box = (
+            _box(Text("\n".join(lines)), Text(title, style="title")) if lines else _box(Text(title))
+        )
         with _print_lock:
             console.print(box)
     else:
@@ -579,9 +615,14 @@ def _result_cell(word: str, styled: bool) -> Text | str:
     return Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]), f" {word}")
 
 
-def _result_text(n_ok: int, n_failed: int, elapsed: int | None = None,
-                interrupt_note: str | None = None,
-                see: str | None = None, failed: bool = False) -> tuple[str, str]:
+def _result_text(
+    n_ok: int,
+    n_failed: int,
+    elapsed: int | None = None,
+    interrupt_note: str | None = None,
+    see: str | None = None,
+    failed: bool = False,
+) -> tuple[str, str]:
     """The run's closing result line as (kind, text): counts, run length,
     then `— <interrupt_note>` after an interrupt or `— <see>` after a
     failure. failed marks a run that failed with no failed row (a fatal
@@ -603,9 +644,17 @@ def _result_text(n_ok: int, n_failed: int, elapsed: int | None = None,
     return ("fail" if interrupt_note is not None or failed else "ok"), text
 
 
-def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
-                replay=(), columns=None, log=None,
-                interrupt_note: str | None = None, failed: bool = False) -> None:
+def run_summary(
+    rows,
+    n_ok: int,
+    n_failed: int,
+    keep_banner: str | None = None,
+    replay=(),
+    columns=None,
+    log=None,
+    interrupt_note: str | None = None,
+    failed: bool = False,
+) -> None:
     """End-of-run summary on stderr (after the run view closed): warn/fail
     lines replayed (TTY only), then on a TTY one closed `summary` box (columns
     `-` for every row dropped, the result line as its bottom title) with the
@@ -647,8 +696,14 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
                 s = _secs(value)
                 if s is not None and not value.endswith(" ⇢"):
                     total += s
-            body.append([label, *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode", "ship")),
-                         _hms(total), word])
+            body.append(
+                [
+                    label,
+                    *(cells.get(p, "-") for p in ("copy", "merge", "subs", "encode", "ship")),
+                    _hms(total),
+                    word,
+                ]
+            )
     else:
         body = [list(row) for row in rows]
     keep = range(len(columns))
@@ -658,43 +713,54 @@ def run_summary(rows, n_ok: int, n_failed: int, keep_banner: str | None = None,
         for line in replay:
             rkind, _, text = line.partition("  ")
             if styled and rkind in SYMBOLS:
-                console.print(Text.assemble((SYMBOLS[rkind], _SYMBOL_STYLE[rkind]),
-                                            f" {text}"), soft_wrap=True)
+                console.print(
+                    Text.assemble((SYMBOLS[rkind], _SYMBOL_STYLE[rkind]), f" {text}"),
+                    soft_wrap=True,
+                )
             else:
                 print(line, file=sys.stderr)
         # plain: PLAIN_HEAD's blank top and bottom edges space the table
         # from the replay above and the result line below; styled: the box
         # is the border, the table keeps only its header rule
-        table = (Table(box=SIMPLE_HEAD, header_style="dim", show_edge=False,
-                       expand=True, pad_edge=False) if styled
-                 else Table(box=PLAIN_HEAD, header_style=""))  # plain: unstyled, even on a NO_COLOR terminal
+        table = (
+            Table(box=SIMPLE_HEAD, header_style="dim", show_edge=False, expand=True, pad_edge=False)
+            if styled
+            else Table(box=PLAIN_HEAD, header_style="")
+        )  # plain: unstyled, even on a NO_COLOR terminal
         for c in keep:
             table.add_column(columns[c])
         for row in body:
-            table.add_row(*(_result_cell(row[c], styled) if columns[c] == "result"
-                            else str(row[c]) for c in keep))
+            table.add_row(
+                *(
+                    _result_cell(row[c], styled) if columns[c] == "result" else str(row[c])
+                    for c in keep
+                )
+            )
         if not styled:
             console.print(table)
             if keep_banner is not None:
                 console.print(keep_banner, soft_wrap=True)
             print(_plain_event(kind, result), file=sys.stderr)
             return
-        line = Text.assemble((SYMBOLS[kind], _SYMBOL_STYLE[kind]), f" {result}",
-                             style=_SYMBOL_STYLE[kind])
+        line = Text.assemble(
+            (SYMBOLS[kind], _SYMBOL_STYLE[kind]), f" {result}", style=_SYMBOL_STYLE[kind]
+        )
         fits = line.cell_len <= _width() - 6
         if not fits:  # the border keeps the counts; the full line prints below
             head = result.partition(" \u2014 ")[0]
             line = Text(f"{SYMBOLS[kind]} {head}", style=_SYMBOL_STYLE[kind])
         console.print(_box(table, Text("summary", style="title"), line))
         if not fits:
-            console.print(Text(f"{SYMBOLS[kind]} {result}", style=_SYMBOL_STYLE[kind]),
-                          soft_wrap=True)
+            console.print(
+                Text(f"{SYMBOLS[kind]} {result}", style=_SYMBOL_STYLE[kind]), soft_wrap=True
+            )
         if keep_banner is not None:
             console.print(Text(keep_banner, style="warn"), soft_wrap=True)
 
 
-def result_line(kind: str, *parts: str, elapsed: int | None = None,
-                note: str | None = None) -> None:
+def result_line(
+    kind: str, *parts: str, elapsed: int | None = None, note: str | None = None
+) -> None:
     """A command's closing result line without a table: `✓ synced 4.1 GB ·
     2m10s` — parts joined by ` · `, the run length, then `— note` (the next
     step after a failure). kind is ok, warn or fail."""
@@ -719,25 +785,46 @@ def musicbrainz_miss(info: dict, rerun: str) -> None:
         title = "several MusicBrainz releases"
         rows = []
         for c in info["candidates"]:
-            details = [c["disambiguation"], c["country"],
-                       f"{c['cds']} CDs" if c["cds"] else None, c["date"]]
-            rows.append((str(c["index"]), c["album"], " · ".join(d for d in details if d),
-                         f"https://musicbrainz.org/release/{c['mbid']}"))
-        lines = [f"Detach wrong releases: {url}",
-                 f"Re-run with the right one: {rerun}"]
+            details = [
+                c["disambiguation"],
+                c["country"],
+                f"{c['cds']} CDs" if c["cds"] else None,
+                c["date"],
+            ]
+            rows.append(
+                (
+                    str(c["index"]),
+                    c["album"],
+                    " · ".join(d for d in details if d),
+                    f"https://musicbrainz.org/release/{c['mbid']}",
+                )
+            )
+        lines = [f"Detach wrong releases: {url}", f"Re-run with the right one: {rerun}"]
     else:
         title = "not on MusicBrainz"
-        facts = [f"DiscID {discid}" if discid else None,
-                 f"{info['tracks']} tracks" if info["tracks"] else None, info["length"]]
-        lines = [" · ".join(f for f in facts if f),
-                 "Open the link, attach this disc to its release, then re-run."]
+        facts = [
+            f"DiscID {discid}" if discid else None,
+            f"{info['tracks']} tracks" if info["tracks"] else None,
+            info["length"],
+        ]
+        lines = [
+            " · ".join(f for f in facts if f),
+            "Open the link, attach this disc to its release, then re-run.",
+        ]
     if not _styled():
-        _plain(_plain_event("warn", f"{title}: DiscID {discid}" if multiple
-                            else f"{title}: {lines[0]}"))
+        _plain(
+            _plain_event(
+                "warn", f"{title}: DiscID {discid}" if multiple else f"{title}: {lines[0]}"
+            )
+        )
         if multiple:
             for index, album, details, link in rows:
-                _plain(_plain_event("warn", f"  {index}  {album}"
-                                    + (f" · {details}" if details else "") + f" · {link}"))
+                _plain(
+                    _plain_event(
+                        "warn",
+                        f"  {index}  {album}" + (f" · {details}" if details else "") + f" · {link}",
+                    )
+                )
             for line in lines:
                 _plain(_plain_event("warn", line))
         else:
@@ -746,27 +833,36 @@ def musicbrainz_miss(info: dict, rerun: str) -> None:
         return
     body: list = []
     if multiple:
-        table = Table(box=SIMPLE_HEAD, header_style="dim", show_edge=False,
-                      expand=True, pad_edge=False)
+        table = Table(
+            box=SIMPLE_HEAD, header_style="dim", show_edge=False, expand=True, pad_edge=False
+        )
         for column in ("#", "album", "details"):
             table.add_column(column)
         for index, album, details, link in rows:
-            table.add_row(Text(index, style="bold"), Text(album, style=f"link {link}"),
-                          details)
-        body += [table, Text.assemble("Detach wrong releases: ", (url, f"link {url}")),
-                 Text(f"Re-run with the right one: {rerun}")]
+            table.add_row(Text(index, style="bold"), Text(album, style=f"link {link}"), details)
+        body += [
+            table,
+            Text.assemble("Detach wrong releases: ", (url, f"link {url}")),
+            Text(f"Re-run with the right one: {rerun}"),
+        ]
     else:
         body += [Text(line) for line in lines]
         body.append(Text(url, style=f"link {url}", no_wrap=True, overflow="ellipsis"))
     with _print_lock:
-        console.print(Panel(Group(*body), box=ROUNDED, width=_width(),
-                            title=Text(f"{SYMBOLS['warn']} {title}", style="warn"),
-                            title_align="left", border_style="warn"))
+        console.print(
+            Panel(
+                Group(*body),
+                box=ROUNDED,
+                width=_width(),
+                title=Text(f"{SYMBOLS['warn']} {title}", style="warn"),
+                title_align="left",
+                border_style="warn",
+            )
+        )
         console.print(Text(url), soft_wrap=True)  # unwrapped, for copying
 
 
-def _print(kind: str, text: str, phase: str | None = None,
-           elapsed: str | None = None) -> None:
+def _print(kind: str, text: str, phase: str | None = None, elapsed: str | None = None) -> None:
     # the lock must not span the view dispatch: _emit takes it too, and a
     # plain Lock re-acquiring on the same thread deadlocks
     if _view is not None and _view.tty and not _view._closed:
@@ -819,6 +915,7 @@ def step(text: str, verbose: bool = False) -> None:
 
 # -- prompts and tables: one shape everywhere ----------------------------------
 
+
 def _read(question: Text) -> str:
     """Print the question line, read one answer on a `›` line. The footer is
     suspended while asking; stdin is read exactly as before (a piped stdin
@@ -858,8 +955,11 @@ def table(*columns: str, title: str | None = None) -> Table:
     the console's full width; plain (pipe, NO_COLOR, TERM=dumb) the ASCII
     PLAIN_HEAD. No column colours (callers style only cells that mean
     something, e.g. a bold pick number)."""
-    t = (Table(box=ROUNDED, header_style="bold #7E9CD8", title=title) if _styled()
-         else Table(box=PLAIN_HEAD, header_style="", title=title))
+    t = (
+        Table(box=ROUNDED, header_style="bold #7E9CD8", title=title)
+        if _styled()
+        else Table(box=PLAIN_HEAD, header_style="", title=title)
+    )
     for col in columns:
         t.add_column(col)
     return t
@@ -897,8 +997,7 @@ def read_hwmon(root="/sys/class/hwmon") -> dict[str, float]:
     else:
         paths = {}
         try:
-            dirs = sorted(d for d in Path(root).iterdir()
-                          if d.name.startswith("hwmon"))
+            dirs = sorted(d for d in Path(root).iterdir() if d.name.startswith("hwmon"))
         except OSError:
             return {}
         for d in dirs:
@@ -919,8 +1018,7 @@ def read_hwmon(root="/sys/class/hwmon") -> dict[str, float]:
             if name in _HWMON_KEYS:
                 continue
             for t in sorted(d.glob("temp*_input")):
-                key = ("cpu" if "cpu" not in paths
-                       else "gpu" if "gpu" not in paths else None)
+                key = "cpu" if "cpu" not in paths else "gpu" if "gpu" not in paths else None
                 if key is None:
                     break
                 paths[key] = t
@@ -956,8 +1054,7 @@ class PerfSampler:
 
     TICK = 2.0
 
-    def __init__(self, view: "RunView", stat_path="/proc/stat",
-                 hwmon_root="/sys/class/hwmon"):
+    def __init__(self, view: "RunView", stat_path="/proc/stat", hwmon_root="/sys/class/hwmon"):
         self._view = view
         self._stat_path = stat_path
         self._hwmon_root = hwmon_root

@@ -4,7 +4,8 @@ import pathlib
 from skive.subs import Track
 
 spec = importlib.util.spec_from_file_location(
-    "rf", pathlib.Path(__file__).parent.parent / "scripts" / "rename_forced_subs.py")
+    "rf", pathlib.Path(__file__).parent.parent / "scripts" / "rename_forced_subs.py"
+)
 rf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rf)
 
@@ -22,7 +23,9 @@ def share(tmp_path, *sidecars):
 
 
 def inv(*tracks):
-    return lambda *_a, **_k: [Track(i, lang, "s", forced) for i, (lang, forced) in enumerate(tracks)]
+    return lambda *_a, **_k: [
+        Track(i, lang, "s", forced) for i, (lang, forced) in enumerate(tracks)
+    ]
 
 
 def test_renames_when_source_has_no_forced_track(tmp_path):

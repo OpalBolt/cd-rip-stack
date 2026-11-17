@@ -4,14 +4,13 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from skive.tag import tag as tag_cmd
 
 
 class FakeArgs:
     """Minimal argparse.Namespace for tag."""
-    pass
 
 
 def test_mount_before_beets():
@@ -40,6 +39,7 @@ def test_nothing_to_import(tmp_path, monkeypatch):
     fake_rip_dir = tmp_path / "rip"
 
     orig_exists = Path.exists
+
     def selective_exists(self):
         if self == fake_rip_dir:
             return False
@@ -58,6 +58,7 @@ def test_nothing_to_import(tmp_path, monkeypatch):
 def test_config_path_resolution():
     """Test config path is resolved correctly relative to this file."""
     import skive.tag
+
     expected_path = Path(skive.tag.__file__).parent.parent / "config" / "beets-config.yaml"
     assert expected_path.exists() or True  # May not exist if config/ not created yet
 
@@ -136,6 +137,7 @@ def test_three_sources_order_and_flags(tmp_path, monkeypatch):
         sdir.mkdir(parents=True)
 
     calls = []
+
     def fake_run(cmd):
         calls.append(cmd)
         return Mock(returncode=0)
@@ -167,6 +169,7 @@ def test_tag_single_source_bandcamp(tmp_path, monkeypatch):
         sdir.mkdir(parents=True)
 
     calls = []
+
     def fake_run(cmd):
         calls.append(cmd)
         return Mock(returncode=0)
@@ -190,6 +193,7 @@ def test_tag_single_source_cd(tmp_path, monkeypatch):
     sdir.mkdir(parents=True)
 
     calls = []
+
     def fake_run(cmd):
         calls.append(cmd)
         return Mock(returncode=0)
@@ -234,6 +238,7 @@ def test_tag_skips_empty_source_folders(tmp_path, monkeypatch):
     (tmp_path / "rip" / "bandcamp" / "Album").mkdir(parents=True)
 
     calls = []
+
     def fake_run(cmd):
         calls.append(cmd)
         return Mock(returncode=0)
@@ -253,6 +258,7 @@ def test_tag_nonzero_exit_if_beets_fails(tmp_path, monkeypatch):
     (tmp_path / "rip" / "other" / "Album").mkdir(parents=True)
 
     calls = []
+
     def fake_run(cmd):
         calls.append(cmd)
         return Mock(returncode=42)
@@ -292,8 +298,7 @@ def test_album_outcomes_keep_raw_when_one_is_left(tmp_path, monkeypatch):
         tag_cmd(FakeArgs(), run=fake_run)
 
     lines = _tag_log_lines(tmp_path)
-    notes = {line["name"]: line["status"] for line in lines
-             if line["status"] in {"filed", "left"}}
+    notes = {line["name"]: line["status"] for line in lines if line["status"] in {"filed", "left"}}
     assert notes == {"Filed": "filed", "Left": "left"}
     run = lines[0]["run"]
     assert (tmp_path / "logs" / "raw" / f"{run}.jsonl").exists()
@@ -342,11 +347,13 @@ def test_tag_interrupt_records_130_and_keeps_raw(tmp_path, monkeypatch):
 def test_tag_argparse_unknown_source():
     """Test unknown source argument causes argparse error."""
     import pytest
+
     from skive.main import build_parser
 
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["tag", "vinyl"])
+
 
 def _tag_stderr(tmp_path, monkeypatch, capsys, fake_run):
     """Run tag over a temporary share; return (exit code, stderr lines)."""

@@ -44,8 +44,9 @@ def probe_tools() -> dict[str, str]:
         else:
             missing.append(f"  {tool}: not on PATH")
     if "tesseract" in paths:
-        r = subprocess.run([paths["tesseract"], "--list-langs"],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            [paths["tesseract"], "--list-langs"], capture_output=True, text=True, check=False
+        )
         langs = set(r.stdout.split())
         lack = [lang for lang in ("eng", "dan") if lang not in langs]
         if r.returncode != 0:
@@ -53,8 +54,7 @@ def probe_tools() -> dict[str, str]:
         for lang in lack:
             missing.append(f"  tesseract --list-langs missing {lang} (tesseract-data-{lang})")
     if missing:
-        print('missing tools -- see README ("Non-Python prerequisites"):',
-              file=sys.stderr)
+        print('missing tools -- see README ("Non-Python prerequisites"):', file=sys.stderr)
         print("\n".join(missing), file=sys.stderr)
         return {}
     return paths
@@ -81,16 +81,16 @@ def _nonempty(path: str) -> bool:
 def _sidecars_beside(video_dir: str, stem: str) -> bool:
     """Any <stem>.*.srt beside the video. A stripped file has no subtitle
     streams left to recompute its expected set from, so this marks it done."""
-    return any(f.startswith(stem + ".") and f.endswith(".srt")
-               for f in os.listdir(video_dir))
+    return any(f.startswith(stem + ".") and f.endswith(".srt") for f in os.listdir(video_dir))
 
 
 def _type_counts(path: str, ffprobe_exe: str) -> dict[str, int] | None:
     """Stream count per codec_type, or None if unreadable."""
     r = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-show_entries", "stream=codec_type",
-         "-of", "csv=p=0", path],
-        capture_output=True, text=True,
+        [ffprobe_exe, "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if r.returncode != 0:
         return None
@@ -109,7 +109,7 @@ def strip(mkv: str, mkv_exe: str, ffprobe_exe: str) -> tuple[bool, str]:
     intact."""
     tmp = os.path.join(os.path.dirname(mkv), Path(mkv).stem + ".stripped.tmp.mkv")
     before = _type_counts(mkv, ffprobe_exe)
-    rc = subprocess.run([mkv_exe, "-o", tmp, "--no-subtitles", mkv]).returncode
+    rc = subprocess.run([mkv_exe, "-o", tmp, "--no-subtitles", mkv], check=False).returncode
     if rc > 1:  # 0 ok, 1 warnings (still usable) -- like transcode's merge
         _rmf(tmp)
         return False, f"mkvmerge failed (rc={rc})"
@@ -154,8 +154,9 @@ def process(path: str, tools: dict[str, str], report: list[str]) -> str:
     # minimal expected set: one name per forced keep, one per language with a
     # full track. All present and non-empty = the pass already ran; only the
     # strip is left (re-run after an interruption -- no redundant OCR).
-    minimal = {subs.sidecar_name(stem, k.track.lang, "forced" if k.track.forced else "")
-               for k in keeps}
+    minimal = {
+        subs.sidecar_name(stem, k.track.lang, "forced" if k.track.forced else "") for k in keeps
+    }
     n_side = 0
     if not all(_nonempty(os.path.join(video_dir, n)) for n in minimal):
         side_dir = tempfile.mkdtemp(prefix="backfill-side-")
@@ -205,8 +206,10 @@ def run_backfill(library: str) -> int:
 
     lines = [
         f"backfill report -- {library}",
-        f"{sum(counts.values())} file(s): {counts['done']} done, "
-        f"{counts['skip']} skipped, {counts['fail']} failed",
+        (
+            f"{sum(counts.values())} file(s): {counts['done']} done, "
+            f"{counts['skip']} skipped, {counts['fail']} failed"
+        ),
         *report,
     ]
     print("\n".join(lines))
@@ -219,11 +222,15 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="backfill.py",
         description="One-off in-place library backfill: OCR embedded subtitles to SRT "
-                    "sidecars, then strip the embedded tracks (after verify).",
+        "sidecars, then strip the embedded tracks (after verify).",
     )
-    p.add_argument("library", nargs="?", metavar="LIBRARY",
-                   default=os.path.join(os.environ.get("VIDEOS") or "/mnt/videos", "library"),
-                   help="library root (default: $VIDEOS/library or /mnt/videos/library)")
+    p.add_argument(
+        "library",
+        nargs="?",
+        metavar="LIBRARY",
+        default=os.path.join(os.environ.get("VIDEOS") or "/mnt/videos", "library"),
+        help="library root (default: $VIDEOS/library or /mnt/videos/library)",
+    )
     return p.parse_args(argv)
 
 

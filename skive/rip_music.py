@@ -3,17 +3,15 @@
 import os
 import re
 import shlex
-import sys
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 from skive import common, ui
-from skive.discid import track_lengths
 from skive.common import RipLog, ensure_share, kill_child_after_grace
-from skive.scan import sniff_disc
 from skive.cyanrip_log import (
     album_header_field,
     album_header_name,
@@ -22,8 +20,14 @@ from skive.cyanrip_log import (
     parse_musicbrainz_miss,
     parse_track_durations,
 )
+from skive.discid import track_lengths
+from skive.scan import sniff_disc
 from skive.selection import (
-    CdTrack, INTERRUPT, QUIT, print_accepted_cd, run_cd_table,
+    INTERRUPT,
+    QUIT,
+    CdTrack,
+    print_accepted_cd,
+    run_cd_table,
 )
 from skive.validation import (
     VALIDATION_FILENAME,
@@ -86,8 +90,9 @@ def rip_music(args) -> None:
     # by the DRV line (a bare /dev/srN guess can point at the OTHER drive).
     _, _, device = sniff_disc(disc=args.disc)
     device = device or f"/dev/sr{args.disc}"
-    log = RipLog("skive rip music", f"cyanrip offset={args.offset} drive={device}",
-                 "-", root=music_mnt)
+    log = RipLog(
+        "skive rip music", f"cyanrip offset={args.offset} drive={device}", "-", root=music_mnt
+    )
     log.start()
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
     ui.set_view(view)
@@ -147,8 +152,7 @@ def rip_music(args) -> None:
                 # The selection table (ADR 0020): one row per track, all
                 # prefilled rip. The view suspends for it; non-TTY runs refuse
                 # before the table — nothing spins.
-                tracks = [CdTrack(n, round(d))
-                          for n, d in sorted(durations.items())]
+                tracks = [CdTrack(n, round(d)) for n, d in sorted(durations.items())]
                 display = f"CD · offset {args.offset}"
                 with view.suspend():
                     if not view.tty and not ui.terminal_present():
@@ -166,8 +170,7 @@ def rip_music(args) -> None:
                 skipped = {n for n, a in result.items() if a == "skip"}
                 if skipped:
                     header["_skipped"] = sorted(skipped)
-                    log.note("rip", "skipped tracks: "
-                             + ", ".join(str(n) for n in sorted(skipped)))
+                    log.note("rip", "skipped tracks: " + ", ".join(str(n) for n in sorted(skipped)))
 
             # Run cyanrip with tee-like capture. The stream watch fills `header`
             # with the album header pair mid-rip and names the run as soon as the
@@ -182,8 +185,9 @@ def rip_music(args) -> None:
             pass_flags = list(flags)
             if skipped:
                 operator_l = _operator_l_tracks(args.cyanrip_flags or [])
-                universe = (operator_l if operator_l is not None
-                            else set(range(1, max(durations) + 1)))
+                universe = (
+                    operator_l if operator_l is not None else set(range(1, max(durations) + 1))
+                )
                 keep = ",".join(str(n) for n in sorted(universe - skipped))
                 if "-l" in pass_flags and operator_l is not None:
                     pass_flags[pass_flags.index("-l") + 1] = keep
@@ -195,8 +199,9 @@ def rip_music(args) -> None:
                 while True:
                     stalled_before = set(header.get("_stalled", []))
                     pass_t0 = time.time()
-                    rc, cap_text = _cyanrip_run(args.offset, pass_flags, rip_dir, log,
-                                                 header, drive=device, budgets=budgets)
+                    rc, cap_text = _cyanrip_run(
+                        args.offset, pass_flags, rip_dir, log, header, drive=device, budgets=budgets
+                    )
                     stalled = header.get("_stalled", [])
                     continuation = None
                     if rc != 0 and set(stalled) > stalled_before:
@@ -206,20 +211,27 @@ def rip_music(args) -> None:
                         pass_flags = continuation
                         continue
                     if rc != 0 and set(stalled) > stalled_before:
-                        log.note("rip", "wipe or replace the disc: tracks "
-                                 + ", ".join(str(n) for n in sorted(stalled))
-                                 + " stalled")
+                        log.note(
+                            "rip",
+                            "wipe or replace the disc: tracks "
+                            + ", ".join(str(n) for n in sorted(stalled))
+                            + " stalled",
+                        )
                     break
 
                 # A MusicBrainz miss never prompts: the run fails and the box
                 # (after the view closes) tells the operator what to fix.
                 miss = parse_musicbrainz_miss(cap_text) if rc != 0 else None
             if miss and miss["case"] == "multiple":
-                log.note("rip", f"several MusicBrainz releases: re-run with -R <n> — {miss['url']}",
-                         echo=False)
+                log.note(
+                    "rip",
+                    f"several MusicBrainz releases: re-run with -R <n> — {miss['url']}",
+                    echo=False,
+                )
             elif miss:
-                log.note("rip", f"no MusicBrainz release: submit this disc — {miss['url']}",
-                         echo=False)
+                log.note(
+                    "rip", f"no MusicBrainz release: submit this disc — {miss['url']}", echo=False
+                )
 
             # Name before phase_end so the rip ok line already carries it. The
             # album-artist header pair wins over the staging scan (a Various
@@ -251,10 +263,14 @@ def rip_music(args) -> None:
             if rel_folder != "-":  # nothing ripped: no folder to name
                 log.note("rip", f"folder: {rel_folder}")
             if rip_ok:
-                summary_tracks = _write_cd_record(rip_dir, rel_folder,
-                                                   args.offset, log,
-                                                   header.get("_stalled"),
-                                                   header.get("_skipped"))
+                summary_tracks = _write_cd_record(
+                    rip_dir,
+                    rel_folder,
+                    args.offset,
+                    log,
+                    header.get("_stalled"),
+                    header.get("_skipped"),
+                )
             if holed:
                 # One note per stalled track: the pre-filled hand re-rip
                 # command (offset, drive, pass-through without any -l, then
@@ -262,13 +278,15 @@ def rip_music(args) -> None:
                 holed_flags = list(args.cyanrip_flags or [])
                 if "-l" in holed_flags:
                     r = holed_flags.index("-l")
-                    del holed_flags[r:r + 2]
+                    del holed_flags[r : r + 2]
                 rerun = ["skive", "rip", "music"]
                 if args.disc:
                     rerun += ["-d", str(args.disc)]
-                rerun_cmd = shlex.join(rerun + [args.offset, "--", *holed_flags]
-                                       + ["-l", ",".join(str(n) for n in
-                                                         sorted(header["_stalled"]))])
+                rerun_cmd = shlex.join(
+                    rerun
+                    + [args.offset, "--", *holed_flags]
+                    + ["-l", ",".join(str(n) for n in sorted(header["_stalled"]))]
+                )
                 for number in sorted(header["_stalled"]):
                     log.note("rip", f"track {number} stalled — hand re-rip: {rerun_cmd}")
                 rc = 1
@@ -300,40 +318,62 @@ def rip_music(args) -> None:
                 number_match = _TRACK_FILE_NUMBER.match(t["file"])
                 number = int(number_match.group(1)) if number_match else position
                 dur_by_number[number] = t["dur_s"]
-            rows = [(str(number),
-                     _summary_hms(dur_by_number[number])
-                     if dur_by_number.get(number) is not None else "?",
-                     result)
-                    for number, result in sorted(header.get("_tracks", {}).items())]
+            rows = [
+                (
+                    str(number),
+                    _summary_hms(dur_by_number[number])
+                    if dur_by_number.get(number) is not None
+                    else "?",
+                    result,
+                )
+                for number, result in sorted(header.get("_tracks", {}).items())
+            ]
             # Manually skipped tracks: named here on holed runs too —
             # absent from every pass, so the stream never saw them.
-            rows += [(str(number),
-                      _summary_hms(round(durations[number]))
-                      if durations and number in durations else "?",
-                      "skipped")
-                     for number in sorted(header.get("_skipped", []))]
+            rows += [
+                (
+                    str(number),
+                    _summary_hms(round(durations[number]))
+                    if durations and number in durations
+                    else "?",
+                    "skipped",
+                )
+                for number in sorted(header.get("_skipped", []))
+            ]
             interrupt_note = None
         elif rc == 0:
-            rows = [(str(i + 1),
-                     _summary_hms(t["dur_s"]) if t["dur_s"] is not None else "?",
-                     "ok")
-                    for i, t in enumerate(summary_tracks)]
+            rows = [
+                (str(i + 1), _summary_hms(t["dur_s"]) if t["dur_s"] is not None else "?", "ok")
+                for i, t in enumerate(summary_tracks)
+            ]
             # Manually skipped tracks: absent from the rip, named once here.
-            rows += [(str(number),
-                      _summary_hms(round(durations[number]))
-                      if durations and number in durations else "?",
-                      "skipped")
-                     for number in sorted(header.get("_skipped", []))]
+            rows += [
+                (
+                    str(number),
+                    _summary_hms(round(durations[number]))
+                    if durations and number in durations
+                    else "?",
+                    "skipped",
+                )
+                for number in sorted(header.get("_skipped", []))
+            ]
             interrupt_note = None
         else:
             # An interrupted rip keeps what the stream saw: finished tracks ok,
             # the one in flight interrupted. Nothing is deleted — cyanrip's
             # files stay in staging. A stalled rip builds the same rows: ok
             # for finished tracks, stalled for the tripped one.
-            rows = [(str(number), "?", result)
+            rows = (
+                [
+                    (str(number), "?", result)
                     for number, result in sorted(header.get("_tracks", {}).items())
-                    ] if (rc == 130 or header.get("_stalled")) else []
-            interrupt_note = "nothing deleted \u2014 staged files left in place" if rc == 130 else None
+                ]
+                if (rc == 130 or header.get("_stalled"))
+                else []
+            )
+            interrupt_note = (
+                "nothing deleted \u2014 staged files left in place" if rc == 130 else None
+            )
         n_ok = sum(row[2] == "ok" for row in rows)
         n_failed = sum(row[2] in ("failed", "stalled") for row in rows)
         if miss:
@@ -343,20 +383,25 @@ def rip_music(args) -> None:
             flags = list(args.cyanrip_flags or [])
             if "-R" in flags:
                 r = flags.index("-R")
-                del flags[r:r + 2]
+                del flags[r : r + 2]
             rerun = ["skive", "rip", "music"]
             if args.disc:
                 rerun += ["-d", str(args.disc)]
-            ui.musicbrainz_miss(miss, shlex.join(
-                rerun + [args.offset, "--", *flags]) + " -R <n>")
-            ui.result_line("fail", _miss_result(miss),
-                           elapsed=int((log._now() - log._start).total_seconds()))
+            ui.musicbrainz_miss(miss, shlex.join(rerun + [args.offset, "--", *flags]) + " -R <n>")
+            ui.result_line(
+                "fail", _miss_result(miss), elapsed=int((log._now() - log._start).total_seconds())
+            )
         else:
-            ui.run_summary(rows, n_ok, n_failed or (1 if rc not in (0, 130) else 0),
-                           columns=("track", "duration", "result"),
-                           replay=view.replay_lines(), log=log,
-                           interrupt_note=interrupt_note,
-                           failed=rc not in (0, 130))
+            ui.run_summary(
+                rows,
+                n_ok,
+                n_failed or (1 if rc not in (0, 130) else 0),
+                columns=("track", "duration", "result"),
+                replay=view.replay_lines(),
+                log=log,
+                interrupt_note=interrupt_note,
+                failed=rc not in (0, 130),
+            )
     finally:
         view.close()
         ui.clear_view()
@@ -366,8 +411,7 @@ def rip_music(args) -> None:
 
 def _miss_result(miss: dict) -> str:
     """The miss's result phrase (screen result line and run-log FAIL)."""
-    return ("several MusicBrainz releases" if miss["case"] == "multiple"
-            else "not on MusicBrainz")
+    return "several MusicBrainz releases" if miss["case"] == "multiple" else "not on MusicBrainz"
 
 
 def _summary_hms(secs: int) -> str:
@@ -375,9 +419,14 @@ def _summary_hms(secs: int) -> str:
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
 
 
-def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
-                     log: RipLog, stalled: list[int] | None = None,
-                     skipped: list[int] | None = None) -> list[dict]:
+def _write_cd_record(
+    rip_dir: Path,
+    rel_folder: str,
+    offset: str,
+    log: RipLog,
+    stalled: list[int] | None = None,
+    skipped: list[int] | None = None,
+) -> list[dict]:
     """Write the CD provenance record without making parsing a failure gate.
     Returns the record's track list (empty when no album folder) for the run
     summary."""
@@ -426,8 +475,7 @@ def _write_cd_record(rip_dir: Path, rel_folder: str, offset: str,
     if parsed["tracks"]:
         disc["accuraterip"] = parsed["tracks"]
     tracks = _staged_tracks(folder, parsed["tracks"])
-    doc = album_document("cd", parsed.get("release"), tracks,
-                         discs={disc_number: disc})
+    doc = album_document("cd", parsed.get("release"), tracks, discs={disc_number: disc})
     old = load_validation(folder / VALIDATION_FILENAME) or {}
     write_validation(folder / VALIDATION_FILENAME, merge_album_document(old, doc))
     if parsed["tracks"]:
@@ -460,9 +508,13 @@ def _staged_tracks(folder: Path, parsed_tracks: list[dict]) -> list[dict]:
         number_match = _TRACK_FILE_NUMBER.match(path.name)
         number = int(number_match.group(1)) if number_match else position
         parsed = by_number.get(number)
-        tracks.append({"file": path.name,
-                       "dur_s": parsed["dur_s"] if parsed else None,
-                       "format": path.suffix.lstrip(".").lower()})
+        tracks.append(
+            {
+                "file": path.name,
+                "dur_s": parsed["dur_s"] if parsed else None,
+                "format": path.suffix.lstrip(".").lower(),
+            }
+        )
     return tracks
 
 
@@ -474,7 +526,8 @@ _TRACK_TITLE = re.compile(r"^\s*title:\s*(.+)$", re.IGNORECASE)
 # progress - 41.50%, ETA - 1h 2m" (the disc ETA: "27m", "45s", or absent).
 _TRACK_PROGRESS = re.compile(
     r"Ripping(?: and encoding)? track (\d+), progress - (\d+(?:\.\d+)?)%"
-    r"(?:, ETA - ((?:\d+h )?\d+[hms]))?")
+    r"(?:, ETA - ((?:\d+h )?\d+[hms]))?"
+)
 # libmusicbrainz parser chatter ("Unrecognised disc element: 'offset-list'")
 _UNRECOGNISED = re.compile(r"Unrecognised .*(?:element|attribute): '")
 # cyanrip's QR code of the attach URL: rows of block characters only.
@@ -483,8 +536,9 @@ _RAW_PROGRESS_SECS = 5  # a progress line reaches the raw log at least this ofte
 STALL_CAP = 3  # stalled tracks per run before the stall guard stops continuing (ADR 0018)
 
 
-def _toc_prepass(offset: str, flags: list[str],
-                 drive: str | None) -> tuple[dict[int, float] | None, str]:
+def _toc_prepass(
+    offset: str, flags: list[str], drive: str | None
+) -> tuple[dict[int, float] | None, str]:
     """TOC pre-pass: ``cyanrip -I`` (info only, no audio read) with the same
     offset, drive and release flags as the main run. Returns its per-track
     durations from the ``Track n info:`` blocks plus the raw text — one
@@ -493,12 +547,11 @@ def _toc_prepass(offset: str, flags: list[str],
     failure: guard unarmed, no table."""
     cmd = ["cyanrip", "-I", "-s", offset] + (["-d", drive] if drive else []) + flags
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                check=False, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=300)
         durations = parse_track_durations(result.stdout)
         if result.returncode != 0 or not durations:
             return None, result.stdout
-    except Exception:  # any failure: OSError, timeout, tests' Popen mocks
+    except Exception:  # noqa: BLE001 — any failure means no durations, never fatal
         return None, ""
     return durations, result.stdout
 
@@ -529,14 +582,13 @@ def _continuation_pass(flags: list[str], header: dict) -> list[str] | None:
     operator_l = _operator_l_tracks(flags)
     if operator_l is not None:
         universe &= operator_l
-    remaining = sorted(universe - set(header.get("_stalled", []))
-                       - set(header.get("_skipped", [])))
+    remaining = sorted(universe - set(header.get("_stalled", [])) - set(header.get("_skipped", [])))
     if not remaining:
         return None
     kept = list(flags)
     if "-l" in kept:
         r = kept.index("-l")
-        del kept[r:r + 2]
+        del kept[r : r + 2]
     return kept + ["-l", ",".join(str(n) for n in remaining)]
 
 
@@ -555,9 +607,15 @@ def _purge_pass_stubs(rip_dir: Path, since: float) -> None:
             continue
 
 
-def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
-                 header: dict | None = None, drive: str | None = None,
-                 budgets: dict[int, float] | None = None) -> tuple[int, str]:
+def _cyanrip_run(
+    offset: str,
+    flags: list[str],
+    rip_dir: Path,
+    log=None,
+    header: dict | None = None,
+    drive: str | None = None,
+    budgets: dict[int, float] | None = None,
+) -> tuple[int, str]:
     """Run cyanrip with merged output captured, gated on the console by the
     verbosity tiers (quiet by default, progress lines at -v, everything at
     -vv; a failed run replays what was hidden, story 7, except a MusicBrainz
@@ -664,8 +722,9 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         whole = int(float(progress.group(2)))
                         if raw_held is not None and raw_held[0] != number:
                             log.raw("cyanrip", raw_held[1])
-                        if ((number, whole) != raw_kept[:2]
-                                or now - raw_kept[2] >= _RAW_PROGRESS_SECS):
+                        if (number, whole) != raw_kept[:2] or now - raw_kept[
+                            2
+                        ] >= _RAW_PROGRESS_SECS:
                             log.raw("cyanrip", stripped)
                             raw_kept, raw_held = (number, whole, now), None
                         else:
@@ -699,8 +758,11 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                     elif on_tty:
                         view.progress(pct, eta)
                     budget = budgets.get(number) if budgets else None
-                    if (budget is not None and tripped is None
-                            and time.monotonic() - track_t0[number] > budget):
+                    if (
+                        budget is not None
+                        and tripped is None
+                        and time.monotonic() - track_t0[number] > budget
+                    ):
                         # Stall guard trip: bounded kill of a track that stops
                         # being readable (ADR 0018). No timer thread — a grind
                         # emits progress lines constantly, this inline check
@@ -710,10 +772,12 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         if header is not None:
                             header.setdefault("_stalled", []).append(number)
                         n_stalled = len(set(header.get("_stalled", []))) if header else 1
-                        ui.warn(f"track {number} stalled: over its "
-                                f"{ui._hms(int(budget))} budget, killing the pass "
-                                f"({n_stalled}/{STALL_CAP} stalled)",
-                                phase="rip")
+                        ui.warn(
+                            f"track {number} stalled: over its "
+                            f"{ui._hms(int(budget))} budget, killing the pass "
+                            f"({n_stalled}/{STALL_CAP} stalled)",
+                            phase="rip",
+                        )
                         close_finished()
                         ui.item_end("fail", "stalled")
                         kill_child_after_grace(process)
@@ -723,8 +787,11 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         # silent cyanrip freezes it (a grind still emits lines).
                         left = budget - (time.monotonic() - track_t0[number])
                         n_stalled = len(set(header.get("_stalled", []))) if header else 0
-                        view.bg("stall guard", f"{ui._hms(max(int(left), 0))} left "
-                                f"\u00b7 {n_stalled}/{STALL_CAP} stalled")
+                        view.bg(
+                            "stall guard",
+                            f"{ui._hms(max(int(left), 0))} left "
+                            f"\u00b7 {n_stalled}/{STALL_CAP} stalled",
+                        )
                 title_match = _TRACK_TITLE.match(stripped)
                 if title_match and pending_track is not None:
                     title = title_match.group(1).strip()
@@ -754,7 +821,8 @@ def _cyanrip_run(offset: str, flags: list[str], rip_dir: Path, log=None,
                         view.bg_clear("stall guard")
                     if pending_track in track_t0:
                         track_took[pending_track] = ui._hms(
-                            int(time.monotonic() - track_t0[pending_track]))
+                            int(time.monotonic() - track_t0[pending_track])
+                        )
                     if pending_track in headed_tracks:
                         finished_open = pending_track
                     if on_tty:
@@ -829,7 +897,7 @@ def _metaflac_tag(flac: Path, tag: str) -> str:
             ["metaflac", f"--show-tag={tag}", str(flac)],
             capture_output=True,
             text=True,
-            check=False
+            check=False,
         )
         # Output format: TAG=value\n
         for line in result.stdout.strip().splitlines():

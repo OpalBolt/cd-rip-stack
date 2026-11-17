@@ -2,7 +2,6 @@
 
 import os
 import re
-import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -23,6 +22,7 @@ def test_iso2b_mapping():
     assert iso2b("ja") == "jpn"  # ISO 639-2/B form; MakeMKV normalizes zho too
     # full-table sanity: keys are 2 lowercase letters, values 3
     from skive.scan import _ISO2B
+
     assert all(re.fullmatch(r"[a-z]{2}", k) for k in _ISO2B)
     assert all(re.fullmatch(r"[a-z]{3}", v) for v in _ISO2B.values())
 
@@ -138,6 +138,7 @@ TINFO:1,26,0,"3,2,1"
 def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
     """A disc with media but zero parseable titles aborts instead of ripping blind."""
     import pytest
+
     from skive.common import RipLog
     from skive.scan import scan_disc
 
@@ -149,6 +150,7 @@ def test_scan_disc_bails_when_no_titles(tmp_path, monkeypatch, capsys):
     assert "no titles" in capsys.readouterr().err
     assert (tmp_path / "skive-scan-failed.txt").exists()
     import json
+
     lines = [json.loads(l) for l in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
     assert any(l["phase"] == "scan" and "no titles" in l["status"] for l in lines)
 
@@ -157,7 +159,9 @@ def test_scan_disc_names_expired_key(tmp_path, monkeypatch, capsys):
     """Expired MakeMKV key: the refusal names the cause and the fix (ADR 0016),
     and the run log records it — fed by a real expired-key scan dump."""
     import json
+
     import pytest
+
     from skive.common import RipLog
     from skive.scan import scan_disc
 
@@ -179,11 +183,11 @@ def test_disc_n_threads_through_scan_and_rip(tmp_path):
     from skive.makemkv import rip_titles
     from skive.scan import scan_disc
 
-    output = '''DRV:0,256,999,0,"","",""
+    output = """DRV:0,256,999,0,"","",""
 DRV:1,2,999,12,"BD-ROM DRIVE","MOVIE","/dev/sr1"
 TINFO:0,9,0,"1:26:43"
 TINFO:0,11,0,"5845346392"
-'''
+"""
     mock_run = Mock(return_value=Mock(stdout=output))
     media, label, titles = scan_disc(120, run=mock_run, disc=1)
     assert media == "BD-ROM"
@@ -210,7 +214,9 @@ def test_scan_disc_label_absent():
     """No second DRV field means no prefill."""
     from skive.scan import scan_disc
 
-    output = 'DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"\nTINFO:0,9,"0:21:00"\nTINFO:0,11,"1234567890"\n'
+    output = (
+        'DRV:0,2,0,0,"DVD-ROM hp CDDVDW TS-L633N"\nTINFO:0,9,"0:21:00"\nTINFO:0,11,"1234567890"\n'
+    )
     _, label, _titles = scan_disc(120, run=Mock(return_value=Mock(stdout=output)))
     assert label == ""
 
@@ -334,14 +340,25 @@ def test_scan_disc_clusters_identical_segment_maps():
     """
     lines = []
     segmaps = {
-        1: "9,10,11,12,13", 2: "9,10,11,12,13", 3: "9,10,11,12,13",
-        4: "9,10,11,12,13", 5: "9,10,11,12,13",
+        1: "9,10,11,12,13",
+        2: "9,10,11,12,13",
+        3: "9,10,11,12,13",
+        4: "9,10,11,12,13",
+        5: "9,10,11,12,13",
         6: "9-13",
         7: "3,1,2",
         8: "9-13",
     }
-    durations = {1: "0:50:00", 2: "0:50:00", 3: "0:50:00", 4: "0:50:00",
-                 5: "0:06:40", 6: "1:30:00", 7: "0:50:00", 8: "0:06:40"}
+    durations = {
+        1: "0:50:00",
+        2: "0:50:00",
+        3: "0:50:00",
+        4: "0:50:00",
+        5: "0:06:40",
+        6: "1:30:00",
+        7: "0:50:00",
+        8: "0:06:40",
+    }
     for t in sorted(segmaps):
         lines.append(f'TINFO:{t},9,0,"{durations[t]}"')
         lines.append(f'TINFO:{t},11,0,"1000000000"')

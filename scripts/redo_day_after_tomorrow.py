@@ -30,7 +30,7 @@ SRC = f"/mnt/videos/lossless/movies/{TITLE}/{TITLE}_t00.mkv"
 OLD = f"/mnt/videos/library/movies/{TITLE}/{TITLE}.mkv"
 KEEP = f"/mnt/videos/library/movies/{TITLE}/{TITLE}.pre-crop.mkv"
 CROP = "crop=704:432:0:72"  # the trial verdict; subsumes the 64-px align crop
-DUR_S = 7116                # source duration the output must match (+/- 5 s)
+DUR_S = 7116  # source duration the output must match (+/- 5 s)
 
 
 def die(msg: str) -> None:
@@ -55,33 +55,53 @@ def vcn_probe(vainfo_exe: str) -> dict | None:
     """skive's _vcn_probe, verbatim contract: low_power only when the LP
     entrypoint exists and the classic one does not."""
     try:
-        out = subprocess.run([vainfo_exe, "--display", "drm"], capture_output=True,
-                             text=True, timeout=60)
+        out = subprocess.run(
+            [vainfo_exe, "--display", "drm"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     if "VAEntrypointEncSlice" not in out.stdout:
         return None
-    classic = re.search(r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSlice[ \t]*$",
-                        out.stdout, re.M)
-    lp = re.search(r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSliceLP[ \t]*$",
-                   out.stdout, re.M)
+    classic = re.search(
+        r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSlice[ \t]*$", out.stdout, re.MULTILINE
+    )
+    lp = re.search(
+        r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSliceLP[ \t]*$", out.stdout, re.MULTILINE
+    )
     return {"low_power": bool(lp and not classic)}
 
 
 def probe(ffprobe_exe: str, path: str) -> dict:
     out = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-show_entries",
-         "stream=codec_type,codec_name,width,height:format=duration",
-         "-of", "json", path], capture_output=True, text=True, check=True).stdout
+        [
+            ffprobe_exe,
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name,width,height:format=duration",
+            "-of",
+            "json",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
     return json.loads(out)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("-w", default=os.path.expanduser("~/.cache/skive-redo"),
-                    help="workdir (default ~/.cache/skive-redo)")
-    ap.add_argument("--preflight", action="store_true",
-                    help="run the checks only, encode nothing")
+    ap.add_argument(
+        "-w",
+        default=os.path.expanduser("~/.cache/skive-redo"),
+        help="workdir (default ~/.cache/skive-redo)",
+    )
+    ap.add_argument("--preflight", action="store_true", help="run the checks only, encode nothing")
     args = ap.parse_args()
 
     ff = find_tool("ffmpeg")
@@ -109,8 +129,10 @@ def main() -> int:
     src_audio = [s["codec_name"] for s in doc["streams"] if s["codec_type"] == "audio"]
     if len(src_audio) != 4:
         die(f"source audio tracks changed ({len(src_audio)}, expected 4)")
-    print(f"preflight ok: source {os.path.getsize(SRC) / 2**30:.1f} GiB, "
-          f"{len(src_audio)} audio tracks, low_power={vcn['low_power']}")
+    print(
+        f"preflight ok: source {os.path.getsize(SRC) / 2**30:.1f} GiB, "
+        f"{len(src_audio)} audio tracks, low_power={vcn['low_power']}"
+    )
     if args.preflight:
         return 0
 
@@ -121,18 +143,39 @@ def main() -> int:
     print(f"copying source to {local_src} ...")
     shutil.copy2(SRC, local_src)
 
-    vf = ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
-          f"{CROP},format=nv12|p010,hwupload")
-    cmd = [ff, "-hide_banner", "-y", "-loglevel", "warning", "-stats",
-           "-vaapi_device", "/dev/dri/renderD128", "-i", local_src,
-           "-map", "0:v:0", "-map", "0:a?", "-c:a", "copy", "-vf", vf,
-           "-c:v", "hevc_vaapi", "-rc_mode", "CQP", "-global_quality", "24"]
+    vf = f"bwdif=mode=send_frame:parity=auto:deint=interlaced,{CROP},format=nv12|p010,hwupload"
+    cmd = [
+        ff,
+        "-hide_banner",
+        "-y",
+        "-loglevel",
+        "warning",
+        "-stats",
+        "-vaapi_device",
+        "/dev/dri/renderD128",
+        "-i",
+        local_src,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:a",
+        "copy",
+        "-vf",
+        vf,
+        "-c:v",
+        "hevc_vaapi",
+        "-rc_mode",
+        "CQP",
+        "-global_quality",
+        "24",
+    ]
     if vcn["low_power"]:
         cmd += ["-low_power", "1"]
     cmd.append(local_out)
     print("encoding:", " ".join(cmd))
     try:
-        rc = subprocess.run(cmd).returncode
+        rc = subprocess.run(cmd, check=False).returncode
     except KeyboardInterrupt:
         print("\ninterrupted -- library untouched, partial output in workdir")
         return 130
@@ -156,8 +199,11 @@ def main() -> int:
     if not 0.5 <= gb <= 4.0:
         problems.append(f"size {gb:.2f} GiB outside sanity window")
     if problems:
-        die("verify failed: " + "; ".join(problems)
-            + f" -- library untouched, output kept at {local_out}")
+        die(
+            "verify failed: "
+            + "; ".join(problems)
+            + f" -- library untouched, output kept at {local_out}"
+        )
 
     # --- swap ----------------------------------------------------------
     os.rename(OLD, KEEP)
@@ -165,13 +211,17 @@ def main() -> int:
         shutil.move(local_out, OLD)
     except OSError:
         os.rename(KEEP, OLD)  # put it back; the verified file stays in workdir
-        die(f"could not move the new encode into place -- old one restored, "
-            f"verified output waiting at {local_out}")
+        die(
+            f"could not move the new encode into place -- old one restored, "
+            f"verified output waiting at {local_out}"
+        )
     os.remove(local_src)
 
     print(f"done: {OLD} is now 704x432 ({gb:.2f} GiB), old encode kept at:\n  {KEEP}")
-    print("eyeball it in Jellyfin (bars gone, AR right, subs load), then:\n"
-          f"  rm '{KEEP}' && rm -rf '{args.w}'")
+    print(
+        "eyeball it in Jellyfin (bars gone, AR right, subs load), then:\n"
+        f"  rm '{KEEP}' && rm -rf '{args.w}'"
+    )
     return 0
 
 

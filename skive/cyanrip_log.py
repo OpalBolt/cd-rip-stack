@@ -15,8 +15,7 @@ _DISC_STEM = re.compile(r"\s+CD(\d+)$", re.IGNORECASE)
 _TRACK = re.compile(r"^\s*Track\s+(\d+)\b", re.IGNORECASE)
 _AR = re.compile(r"^\s*Accurip\s+(v1|v2|450):\s*(.*)$", re.IGNORECASE)
 # ``Duration:`` carries an optional hour field (``hh:mm:ss.mmm`` or ``mm:ss.mmm``).
-_DURATION = re.compile(r"^\s*Duration:\s*(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)\s*$",
-                       re.IGNORECASE)
+_DURATION = re.compile(r"^\s*Duration:\s*(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)\s*$", re.IGNORECASE)
 _CRC32 = re.compile(r"^\s*EAC CRC32:\s*([0-9A-F]{8})\s*$", re.IGNORECASE)
 _DETAIL = re.compile(r"\((.*?)\)")
 _CONFIDENCE = re.compile(r"confidence\s+(\d+)", re.IGNORECASE)
@@ -68,8 +67,9 @@ _URL_DISCID = re.compile(r"[?&]id=([^&\s]+)")
 _URL_TRACKS = re.compile(r"[?&]tracks=(\d+)")
 _URL_TOC = re.compile(r"[?&]toc=(\d+)\+(\d+)\+(\d+)\+(\d+)")
 _DISC_TRACKS = re.compile(r"^Disc tracks:\s*(\d+)", re.MULTILINE)
-_MULTIPLE = re.compile(r"^Multiple releases found in database for DiscID (\S+?):?\s*$",
-                       re.MULTILINE)
+_MULTIPLE = re.compile(
+    r"^Multiple releases found in database for DiscID (\S+?):?\s*$", re.MULTILINE
+)
 # cyanrip 0.9.3: "    <n> (ID: <mbid>): <album> (<disambiguation>) (<country>) (<n> CDs) (<date>)",
 # each parenthesised field optional.
 # shortcut: an album title ending in "(…)" reads as disambiguation; upgrade if a real transcript shows it.
@@ -101,8 +101,7 @@ def parse_musicbrainz_miss(text: str) -> dict | None:
     url_match = _MB_URL.search(text)
     url = url_match.group(0) if url_match else None
     discid_match = _URL_DISCID.search(url or "")
-    discid = multiple.group(1) if multiple else (
-        discid_match.group(1) if discid_match else None)
+    discid = multiple.group(1) if multiple else (discid_match.group(1) if discid_match else None)
     if multiple:
         url = f"https://musicbrainz.org/cdtoc/{discid}"
     tracks_match = _DISC_TRACKS.search(text) or _URL_TRACKS.search(url or "")
@@ -113,13 +112,19 @@ def parse_musicbrainz_miss(text: str) -> dict | None:
         length = f"{secs // 60}:{secs % 60:02d}"
     candidates = []
     if multiple:
-        for line in text[multiple.end():].splitlines():
+        for line in text[multiple.end() :].splitlines():
             candidate = _CANDIDATE.match(line)
             if not candidate:
                 continue
-            entry = {"index": int(candidate.group(1)), "mbid": candidate.group(2),
-                     "album": candidate.group(3), "disambiguation": None,
-                     "country": None, "cds": None, "date": None}
+            entry = {
+                "index": int(candidate.group(1)),
+                "mbid": candidate.group(2),
+                "album": candidate.group(3),
+                "disambiguation": None,
+                "country": None,
+                "cds": None,
+                "date": None,
+            }
             for field in _FIELD.findall(candidate.group(4)):
                 if re.fullmatch(r"\d+ CDs?", field):
                     entry["cds"] = int(field.split()[0])
@@ -130,9 +135,14 @@ def parse_musicbrainz_miss(text: str) -> dict | None:
                 elif entry["disambiguation"] is None:
                     entry["disambiguation"] = field
             candidates.append(entry)
-    return {"case": case, "discid": discid, "url": url,
-            "tracks": int(tracks_match.group(1)) if tracks_match else None,
-            "length": length, "candidates": candidates}
+    return {
+        "case": case,
+        "discid": discid,
+        "url": url,
+        "tracks": int(tracks_match.group(1)) if tracks_match else None,
+        "length": length,
+        "candidates": candidates,
+    }
 
 
 def parse_track_durations(text: str) -> dict[int, float]:
@@ -169,27 +179,36 @@ def parse_cyanrip_log(text: str) -> dict:
     release_match = _RELEASE_ID.search(text or "")
     album_match = _ALBUM.search(text or "")
     artist_match = _ALBUM_ARTIST.search(text or "")
-    result = {"offset": int(offset_match.group(1)) if offset_match else None,
-              "release": release_match.group(1) if release_match else None,
-              "album": album_match.group(1) if album_match else None,
-              "album_artist": artist_match.group(1) if artist_match else None,
-              "tracks": []}
+    result = {
+        "offset": int(offset_match.group(1)) if offset_match else None,
+        "release": release_match.group(1) if release_match else None,
+        "album": album_match.group(1) if album_match else None,
+        "album_artist": artist_match.group(1) if artist_match else None,
+        "tracks": [],
+    }
     current: dict[int, dict] = {}
     parsed: set[int] = set()
     for line in (text or "").splitlines():
         track_match = _TRACK.match(line)
         if track_match:
             number = int(track_match.group(1))
-            current.setdefault(number, {"track": number, "status": "unknown",
-                                        "confidence": None, "crc32": None,
-                                        "dur_s": None})
+            current.setdefault(
+                number,
+                {
+                    "track": number,
+                    "status": "unknown",
+                    "confidence": None,
+                    "crc32": None,
+                    "dur_s": None,
+                },
+            )
             continue
         duration_match = _DURATION.match(line)
         if duration_match and current:
             hours, minutes, seconds = duration_match.groups()
             current[next(reversed(current))]["dur_s"] = (
-                int(hours or 0) * 3600 + int(minutes) * 60
-                + int(seconds.split(".", 1)[0]))
+                int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds.split(".", 1)[0])
+            )
             continue
         crc_match = _CRC32.match(line)
         if crc_match and current:
@@ -198,7 +217,7 @@ def parse_cyanrip_log(text: str) -> dict:
         ar_match = _AR.match(line)
         if not ar_match or not current:
             continue
-        kind, rest = ar_match.groups()
+        _kind, rest = ar_match.groups()
         number = next(reversed(current))
         entry = current[number]
         parsed.add(number)
@@ -214,10 +233,8 @@ def parse_cyanrip_log(text: str) -> dict:
             entry["status"] = "accurate"
         elif "partially accurately ripped" in lower or "matches accurip db" in lower:
             entry["status"] = "partial"
-        elif "not found" in lower:
-            # Keep an accurate v1/v2 result if a later variant says so.
-            if entry["status"] not in {"accurate", "partial"}:
-                entry["status"] = "not_found"
-    result["tracks"] = [entry for number, entry in current.items()
-                         if number in parsed]
+        # Keep an accurate v1/v2 result if a later variant says not found.
+        elif "not found" in lower and entry["status"] not in {"accurate", "partial"}:
+            entry["status"] = "not_found"
+    result["tracks"] = [entry for number, entry in current.items() if number in parsed]
     return result

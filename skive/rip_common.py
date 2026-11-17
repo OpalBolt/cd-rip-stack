@@ -3,17 +3,20 @@
 import builtins
 import os
 import sys
-
-from skive import ui
 from dataclasses import dataclass
 from pathlib import Path
 
+from skive import ui
 from skive.common import RipLog, ensure_share, sanitize
 from skive.makemkv import purge_junk
 from skive.scan import (
-    TitleInfo, is_recordable, iso2b, scan_disc, sniff_disc,
+    TitleInfo,
+    is_recordable,
+    iso2b,
+    scan_disc,
+    sniff_disc,
 )
-from skive.search import folder_states, fmt_seasons, seasons_in
+from skive.search import fmt_seasons, folder_states, seasons_in
 from skive.tmdb import TMDBPick, fetch_by_id, parse_tmdbid, require_online, search_loop
 from skive.validation import VALIDATION_FILENAME, load_validation
 
@@ -84,10 +87,18 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
         if args.verified:
             log.note("media", f"recordable media ({media}) — override by --verified")
         else:
-            ui.warn(f"RECORDABLE media in the drive ({media}) — this looks like a burned copy, not a")
-            ui.warn("pressed original (thrift-store discs are often bootlegs). check the disc by eye: burns")
-            ui.warn("have purple/green/blue dye and often a stick-on or inkjet label; originals are silver")
-            ui.warn("with printed artwork. genuinely-original recordable releases exist (e.g. Warner Archive")
+            ui.warn(
+                f"RECORDABLE media in the drive ({media}) — this looks like a burned copy, not a"
+            )
+            ui.warn(
+                "pressed original (thrift-store discs are often bootlegs). check the disc by eye: burns"
+            )
+            ui.warn(
+                "have purple/green/blue dye and often a stick-on or inkjet label; originals are silver"
+            )
+            ui.warn(
+                "with printed artwork. genuinely-original recordable releases exist (e.g. Warner Archive"
+            )
             ui.warn("DVD-R) — if you verify it is one, re-run with --verified.")
             sys.exit(1)
     else:
@@ -117,7 +128,11 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     display = sanitize(display)
     log.name = display
 
-    keep = iso2b(pick.original_language) if pick.original_language and pick.original_language != "-" else ""
+    keep = (
+        iso2b(pick.original_language)
+        if pick.original_language and pick.original_language != "-"
+        else ""
+    )
 
     # Identity gates (movies only, map.md decision 2): between the pick and the
     # staging mkdir, so "already ripped" and "wrong name" are caught before
@@ -137,9 +152,20 @@ def _preamble_body(kind: str, args, log, disc: int, videos_mnt: Path):
     # whole type dir, never a sibling title, never a parallel drive's d{disc}.
     purge_junk([title_dir, stage])
 
-    return Preamble(log, pick, display, media, titles_full, title_dir, stage,
-                    minlength, keep, disc, device,
-                    label=label)  # spill: slice-05 document needs the volume label
+    return Preamble(
+        log,
+        pick,
+        display,
+        media,
+        titles_full,
+        title_dir,
+        stage,
+        minlength,
+        keep,
+        disc,
+        device,
+        label=label,
+    )  # spill: slice-05 document needs the volume label
 
 
 # --- Movie identity gates (map.md decision 2) -----------------------------
@@ -234,8 +260,7 @@ def _duplicate_id_folders(videos_mnt: Path, tmdb_id: str) -> list[Path]:
     return matches
 
 
-def _identity_gates(videos_mnt: Path, log: RipLog, display: str,
-                    pick: TMDBPick) -> None:
+def _identity_gates(videos_mnt: Path, log: RipLog, display: str, pick: TMDBPick) -> None:
     """The movie identity gates (map.md decision 2), run after the TMDB pick
     resolves and before any staging folder is created: (a) the picked id
     already has a folder under rip/, lossless/ or library/ — including this
@@ -268,15 +293,24 @@ def _identity_gates(videos_mnt: Path, log: RipLog, display: str,
         for folder in duplicates:
             ui.warn(f"  {folder}")
         if not _confirm("might already be ripped — continue? (y/N): "):
-            _refuse(log, f'"{display}" might already be ripped '
-                         f"in {len(duplicates)} folder(s) — nothing ripped")
+            _refuse(
+                log,
+                f'"{display}" might already be ripped '
+                f"in {len(duplicates)} folder(s) — nothing ripped",
+            )
     title_dir = videos_mnt / "rip" / "movies" / display
     recorded = _recorded_identity(title_dir) if title_dir.is_dir() else None
-    if recorded and recorded[0] != pick.id:
-        if not _confirm(f'folder "{display}" holds "{recorded[1]}", '
-                        f'you picked "{display}" — continue? (y/N): '):
-            _refuse(log, f'title folder "{display}" holds "{recorded[1]}", '
-                         "not the picked film — nothing ripped")
+    if (
+        recorded
+        and recorded[0] != pick.id
+        and not _confirm(
+            f'folder "{display}" holds "{recorded[1]}", you picked "{display}" — continue? (y/N): '
+        )
+    ):
+        _refuse(
+            log,
+            f'title folder "{display}" holds "{recorded[1]}", not the picked film — nothing ripped',
+        )
 
 
 def tv_season_gate(videos_mnt: Path, log: RipLog, display: str, season: int) -> None:
@@ -328,4 +362,3 @@ def interrupted_exit(log, stage_dirs: list[Path]) -> None:
     log.interrupted()
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
     sys.exit(130)
-

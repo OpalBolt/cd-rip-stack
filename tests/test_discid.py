@@ -3,12 +3,12 @@
 
 import json
 import re
-from pathlib import Path
 import urllib.error
+from pathlib import Path
 
 from skive.discid import (
-    discid_from_toc,
     discid_from_text,
+    discid_from_toc,
     release_track_lengths,
     toc_from_text,
     track_lengths,
@@ -16,20 +16,26 @@ from skive.discid import (
 
 # A cyanrip pre-pass text: the attach URL carries the DiscID and the TOC
 # (first track, last track, lead-out, per-track start offsets — sectors).
-INFO_TEXT = ("Disc tracks: 2\n"
-             "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
-             "&tracks=2&toc=1+2+180000+150+90000\n")
+INFO_TEXT = (
+    "Disc tracks: 2\n"
+    "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
+    "&tracks=2&toc=1+2+180000+150+90000\n"
+)
 
 FIXTURE_INFO = {
-    "releases": [{
-        "title": "Test Album",
-        "mediums": [{
-            "tracks": [
-                {"recording": {"length": 200123}},
-                {"length": 300000},
+    "releases": [
+        {
+            "title": "Test Album",
+            "mediums": [
+                {
+                    "tracks": [
+                        {"recording": {"length": 200123}},
+                        {"length": 300000},
+                    ],
+                }
             ],
-        }],
-    }],
+        }
+    ],
 }
 
 
@@ -47,8 +53,9 @@ def test_discid_from_toc_shape():
 
 def test_discid_from_text_prefers_the_url_id():
     assert discid_from_text(INFO_TEXT) == "AbCdEf123456"
-    assert discid_from_text("?toc=1+2+180000+150+90000") == \
-        discid_from_toc([1, 2, 180000, 150, 90000])
+    assert discid_from_text("?toc=1+2+180000+150+90000") == discid_from_toc(
+        [1, 2, 180000, 150, 90000]
+    )
     assert discid_from_text("nothing useful") is None
 
 
@@ -86,10 +93,12 @@ def test_discid_info_hits_the_ws2_endpoint(monkeypatch):
     monkeypatch.setattr("skive.discid.urllib.request.urlopen", fake_urlopen)
     info = None
     from skive import discid as discid_module
+
     info = discid_module.discid_info("AbCdEf123456")
     assert info["releases"][0]["title"] == "Test Album"
-    assert seen["url"] == ("https://musicbrainz.org/ws/2/discid/AbCdEf123456"
-                           "?fmt=json&inc=recordings")
+    assert seen["url"] == (
+        "https://musicbrainz.org/ws/2/discid/AbCdEf123456?fmt=json&inc=recordings"
+    )
 
     def boom(request, timeout=None):
         raise urllib.error.URLError("down")
@@ -98,12 +107,32 @@ def test_discid_info_hits_the_ws2_endpoint(monkeypatch):
     assert discid_module.discid_info("AbCdEf123456") is None
 
 
-_SUMMERTIME_FIXTURE = (Path(__file__).parent / "fixtures" / "cyanrip"
-                       / "summertime-blues.log")
+_SUMMERTIME_FIXTURE = Path(__file__).parent / "fixtures" / "cyanrip" / "summertime-blues.log"
 
-_SUMMERTIME_TOC = [1, 19, 354705, 150, 20335, 45765, 70122, 85770, 106592,
-                   125922, 151877, 168452, 187122, 209860, 232147, 250112,
-                   265927, 284967, 299585, 312580, 325957, 339192]
+_SUMMERTIME_TOC = [
+    1,
+    19,
+    354705,
+    150,
+    20335,
+    45765,
+    70122,
+    85770,
+    106592,
+    125922,
+    151877,
+    168452,
+    187122,
+    209860,
+    232147,
+    250112,
+    265927,
+    284967,
+    299585,
+    312580,
+    325957,
+    339192,
+]
 
 
 def test_discid_from_toc_matches_the_fixture_disc():
@@ -115,25 +144,32 @@ def test_discid_from_toc_matches_the_fixture_disc():
 def test_discid_from_text_reads_the_bare_discid_line():
     """A found release prints a bare ``DiscID:`` line and no attach URL —
     the real summertime-blues header text must still yield the DiscID."""
-    assert discid_from_text(_SUMMERTIME_FIXTURE.read_text()) == \
-        "bOpGMzWaoGKqV7OC6onCHgXytfE-"
+    assert discid_from_text(_SUMMERTIME_FIXTURE.read_text()) == "bOpGMzWaoGKqV7OC6onCHgXytfE-"
 
 
 _MULTI_MEDIUM_INFO = {
-    "releases": [{
-        "title": "Two-fer",
-        "mediums": [
-            {"position": 1, "tracks": [
-                {"recording": {"length": 100000}},
-                {"recording": {"length": 110000}},
-            ]},
-            {"position": 2, "tracks": [
-                {"recording": {"length": 200123}},
-                {"length": 300000},
-                {"recording": {"length": 400000}},
-            ]},
-        ],
-    }],
+    "releases": [
+        {
+            "title": "Two-fer",
+            "mediums": [
+                {
+                    "position": 1,
+                    "tracks": [
+                        {"recording": {"length": 100000}},
+                        {"recording": {"length": 110000}},
+                    ],
+                },
+                {
+                    "position": 2,
+                    "tracks": [
+                        {"recording": {"length": 200123}},
+                        {"length": 300000},
+                        {"recording": {"length": 400000}},
+                    ],
+                },
+            ],
+        }
+    ],
 }
 
 
@@ -148,10 +184,11 @@ def test_release_track_lengths_grades_the_matching_medium():
 
 
 def test_track_lengths_passes_the_pre_pass_track_count(monkeypatch):
-    monkeypatch.setattr("skive.discid.discid_info",
-                        lambda d: dict(_MULTI_MEDIUM_INFO))
+    monkeypatch.setattr("skive.discid.discid_info", lambda d: dict(_MULTI_MEDIUM_INFO))
     assert track_lengths(INFO_TEXT) == {1: 100, 2: 110}
-    three = ("Disc tracks: 3\n"
-             "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
-             "&tracks=3&toc=1+3+180000+150+90000+120000\n")
+    three = (
+        "Disc tracks: 3\n"
+        "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
+        "&tracks=3&toc=1+3+180000+150+90000+120000\n"
+    )
     assert track_lengths(three) == {1: 200, 2: 300, 3: 400}

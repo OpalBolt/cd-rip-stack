@@ -1,7 +1,8 @@
 import os
 import re
-import pytest
 import threading
+
+import pytest
 
 from skive import ui
 
@@ -44,11 +45,13 @@ def test_opener_and_item_heading_render_as_plain_info_lines(capsys):
     ui.ok("encoded  41m12s")
     ui.warn("subtitle track 3 barren, dropped")
     err = capsys.readouterr().err
-    assert err == ("info  skive transcode \u00b7 4 to encode\n"
-                   "info  1/4  Rogue One (2016)\n"
-                   "info  copy 5744 MB at 64 MB/s  1m30s\n"
-                   "ok    encoded  41m12s\n"
-                   "warn  subtitle track 3 barren, dropped\n")
+    assert err == (
+        "info  skive transcode \u00b7 4 to encode\n"
+        "info  1/4  Rogue One (2016)\n"
+        "info  copy 5744 MB at 64 MB/s  1m30s\n"
+        "ok    encoded  41m12s\n"
+        "warn  subtitle track 3 barren, dropped\n"
+    )
     assert "\x1b" not in err
 
 
@@ -58,10 +61,21 @@ def _terminal_console(monkeypatch, **kw):
     import io
 
     from rich.console import Console
+
     buf = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(
-        file=buf, force_terminal=True, width=80, theme=ui.THEME,
-        highlight=False, emoji=False, **kw))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(
+            file=buf,
+            force_terminal=True,
+            width=80,
+            theme=ui.THEME,
+            highlight=False,
+            emoji=False,
+            **kw,
+        ),
+    )
     return buf
 
 
@@ -86,17 +100,20 @@ def test_tty_lines_carry_symbols_frame_and_gutter(monkeypatch):
     assert lines[0] == "\u256d\u2500 skive transcode " + "\u2500" * 60 + "\u256e"
     assert lines[1] == "\u2502 2 to encode" + " " * 66 + "\u2502"
     assert lines[2] == "\u2570" + "\u2500" * 78 + "\u256f"
+
     def row(t):  # a line inside the frame: both sides, padded to 80
         return "\u2502 " + t.ljust(76) + " \u2502"
-    assert lines[3:] == ["\u256d\u2500 2/2  Arrival (2016) " + "\u2500" * 56 + "\u256e",
-                         row("\u2713 done"),
-                         row("\u00b7 copy 4m12s"),
-                         row("! subtitle track 3 barren, dropped"),
-                         row("\u2717 encode failed"),
-                         row("handbrake  ERROR x"),
-                         "\u2570" + "\u2500" * 78 + "\u256f"]  # clear_view closes the frame
-    assert view.replay_lines() == ["warn  subtitle track 3 barren, dropped",
-                                   "fail  encode failed"]
+
+    assert lines[3:] == [
+        "\u256d\u2500 2/2  Arrival (2016) " + "\u2500" * 56 + "\u256e",
+        row("\u2713 done"),
+        row("\u00b7 copy 4m12s"),
+        row("! subtitle track 3 barren, dropped"),
+        row("\u2717 encode failed"),
+        row("handbrake  ERROR x"),
+        "\u2570" + "\u2500" * 78 + "\u256f",
+    ]  # clear_view closes the frame
+    assert view.replay_lines() == ["warn  subtitle track 3 barren, dropped", "fail  encode failed"]
 
 
 def test_tty_lines_use_theme_colours(monkeypatch):
@@ -125,10 +142,14 @@ def test_no_color_on_a_terminal_is_the_plain_fallback(monkeypatch, capsys):
         ui.item_end("ok", "done", "3m06s")
         ui.run_summary([("X (2001)", ["copy 3m06s"], "ok")], 1, 0)
         err = capsys.readouterr().err
-        assert not any(c in buf.getvalue() for c in "\u256d\u2502\u2570\u2500\x1b")  # the plain table
-        assert err.startswith("info  skive transcode \u00b7 1 to encode\n"
-                              "info  1/1  X (2001)\n"
-                              "ok    copy 3664 MB at 19 MB/s 3m06s\n")
+        assert not any(
+            c in buf.getvalue() for c in "\u256d\u2502\u2570\u2500\x1b"
+        )  # the plain table
+        assert err.startswith(
+            "info  skive transcode \u00b7 1 to encode\n"
+            "info  1/1  X (2001)\n"
+            "ok    copy 3664 MB at 19 MB/s 3m06s\n"
+        )
         assert not any(c in err for c in "\u256d\u2502\u2570\u2500\x1b")
         assert err.endswith("ok    1 ok\n")
         monkeypatch.delenv(env)
@@ -140,10 +161,10 @@ def test_print_lock_exists_for_whole_line_writes():
 
 # -- run view (slice 02): fallback rendering is the tagged lines, no panels ----
 
+
 def test_fallback_view_renders_tagged_lines_no_panels(capsys):
     """A RunView on non-TTY stderr (pytest) holds no rich objects and its
     event/tool output is the plain tagged lines on stderr."""
-    import sys
 
     view = ui.RunView()
     assert not view.tty and view._live is None
@@ -246,14 +267,20 @@ def test_run_summary_table_cells_result_line_and_banner(capsys):
     arow = next(l for l in err.splitlines() if l.strip().startswith("A (2001)"))
     assert "1m16s" in arow and arow.rstrip().endswith("ok")  # 1 + 5 + 70 secs, merge/detect absent
     brow = next(l for l in err.splitlines() if l.strip().startswith("B (2002)"))
-    assert "2m55s ⇢" in brow and brow.split()[-4:] == ["1m12s", "-", "1m12s", "failed"]  # ⇢ overlapped before B
+    assert "2m55s ⇢" in brow and brow.split()[-4:] == [
+        "1m12s",
+        "-",
+        "1m12s",
+        "failed",
+    ]  # ⇢ overlapped before B
     assert err.endswith("fail  1 failed · 1 ok\n")  # no log: no time, no pointer
     assert "--keep:" not in err  # keep_banner=None: the honesty rule
 
     ui.run_summary([], 0, 0, "--keep: lossless sources moved to /x -- verify, then clean by hand")
     err = capsys.readouterr().err
-    assert err.endswith("--keep: lossless sources moved to /x -- verify, then clean by hand\n"
-                        "ok    0 ok\n")
+    assert err.endswith(
+        "--keep: lossless sources moved to /x -- verify, then clean by hand\nok    0 ok\n"
+    )
 
 
 def _ended_log(tmp_path, secs):
@@ -261,6 +288,7 @@ def _ended_log(tmp_path, secs):
     from datetime import datetime, timedelta
 
     from skive.common import RipLog
+
     t0 = datetime(2026, 11, 12, 21, 4)
     clock = iter([t0, t0 + timedelta(seconds=secs)])
     log = RipLog("skive transcode", "handbrake", root=tmp_path, now=lambda: next(clock))
@@ -281,9 +309,11 @@ def test_run_summary_plain_failure_ending_points_at_the_run_log(tmp_path, capsys
     rows = [("A (2001)", ["encode 1m10s"], "ok"), ("B (2002)", ["encode 25s"], "failed")]
     ui.run_summary(rows, 1, 1, log=log)
     err = capsys.readouterr().err
-    assert err.endswith(f"fail  1 failed · 1 ok · 1m35s — see "
-                        f"{tmp_path}/logs/rip.jsonl (run {log.run}), "
-                        f"raw {tmp_path}/logs/raw/{log.run}.jsonl\n")
+    assert err.endswith(
+        f"fail  1 failed · 1 ok · 1m35s — see "
+        f"{tmp_path}/logs/rip.jsonl (run {log.run}), "
+        f"raw {tmp_path}/logs/raw/{log.run}.jsonl\n"
+    )
 
 
 def test_run_summary_failure_ending_omits_a_raw_log_not_retained(tmp_path, capsys):
@@ -291,15 +321,15 @@ def test_run_summary_failure_ending_omits_a_raw_log_not_retained(tmp_path, capsy
     log._raw_log.unlink()
     ui.run_summary([("B (2002)", ["encode 25s"], "failed")], 0, 1, log=log)
     err = capsys.readouterr().err
-    assert err.endswith(f"fail  1 failed · 0 ok · 1m35s — see "
-                        f"{tmp_path}/logs/rip.jsonl (run {log.run})\n")
+    assert err.endswith(
+        f"fail  1 failed · 0 ok · 1m35s — see {tmp_path}/logs/rip.jsonl (run {log.run})\n"
+    )
 
 
 def test_run_summary_failed_run_without_rows_ends_failed(capsys):
     """A run that failed before any row existed (an empty failed rip) still
     ends on a failure line, not `0 ok`."""
-    ui.run_summary([], 0, 0, columns=("Title", "duration", "size", "result"),
-                   failed=True)
+    ui.run_summary([], 0, 0, columns=("Title", "duration", "size", "result"), failed=True)
     assert capsys.readouterr().err.endswith("fail  failed · 0 ok\n")
 
 
@@ -320,16 +350,19 @@ def test_run_summary_tty_symbols_in_result_column_and_line():
     import io
 
     from rich.console import Console
+
     buf = io.StringIO()
-    tty = Console(file=buf, force_terminal=True, color_system=None, width=80,
-                  theme=ui.THEME)
+    tty = Console(file=buf, force_terminal=True, color_system=None, width=80, theme=ui.THEME)
     real = ui.console
     ui.console = tty
     try:
-        ui.run_summary([("A (2001)", ["encode 1m10s"], "ok"),
-                        ("B (2002)", ["encode 5s"], "interrupted")], 1, 0,
-                       replay=["warn  subtitle track 3 barren, dropped"],
-                       interrupt_note="partial deleted")
+        ui.run_summary(
+            [("A (2001)", ["encode 1m10s"], "ok"), ("B (2002)", ["encode 5s"], "interrupted")],
+            1,
+            0,
+            replay=["warn  subtitle track 3 barren, dropped"],
+            interrupt_note="partial deleted",
+        )
     finally:
         ui.console = real
     lines = buf.getvalue().splitlines()
@@ -348,9 +381,17 @@ def _tty(width):
     import io
 
     from rich.console import Console
+
     buf = io.StringIO()
-    return Console(file=buf, force_terminal=True, color_system=None, width=width,
-                   theme=ui.THEME, highlight=False, emoji=False), buf
+    return Console(
+        file=buf,
+        force_terminal=True,
+        color_system=None,
+        width=width,
+        theme=ui.THEME,
+        highlight=False,
+        emoji=False,
+    ), buf
 
 
 @pytest.mark.parametrize("width", [80, 40, 120])
@@ -429,20 +470,27 @@ def test_phase_line_plain_form(capsys):
     ui.ok("3664 MB at 19 MB/s", phase="copy", elapsed="3m06s")
     ui.info("none (no bar >= 16 px)", phase="crop")
     ui.item_end("ok", "done", "7m56s")  # plain has no frames: prints nothing
-    assert capsys.readouterr().err == ("ok    copy 3664 MB at 19 MB/s 3m06s\n"
-                                       "info  crop none (no bar >= 16 px)\n")
+    assert capsys.readouterr().err == (
+        "ok    copy 3664 MB at 19 MB/s 3m06s\ninfo  crop none (no bar >= 16 px)\n"
+    )
 
 
 @pytest.mark.parametrize("width", [80, 40])
 def test_summary_box_drops_empty_columns_with_result_as_bottom_title(monkeypatch, width):
     con, buf = _tty(width)
     monkeypatch.setattr(ui, "console", con)
-    ui.run_summary([("Bad Boys (1995)", ["copy 3m06s", "subs 3m12s", "encode 1m37s"], "ok"),
-                    ("Bambi (1942)", ["copy 4s"], "interrupted")], 1, 0,
-                   keep_banner="--keep: lossless sources moved to /x -- verify, then clean by hand",
-                   interrupt_note="partial deleted")
+    ui.run_summary(
+        [
+            ("Bad Boys (1995)", ["copy 3m06s", "subs 3m12s", "encode 1m37s"], "ok"),
+            ("Bambi (1942)", ["copy 4s"], "interrupted"),
+        ],
+        1,
+        0,
+        keep_banner="--keep: lossless sources moved to /x -- verify, then clean by hand",
+        interrupt_note="partial deleted",
+    )
     lines = buf.getvalue().splitlines()
-    box = lines[:lines.index(next(l for l in lines if l.startswith("\u2570"))) + 1]
+    box = lines[: lines.index(next(l for l in lines if l.startswith("\u2570"))) + 1]
     assert box[0].startswith("\u256d\u2500 summary")
     assert {len(l) for l in box} == {width}
     assert "merge" not in buf.getvalue()  # `-` for every row: dropped
@@ -458,6 +506,7 @@ def test_transcode_progress_plain_line_vs_tty_footer(capsys):
     """Transcode→view wiring: off a TTY the surfaced encoder line prints as
     a plain tool line; on a TTY only the footer bar moves (nothing scrolls)."""
     from skive import transcode
+
     line = "Encoding: task 1 of 1, 42.50 % (30 fps, avg 31 fps, ETA 00h01m30s)"
     plain = ui.RunView()
     ui.set_view(plain)
@@ -491,6 +540,7 @@ def test_suspend_is_a_no_op_context_without_a_live():
 
 
 # -- background panel (slice 04): concurrent activity, one keyed line each ----
+
 
 def _tty_seam_view():
     """A RunView forced onto the TTY render path without a Live region:
@@ -600,6 +650,7 @@ def test_closed_view_still_routes_fail_to_stderr_and_keeps_replay(capsys):
 
 
 # -- perf line (slice 05) ------------------------------------------------------
+
 
 def test_perf_text_full_line():
     text, hot = ui.perf_text(62.4, {"cpu": 78.2, "gpu": 61.0})
@@ -757,7 +808,7 @@ def test_footer_line2_hot_temp_uses_hot_style():
     text, hot = ui.perf_text(62, {"cpu": 96.0, "gpu": 61.0})
     view.perf(text, hot)
     line2 = view._footer(80).renderables[-1]
-    styles = {line2.plain[s.start:s.end]: s.style for s in line2.spans}
+    styles = {line2.plain[s.start : s.end]: s.style for s in line2.spans}
     assert styles["cpu 96\u00b0C"] == "hot"
     assert styles["CPU 62%"] == "dim" and styles["gpu 61\u00b0C"] == "dim"
 
@@ -774,8 +825,7 @@ def test_sampler_tick_drives_view_and_clears(tmp_path):
     stat.write_text("cpu  100 0 100 800 0 0 0 0 0 0\n")
     view = ui.RunView(tty=True, live=False)
     view.status("encoding")
-    sampler = ui.PerfSampler(view, stat_path=str(stat),
-                             hwmon_root=str(tmp_path / "hw"))
+    sampler = ui.PerfSampler(view, stat_path=str(stat), hwmon_root=str(tmp_path / "hw"))
     sampler.tick()  # first tick: no delta yet → line dropped
     assert view._perf is None
     stat.write_text("cpu  200 0 100 900 0 0 0 0 0 0\n")
@@ -900,6 +950,7 @@ def test_table_tty_is_rounded_bold_blue_header_full_width_keeps_cell_styles(monk
     assert "\x1b[1;38;2;126;156;216m#" in out  # bold Kanagawa crystalBlue header
     assert "\x1b[1m1\x1b[0m" in out and "\x1b[38;2;152;187;108mok" in out
     import re
+
     lines = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in out.splitlines()]
     assert lines[0].startswith("\u256d") and max(map(len, lines)) == width
 
@@ -914,9 +965,15 @@ def test_ask_ends_the_marker_line_on_piped_input(monkeypatch, capsys):
 
 def test_out_exits_quietly_on_a_closed_pipe(monkeypatch):
     class Closed:
-        def write(self, _): raise BrokenPipeError
-        def flush(self): raise BrokenPipeError
-        def fileno(self): return os.open(os.devnull, os.O_WRONLY)
+        def write(self, _):
+            raise BrokenPipeError
+
+        def flush(self):
+            raise BrokenPipeError
+
+        def fileno(self):
+            return os.open(os.devnull, os.O_WRONLY)
+
     monkeypatch.setattr(ui.sys, "stdout", Closed())
     monkeypatch.setattr(ui.os, "dup2", lambda *a: None)
     with pytest.raises(SystemExit) as e:
@@ -925,10 +982,12 @@ def test_out_exits_quietly_on_a_closed_pipe(monkeypatch):
 
 
 def test_result_line_plain_joins_parts_elapsed_and_note(capsys):
-    ui.result_line("fail", "rsync failed (exit 23)", "2.0 MB copied", elapsed=130,
-                   note="re-run to resume")
+    ui.result_line(
+        "fail", "rsync failed (exit 23)", "2.0 MB copied", elapsed=130, note="re-run to resume"
+    )
     assert capsys.readouterr().err == (
-        "fail  rsync failed (exit 23) \u00b7 2.0 MB copied \u00b7 2m10s \u2014 re-run to resume\n")
+        "fail  rsync failed (exit 23) \u00b7 2.0 MB copied \u00b7 2m10s \u2014 re-run to resume\n"
+    )
 
 
 def test_result_line_on_a_terminal_leads_with_the_symbol(monkeypatch):
@@ -949,12 +1008,15 @@ def test_no_bare_print_in_skive_outside_ui():
     only allowed inside the console module itself."""
     import re
     from pathlib import Path
+
     bare = re.compile(r"(?<![\w.])print\(")
-    hits = [f"{path.name}:{n}: {line.strip()}"
-            for path in sorted(Path(ui.__file__).parent.rglob("*.py"))
-            if path.name != "ui.py"
-            for n, line in enumerate(path.read_text().splitlines(), 1)
-            if bare.search(line)]
+    hits = [
+        f"{path.name}:{n}: {line.strip()}"
+        for path in sorted(Path(ui.__file__).parent.rglob("*.py"))
+        if path.name != "ui.py"
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if bare.search(line)
+    ]
     assert hits == []
 
 
