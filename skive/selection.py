@@ -107,13 +107,20 @@ def prefill(titles: list[TitleInfo], runtime_s: int | None,
         _note(log, "main",
               f"main=t{main_number} biggest bytes — no candidate main on the disc")
     elif arb.pick is None:
-        main_number = biggest_title(triples)[0]
-        notes[main_number] = (notes.get(main_number, "") + " "
-                              if notes.get(main_number) else "") \
-            + "biggest bytes — every title decoy-clustered"
-        _note(log, "main",
-              f"main=t{main_number} biggest bytes — every title decoy-clustered"
-              + skip_note)
+        main_number = biggest_title(clean or triples)[0]
+        if clean:
+            # Clean sub-floor titles exist (the shorts flavor): the decoy
+            # cluster fact would be false on this main's row.
+            why = "biggest bytes — no candidate main"
+            notes[main_number] = why
+            _note(log, "main",
+                  f"main=t{main_number} {why} on the disc" + skip_note)
+        else:
+            why = "biggest bytes — every title decoy-clustered"
+            notes[main_number] = (notes.get(main_number, "") + " "
+                                  if notes.get(main_number) else "") + why
+            _note(log, "main",
+                  f"main=t{main_number} {why}" + skip_note)
     else:
         main_number = arb.pick[0]
         how = {"sole": "near the runtime — automatic",

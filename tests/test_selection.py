@@ -137,6 +137,25 @@ def test_prefill_all_decoys_still_names_exactly_one_main():
                                   "decoy-clustered — skipped 2 decoys")]
 
 
+def test_prefill_decoys_and_clean_subfloor_titles_pick_clean_biggest():
+    """A decoy cluster above the floor plus clean sub-floor titles: the
+    main is the biggest clean title (not the decoy), with the no-candidate
+    wording — no false "every title decoy-clustered" fact anywhere."""
+    log = _FakeLog()
+    titles = [TitleInfo(1, 6500, 20_000_000_000, "en", "", False,
+                        decoy_cluster=3),
+              TitleInfo(2, 6400, 19_000_000_000, "en", "", False,
+                        decoy_cluster=3),
+              TitleInfo(3, 300, 3_000_000_000, "en", "", False)]
+    actions, notes = prefill(titles, 6480, log)
+    assert actions == {1: SKIP_ACTION, 2: SKIP_ACTION, 3: MAIN_ACTION}
+    assert notes == {1: "decoy cluster ×3",
+                     2: "decoy cluster ×3",
+                     3: "biggest bytes — no candidate main"}
+    assert log.notes == [("main", "main=t3 biggest bytes — no candidate main"
+                                  " on the disc — skipped 2 decoys")]
+
+
 def test_prefill_main_log_line_notes_skipped_decoy_count():
     """The run-log main line gains `— skipped N decoys` when N>0 and stays
     byte-identical to the old line when none were skipped."""
