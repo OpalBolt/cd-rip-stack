@@ -256,6 +256,7 @@ TINFO:2,11,"3456789012"
     assert titles[1].seconds == 22 * 60 + 30  # 22:30
     assert titles[2].number == 2
     assert titles[2].seconds == 15 * 60
+    assert all(t.decoy_cluster == 0 for t in titles)
 
 
 def test_scan_disc_makemkv_info_override():
@@ -320,15 +321,16 @@ def test_scan_disc_clusters_identical_segment_maps():
     """Titles sharing an identical raw segment map (>= 3) get decoy_cluster.
 
     Fixture (orchestrator's resolution of the ticket's ambiguity):
-      t1..t5 share list-form "9,10,11,12,13" -> decoy_cluster == 5;
+      t1..t5 share list-form "9,10,11,12,13" -> decoy_cluster == 5; t5 is
+        SUB-FLOOR (400s) but still counts toward the cluster of 5 (clustering
+        ignores all floors);
       t6 feature-length with range-form "9-13" (same cells) -> 0, the
         range/list no-merge case (mirrors the real disc's 82 list-form
         decoys vs t38's "9-26");
       t7 map "3,1,2" -> scrambled is True, cluster 0 (shuffled alone never
         clusters);
       t8 SUB-FLOOR (~400s) carrying "9-13" -> 0; together with t6 it is the
-        two-sharing pair below the >= 3 threshold, and it proves sub-floor
-        titles participate in counting (clustering ignores all floors).
+        two-sharing pair below the >= 3 threshold.
     """
     lines = []
     segmaps = {
@@ -339,7 +341,7 @@ def test_scan_disc_clusters_identical_segment_maps():
         8: "9-13",
     }
     durations = {1: "0:50:00", 2: "0:50:00", 3: "0:50:00", 4: "0:50:00",
-                 5: "0:50:00", 6: "1:30:00", 7: "0:50:00", 8: "0:06:40"}
+                 5: "0:06:40", 6: "1:30:00", 7: "0:50:00", 8: "0:06:40"}
     for t in sorted(segmaps):
         lines.append(f'TINFO:{t},9,0,"{durations[t]}"')
         lines.append(f'TINFO:{t},11,0,"1000000000"')
