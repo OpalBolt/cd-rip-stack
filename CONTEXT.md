@@ -131,6 +131,14 @@ _Avoid_: download, upload, double-buffering
 The rule that decides a title's black-bar crop at transcode: sampled detection (~6 probes spread over 10–90% of the file), per-side bar as the median across probes, at most one probe per side dissenting beyond ±4 px (a lone dissent is a credits or dark-scene outlier), sides under 16 px crop as nothing, per-axis totals capped at 30%. Unstable or over-cap detection means no crop plus a loud note; applied values are recorded in the run log and validation.json. Applies to everything encoded — mains, TV episodes, extras — on every encode path.
 _Avoid_: autocrop, letterbox removal
 
+**Misflagged anamorphic**:
+A staged title whose aspect flag lies about its content — 16:9 anamorphic material flagged 4:3 (SAR 16:15), so players squeeze it thin. Diagnosed by ffprobe's flag against cropdetect's measured bars; the remedy is a mkvpropedit display-dimension fix on the lossless file, never an encode-time override.
+_Avoid_: aspect bug, wrong AR
+
+**Keep-SAR encode**:
+The encode aspect policy: an encode inherits its source's sample aspect ratio (a 720×452 crop of PAL 16:9 encodes at SAR 64:45, displaying ~2.35:1) — never baked to square pixels, never upscaled; players do the display math.
+_Avoid_: square pixels, bake aspect
+
 **Staging**:
 Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/<music source>/<album>/` — one folder per album, the source level tells `tag` how to file it; `tag` moves it into the library, so an album still in `rip/` is not yet filed. A mid-rip file still wears its junk label.
 

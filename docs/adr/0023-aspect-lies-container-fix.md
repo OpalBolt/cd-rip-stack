@@ -1,0 +1,7 @@
+# Aspect lies — fix the container, keep the source SAR
+
+A misflagged anamorphic title (Flame & Citron's decoys: 16:9 material flagged 4:3, players squeeze it thin) is diagnosed by ffprobe's flag against cropdetect's measured bars, and the remedy is one mkvpropedit display-dimension fix on the lossless file — never an encode-time override. The encode policy it rests on: encodes inherit the source's sample aspect ratio (a 720×452 crop of PAL 16:9 encodes at SAR 64:45, displaying ~2.35:1) and are never baked to square pixels and never upscaled — players do the display math.
+
+Considered and rejected: a transcode-time aspect override (sets SAR without knowing the truth — the flag lies, so the override needs the same ffprobe-vs-cropdetect diagnosis anyway, at which point fixing the lossless container fixes the file, Jellyfin, and every future encode at once), and baking square pixels (upscaling-or-wasting-bits on every encode; reversing it means re-encoding the library).
+
+Consequences: an aspect lie on a correctly-picked title is caught by the operator's eye, not by the pipeline — the ffprobe/cropdetect sanity check at transcode-in was considered and deliberately not built (aspect lies are rare; flame-and-citron-class decoy maps are the common case, and the decoy-cluster note covers those). The crop gate must never be read as aspect evidence: it crops what it measures, and on a misflagged title it will happily crop the bars and ship a confidently wrong 1.70:1.
