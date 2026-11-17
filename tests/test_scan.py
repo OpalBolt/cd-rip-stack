@@ -314,3 +314,53 @@ def test_scan_disc_without_log_writes_nothing(tmp_path):
 
     assert (media, len(titles)) == ("DVD-ROM", 1)
     assert not (tmp_path / "logs").exists()
+
+
+def test_scan_disc_clusters_identical_segment_maps():
+    """Titles sharing an identical raw segment map (>= 3) get decoy_cluster.
+
+    Fixture (orchestrator's resolution of the ticket's ambiguity):
+      t1..t5 share list-form "9,10,11,12,13" -> decoy_cluster == 5;
+      t6 feature-length with range-form "9-13" (same cells) -> 0, the
+        range/list no-merge case (mirrors the real disc's 82 list-form
+        decoys vs t38's "9-26");
+      t7 map "3,1,2" -> scrambled is True, cluster 0 (shuffled alone never
+        clusters);
+      t8 SUB-FLOOR (~400s) carrying "9-13" -> 0; together with t6 it is the
+        two-sharing pair below the >= 3 threshold, and it proves sub-floor
+        titles participate in counting (clustering ignores all floors).
+    """
+    lines = []
+    segmaps = {
+        1: "9,10,11,12,13", 2: "9,10,11,12,13", 3: "9,10,11,12,13",
+        4: "9,10,11,12,13", 5: "9,10,11,12,13",
+        6: "9-13",
+        7: "3,1,2",
+        8: "9-13",
+    }
+    durations = {1: "0:50:00", 2: "0:50:00", 3: "0:50:00", 4: "0:50:00",
+                 5: "0:50:00", 6: "1:30:00", 7: "0:50:00", 8: "0:06:40"}
+    for t in sorted(segmaps):
+        lines.append(f'TINFO:{t},9,0,"{durations[t]}"')
+        lines.append(f'TINFO:{t},11,0,"1000000000"')
+        lines.append(f'TINFO:{t},26,0,"{segmaps[t]}"')
+    output = "\n".join(lines) + "\n"
+
+    _, _, result = scan_disc(60, run=Mock(return_value=Mock(stdout=output)))
+
+    assert len(result) == 8
+    got = {t.number: t.decoy_cluster for t in result}
+    assert got == {1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 0, 7: 0, 8: 0}
+    t7 = next(t for t in result if t.number == 7)
+    assert t7.scrambled is True
+    t1 = next(t for t in result if t.number == 1)
+    assert t1.scrambled is False
+
+    # Manual check (real Flame & Citron scan dump replay, documented per
+    # ticket 01; non-monotonic count in that dump: 0 — absent, as expected):
+    #   $ MAKEMKV_INFO="cat '/mnt/videos/logs/scan/f2c0767a_FLAMMEN CITRONEN.txt'" \
+    #     uv run python -c "from skive.scan import scan_disc; \
+    #     m,l,ts=scan_disc(600); print(sum(1 for t in ts if t.decoy_cluster==82), \
+    #     [(t.number,t.decoy_cluster,t.scrambled) for t in ts if t.number==38])"
+    #   Expected output: "82 [(38, 0, False)]" — 82 titles at cluster size 82,
+    #   t38 clean.

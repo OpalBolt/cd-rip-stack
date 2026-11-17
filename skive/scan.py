@@ -4,6 +4,7 @@ and the ISO language helper."""
 import os
 import re
 import subprocess
+from collections import Counter
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -189,6 +190,7 @@ class TitleInfo:
     audio: str
     subtitles: str
     scrambled: bool
+    decoy_cluster: int = 0
 
 
 def _dur_seconds(val: str) -> int:
@@ -255,7 +257,7 @@ def _parse_titles(out: str) -> list[TitleInfo]:
             except ValueError:
                 continue
             rec = data.setdefault(t, {"secs": 0, "size": 0, "scrambled": False,
-                                      "stypes": {}, "slangs": {}})
+                                      "segmap": "", "stypes": {}, "slangs": {}})
             code = f[1] if len(f) > 1 else ""
             val = _qval(line)
             if code == "9":
@@ -264,6 +266,8 @@ def _parse_titles(out: str) -> list[TitleInfo]:
                 rec["size"] = int(val) if val.isdigit() else 0
             elif code == "26":
                 rec["scrambled"] = _scrambled(val)
+                if val:
+                    rec["segmap"] = val
         elif line.startswith("SINFO:"):
             f = line.split(",")
             head = f[0].split(":")
@@ -283,6 +287,13 @@ def _parse_titles(out: str) -> list[TitleInfo]:
             elif code == "3":
                 rec["slangs"][stream] = val
 
+    # Decoy-cluster guard (CONTEXT.md): identical raw segment maps (TINFO 26)
+    # across >= 3 titles mark every member as a mass-duplicated decoy. Exact
+    # string equality only — no parsing or normalising, so range-form and
+    # list-form renderings of the same cells cluster separately. This runs at
+    # parse time, before any floor applies, so sub-floor titles count too.
+    clusters = Counter(rec["segmap"] for rec in data.values() if rec["segmap"])
+
     result = []
     for t in sorted(data):
         rec = data[t]
@@ -295,6 +306,9 @@ def _parse_titles(out: str) -> list[TitleInfo]:
             audio=_audio_str(rec["stypes"], rec["slangs"]),
             subtitles=_subs_str(rec["stypes"], rec["slangs"]),
             scrambled=rec["scrambled"],
+            decoy_cluster=(clusters[rec["segmap"]]
+                           if rec["segmap"] and clusters[rec["segmap"]] >= 3
+                           else 0),
         ))
     return result
 
