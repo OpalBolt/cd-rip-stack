@@ -484,7 +484,8 @@ def test_decoys_with_greener_fit_get_none_and_the_decoy_note():
     titles = [TitleInfo(0, 3932, 1_000_000_000, "dan", "", False),
               TitleInfo(1, 3897, 1_000_000_000, "dan", "", False),
               TitleInfo(2, 4100, 2_000_000_000, "dan", "", False,
-                        decoy_cluster=3),   # 4100/4140 = 0.99 — greener than t0
+                        decoy_cluster=3),   # 4100/3932 = 1.04, yellow — excluded
+                                                # anyway; t3 is the green decoy (1.00)
               TitleInfo(3, 3900, 2_000_000_000, "dan", "", True),
               TitleInfo(4, 300, 100_000_000, "dan", "", False,
                         decoy_cluster=2)]
