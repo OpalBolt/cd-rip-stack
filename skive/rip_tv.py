@@ -10,22 +10,42 @@ from pathlib import Path
 from skive import ui
 from skive.chapter_split import split_combined
 from skive.makemkv import (
-    build_selection, inject_profile, promote_staged, purge_junk,
-    rip_header, subtitle_note, subtitle_shortfall, rip_titles, hsize, strip_audio_counts,
-    silent_staged, widened_audio,
+    build_selection,
+    hsize,
+    inject_profile,
+    promote_staged,
+    purge_junk,
+    rip_header,
+    rip_titles,
+    silent_staged,
+    strip_audio_counts,
+    subtitle_note,
+    subtitle_shortfall,
+    widened_audio,
 )
 from skive.rip_common import rip_preamble, tv_season_gate
 from skive.selection import (
-    INTERRUPT, QUIT, decoy_numbers, episode_map, print_accepted_episodes,
+    INTERRUPT,
+    QUIT,
+    decoy_numbers,
+    episode_map,
+    print_accepted_episodes,
     run_episode_table,
 )
 from skive.tmdb import fetch_season
-from skive.validation import (
-    VALIDATION_FILENAME, _double_runtime, load_validation, merge_tv_document,
-    tv_document, tv_row, write_validation,
-)
 from skive.tv_match import (
-    tv_floor, playall_only, sum_disqualified_windowed,
+    playall_only,
+    sum_disqualified_windowed,
+    tv_floor,
+)
+from skive.validation import (
+    VALIDATION_FILENAME,
+    _double_runtime,
+    load_validation,
+    merge_tv_document,
+    tv_document,
+    tv_row,
+    write_validation,
 )
 
 console = ui.console  # the shared console; a module name tests can swap
@@ -62,7 +82,7 @@ def staged_eps(show_dir: Path, display: str, season: int) -> set[int]:
     """
     staged = set()
     season_str = f"{season:02d}"
-    pattern = re.compile(rf'^{re.escape(display)}_S{season_str}E(\d+)(-E(\d+))?$')
+    pattern = re.compile(rf"^{re.escape(display)}_S{season_str}E(\d+)(-E(\d+))?$")
     for mkv in show_dir.glob("*.mkv"):
         base = mkv.stem
         m = pattern.match(base)
@@ -80,8 +100,11 @@ def show_staging(show_dir: Path, display: str) -> list[Path]:
     """Every staged file belonging to one show: its episodes (any season,
     singles and doubles) and its extras. The table's clear command deletes
     exactly these."""
-    return [p for p in sorted(show_dir.glob("*.mkv"))
-            if p.name.startswith(display + "_S") or p.name.startswith(display + " - ")]
+    return [
+        p
+        for p in sorted(show_dir.glob("*.mkv"))
+        if p.name.startswith(display + "_S") or p.name.startswith(display + " - ")
+    ]
 
 
 def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) -> Path:
@@ -105,8 +128,9 @@ def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) 
     return show_dir / f"{display}_S{season_str}E{lo:02d}-E{hi:02d}.mkv"
 
 
-def rename_tv(display: str, show_dir: Path, season: int,
-              assignment: dict[int, tuple[int, int]]) -> dict[Path, int]:
+def rename_tv(
+    display: str, show_dir: Path, season: int, assignment: dict[int, tuple[int, int]]
+) -> dict[Path, int]:
     """Rename staged files per the episode map.
 
     Junk-labeled titles become <display>_SNNENN[-ENNN].mkv or <display> - Extra NN.mkv.
@@ -126,7 +150,7 @@ def rename_tv(display: str, show_dir: Path, season: int,
     for mkv in show_dir.glob("*.mkv"):
         base = mkv.stem
         # Extract _tNN
-        m = re.search(r'_t(\d+)$', base)
+        m = re.search(r"_t(\d+)$", base)
         if not m:
             continue
         title_num = int(m.group(1))
@@ -154,15 +178,20 @@ def rename_tv(display: str, show_dir: Path, season: int,
 
         mkv.rename(target)
         renamed[target] = title_num
-        cur = base[:m.start()]
+        cur = base[: m.start()]
         ui.info(f"{cur} → {target.stem}")
     return renamed
 
 
-def chapter_split_hook(preamble, season: int,
-                       titles_info: list[tuple[int, int, int]],
-                       playalls: set[int], assignment: dict[int, tuple[int, int]],
-                       ep_runtimes: dict[int, int], run=subprocess.run) -> None:
+def chapter_split_hook(
+    preamble,
+    season: int,
+    titles_info: list[tuple[int, int, int]],
+    playalls: set[int],
+    assignment: dict[int, tuple[int, int]],
+    ep_runtimes: dict[int, int],
+    run=subprocess.run,
+) -> None:
     """The chapter split (ADR 0009) for play-all-only discs: when the final
     episode map leaves exactly one eligible title carrying a multi-episode
     range, its combined `_SNNENN-ENNN.mkv` is probed, confirmed at the
@@ -187,15 +216,20 @@ def chapter_split_hook(preamble, season: int,
     _t, lo, hi = lone
     show_dir = preamble.title_dir
     combined = episode_target(show_dir, preamble.display, season, lo, hi)
-    targets = {e: episode_target(show_dir, preamble.display, season, e, e)
-               for e in range(lo, hi + 1)}
-    split_combined(combined, targets, season, lo, hi, ep_runtimes,
-                   preamble.log, run=run)
+    targets = {
+        e: episode_target(show_dir, preamble.display, season, e, e) for e in range(lo, hi + 1)
+    }
+    split_combined(combined, targets, season, lo, hi, ep_runtimes, preamble.log, run=run)
 
 
-def probe_episodes(show_dir: Path, display: str, season: int,
-                   assignment: dict[int, tuple[int, int]], ep_runtimes: dict[int, int],
-                   run=subprocess.run) -> list[dict]:
+def probe_episodes(
+    show_dir: Path,
+    display: str,
+    season: int,
+    assignment: dict[int, tuple[int, int]],
+    ep_runtimes: dict[int, int],
+    run=subprocess.run,
+) -> list[dict]:
     """Probe this season's staged episode files for the validation record.
 
     Globs the show folder for `<display>_S{season:02d}E*.mkv` and parses each
@@ -222,8 +256,7 @@ def probe_episodes(show_dir: Path, display: str, season: int,
         episodes rows [{"ep", "file", "t", "dur_s", "runtime_s", "ratio",
         "band"}] in ep order
     """
-    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                   "-of", "csv=p=0"]
+    ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]
     pattern = re.compile(rf"^{re.escape(display)}_S{season:02d}E(\d+)(-E(\d+))?$")
     rows = []
     for mkv in show_dir.glob("*.mkv"):
@@ -239,16 +272,22 @@ def probe_episodes(show_dir: Path, display: str, season: int,
             ui.warn(f"cannot read duration of {mkv.name} — recorded without one")
             dur = None
         # `t` inverts this run's map: the first title whose (lo, hi) covers the ep
-        t = next((num for num in sorted(assignment)
-                  if assignment[num][0] <= ep <= assignment[num][1]), None)
-        rows.append(tv_row(ep, mkv.name, t, dur,
-                           _double_runtime(ep_runtimes, ep, hi)))
+        t = next(
+            (num for num in sorted(assignment) if assignment[num][0] <= ep <= assignment[num][1]),
+            None,
+        )
+        rows.append(tv_row(ep, mkv.name, t, dur, _double_runtime(ep_runtimes, ep, hi)))
     rows.sort(key=lambda r: r["ep"])
     return rows
 
 
-def post_rip_validation(preamble, season: int, assignment: dict[int, tuple[int, int]],
-                        ep_runtimes: dict[int, int], run=subprocess.run) -> None:
+def post_rip_validation(
+    preamble,
+    season: int,
+    assignment: dict[int, tuple[int, int]],
+    ep_runtimes: dict[int, int],
+    run=subprocess.run,
+) -> None:
     """The post-rip record (map.md decision 6), run beside the subtitle note:
     probe the season's staged episodes, grade them against their TMDB
     runtimes, report the one summary line, and write validation.json at the
@@ -274,15 +313,14 @@ def post_rip_validation(preamble, season: int, assignment: dict[int, tuple[int, 
     """
     show_dir = preamble.title_dir
     log = preamble.log
-    rows = probe_episodes(show_dir, preamble.display, season, assignment,
-                          ep_runtimes, run)
+    rows = probe_episodes(show_dir, preamble.display, season, assignment, ep_runtimes, run)
     yellow = sum(1 for r in rows if r["band"] == "yellow")
     log.note("validation", f"{len(rows)} episodes, {yellow} yellow")
 
-    staged = sorted({ep for lo, hi in assignment.values() if lo >= 1
-                     for ep in range(lo, hi + 1)})
-    doc = tv_document(preamble.pick.id, preamble.display, season,
-                      preamble.label, log.run, staged, rows)
+    staged = sorted({ep for lo, hi in assignment.values() if lo >= 1 for ep in range(lo, hi + 1)})
+    doc = tv_document(
+        preamble.pick.id, preamble.display, season, preamble.label, log.run, staged, rows
+    )
     path = show_dir / VALIDATION_FILENAME
     old = load_validation(path)
     if old is not None:
@@ -312,12 +350,18 @@ def _size(path: Path) -> str:
         return "?"
 
 
-def _summary_rows(show_dir: Path, display: str, season: int, probed: list[dict],
-                  preexisting: set[Path], worst_rc: int,
-                  outcomes: dict[int, int] | None = None,
-                  attempted: list[int] | None = None,
-                  assignment: dict[int, tuple[int, int]] | None = None,
-                  renamed: dict[Path, int] | None = None) -> list[tuple]:
+def _summary_rows(
+    show_dir: Path,
+    display: str,
+    season: int,
+    probed: list[dict],
+    preexisting: set[Path],
+    worst_rc: int,
+    outcomes: dict[int, int] | None = None,
+    attempted: list[int] | None = None,
+    assignment: dict[int, tuple[int, int]] | None = None,
+    renamed: dict[Path, int] | None = None,
+) -> list[tuple]:
     """This run's run-summary rows: each episode file it staged, labeled
     with its full range (failed when its own title's rc is known and
     non-zero, else by the run's worst rc), then the extras it staged (by
@@ -337,11 +381,19 @@ def _summary_rows(show_dir: Path, display: str, season: int, probed: list[dict],
             continue
         new_eps.add(r["ep"])
         rc = outcomes.get(r["t"], worst_rc)
-        rows.append((f.stem.removeprefix(f"{display}_"),
-                     _hms(r["dur_s"]) if r["dur_s"] is not None else "?",
-                     _size(f), "ok" if rc == 0 else "failed"))
-    extras = [f for f in sorted(show_dir.glob("*.mkv"))
-              if f.name.startswith(f"{display} - Extra ") and f not in preexisting]
+        rows.append(
+            (
+                f.stem.removeprefix(f"{display}_"),
+                _hms(r["dur_s"]) if r["dur_s"] is not None else "?",
+                _size(f),
+                "ok" if rc == 0 else "failed",
+            )
+        )
+    extras = [
+        f
+        for f in sorted(show_dir.glob("*.mkv"))
+        if f.name.startswith(f"{display} - Extra ") and f not in preexisting
+    ]
     for f in extras:
         rc = outcomes.get(renamed[f], worst_rc) if f in renamed else worst_rc
         rows.append((f.stem, "?", _size(f), "ok" if rc == 0 else "failed"))
@@ -366,8 +418,9 @@ def _summary_rows(show_dir: Path, display: str, season: int, probed: list[dict],
     return rows
 
 
-def _interrupted(log, stage_dirs: list[Path], view, preexisting: set[Path],
-                 inflight: str | None = None) -> None:
+def _interrupted(
+    log, stage_dirs: list[Path], view, preexisting: set[Path], inflight: str | None = None
+) -> None:
     """The interrupt (Ctrl+C) exit with its run summary (CONTEXT.md:
     Interrupt): delete the in-flight partial (junk-labeled files), keep
     completed renames, record status=interrupted, list this run's kept files
@@ -376,8 +429,12 @@ def _interrupted(log, stage_dirs: list[Path], view, preexisting: set[Path],
     ui.item_end("fail", "interrupted")  # the open title's frame closes before the summary
     purge_junk(stage_dirs, quiet=True)
     kept = sum(1 for d in stage_dirs for f in d.glob("*.mkv"))
-    rows = [(f.stem, "?", _size(f), "ok") for d in stage_dirs
-            for f in sorted(d.glob("*.mkv")) if f not in preexisting]
+    rows = [
+        (f.stem, "?", _size(f), "ok")
+        for d in stage_dirs
+        for f in sorted(d.glob("*.mkv"))
+        if f not in preexisting
+    ]
     n_ok = len(rows)
     if inflight:
         rows.append((inflight, "?", "?", "interrupted"))
@@ -385,8 +442,15 @@ def _interrupted(log, stage_dirs: list[Path], view, preexisting: set[Path],
     view.close()
     log.interrupted()
     ui.fail(f"interrupted — partial deleted, kept {kept} titles")
-    ui.run_summary(rows, n_ok, 0, columns=SUMMARY_COLUMNS, replay=replay,
-                   interrupt_note="partial deleted", log=log)
+    ui.run_summary(
+        rows,
+        n_ok,
+        0,
+        columns=SUMMARY_COLUMNS,
+        replay=replay,
+        interrupt_note="partial deleted",
+        log=log,
+    )
     sys.exit(130)
 
 
@@ -434,6 +498,7 @@ def rip_tv(args) -> None:
                     started += 1
                 inflight = names[started - 1] if started <= len(names) else display
                 ui.item(started, len(order), inflight)
+
             return on_start
 
         # Season prompt (ui.ask suspends the view while it asks)
@@ -450,8 +515,7 @@ def rip_tv(args) -> None:
 
         # Rip preflight (CONTEXT.md): the exact season on disk escalates to
         # the default-No confirm; other seasons only inform
-        tv_season_gate(Path(os.environ.get("VIDEOS_MOUNT", "/mnt/videos")),
-                       log, display, season)
+        tv_season_gate(Path(os.environ.get("VIDEOS_MOUNT", "/mnt/videos")), log, display, season)
 
         # The gate already scanned the disc; reuse that result (no second scan)
         if not titles_full:
@@ -478,15 +542,22 @@ def rip_tv(args) -> None:
         disqualified = sum_disqualified_windowed(titles_info)
         playalls = set(disqualified)
         if floored and not titles_info:
-            ui.warn("every eligible title on this disc is a decoy — nothing prefilled; assign episodes at the cursor")
-            log.note("decoy", f"all {floored} eligible titles decoy-clustered — nothing prefilled, operator assigns at the cursor")
+            ui.warn(
+                "every eligible title on this disc is a decoy — nothing prefilled; assign episodes at the cursor"
+            )
+            log.note(
+                "decoy",
+                f"all {floored} eligible titles decoy-clustered — nothing prefilled, operator assigns at the cursor",
+            )
         elif len(titles_info) == len(playalls):
             ui.fail("no eligible titles on this disc")
             sys.exit(1)
 
         # Fetch season from TMDB
         if not pick.id or pick.id == "-":
-            ui.fail("the TMDB pick carries no id — cannot fetch episodes. re-pick or use --tmdbid tv:N.")
+            ui.fail(
+                "the TMDB pick carries no id — cannot fetch episodes. re-pick or use --tmdbid tv:N."
+            )
             sys.exit(1)
 
         try:
@@ -519,8 +590,9 @@ def rip_tv(args) -> None:
         # actions at the cursor, Enter accepts. The view suspends for it, the
         # accepted map echoes into scrollback, the view redraws after.
         # Non-TTY runs refuse before the table — nothing spins.
-        emap = episode_map(season, titles_full, minlength, disqualified,
-                           ep_names, ep_runtimes, staged)
+        emap = episode_map(
+            season, titles_full, minlength, disqualified, ep_names, ep_runtimes, staged
+        )
         with view.suspend():
             if not view.tty and not ui.terminal_present():
                 ui.fail("selection table needs a terminal")
@@ -530,12 +602,15 @@ def rip_tv(args) -> None:
                 print_accepted_episodes(display, emap, result)
                 # Play-all-only caption (ADR 0009): the accepted map arms the
                 # chapter split before the drive spins.
-                lone = playall_only(titles_info, playalls,
-                                    {t: r for t, r in result.items() if r is not None})
+                lone = playall_only(
+                    titles_info, playalls, {t: r for t, r in result.items() if r is not None}
+                )
                 if lone:
                     t, clo, chi = lone
-                    console.print(f"title {t} carries S{season:02d}E{clo:02d}-E{chi:02d}"
-                                  f" — play-all-only disc, split after the rip")
+                    console.print(
+                        f"title {t} carries S{season:02d}E{clo:02d}-E{chi:02d}"
+                        f" — play-all-only disc, split after the rip"
+                    )
         if result == INTERRUPT:
             # Textual has restored the terminal; follow the repo Interrupt
             # through the handler below (exit 130).
@@ -549,19 +624,27 @@ def rip_tv(args) -> None:
         assignment = {t: r for t, r in result.items() if r is not None}
         skipped = {t for t, r in result.items() if r is None}
 
-        ui.opener("skive rip tv", f"{display} · season {season}", f"disc {preamble.disc} · {preamble.device}")
+        ui.opener(
+            "skive rip tv",
+            f"{display} · season {season}",
+            f"disc {preamble.disc} · {preamble.device}",
+        )
 
         # Selection string + profile injection
         keep = preamble.keep
-        sub_langs = {l for t in titles_full if t.number in assignment
-                     for l in t.subtitles.split(",") if l}
+        sub_langs = {
+            l for t in titles_full if t.number in assignment for l in t.subtitles.split(",") if l
+        }
         audio_langs = strip_audio_counts(
-            [l for t in titles_full if t.number in assignment
-             for l in t.audio.split(",")])
+            [l for t in titles_full if t.number in assignment for l in t.audio.split(",")]
+        )
         widened = widened_audio(keep, audio_langs, args.keep_all)
         sel = build_selection(keep, sub_langs, audio_langs, args.keep_all)
-        log.note("audio", f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'} "
-                 f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}")
+        log.note(
+            "audio",
+            f"kept={keep if keep else 'all'} origlang={pick.original_language if pick.original_language != '-' else '?'} "
+            f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}",
+        )
 
         profile_path = inject_profile(sel)
         rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
@@ -576,17 +659,31 @@ def rip_tv(args) -> None:
             # operator left alone, or any title restated `s` — are never
             # ripped (ADR 0008); a rescued row is not skipped, so it rips.
             # Nothing skipped rips "all" in one call.
-            rip_selection = (None if not skipped else
-                             [t.number for t in titles_full if t.number not in skipped])
-            order = (rip_selection if rip_selection is not None
-                     else sorted(t.number for t in titles_full))
+            rip_selection = (
+                None if not skipped else [t.number for t in titles_full if t.number not in skipped]
+            )
+            order = (
+                rip_selection
+                if rip_selection is not None
+                else sorted(t.number for t in titles_full)
+            )
             names = [f"{display} {_episode_code(season, assignment.get(t, (0, 0)))}" for t in order]
             attempted = order
-            worst_rc = rip_titles(rip_selection, profile_path, minlength, stage_tv, disc=preamble.disc,
-                                  total=len(titles_info), infos=titles_full, header=rip_header(display, titles_full), log=log,
-                                  device=preamble.device,
-                                  on_title_start=start_rip(order, names, rip_selection is not None),
-                                  names=names, outcomes=outcomes)
+            worst_rc = rip_titles(
+                rip_selection,
+                profile_path,
+                minlength,
+                stage_tv,
+                disc=preamble.disc,
+                total=len(titles_info),
+                infos=titles_full,
+                header=rip_header(display, titles_full),
+                log=log,
+                device=preamble.device,
+                on_title_start=start_rip(order, names, rip_selection is not None),
+                names=names,
+                outcomes=outcomes,
+            )
             inflight = None
 
             if worst_rc != 0:
@@ -607,8 +704,7 @@ def rip_tv(args) -> None:
             # own interrupts, so a Ctrl+C at its table never reaches the
             # generic interrupt exit below.
             _phase_status("split", f"{display} S{season:02d}")
-            chapter_split_hook(preamble, season, titles_info, playalls,
-                               assignment, ep_runtimes)
+            chapter_split_hook(preamble, season, titles_info, playalls, assignment, ep_runtimes)
 
             # Subtitle note
             note = subtitle_note(show_dir)
@@ -638,12 +734,16 @@ def rip_tv(args) -> None:
 
             # Audio gate (ADR 0019/0022): a silent episode never reaches the
             # library. Extras are exempt (" - Extra NN" never matches S*E).
-            silent = silent_staged([f for f in sorted(show_dir.glob("*_S*E*.mkv"))
-                                    if f not in preexisting])
+            silent = silent_staged(
+                [f for f in sorted(show_dir.glob("*_S*E*.mkv")) if f not in preexisting]
+            )
             for f in silent:
                 ui.fail(f"{f.name}: no audio stream")
-                log.note("audio", f"{f.name}: no audio stream — silent rip kept in place; "
-                                  "re-rip with -K/--keep-all")
+                log.note(
+                    "audio",
+                    f"{f.name}: no audio stream — silent rip kept in place; "
+                    "re-rip with -K/--keep-all",
+                )
             if silent:
                 worst_rc = worst_rc or 1
 
@@ -675,11 +775,28 @@ def rip_tv(args) -> None:
         # garble them); the outer close is idempotent.
         view.close()
         # The run summary: this run's episodes and extras × duration × size × result.
-        rows = _summary_rows(show_dir, display, season, probed, preexisting,
-                             worst_rc, outcomes, attempted, assignment, renamed)
+        rows = _summary_rows(
+            show_dir,
+            display,
+            season,
+            probed,
+            preexisting,
+            worst_rc,
+            outcomes,
+            attempted,
+            assignment,
+            renamed,
+        )
         n_ok = sum(1 for r in rows if r[3] == "ok")
-        ui.run_summary(rows, n_ok, len(rows) - n_ok, columns=SUMMARY_COLUMNS,
-                       replay=view.replay_lines(), log=log, failed=rc != 0)
+        ui.run_summary(
+            rows,
+            n_ok,
+            len(rows) - n_ok,
+            columns=SUMMARY_COLUMNS,
+            replay=view.replay_lines(),
+            log=log,
+            failed=rc != 0,
+        )
         sys.exit(rc)
     except KeyboardInterrupt:
         # Interrupt outside the rip try (TMDB prompt via rip_preamble, season
@@ -688,8 +805,9 @@ def rip_tv(args) -> None:
         # apply; main's fallback prints the one line for the not-yet-started
         # window.
         if preamble is not None:
-            _interrupted(preamble.log, [preamble.title_dir, preamble.stage], view,
-                         preexisting, inflight)
+            _interrupted(
+                preamble.log, [preamble.title_dir, preamble.stage], view, preexisting, inflight
+            )
         raise
     finally:
         view.close()

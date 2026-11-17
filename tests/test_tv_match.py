@@ -1,13 +1,22 @@
 """Tests for TV assignment math: floor, play-alls, the guess and prefill, the
 table's violation checks, audit."""
 
-import pytest
-
 from skive.tv_match import (
-    next_unstaged, assign_range, tv_floor, sum_disqualified,
-    sum_disqualified_windowed, playall_only, audit_ratio, audit_cell,
-    guess_pairing, prefill_assignment, episode_clashes, staged_claims,
-    unfilled_episodes, past_end_claims, sub_floor_titles,
+    assign_range,
+    audit_cell,
+    audit_ratio,
+    episode_clashes,
+    guess_pairing,
+    next_unstaged,
+    past_end_claims,
+    playall_only,
+    prefill_assignment,
+    staged_claims,
+    sub_floor_titles,
+    sum_disqualified,
+    sum_disqualified_windowed,
+    tv_floor,
+    unfilled_episodes,
 )
 
 
@@ -152,6 +161,7 @@ def test_playall_only_disarm_extra():
 
 # The engine seams extracted in slice 01
 
+
 def test_guess_pairing_pairs_episodes_with_titles():
     """The guess walk pairs each walked episode with its own title."""
     titles = [(0, 3940, 1), (1, 2855, 1), (2, 2852, 1), (3, 9643, 1)]
@@ -167,7 +177,11 @@ def test_prefill_assignment_uses_green_fit():
     runtimes = {1: 4020, 2: 2820, 3: 2820}
     names = {1: "ep1", 2: "ep2", 3: "ep3"}
     assert prefill_assignment(titles, {3}, runtimes, set(), names) == {
-        0: (1, 1), 1: (2, 2), 2: (3, 3), 3: (0, 0)}
+        0: (1, 1),
+        1: (2, 2),
+        2: (3, 3),
+        3: (0, 0),
+    }
 
 
 def test_prefill_assignment_starts_at_first_unstaged():
@@ -176,18 +190,23 @@ def test_prefill_assignment_starts_at_first_unstaged():
     runtimes = {4: 4020, 5: 2820, 6: 2820}
     names = {4: "ep4", 5: "ep5", 6: "ep6"}
     assert prefill_assignment(titles, set(), runtimes, {1, 2, 3}, names) == {
-        0: (4, 4), 1: (5, 5), 2: (6, 6)}
+        0: (4, 4),
+        1: (5, 5),
+        2: (6, 6),
+    }
 
 
 def test_prefill_assignment_fallback_one_per_eligible():
     """No runtimes (or no green matches): one episode per eligible title."""
     titles = [(0, 1000, 1), (1, 1000, 1), (2, 11482, 1)]
     names = {1: "ep1", 2: "ep2"}
-    assert prefill_assignment(titles, {2}, {}, set(), names) == {
-        0: (1, 1), 1: (2, 2), 2: (0, 0)}
+    assert prefill_assignment(titles, {2}, {}, set(), names) == {0: (1, 1), 1: (2, 2), 2: (0, 0)}
     # Zero green matches (runtimes wildly off) falls back the same way.
     assert prefill_assignment(titles, {2}, {1: 100, 2: 100}, set(), names) == {
-        0: (1, 1), 1: (2, 2), 2: (0, 0)}
+        0: (1, 1),
+        1: (2, 2),
+        2: (0, 0),
+    }
 
 
 def test_prefill_assignment_empty_and_playall_only_edges():

@@ -21,8 +21,12 @@ from pathlib import Path
 _repo = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo))  # the skive package
 
-from skive.validation import (VALIDATION_FILENAME, load_validation,
-                              read_extras_marker, write_validation)
+from skive.validation import (
+    VALIDATION_FILENAME,
+    load_validation,
+    read_extras_marker,
+    write_validation,
+)
 
 
 def main() -> int:
@@ -43,15 +47,19 @@ def main() -> int:
             continue
         marker = read_extras_marker(doc)
         movie = doc_path.parent.name
-        for dest in (root / "rip" / "movies" / movie / VALIDATION_FILENAME,
-                     root / "lossless" / "movies" / movie / VALIDATION_FILENAME):
+        for dest in (
+            root / "rip" / "movies" / movie / VALIDATION_FILENAME,
+            root / "lossless" / "movies" / movie / VALIDATION_FILENAME,
+        ):
             if not dest.is_file():
                 continue
             other = load_validation(dest)
             if other is None or read_extras_marker(other) == marker:
                 continue
-            print(f"{movie}: {'sync' if args.go else 'would sync'} "
-                  f"include={marker['include']} ({marker['quality']}) -> {dest}")
+            print(
+                f"{movie}: {'sync' if args.go else 'would sync'} "
+                f"include={marker['include']} ({marker['quality']}) -> {dest}"
+            )
             if args.go:
                 other["extras"] = marker
                 write_validation(dest, other)

@@ -33,8 +33,16 @@ from skive.common import Interrupted
 
 
 class Args:
-    def __init__(self, prefixes=None, keep=False, encoder="x265", workdir=None, verbose=0, retry=False,
-                 limit=0):
+    def __init__(
+        self,
+        prefixes=None,
+        keep=False,
+        encoder="x265",
+        workdir=None,
+        verbose=0,
+        retry=False,
+        limit=0,
+    ):
         self.prefixes = prefixes or []
         self.keep = keep
         self.encoder = encoder
@@ -254,6 +262,7 @@ fi
 
 # -- staging walk: both resting depths, junk labels ----------------------------
 
+
 def test_scan_finds_both_resting_depths(env):
     """_scan finds promoted files at <type>/<Name>/<file>.mkv AND fresh files at
     <type>/<Name>/d{disc}/<file>.mkv; the type level is still the first path
@@ -286,13 +295,16 @@ def test_junk_label_skipped_and_stays(env, capsys):
     err = capsys.readouterr().err
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Good One (2001)" / "Good One (2001).mkv").read_text() == "GOOD-MAIN"
+    assert (
+        vid / "library" / "movies" / "Good One (2001)" / "Good One (2001).mkv"
+    ).read_text() == "GOOD-MAIN"
     assert (vid / "rip" / "movies" / "Baz Extras (2003)" / "d2" / "B1_t00.mkv").exists()
     assert "skip (junk label" in err
     assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 1
 
 
 # -- default workdir -------------------------------------------------------------
+
 
 def test_workdir_defaults_to_cache_skive(env, monkeypatch):
     """No -w: work goes to ~/.cache/skive on disk, never $TMPDIR (tmpfs is
@@ -315,6 +327,7 @@ def test_workdir_defaults_to_cache_skive(env, monkeypatch):
 
 # -- prefix filter ---------------------------------------------------------------
 
+
 def test_prefix_run_ships_matching_title(env):
     vid = env / "vid"
     mk(vid, "rip/movies/Solo (2006)/d0/Solo (2006)_t00.mkv", "SOLO-MAIN")
@@ -322,7 +335,9 @@ def test_prefix_run_ships_matching_title(env):
     rc = transcode.run_transcode(Args(prefixes=["Solo (2006)"]))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Solo (2006)" / "Solo (2006).mkv").read_text() == "SOLO-MAIN"
+    assert (
+        vid / "library" / "movies" / "Solo (2006)" / "Solo (2006).mkv"
+    ).read_text() == "SOLO-MAIN"
 
 
 def test_no_match_prefix_exits_1(env, capsys):
@@ -337,23 +352,37 @@ def test_no_match_prefix_exits_1(env, capsys):
 
 def test_colon_prefix_matches_sanitized_file(env):
     vid = env / "vid"
-    mk(vid, "rip/movies/Team America World Police (2004)/d0/Team America World Police (2004)_t00.mkv", "TEAM-MAIN")
+    mk(
+        vid,
+        "rip/movies/Team America World Police (2004)/d0/Team America World Police (2004)_t00.mkv",
+        "TEAM-MAIN",
+    )
 
     rc = transcode.run_transcode(Args(prefixes=["Team America: World Police (2004)"]))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Team America World Police (2004)"
-            / "Team America World Police (2004).mkv").read_text() == "TEAM-MAIN"
+    assert (
+        vid
+        / "library"
+        / "movies"
+        / "Team America World Police (2004)"
+        / "Team America World Police (2004).mkv"
+    ).read_text() == "TEAM-MAIN"
 
 
 # -- movie main pick: doc-recorded main vs biggest-bytes fallback ----------------
 
+
 def _movie_doc(main, **over):
     """A minimal movie validation.json body (skive/validation.movie_document shape)."""
-    d = {"tmdb": {"id": "476", "type": "movie", "title": "Doc (2000)",
-                  "runtime_s": 6480},
-         "volume_label": "LABEL", "run": "deadbeef", "main": main,
-         "titles": [], "encodes": []}
+    d = {
+        "tmdb": {"id": "476", "type": "movie", "title": "Doc (2000)", "runtime_s": 6480},
+        "volume_label": "LABEL",
+        "run": "deadbeef",
+        "main": main,
+        "titles": [],
+        "encodes": [],
+    }
     d.update(over)
     return json.dumps(d)
 
@@ -365,10 +394,14 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     folder; the source is gone after the verified ship. The byte-winner _t
     title files as an extra beside it (slice 05's extras arm)."""
     vid = env / "vid"
-    mk(vid, "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t12.mkv",
-       "RED-BYTES-BYTES-BYTES-BYTES-BYTES")  # biggest bytes: the wrong film
-    mk(vid, "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t21.mkv",
-       "MAMMA-DUR-6251")                     # the recorded main
+    mk(
+        vid,
+        "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t12.mkv",
+        "RED-BYTES-BYTES-BYTES-BYTES-BYTES",
+    )  # biggest bytes: the wrong film
+    mk(
+        vid, "rip/movies/Mamma Mia! (2008)/Mamma Mia! (2008)_t21.mkv", "MAMMA-DUR-6251"
+    )  # the recorded main
     mk(vid, "rip/movies/Mamma Mia! (2008)/validation.json", _movie_doc("t21"))
 
     rc = transcode.run_transcode(Args())
@@ -376,8 +409,13 @@ def test_recorded_main_beats_bytes_and_appends_encodes(env):
     assert rc == 0
     L = vid / "library" / "movies" / "Mamma Mia! (2008)"
     assert (L / "Mamma Mia! (2008).mkv").read_text() == "MAMMA-DUR-6251"
-    entry = {"file": "Mamma Mia! (2008).mkv", "src": "t21", "dur_s": 6251,
-             "crop": None, "size": "1920x1080"}
+    entry = {
+        "file": "Mamma Mia! (2008).mkv",
+        "src": "t21",
+        "dur_s": 6251,
+        "crop": None,
+        "size": "1920x1080",
+    }
     assert json.loads((L / "validation.json").read_text())["encodes"] == [entry]
     staged = vid / "rip" / "movies" / "Mamma Mia! (2008)" / "validation.json"
     assert json.loads(staged.read_text())["encodes"] == [entry]
@@ -406,8 +444,14 @@ def test_null_main_and_absent_doc_keep_bytes_fallback(env):
     assert (L / "Legacy (2002)" / "Legacy (2002).mkv").read_text() == "LEGACY-BIG-BYTES"
     # the existing (null-main) doc still records the fallback encode's result
     assert json.loads((L / "Shorts (2001)" / "validation.json").read_text())["encodes"] == [
-        {"file": "Shorts (2001).mkv", "src": "t12", "dur_s": 5580,
-         "crop": None, "size": "1920x1080"}]
+        {
+            "file": "Shorts (2001).mkv",
+            "src": "t12",
+            "dur_s": 5580,
+            "crop": None,
+            "size": "1920x1080",
+        }
+    ]
     # no doc ever existed for the legacy folder -> no library copy
     assert not (L / "Legacy (2002)" / "validation.json").exists()
     # the unmarked non-main title rode the main's disposal (Extras marker)
@@ -416,6 +460,7 @@ def test_null_main_and_absent_doc_keep_bytes_fallback(env):
 
 
 # -- split main merge (slice 05): ordering, guard, mkvmerge failure -----------
+
 
 def test_merge_orders_nosuffix_first_then_parts(env):
     """Windows test_merge_orders_nosuffix_first_then_parts: a two-part main
@@ -430,7 +475,9 @@ def test_merge_orders_nosuffix_first_then_parts(env):
     rc = transcode.run_transcode(Args())
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Multi (2003)" / "Multi (2003).mkv").read_text() == "A-NOSUFFIXC-P1B-P2"
+    assert (
+        vid / "library" / "movies" / "Multi (2003)" / "Multi (2003).mkv"
+    ).read_text() == "A-NOSUFFIXC-P1B-P2"
 
 
 def test_merge_failure_leaves_sources_and_continues(env, capsys):
@@ -447,8 +494,10 @@ def test_merge_failure_leaves_sources_and_continues(env, capsys):
 
     assert rc == 1
     assert "FAILED mkvmerge" in err
-    assert sorted(p.name for p in (vid / "rip" / "movies" / "Bad (2001)" / "d1").iterdir()) == \
-        ["Bad (2001)_t00.p1.mkv", "Bad (2001)_t00.p2.mkv"]
+    assert sorted(p.name for p in (vid / "rip" / "movies" / "Bad (2001)" / "d1").iterdir()) == [
+        "Bad (2001)_t00.p1.mkv",
+        "Bad (2001)_t00.p2.mkv",
+    ]
     assert (vid / "library" / "movies" / "Good (2002)" / "Good (2002).mkv").read_text() == "GOOD"
 
 
@@ -468,8 +517,10 @@ def test_guard_mismatch_quarantines_all_parts_no_encode(env, capsys):
 
     assert rc == 1
     issues = vid / "issues" / "movies" / "Two (2001)"
-    assert sorted(p.name for p in issues.glob("*.mkv")) == \
-        ["Two (2001)_t00.p1.mkv", "Two (2001)_t00.p2.mkv"]
+    assert sorted(p.name for p in issues.glob("*.mkv")) == [
+        "Two (2001)_t00.p1.mkv",
+        "Two (2001)_t00.p2.mkv",
+    ]
     assert (issues / "rip.jsonl").exists()  # the run's evidence rides along
     assert sorted(p.name for p in (vid / "rip" / "movies" / "Two (2001)" / "d1").iterdir()) == []
     assert not (vid / "library" / "movies" / "Two (2001)").exists()
@@ -524,8 +575,10 @@ def test_guard_ffprobe_failure_quarantines(env):
     rc = transcode.run_transcode(Args())
 
     assert rc == 1
-    assert sorted(p.name for p in (vid / "issues" / "movies" / "Rip (2001)").glob("*.mkv")) == \
-        ["Rip (2001)_t00.p1.mkv", "Rip (2001)_t00.p2.mkv"]
+    assert sorted(p.name for p in (vid / "issues" / "movies" / "Rip (2001)").glob("*.mkv")) == [
+        "Rip (2001)_t00.p1.mkv",
+        "Rip (2001)_t00.p2.mkv",
+    ]
     assert not (env / "hb-calls.log").exists()
 
 
@@ -552,6 +605,7 @@ def test_guard_match_still_merges_and_passes_merged_file(env):
 
 # -- same track set, different order: align by remux, then merge -----------
 
+
 def test_order_mismatch_same_set_aligns_and_merges(env, capsys):
     """A part set whose tracks match but sit in a different order (the Two
     Towers discs' eng/dan subtitles) never quarantines: each later part
@@ -563,7 +617,7 @@ def test_order_mismatch_same_set_aligns_and_merges(env, capsys):
     mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "ORDER-B")
 
     rc = transcode.run_transcode(Args())
-    err = capsys.readouterr().err
+    _ = capsys.readouterr().err
 
     assert rc == 0
     L = vid / "library" / "movies" / "Two (2001)"
@@ -611,13 +665,14 @@ def test_align_still_mismatched_quarantines(env, capsys):
 
     assert rc == 1
     issues = vid / "issues" / "movies" / "Two (2001)"
-    assert sorted(p.name for p in issues.glob("*.mkv")) == \
-        ["Two (2001)_t00.p1.mkv", "Two (2001)_t00.p2.mkv"]
+    assert sorted(p.name for p in issues.glob("*.mkv")) == [
+        "Two (2001)_t00.p1.mkv",
+        "Two (2001)_t00.p2.mkv",
+    ]
     assert (issues / "rip.jsonl").exists()
     assert not (vid / "library" / "movies" / "Two (2001)" / "Two (2001).mkv").exists()
     assert "tracks still differ after alignment" in err
     assert list((env / "work").iterdir()) == []  # local copies and twins dropped
-
 
 
 def test_mkvmerge_output_captured_and_replayed_on_failure(env, capsys):
@@ -649,8 +704,11 @@ exit 2
     assert len(raws) == 1  # failure keeps the run's raw log
     lines = [json.loads(l) for l in raws[0].read_text(encoding="utf-8").splitlines()]
     mkv = [l for l in lines if l["tool"] == "mkvmerge"]
-    assert [l["line"] for l in mkv] == \
-        ["mkvmerge v99.0", "Progress: 50%", "Error: the source is broken"]
+    assert [l["line"] for l in mkv] == [
+        "mkvmerge v99.0",
+        "Progress: 50%",
+        "Error: the source is broken",
+    ]
 
 
 def test_interrupt_drops_part_copies_in_multi_part_copy_window(env, capsys, monkeypatch):
@@ -705,11 +763,12 @@ def test_recorded_main_parts_still_merge(env):
     L = vid / "library" / "movies" / "Parts (2007)"
     assert (L / "Parts (2007).mkv").read_text() == "P1-DUR-6251P2"
     assert json.loads((L / "validation.json").read_text())["encodes"] == [
-        {"file": "Parts (2007).mkv", "src": "t21", "dur_s": 6251,
-         "crop": None, "size": "1920x1080"}]
+        {"file": "Parts (2007).mkv", "src": "t21", "dur_s": 6251, "crop": None, "size": "1920x1080"}
+    ]
 
 
 # -- inline subtitle pass on mains (slice 03) -------------------------------------
+
 
 def test_pass_success_sidecars_beside_encode_and_archived(env):
     """Windows test_pass_success_sidecars_beside_encode_and_archived: the main
@@ -726,7 +785,9 @@ def test_pass_success_sidecars_beside_encode_and_archived(env):
     assert (L / "Side (2001).mkv").read_text() == "SUBS-ENG-DAN"
     assert (L / "Side (2001).dan.forced.srt").read_text().count(" --> ") == 1
     assert (L / "Side (2001).eng.srt").exists()
-    assert sorted(p.name for p in (vid / "lossless" / "movies" / "Side (2001)").iterdir()) == ["Side (2001)_t00.mkv"]
+    assert sorted(p.name for p in (vid / "lossless" / "movies" / "Side (2001)").iterdir()) == [
+        "Side (2001)_t00.mkv"
+    ]
     assert len((env / "seconv-calls.log").read_text().strip().splitlines()) == 2
     assert list((env / "work").iterdir()) == []  # sidecar temp dir cleaned up
 
@@ -745,8 +806,10 @@ def test_pass_settles_full_track_dupes_to_sdh(env):
     L = vid / "library" / "movies" / "Settle (2004)"
     assert (L / "Settle (2004).mkv").read_text() == "SUBS-SETTLE"
     assert sorted(p.name for p in L.glob("*.srt")) == [
-        "Settle (2004).eng.forced.srt", "Settle (2004).eng.sdh.srt",
-        "Settle (2004).eng.srt"]
+        "Settle (2004).eng.forced.srt",
+        "Settle (2004).eng.sdh.srt",
+        "Settle (2004).eng.srt",
+    ]
     assert (L / "Settle (2004).eng.srt").read_text().count(" --> ") == 1
     assert len((env / "seconv-calls.log").read_text().strip().splitlines()) == 3
 
@@ -781,9 +844,13 @@ def test_pass_failure_ships_encode_and_quarantines_source(env, capsys):
     run = runs.pop()
     ev = [json.loads(l) for l in (issues / "rip.jsonl").read_text().splitlines()]
     assert ev and all(l["run"] == run for l in ev)
-    assert (issues / f"{run}.jsonl").read_text() == (vid / "logs" / "raw" / f"{run}.jsonl").read_text()
+    assert (issues / f"{run}.jsonl").read_text() == (
+        vid / "logs" / "raw" / f"{run}.jsonl"
+    ).read_text()
     # batch continued: the second movie shipped (and archived, -k)
-    assert (vid / "library" / "movies" / "After (2002)" / "After (2002).mkv").read_text() == "AFTER-MAIN"
+    assert (
+        vid / "library" / "movies" / "After (2002)" / "After (2002).mkv"
+    ).read_text() == "AFTER-MAIN"
     assert not (vid / "rip" / "movies" / "After (2002)" / "d0" / "After (2002)_t00.mkv").exists()
     assert (vid / "lossless" / "movies" / "After (2002)" / "After (2002)_t00.mkv").exists()
 
@@ -827,6 +894,7 @@ def test_pass_barren_seconv_failure_drops_track(env, capsys):
 
 # -- HandBrake argument mapping --------------------------------------------------
 
+
 def test_x265_default_arg_list(env):
     """The default x265 run's HandBrake argv is the Windows script's, byte for
     byte (mod -i/-o paths): preset by probed height, no --encoder/--quality,
@@ -843,7 +911,8 @@ def test_x265_default_arg_list(env):
         r"--all-audio --aencoder copy "
         r"--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac "
         r"--audio-fallback ac3 --subtitle-lang-list zzz --all-subtitles --subtitle-burned=none$",
-        line)
+        line,
+    )
     assert "--encoder" not in line  # default x265 passes no --encoder flag
     assert "--quality" not in line
 
@@ -866,8 +935,9 @@ def test_x265_letterboxed_main_encodes_cropped(env):
     assert "--preset H.265 MKV 480p30" in line
     det = [l for l in run_log(env) if l.get("phase") == "detect"]
     assert "crop 0/72/0/72 -> 720x432" in det[0]["status"]
-    lib_doc = json.loads((vid / "library" / "movies" / "Bars (2001)" /
-                          "validation.json").read_text())
+    lib_doc = json.loads(
+        (vid / "library" / "movies" / "Bars (2001)" / "validation.json").read_text()
+    )
     assert lib_doc["encodes"][0]["crop"] == "0/72/0/72"
 
 
@@ -902,10 +972,12 @@ def test_vaapi_flags(env):
     assert not (env / "hb-calls.log").exists()
     ff = (env / "ffmpeg-calls.log").read_text()
     assert "-c:v hevc_vaapi -rc_mode CQP -global_quality 24" in ff
-    assert ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
-            "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload") in ff
+    assert (
+        "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
+        "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload"
+    ) in ff
     assert "-map 0:a? -c:a copy" in ff
-    assert "-map 0:s?" not in ff   # features encode subless (sidecars carry subs)
+    assert "-map 0:s?" not in ff  # features encode subless (sidecars carry subs)
     assert "-low_power" not in ff  # classic entrypoint needs no low_power
 
 
@@ -929,15 +1001,24 @@ def test_gate_matches_trial_self_check():
     """The ported gate returns the trial script's self-check verdicts exactly
     (scripts/crop_detect_test.py --self-check is the oracle)."""
     cases = [  # (readings, width, height, expected crop or None)
-        ([(0, 0, 0, 0)] * 6, 1024, 576, None),              # clean frame
+        ([(0, 0, 0, 0)] * 6, 1024, 576, None),  # clean frame
         ([(0, 70, 0, 70)] * 6, 1024, 576, (0, 70, 0, 70)),  # plain letterbox
-        ([(8, 0, 8, 0)] * 6, 1024, 576, None),              # under 16 px = noise
-        ([(0, 200, 0, 200)] * 6, 1024, 576, None),          # 69% of height = error
-        ([(70, 0, 70, 0), (70, 0, 70, 0), (0, 0, 0, 0),
-          (70, 0, 70, 0), (70, 0, 70, 0), (70, 0, 70, 0)],
-         1024, 576, (70, 0, 70, 0)),                      # lone dissent absorbed
-        ([(70, 0, 70, 0)] * 3 + [(0, 0, 0, 0)] * 3,
-         1024, 576, None),                                # half dissent = mixed AR
+        ([(8, 0, 8, 0)] * 6, 1024, 576, None),  # under 16 px = noise
+        ([(0, 200, 0, 200)] * 6, 1024, 576, None),  # 69% of height = error
+        (
+            [
+                (70, 0, 70, 0),
+                (70, 0, 70, 0),
+                (0, 0, 0, 0),
+                (70, 0, 70, 0),
+                (70, 0, 70, 0),
+                (70, 0, 70, 0),
+            ],
+            1024,
+            576,
+            (70, 0, 70, 0),
+        ),  # lone dissent absorbed
+        ([(70, 0, 70, 0)] * 3 + [(0, 0, 0, 0)] * 3, 1024, 576, None),  # half dissent = mixed AR
         ([(20, 0, 40, 0)] * 6, 1024, 576, (20, 0, 40, 0)),  # asymmetric pillarbox
     ]
     for readings, w, h, want in cases:
@@ -975,13 +1056,18 @@ def test_vaapi_letterboxed_main_encodes_cropped(env):
     lines = run_log(env)
     order = [l.get("phase") for l in lines]
     # a run-start note reuses phase "encode", so compare the item's tail
-    assert order.index("copy") < order.index("detect") \
-        < len(order) - order[::-1].index("encode") - 1 < order.index("subs")
+    assert (
+        order.index("copy")
+        < order.index("detect")
+        < len(order) - order[::-1].index("encode") - 1
+        < order.index("subs")
+    )
     det = [l for l in lines if l.get("phase") == "detect"]
     assert "crop 0/72/0/72 -> 720x432" in det[0]["status"]
     # the validation encodes entry carries the applied crop and the geometry
-    lib_doc = json.loads((vid / "library" / "movies" / "Bars (2001)" /
-                          "validation.json").read_text())
+    lib_doc = json.loads(
+        (vid / "library" / "movies" / "Bars (2001)" / "validation.json").read_text()
+    )
     entry = lib_doc["encodes"][0]
     assert entry["crop"] == "0/72/0/72"
     assert entry["size"] == "720x576"
@@ -997,7 +1083,8 @@ def test_vaapi_subs_pass_overlaps_the_encode(env, monkeypatch):
     _mk_main(vid, "Twin (2001)", "SUBS-ENG-DAN")
 
     from skive import subs as subs_mod
-    started = threading.Event()   # the pass's thread is running
+
+    started = threading.Event()  # the pass's thread is running
     in_encode = threading.Event()  # the encode is running
     real_run_pass = subs_mod.run_pass
 
@@ -1041,12 +1128,13 @@ def test_vaapi_unstable_bars_refuse_and_ship_uncropped(env):
     rc = transcode.run_transcode(Args(encoder="vaapi"))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Wobbly (2002)" /
-            "Wobbly (2002).mkv").exists()
+    assert (vid / "library" / "movies" / "Wobbly (2002)" / "Wobbly (2002).mkv").exists()
     ff = (env / "ffmpeg-calls.log").read_text()
     assert "crop=iw-" not in ff
-    assert ("bwdif=mode=send_frame:parity=auto:deint=interlaced,"
-            "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload") in ff
+    assert (
+        "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
+        "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload"
+    ) in ff
     lines = run_log(env)
     det = [l for l in lines if l.get("phase") == "detect"]
     assert "unstable left" in det[0]["status"]
@@ -1061,8 +1149,9 @@ def test_vaapi_tight_main_detection_failed_ships_uncropped(env):
     rc = transcode.run_transcode(Args(encoder="vaapi"))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Tight (2003)" /
-            "Tight (2003).mkv").read_text() == "TIGHT-MAIN"
+    assert (
+        vid / "library" / "movies" / "Tight (2003)" / "Tight (2003).mkv"
+    ).read_text() == "TIGHT-MAIN"
     assert "crop=iw-" not in (env / "ffmpeg-calls.log").read_text()
     lines = run_log(env)
     det = [l for l in lines if l.get("phase") == "detect"]
@@ -1078,8 +1167,7 @@ def test_detect_never_fails_the_item(env):
     rc = transcode.run_transcode(Args(encoder="vaapi"))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Badprobe (2004)" /
-            "Badprobe (2004).mkv").exists()
+    assert (vid / "library" / "movies" / "Badprobe (2004)" / "Badprobe (2004).mkv").exists()
     det = [l for l in run_log(env) if l.get("phase") == "detect"]
     assert "detection failed" in det[0]["status"]
 
@@ -1140,8 +1228,10 @@ def test_encode_vaapi_footer_progress_from_ffmpeg_time(tmp_path, monkeypatch):
     lines = [
         "Input #0, matroska,webm, from 'in.mkv':\n",
         "  Duration: 01:40:00.00, start: 0.000000, bitrate: 6234 kb/s\n",
-        "frame= 9000 fps=120 q=-0.0 size=  204800KiB time=00:25:00.00 "
-        "bitrate=1118.5kbits/s speed=5.00x\n",
+        (
+            "frame= 9000 fps=120 q=-0.0 size=  204800KiB time=00:25:00.00 "
+            "bitrate=1118.5kbits/s speed=5.00x\n"
+        ),
     ]
 
     class FakeProc:
@@ -1179,17 +1269,20 @@ def test_dvd_not_upscaled(env):
 
 # -- movie extras (slice 05): rolled names, legacy labels, pass-through argv ---
 
+
 def test_extra_number_rolls_past_taken_names(env):
     """Windows test_extra_number_rolls_past_taken_names: a bonus _t title files
     as ` - Extra NN` — its disc number when free, rolled forward when an
     existing Extra file already claims it; never a collision, never a staging
     label in the library."""
     vid = env / "vid"
-    mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t00.mkv",
-       "COLL-MAIN-BYTES-BYTES-BYTES")
+    mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t00.mkv", "COLL-MAIN-BYTES-BYTES-BYTES")
     mk(vid, "rip/movies/Coll (2006)/d1/Coll (2006)_t03.mkv", "COLL-EXTRA")
-    mk(vid, "rip/movies/Coll (2006)/validation.json",
-       _movie_doc("t00", extras={"include": True, "quality": "superfast"}))
+    mk(
+        vid,
+        "rip/movies/Coll (2006)/validation.json",
+        _movie_doc("t00", extras={"include": True, "quality": "superfast"}),
+    )
     ex = vid / "library" / "movies" / "Coll (2006)" / "extras"
     ex.mkdir(parents=True)
     (ex / "Coll (2006) - Extra 03.mkv").write_text("TAKEN")
@@ -1206,19 +1299,25 @@ def test_legacy_eNN_extras_still_file(env):
     parse and file under extras/ (backward compat)."""
     vid = env / "vid"
     mk(vid, "rip/movies/Old (2001)/d0/Old (2001)_e02.mkv", "OLD-EXTRA")
-    mk(vid, "rip/movies/Old (2001)/validation.json",
-       _movie_doc(None, extras={"include": True, "quality": "superfast"}))
+    mk(
+        vid,
+        "rip/movies/Old (2001)/validation.json",
+        _movie_doc(None, extras={"include": True, "quality": "superfast"}),
+    )
 
     rc = transcode.run_transcode(Args())
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Old (2001)" / "extras" /
-            "Old (2001) - Extra 02.mkv").read_text() == "OLD-EXTRA"
+    assert (
+        vid / "library" / "movies" / "Old (2001)" / "extras" / "Old (2001) - Extra 02.mkv"
+    ).read_text() == "OLD-EXTRA"
 
 
-_ARGV_TAIL = ('--preset H.265 MKV 1080p30 --all-audio --aencoder copy '
-              '--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac '
-              '--audio-fallback ac3 ')
+_ARGV_TAIL = (
+    "--preset H.265 MKV 1080p30 --all-audio --aencoder copy "
+    "--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac "
+    "--audio-fallback ac3 "
+)
 
 
 def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
@@ -1228,10 +1327,15 @@ def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
     pass-through (every embedded track stays) — byte for byte, mod -i/-o
     paths."""
     vid = env / "vid"
-    mk(vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t00.mkv", "ARG-MAIN-BYTES")  # outweighs t01 so t00 is the main
+    mk(
+        vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t00.mkv", "ARG-MAIN-BYTES"
+    )  # outweighs t01 so t00 is the main
     mk(vid, "rip/movies/Arg (2001)/d0/Arg (2001)_t01.mkv", "ARG-EXTRA")
-    mk(vid, "rip/movies/Arg (2001)/validation.json",
-       _movie_doc("t00", extras={"include": True, "quality": "superfast"}))
+    mk(
+        vid,
+        "rip/movies/Arg (2001)/validation.json",
+        _movie_doc("t00", extras={"include": True, "quality": "superfast"}),
+    )
 
     rc = transcode.run_transcode(Args())
 
@@ -1241,15 +1345,20 @@ def test_feature_argv_zero_subs_and_extras_argv_byte_identical(env):
     feat = next(l for l in lines if "_t00.h265.mkv" in l)
     extra = next(l for l in lines if "_t01.h265.mkv" in l)
     # feature: the no-match language list rides in front of --all-subtitles
-    assert feat.split(".h265.mkv ", 1)[1] == _ARGV_TAIL + \
-        "--subtitle-lang-list zzz --all-subtitles --subtitle-burned=none"
+    assert (
+        feat.split(".h265.mkv ", 1)[1]
+        == _ARGV_TAIL + "--subtitle-lang-list zzz --all-subtitles --subtitle-burned=none"
+    )
     # extra: byte-identical to the pass-through argv, plus the superfast
     # encoder preset the marker asked for (Extras marker)
-    assert extra.split(".h265.mkv ", 1)[1] == \
-        _ARGV_TAIL + "--all-subtitles --subtitle-burned=none --encoder-preset superfast"
+    assert (
+        extra.split(".h265.mkv ", 1)[1]
+        == _ARGV_TAIL + "--all-subtitles --subtitle-burned=none --encoder-preset superfast"
+    )
 
 
 # -- -k keep + --retry (slice 06): source disposition -------------------------
+
 
 def test_scenario2_keep_archive(env, capsys):
     """Windows test_scenario2_keep_archive: -k parks the verified lossless
@@ -1264,8 +1373,10 @@ def test_scenario2_keep_archive(env, capsys):
 
     assert rc == 0
     assert not list((vid / "rip" / "movies" / "Keep (2005)" / "d1").iterdir())  # sources moved out
-    assert sorted(p.name for p in (vid / "lossless" / "movies" / "Keep (2005)").iterdir()) == \
-        ["Keep (2005) - Extra 01.p2.mkv", "Keep (2005)_t00.mkv"]
+    assert sorted(p.name for p in (vid / "lossless" / "movies" / "Keep (2005)").iterdir()) == [
+        "Keep (2005) - Extra 01.p2.mkv",
+        "Keep (2005)_t00.mkv",
+    ]
     # the unmarked extra rode the main's disposal (Extras marker): parked,
     # never encoded
     assert not (vid / "library" / "movies" / "Keep (2005)" / "extras").exists()
@@ -1292,6 +1403,7 @@ def test_keep_clobber_refusal(env, capsys):
 
 # -- already in the library: skip, park in lossless ---------------------------
 
+
 def test_dup_main_skips_encode_and_parks(env):
     """A staged main whose library encode already exists never re-encodes:
     the source parks in lossless/ with no -k, the library copy is untouched,
@@ -1306,7 +1418,9 @@ def test_dup_main_skips_encode_and_parks(env):
 
     assert rc == 0
     assert (L / "Dup (2001).mkv").read_text() == "EXISTING-ENCODE"
-    assert (vid / "lossless" / "movies" / "Dup (2001)" / "Dup (2001)_t00.mkv").read_text() == "DUP-MAIN"
+    assert (
+        vid / "lossless" / "movies" / "Dup (2001)" / "Dup (2001)_t00.mkv"
+    ).read_text() == "DUP-MAIN"
     assert not (vid / "rip" / "movies" / "Dup (2001)" / "d1" / "Dup (2001)_t00.mkv").exists()
     assert not (env / "hb-calls.log").exists()  # never encoded
     skips = [d for d in run_log(env) if d.get("phase") == "skip"]
@@ -1331,7 +1445,7 @@ def test_dup_main_deleted_when_lossless_holds_it(env):
     assert (done / "Dup (2001)_t00.mkv").read_text() == "KEPT-LOSSLESS"
     assert not (vid / "rip" / "movies" / "Dup (2001)" / "d1" / "Dup (2001)_t00.mkv").exists()
     assert not (env / "hb-calls.log").exists()
-    assert "deleted" in [d["status"] for d in run_log(env) if d.get("phase") == "skip"][0]
+    assert "deleted" in next(d["status"] for d in run_log(env) if d.get("phase") == "skip")
 
 
 def test_dup_split_main_parks_all_parts_and_riding_extras(env):
@@ -1369,8 +1483,9 @@ def test_dup_tv_episode_skips_and_parks(env):
 
     assert rc == 0
     assert (E / "Dup Show (2003) - S01E01.mkv").read_text() == "EXISTING-EP"
-    assert (vid / "lossless" / "tv" / "Dup Show (2003)" /
-            "Dup Show (2003)_S01E01.mkv").read_text() == "DUP-EP"
+    assert (
+        vid / "lossless" / "tv" / "Dup Show (2003)" / "Dup Show (2003)_S01E01.mkv"
+    ).read_text() == "DUP-EP"
     assert not (vid / "rip" / "tv" / "Dup Show (2003)" / "Dup Show (2003)_S01E01.mkv").exists()
     assert not (env / "hb-calls.log").exists()
 
@@ -1388,8 +1503,12 @@ def test_dup_main_does_not_burn_session_cap(env):
     rc = transcode.run_transcode(Args(limit=1))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Fresh (2002)" / "Fresh (2002).mkv").read_text() == "FRESH-MAIN"
-    assert (vid / "lossless" / "movies" / "Dup (2001)" / "Dup (2001)_t00.mkv").read_text() == "DUP-MAIN"
+    assert (
+        vid / "library" / "movies" / "Fresh (2002)" / "Fresh (2002).mkv"
+    ).read_text() == "FRESH-MAIN"
+    assert (
+        vid / "lossless" / "movies" / "Dup (2001)" / "Dup (2001)_t00.mkv"
+    ).read_text() == "DUP-MAIN"
     assert not (vid / "rip" / "movies" / "Fresh (2002)" / "d1" / "Fresh (2002)_t00.mkv").exists()
 
 
@@ -1403,7 +1522,9 @@ def test_retry_success_ships_and_empties_issues(env):
     rc = transcode.run_transcode(Args(retry=True))
 
     assert rc == 0
-    assert (vid / "library" / "movies" / "Heal (2002)" / "Heal (2002).mkv").read_text() == "HEAL-MAIN"
+    assert (
+        vid / "library" / "movies" / "Heal (2002)" / "Heal (2002).mkv"
+    ).read_text() == "HEAL-MAIN"
     assert not list((vid / "issues" / "movies" / "Heal (2002)").glob("*.mkv"))
 
 
@@ -1417,10 +1538,12 @@ def test_retry_success_with_keep_archives_to_lossless(env):
     rc = transcode.run_transcode(Args(retry=True, keep=True))
 
     assert rc == 0
-    assert (vid / "library" / "tv" / "Ret Show (2003)" / "Season 01" /
-            "Ret Show (2003) - S01E01.mkv").read_text() == "SUBS-ENG-DAN"
-    assert sorted(p.name for p in (vid / "lossless" / "tv" / "Ret Show (2003)").iterdir()) == \
-        ["Ret Show (2003)_S01E01.mkv"]
+    assert (
+        vid / "library" / "tv" / "Ret Show (2003)" / "Season 01" / "Ret Show (2003) - S01E01.mkv"
+    ).read_text() == "SUBS-ENG-DAN"
+    assert sorted(p.name for p in (vid / "lossless" / "tv" / "Ret Show (2003)").iterdir()) == [
+        "Ret Show (2003)_S01E01.mkv"
+    ]
     assert not list((vid / "issues" / "tv" / "Ret Show (2003)").glob("*.mkv"))
 
 
@@ -1448,7 +1571,9 @@ def test_retry_failure_requarantines_in_place(env, capsys):
     ev = [json.loads(l) for l in (folder / "rip.jsonl").read_text().splitlines()]
     assert ev and all(l["run"] == run for l in ev)
     assert any("FAILED handbrake: Stuck (2004)_t00.mkv" in l["status"] for l in ev)
-    assert (folder / f"{run}.jsonl").read_text() == (vid / "logs" / "raw" / f"{run}.jsonl").read_text()
+    assert (folder / f"{run}.jsonl").read_text() == (
+        vid / "logs" / "raw" / f"{run}.jsonl"
+    ).read_text()
 
 
 def test_retry_subtitle_failure_leaves_source_in_issues(env, capsys):
@@ -1485,11 +1610,12 @@ def test_retry_obeys_traveled_doc(env):
     L = vid / "library" / "movies" / "Heal (2008)"
     assert (L / "Heal (2008).mkv").read_text() == "HEAL-REAL"
     assert json.loads((L / "validation.json").read_text())["encodes"] == [
-        {"file": "Heal (2008).mkv", "src": "t21", "dur_s": 5580,
-         "crop": None, "size": "1920x1080"}]
+        {"file": "Heal (2008).mkv", "src": "t21", "dur_s": 5580, "crop": None, "size": "1920x1080"}
+    ]
 
 
 # -- run log / raw log shapes -----------------------------------------------------
+
 
 def test_log_line_shape(env):
     vid = env / "vid"
@@ -1497,7 +1623,16 @@ def test_log_line_shape(env):
     transcode.run_transcode(Args(prefixes=["Solo (2006)"]))
     lines = run_log(env)
     first = lines[0]
-    assert list(first) == ["ts", "run", "script", "software", "name", "phase", "status", "elapsed_s"]
+    assert list(first) == [
+        "ts",
+        "run",
+        "script",
+        "software",
+        "name",
+        "phase",
+        "status",
+        "elapsed_s",
+    ]
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$", first["ts"])
     assert re.fullmatch(r"[0-9a-f]{8}", first["run"])
     assert first["script"] == "skive transcode"
@@ -1544,7 +1679,7 @@ def test_encode_exit0_without_output_fails_like_encode_failure(env, tmp_path, ca
     the run exits 1, and no downstream FATAL happens."""
     (tmp_path / "bin" / "HandBrakeCLI").write_text(
         f"""#!/bin/sh
-{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / 'hb-calls.log'}"
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / "hb-calls.log"}"
 echo "hb: work initialization error"
 exit 0
 """
@@ -1597,7 +1732,7 @@ def test_progress_lines_all_print_at_vv(env, tmp_path, capsys):
     """At -vv every progress update prints (and the run still succeeds)."""
     (tmp_path / "bin" / "HandBrakeCLI").write_text(
         f"""#!/bin/sh
-{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / 'hb-calls.log'}"
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / "hb-calls.log"}"
 in=""; out=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -1620,7 +1755,9 @@ cat "$in" > "$out"
 
     assert rc == 0
     assert captured.err.count("handbrake  Encoding:") == 3
-    assert (vid / "library" / "movies" / "Verbose (2005)" / "Verbose (2005).mkv").read_text() == "VERBOSE"
+    assert (
+        vid / "library" / "movies" / "Verbose (2005)" / "Verbose (2005).mkv"
+    ).read_text() == "VERBOSE"
 
 
 def test_unreachable_share_fails_loudly(tmp_path, monkeypatch, capsys):
@@ -1631,6 +1768,7 @@ def test_unreachable_share_fails_loudly(tmp_path, monkeypatch, capsys):
 
 
 # -- Interrupt (Ctrl+C), skive.common's POSIX arm ---------------------------------
+
 
 def test_interrupt_drops_temp_partial_source_stays_log_130(env, capsys, monkeypatch):
     """Ctrl+C mid-encode: the partial .h265 temp output and the local copy are
@@ -1649,7 +1787,9 @@ def test_interrupt_drops_temp_partial_source_stays_log_130(env, capsys, monkeypa
     rc = transcode.run_transcode(Args())
 
     assert rc == 130
-    assert (vid / "rip" / "movies" / "Stop (2007)" / "d0" / "Stop (2007)_t00.mkv").exists()  # source untouched
+    assert (
+        vid / "rip" / "movies" / "Stop (2007)" / "d0" / "Stop (2007)_t00.mkv"
+    ).exists()  # source untouched
     assert list(work.iterdir()) == []  # local copy + partial encode dropped
     log = run_log(env)
     enc = [l for l in log if l["phase"] == "encode"]
@@ -1703,11 +1843,13 @@ def test_phase_lines_carry_statuses_and_item_summary(env, capsys):
     assert by["copy"]["elapsed_s"] >= 0 and by["encode"]["elapsed_s"] >= 0
     cap = capsys.readouterr()
     assert re.search(
-        r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ \+ ship \S+\n", cap.err)
+        r"ok    Marked \(2009\)_t00\.mkv: copy \S+ \+ subs \S+ \+ detect \S+ \+ encode \S+ \+ ship \S+\n",
+        cap.err,
+    )
     assert re.search(r"ok    1 ok · \d+s\n$", cap.err)  # the result line
     # plain keeps its pre-frame forms: the phase lines are TTY-only
     assert re.search(r"\ninfo  copied in \S+ \(\d+ MB at \d+ MB/s\)\n", cap.err)
-    assert not re.search(r"^\S+ +(copy|subs|crop|encode) ", cap.err, re.M)
+    assert not re.search(r"^\S+ +(copy|subs|crop|encode) ", cap.err, re.MULTILINE)
 
 
 def test_keep_banner_prints_only_when_something_parked(env, capsys):
@@ -1741,6 +1883,7 @@ def test_keep_banner_prints_only_when_something_parked(env, capsys):
 
 # -- TV branch (slice 04): seasons/specials/doubles/junk, show doc, extras -----
 
+
 def test_scenario6_tv_seasons_specials_junk(env, capsys):
     """Windows test_scenario6: the TV root encodes every staged episode (the
     double stays one S01E05-E06 file), season 0 files into Specials, the TV
@@ -1765,7 +1908,9 @@ def test_scenario6_tv_seasons_specials_junk(env, capsys):
     assert (TL / "Specials" / "Show (2010) - S00E01.mkv").read_text() == "TV-SPECIAL"
     assert (TL / "extras" / "Show (2010) - Extra 03.mkv").read_text() == "TV-EXTRA"
     assert (vid / "library" / "movies" / "Mov (2011)" / "Mov (2011).mkv").read_text() == "MOV-MAIN"
-    assert [p.name for p in (vid / "rip" / "tv" / "Show (2010)" / "d1").iterdir()] == ["B1_S01E02.mkv"]
+    assert [p.name for p in (vid / "rip" / "tv" / "Show (2010)" / "d1").iterdir()] == [
+        "B1_S01E02.mkv"
+    ]
     assert "skip (junk label" in err
     assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 5
 
@@ -1776,11 +1921,16 @@ def test_tv_show_doc_copies_into_season_folders(env):
     into each Season folder beside its encodes — the checker reads it there;
     the extras folder gets no copy."""
     vid = env / "vid"
-    doc = json.dumps({
-        "tmdb": {"id": "456", "type": "tv", "title": "Show (2010)"},
-        "seasons": [{"season": 1, "episodes": [], "discs": []},
-                    {"season": 0, "episodes": [], "discs": []}],
-        "encodes": []})
+    doc = json.dumps(
+        {
+            "tmdb": {"id": "456", "type": "tv", "title": "Show (2010)"},
+            "seasons": [
+                {"season": 1, "episodes": [], "discs": []},
+                {"season": 0, "episodes": [], "discs": []},
+            ],
+            "encodes": [],
+        }
+    )
     mk(vid, "rip/tv/Show (2010)/validation.json", doc)
     mk(vid, "rip/tv/Show (2010)/d0/Show (2010)_S01E02.mkv", "TV-E02")
     mk(vid, "rip/tv/Show (2010)/d1/Show (2010)_S00E01.mkv", "TV-SPECIAL")
@@ -1819,8 +1969,9 @@ def test_scenario7_tv_extras_disc(env):
     rc = transcode.run_transcode(Args())
 
     assert rc == 0
-    assert (vid / "library" / "tv" / "Solo Show (2012)" / "extras" /
-            "Solo Show (2012) - Extra 04.mkv").read_text() == "TVONLY-EXTRA"
+    assert (
+        vid / "library" / "tv" / "Solo Show (2012)" / "extras" / "Solo Show (2012) - Extra 04.mkv"
+    ).read_text() == "TVONLY-EXTRA"
     assert not (vid / "library" / "movies" / "Solo Show (2012)").exists()
     assert len((env / "hb-calls.log").read_text().strip().splitlines()) == 1
 
@@ -1835,8 +1986,9 @@ def test_tv_lowercase_root_is_tv(env):
     rc = transcode.run_transcode(Args())
 
     assert rc == 0
-    assert (vid / "library" / "tv" / "Show (2013)" / "Season 01" /
-            "Show (2013) - S01E01.mkv").read_text() == "LOW-TV"
+    assert (
+        vid / "library" / "tv" / "Show (2013)" / "Season 01" / "Show (2013) - S01E01.mkv"
+    ).read_text() == "LOW-TV"
 
 
 def test_tv_episode_pass_and_zero_subs_encode(env):
@@ -1907,6 +2059,7 @@ def test_interrupt_drops_tv_sidecar_dir_and_temp(env, monkeypatch):
 
 # -- extras marker + session cap ------------------------------------------------
 
+
 def test_marked_extra_encodes_unmarked_rides_disposal(env, capsys):
     """The extras marker gates the extras arm: include=true encodes at
     superfast; unmarked extras never encode — they ride the main's disposal
@@ -1914,8 +2067,11 @@ def test_marked_extra_encodes_unmarked_rides_disposal(env, capsys):
     vid = env / "vid"
     mk(vid, "rip/movies/Gate (2001)/d0/Gate (2001)_t00.mkv", "GATE-MAIN")
     mk(vid, "rip/movies/Gate (2001)/d0/Gate (2001)_t01.mkv", "GATE-KEEPER")
-    mk(vid, "rip/movies/Gate (2001)/validation.json",
-       _movie_doc("t00", extras={"include": True, "quality": "superfast"}))
+    mk(
+        vid,
+        "rip/movies/Gate (2001)/validation.json",
+        _movie_doc("t00", extras={"include": True, "quality": "superfast"}),
+    )
     mk(vid, "rip/movies/Plain (2002)/d0/Plain (2002)_t00.mkv", "PLAIN-MAIN")
     mk(vid, "rip/movies/Plain (2002)/d0/Plain (2002)_t01.mkv", "PLAIN-EX")
 
@@ -1923,7 +2079,9 @@ def test_marked_extra_encodes_unmarked_rides_disposal(env, capsys):
 
     assert rc == 0
     L = vid / "library" / "movies"
-    assert (L / "Gate (2001)" / "extras" / "Gate (2001) - Extra 01.mkv").read_text() == "GATE-KEEPER"
+    assert (
+        L / "Gate (2001)" / "extras" / "Gate (2001) - Extra 01.mkv"
+    ).read_text() == "GATE-KEEPER"
     assert not (L / "Plain (2002)" / "extras").exists()
     assert not (vid / "rip" / "movies" / "Plain (2002)" / "d0" / "Plain (2002)_t01.mkv").exists()
     err = capsys.readouterr().err
@@ -1951,7 +2109,9 @@ def test_plain_default_encodes_all_mains_no_cap(env, capsys):
     """The default is unlimited: with more than 4 mains staged, a plain run
     encodes all of them and defers nothing."""
     vid = env / "vid"
-    for n, name in enumerate(["Aaa (2001)", "Bbb (2002)", "Ccc (2003)", "Ddd (2004)", "Eee (2005)"]):
+    for n, name in enumerate(
+        ["Aaa (2001)", "Bbb (2002)", "Ccc (2003)", "Ddd (2004)", "Eee (2005)"]
+    ):
         mk(vid, f"rip/movies/{name}/{name}_t00.mkv", name[:3])
 
     rc = transcode.run_transcode(Args())
@@ -1978,8 +2138,10 @@ def test_plain_skips_precede_the_base_opener_and_counter_counts_the_session(env,
     assert rc == 0
     lines = capsys.readouterr().err.splitlines()
     assert lines[0].startswith("info  skip (junk label -- mid-rip or failed rename): ")
-    assert lines[1] == ("info  skive transcode \u00b7 1 to encode \u00b7 1 main(s) this session "
-                        "(cap 1, ~2\u201310 min) \u00b7 1 deferred")
+    assert lines[1] == (
+        "info  skive transcode \u00b7 1 to encode \u00b7 1 main(s) this session "
+        "(cap 1, ~2\u201310 min) \u00b7 1 deferred"
+    )
     assert lines[2] == "info  1/1  Aaa (2001)"
 
 
@@ -2015,12 +2177,23 @@ def test_tty_run_warnings_print_under_the_opener_and_replay(env, monkeypatch):
     import io
 
     from rich.console import Console
+
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     buf = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(
-        file=buf, force_terminal=True, color_system=None, width=200, theme=ui.THEME,
-        highlight=False, emoji=False))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system=None,
+            width=200,
+            theme=ui.THEME,
+            highlight=False,
+            emoji=False,
+        ),
+    )
     vid = env / "vid"
     mk(vid, "rip/movies/Aaa (2001)/Aaa (2001)_t00.mkv", "AAA")
     mk(vid, "rip/movies/Aaa (2001)/validation.json", _movie_doc(42))
@@ -2039,7 +2212,10 @@ def test_tty_run_warnings_print_under_the_opener_and_replay(env, monkeypatch):
     box_end = next(n for n, l in enumerate(lines) if l.startswith("\u2570"))
     assert lines[box_end + 1].startswith("! skip (junk label -- mid-rip or failed rename): ")
     assert lines[box_end + 2] == "! no staged MKVs match: Nope (2999)"
-    assert lines[box_end + 3].startswith("! validation: ") and "unreadable main 42" in lines[box_end + 3]
+    assert (
+        lines[box_end + 3].startswith("! validation: ")
+        and "unreadable main 42" in lines[box_end + 3]
+    )
     replay = view.replay_lines()
     assert replay[0].startswith("warn  skip (junk label")
     assert replay[1] == "warn  no staged MKVs match: Nope (2999)"
@@ -2051,12 +2227,23 @@ def _tty_run(monkeypatch, args, width=200):
     import io
 
     from rich.console import Console
+
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     buf = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(
-        file=buf, force_terminal=True, color_system=None, width=width, theme=ui.THEME,
-        highlight=False, emoji=False))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system=None,
+            width=width,
+            theme=ui.THEME,
+            highlight=False,
+            emoji=False,
+        ),
+    )
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
@@ -2087,8 +2274,10 @@ def test_all_junk_scan_still_opens_tty_and_stays_plain_piped(env, monkeypatch, c
     assert ui.view() is None
 
 
-@pytest.mark.parametrize("staged", ["rip/movies/Ocr (2001)/d0/Ocr (2001)_t00.mkv",
-                                    "rip/tv/Ocr (2001)/d0/Ocr (2001)_S01E01.mkv"])
+@pytest.mark.parametrize(
+    "staged",
+    ["rip/movies/Ocr (2001)/d0/Ocr (2001)_t00.mkv", "rip/tv/Ocr (2001)/d0/Ocr (2001)_S01E01.mkv"],
+)
 def test_tty_subs_failure_closes_with_the_failing_track(env, monkeypatch, staged):
     """Movie and TV-episode paths: the closing rule names the failing track."""
     mk(env / "vid", staged, "SUBS-FAIL")
@@ -2106,8 +2295,9 @@ def test_tty_encode_failure_closes_with_phase_and_reason(env, monkeypatch):
     rc, lines, _ = _tty_run(monkeypatch, Args())
 
     assert rc == 1
-    assert any(l.startswith("\u2570\u2500 \u2717 failed: encode (handbrake exit 3) ")
-               for l in lines)
+    assert any(
+        l.startswith("\u2570\u2500 \u2717 failed: encode (handbrake exit 3) ") for l in lines
+    )
 
 
 def test_tty_exception_closes_with_phase_and_reason(env, monkeypatch):
@@ -2129,7 +2319,7 @@ def test_tty_guard_failure_reaches_the_replay(env, monkeypatch):
     mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p1.mkv", "PART-ONE")
     mk(vid, "rip/movies/Two (2001)/d1/Two (2001)_t00.p2.mkv", "TRACKS-DIFFER")
 
-    rc, lines, view = _tty_run(monkeypatch, Args())
+    rc, _lines, view = _tty_run(monkeypatch, Args())
 
     assert rc == 1
     assert any(r.startswith("fail  guard: tracks differ: ") for r in view.replay_lines())
@@ -2141,12 +2331,23 @@ def test_interrupt_closes_the_item_frame_before_the_summary_box(env, monkeypatch
     import io
 
     from rich.console import Console
+
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     buf = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(
-        file=buf, force_terminal=True, color_system=None, width=80, theme=ui.THEME,
-        highlight=False, emoji=False))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system=None,
+            width=80,
+            theme=ui.THEME,
+            highlight=False,
+            emoji=False,
+        ),
+    )
     vid = env / "vid"
     mk(vid, "rip/movies/Stop (2001)/Stop (2001)_t00.mkv", "STOP")
 
@@ -2168,17 +2369,18 @@ def test_interrupt_closes_the_item_frame_before_the_summary_box(env, monkeypatch
     close = next(n for n, l in enumerate(lines) if l.startswith("\u2570\u2500 \u2717 interrupted "))
     summary = next(n for n, l in enumerate(lines) if l.startswith("\u256d\u2500 summary"))
     assert head < close < summary
-    assert all(l.startswith("\u2502 ") for l in lines[head + 1:close])  # inside the gutter
+    assert all(l.startswith("\u2502 ") for l in lines[head + 1 : close])  # inside the gutter
     assert len(lines[close]) == 80
 
 
 # -- prefetch lookahead: the next unit's copy overlaps the current encode ---------
 
+
 def _slow_hb(tmp_path):
     """The standard HandBrakeCLI fake, plus a SLOWENCODE arm that sleeps so
     the next unit's background prefetch has an encode window to land in."""
     (tmp_path / "bin" / "HandBrakeCLI").write_text(f"""#!/bin/sh
-{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / 'hb-calls.log'}"
+{{ printf 'ARGS:'; printf ' %s' "$@"; echo; }} >> "{tmp_path / "hb-calls.log"}"
 in=""; out=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -2190,8 +2392,7 @@ done
 if grep -q FAILME "$in" 2>/dev/null; then exit 3; fi
 if grep -q SLOWENCODE "$in" 2>/dev/null; then sleep 2; fi
 cat "$in" > "$out"
-"""
-    )
+""")
 
 
 def test_prefetch_overlaps_encode(env, tmp_path, capsys):
@@ -2280,8 +2481,9 @@ def test_prefetch_multipart_logs_each_file_and_counts_unit_once(env, monkeypatch
     assert transcode.run_transcode(Args()) == 0
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert [l["elapsed_s"] for l in copies[1:]] == [2, 5]
-    row = next(l for l in capsys.readouterr().err.splitlines()
-               if l.strip().startswith("Parts"))  # the ship column wraps the long label
+    row = next(
+        l for l in capsys.readouterr().err.splitlines() if l.strip().startswith("Parts")
+    )  # the ship column wraps the long label
     assert "7s ⇢" in row
 
 
@@ -2290,8 +2492,7 @@ def test_ready_prefetch_is_logged_when_cleanup_drops_it(env, monkeypatch, failur
     """A ready lookahead that is never consumed remains in the run log when
     interrupt or fatal cleanup drops its local copy."""
     vid = env / "vid"
-    for title, content in (("One (2001)", "ONE"), ("Two (2002)", "TWO"),
-                           ("Three (2003)", "THREE")):
+    for title, content in (("One (2001)", "ONE"), ("Two (2002)", "TWO"), ("Three (2003)", "THREE")):
         mk(vid, f"rip/movies/{title}/d0/{title}_t00.mkv", content)
     ready = threading.Event()
     real_ok = transcode.ui.ok
@@ -2314,9 +2515,13 @@ def test_ready_prefetch_is_logged_when_cleanup_drops_it(env, monkeypatch, failur
     monkeypatch.setattr(transcode, "_encode", fail_encode)
 
     assert transcode.run_transcode(Args()) == (130 if failure == "interrupt" else 1)
-    ready_notes = [line for line in run_log(env) if line["phase"] == "prefetch"
-                  and "Three (2003) ready" in line["status"]]
+    ready_notes = [
+        line
+        for line in run_log(env)
+        if line["phase"] == "prefetch" and "Three (2003) ready" in line["status"]
+    ]
     assert len(ready_notes) == 1
+
 
 def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkeypatch):
     """TTY prefetch lifecycle events are visible between the current item's
@@ -2349,7 +2554,9 @@ def test_prefetch_start_and_ready_are_in_current_tty_frame(env, tmp_path, monkey
     assert rc == 0
     head = next(n for n, line in enumerate(lines) if line.startswith("╭─ 1/2  One (2001)"))
     close = next(n for n, line in enumerate(lines) if line.startswith("╰─ ✓ encoded") and n > head)
-    start = next(n for n, line in enumerate(lines) if "↳ Two (2002) started" in line and "prefetch" in line)
+    start = next(
+        n for n, line in enumerate(lines) if "↳ Two (2002) started" in line and "prefetch" in line
+    )
     ready = next(n for n, line in enumerate(lines) if "Two (2002) ready" in line)
     assert head < start < ready < close
 
@@ -2373,7 +2580,7 @@ def test_prefetch_overlaps_encode_retry(env, tmp_path, capsys):
     assert not list((vid / "issues" / "movies" / "Two (2002)").glob("*.mkv"))
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert copies[1]["status"] == "prefetched — overlapped with the previous encode"
-    out = capsys.readouterr().out
+    _ = capsys.readouterr().out  # drain: assert below reads fresh output
     assert "copying Two (2002)_t00.mkv to local temp" not in capsys.readouterr().err
 
 
@@ -2425,6 +2632,7 @@ def test_fatal_during_prefetch_cleans_worker_artifacts(env, monkeypatch):
     started = threading.Event()
 
     real_copy2 = transcode._copy2
+
     def blocked_copy(src, dst, cancel=None, bg=None):
         if bg:
             real_copy2(src, dst, cancel, bg)
@@ -2537,8 +2745,12 @@ def test_prefetch_multi_part_main_siblings_all_consumed(env):
     assert (L / "Two (2002)" / "Two (2002).mkv").read_text() == "TWO"
     copies = [l for l in run_log(env) if l["phase"] == "copy"]
     assert len(copies) == 4
-    assert [c["status"] == "prefetched — overlapped with the previous encode"
-            for c in copies] == [False, True, True, True]
+    assert [c["status"] == "prefetched — overlapped with the previous encode" for c in copies] == [
+        False,
+        True,
+        True,
+        True,
+    ]
 
 
 def test_run_summary_table_count_and_keep_banner(env, capsys):
@@ -2564,7 +2776,9 @@ def test_run_summary_table_count_and_keep_banner(env, capsys):
     run = run_log(env)[0]["run"]
     assert re.fullmatch(
         rf"fail  1 failed · 1 ok · \d+s — see \S+/logs/rip\.jsonl \(run {run}\), "
-        rf"raw \S+/logs/raw/{run}\.jsonl", result)
+        rf"raw \S+/logs/raw/{run}\.jsonl",
+        result,
+    )
 
 
 def test_fatal_outside_an_encode_unit_ends_on_a_failure_line(env, capsys, monkeypatch):
@@ -2587,7 +2801,9 @@ def test_fatal_outside_an_encode_unit_ends_on_a_failure_line(env, capsys, monkey
     run = run_log(env)[0]["run"]
     assert re.search(
         rf"fail  failed · 0 ok · \d+s — see \S+/logs/rip\.jsonl \(run {run}\), "
-        rf"raw \S+/logs/raw/{run}\.jsonl\n$", err)
+        rf"raw \S+/logs/raw/{run}\.jsonl\n$",
+        err,
+    )
 
 
 def test_fallback_warn_prints_once_no_summary_replay(env, capsys):
@@ -2633,8 +2849,7 @@ def test_prefetch_copy_line_in_background_panel(env, tmp_path):
     progress = [h for h in history if "%" in h]
     assert all(h.startswith("Two (2002)_t00.mkv  ") for h in progress)
     pcts = [int(h.split("  ")[1].split("%")[0]) for h in progress]
-    assert pcts == sorted(pcts) and progress[-1].startswith(
-        "Two (2002)_t00.mkv  100%")
+    assert pcts == sorted(pcts) and progress[-1].startswith("Two (2002)_t00.mkv  100%")
     assert history[-1] == "Two (2002) \u2713 ready"
     assert view._bg == {}  # the key is cleared on consumption
     assert "Two (2002)_t00.mkv" not in view.render()  # footer line 2 gone with the key

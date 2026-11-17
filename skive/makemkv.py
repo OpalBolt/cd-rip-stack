@@ -9,10 +9,16 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 
 from skive import common, ui  # ui: event lines only — no view logic here
+
+if TYPE_CHECKING:
+    # string annotations only — scan imports _qval from here, so a runtime
+    # import would cycle
+    from skive.scan import TitleInfo
 
 
 # Per-type selection string (audio keeps its language set, subtitles are
@@ -23,7 +29,7 @@ from skive import common, ui  # ui: event lines only — no view logic here
 # rejects them). BASELINE is the manual-use default AND the substitution
 # target; it must stay byte-identical (after &-escaping) to the literal in
 # config/custom.mmcp.xml.
-BASELINE = '-sel:all,+sel:video,+sel:audio&(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo'
+BASELINE = "-sel:all,+sel:video,+sel:audio&(eng|dan|nolang|single),+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo"
 # "per-type" uses the MakeMKV per-type tokens above; "union" falls back to the
 # type-agnostic shape with every scanned subtitle language added to the union.
 SUBTITLE_SYNTAX = "per-type"
@@ -44,8 +50,7 @@ def strip_audio_counts(langs: list[str]) -> set[str]:
     return {re.sub(r"\(\d+\)", "", l) for l in langs if l}
 
 
-def widened_audio(keep_lang: str, audio_langs: set[str] | None,
-                  keep_all: bool) -> set[str]:
+def widened_audio(keep_lang: str, audio_langs: set[str] | None, keep_all: bool) -> set[str]:
     """Audio languages the selection widens to beyond the keep set.
 
     keep_all stages every scanned audio language; otherwise widening fires
@@ -59,9 +64,12 @@ def widened_audio(keep_lang: str, audio_langs: set[str] | None,
     return set()
 
 
-def build_selection(keep_lang: str, sub_langs: set[str] | None = None,
-                    audio_langs: set[str] | None = None,
-                    keep_all: bool = False) -> str:
+def build_selection(
+    keep_lang: str,
+    sub_langs: set[str] | None = None,
+    audio_langs: set[str] | None = None,
+    keep_all: bool = False,
+) -> str:
     """Build the MakeMKV selection string.
 
     Args:
@@ -81,18 +89,21 @@ def build_selection(keep_lang: str, sub_langs: set[str] | None = None,
     base = {"dan", "eng"} | ({keep_lang} if keep_lang else set())
     added = widened_audio(keep_lang, audio_langs, keep_all)
     langs_set = base | added
-    order = ([] if not keep_lang or keep_lang in ("dan", "eng") else [keep_lang])
+    order = [] if not keep_lang or keep_lang in ("dan", "eng") else [keep_lang]
     order += [l for l in ("dan", "eng") if l in langs_set]
-    order += sorted(langs_set - {"dan", "eng", "nolang", "single"}
-                    - ({keep_lang} if keep_lang else set()))
+    order += sorted(
+        langs_set - {"dan", "eng", "nolang", "single"} - ({keep_lang} if keep_lang else set())
+    )
     order += [l for l in ("nolang", "single")]  # always present (spec: never dropped)
     audio_langs_str = "|".join(order)
     if SUBTITLE_SYNTAX == "per-type":
         if not added and (not keep_lang or keep_lang in ("dan", "eng")):
             # Keep exact order for the baseline case
             return BASELINE
-        return (f"-sel:all,+sel:video,+sel:audio&({audio_langs_str}),"
-                "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo")
+        return (
+            f"-sel:all,+sel:video,+sel:audio&({audio_langs_str}),"
+            "+sel:subtitle,-sel:(havemulti|havecore),-sel:mvcvideo"
+        )
     # Union fallback: type-agnostic list = audio set + every scanned subtitle
     # language, so subtitles are never dropped by language policy.
     langs = sorted(set(audio_langs_str.split("|")) | set(sub_langs or ()))
@@ -128,14 +139,25 @@ def rip_header(display: str, infos: list["TitleInfo"]) -> str:
     audio = sorted({strip(l) for t in infos for l in t.audio.split(",") if l})
     subs = sorted({l for t in infos for l in t.subtitles.split(",") if l})
     total = sum(t.size for t in infos)
-    return (f"{display}\n"
-            f"  titles: {len(infos)}  est total: {hsize(total)}\n"
-            f"  audio: {','.join(audio) or '?'}\n"
-            f"  subs:  {','.join(subs) or 'none'}")
+    return (
+        f"{display}\n"
+        f"  titles: {len(infos)}  est total: {hsize(total)}\n"
+        f"  audio: {','.join(audio) or '?'}\n"
+        f"  subs:  {','.join(subs) or 'none'}"
+    )
 
 
-def status_block(what: str, drive: str, phase: str, title_x: int, title_y: int,
-                 cur: str = "", total: str = "", disc: str = "", eta: str = "") -> tuple[str, str]:
+def status_block(
+    what: str,
+    drive: str,
+    phase: str,
+    title_x: int,
+    title_y: int,
+    cur: str = "",
+    total: str = "",
+    disc: str = "",
+    eta: str = "",
+) -> tuple[str, str]:
     """Render lines 1 and 2 of the rip status block (the bar is line 3).
 
     Line 1 is what is being ripped: display title and drive. Line 2 is the
@@ -176,12 +198,21 @@ def _fmt_eta(seconds: float) -> str:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
-def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
-                       sizes: list[int] | None = None, header: str | None = None,
-                       log=None, what: str | None = None,
-                       title_offset: int = 0, device: str | None = None,
-                       disc_total: int | None = None, disc_offset: int = 0,
-                       on_title_start=None, names: list[str] | None = None) -> int:
+def _run_with_progress(
+    cmd: list[str],
+    desc: str,
+    total_titles: int = 1,
+    sizes: list[int] | None = None,
+    header: str | None = None,
+    log=None,
+    what: str | None = None,
+    title_offset: int = 0,
+    device: str | None = None,
+    disc_total: int | None = None,
+    disc_offset: int = 0,
+    on_title_start=None,
+    names: list[str] | None = None,
+) -> int:
     """Run makemkvcon with --progress=-same and drive the run view (ADR 0012:
     absorption — the parsing stays, only the rendering moved into the view).
 
@@ -247,12 +278,16 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
     def push_status(eta: str = "") -> None:
         """Feed the status panel: line 1 what + drive, line 2 status_block."""
         l1, l2 = status_block(
-            what=what, drive=drive, phase=phase, title_x=cur_title + title_offset,
+            what=what,
+            drive=drive,
+            phase=phase,
+            title_x=cur_title + title_offset,
             title_y=total_titles,
             cur=hsize(cur_done) if est_total else "",
             total=hsize(cur_size) if est_total else "",
             disc=f"{hsize(tot_done)}/{hsize(whole_total)}" if whole_total else "",
-            eta=eta)
+            eta=eta,
+        )
         if whole_total:
             disc_label = f"disc {hsize(tot_done)}/{hsize(whole_total)}"
             l2 = l2.replace(f" · {disc_label}", "")
@@ -297,8 +332,11 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
                         # the next title started; this one's outcome is not reported
                         now = time.monotonic()
                         if on_title_start is not None and live_view:
-                            ui.info(f"title {cur_title + title_offset}/{total_titles}",
-                                    phase="rip", elapsed=ui._hms(int(now - title_t0)))
+                            ui.info(
+                                f"title {cur_title + title_offset}/{total_titles}",
+                                phase="rip",
+                                elapsed=ui._hms(int(now - title_t0)),
+                            )
                         ui.unindent()
                         title_t0 = now
                     cur_title += 1
@@ -355,7 +393,23 @@ def _run_with_progress(cmd: list[str], desc: str, total_titles: int = 1,
         ui.info(summary)
     return rc
 
-def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, stage_dir: Path, run=subprocess.run, disc: int = 0, total: int = 0, infos: list["TitleInfo"] | None = None, header: str | None = None, log=None, device: str | None = None, on_title_start=None, names: list[str] | None = None, outcomes: dict[int, int] | None = None) -> int:
+
+def rip_titles(
+    titles: list[int] | None,
+    profile_path: Path,
+    minlength: int,
+    stage_dir: Path,
+    run=subprocess.run,
+    disc: int = 0,
+    total: int = 0,
+    infos: list["TitleInfo"] | None = None,
+    header: str | None = None,
+    log=None,
+    device: str | None = None,
+    on_title_start=None,
+    names: list[str] | None = None,
+    outcomes: dict[int, int] | None = None,
+) -> int:
     """Rip titles with makemkvcon, collecting the worst return code.
 
     Args:
@@ -379,13 +433,34 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
     by_num = {t.number: t for t in infos or []}
     if titles is None:
         # Rip all in one call
-        cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", "all", str(stage_dir) + "/"]
+        cmd = [
+            "makemkvcon",
+            "mkv",
+            "-r",
+            "--profile",
+            str(profile_path),
+            f"--minlength={minlength}",
+            f"disc:{disc}",
+            "all",
+            str(stage_dir) + "/",
+        ]
         sizes = [t.size for t in sorted(infos, key=lambda t: t.number)] if infos else None
-        rc = _run_with_progress(
-            cmd, "all titles", total_titles=total or 1, sizes=sizes, header=header,
-            log=log, device=device, on_title_start=on_title_start, names=names) if run is subprocess.run else run(cmd).returncode
-        if rc > worst_rc:
-            worst_rc = rc
+        rc = (
+            _run_with_progress(
+                cmd,
+                "all titles",
+                total_titles=total or 1,
+                sizes=sizes,
+                header=header,
+                log=log,
+                device=device,
+                on_title_start=on_title_start,
+                names=names,
+            )
+            if run is subprocess.run
+            else run(cmd).returncode
+        )
+        worst_rc = max(worst_rc, rc)
     else:
         # Seed line 1 and the title position once: every call's block keeps
         # the header's display title and shows true x/y across the selection,
@@ -396,21 +471,45 @@ def rip_titles(titles: list[int] | None, profile_path: Path, minlength: int, sta
         selection_total = sum(selection_sizes)
         completed_size = 0
         for i, t in enumerate(titles, 1):
-            cmd = ["makemkvcon", "mkv", "-r", "--profile", str(profile_path), f"--minlength={minlength}", f"disc:{disc}", str(t), str(stage_dir) + "/"]
+            cmd = [
+                "makemkvcon",
+                "mkv",
+                "-r",
+                "--profile",
+                str(profile_path),
+                f"--minlength={minlength}",
+                f"disc:{disc}",
+                str(t),
+                str(stage_dir) + "/",
+            ]
             desc = f"title {t} ({i}/{total_titles})"
             sizes = [by_num[t].size] if t in by_num else None
-            callback = (lambda _position, title=t: on_title_start(title)) if on_title_start else None
-            rc = _run_with_progress(
-                cmd, desc, total_titles=total_titles, sizes=sizes,
-                header=header if i == 1 else None, log=log, what=what,
-                title_offset=i - 1, device=device, disc_total=selection_total,
-                disc_offset=completed_size, on_title_start=callback, names=names
-            ) if run is subprocess.run else run(cmd).returncode
+            callback = (
+                (lambda _position, title=t: on_title_start(title)) if on_title_start else None
+            )
+            rc = (
+                _run_with_progress(
+                    cmd,
+                    desc,
+                    total_titles=total_titles,
+                    sizes=sizes,
+                    header=header if i == 1 else None,
+                    log=log,
+                    what=what,
+                    title_offset=i - 1,
+                    device=device,
+                    disc_total=selection_total,
+                    disc_offset=completed_size,
+                    on_title_start=callback,
+                    names=names,
+                )
+                if run is subprocess.run
+                else run(cmd).returncode
+            )
             if outcomes is not None:
                 outcomes[t] = rc
             completed_size += by_num[t].size if t in by_num else 0
-            if rc > worst_rc:
-                worst_rc = rc
+            worst_rc = max(worst_rc, rc)
     return worst_rc
 
 
@@ -441,7 +540,7 @@ def purge_junk(stage_dirs: list[Path], quiet: bool = False) -> None:
             silently so its one summary line stays the only output)
     """
     # shortcut: a year-less TMDB title shaped like a bare code ("B2" renames to "B2_t01.mkv") full-matches this pattern, so a completed file would be purged like a partial; if TMDB ever returns year-less titles or bare codes, anchor junk matching to the current run instead of the name pattern
-    junk_pat = re.compile(r'^[A-Z][0-9]+_t\d+$')
+    junk_pat = re.compile(r"^[A-Z][0-9]+_t\d+$")
     for stage_dir in stage_dirs:
         if not stage_dir.is_dir():
             continue
@@ -464,17 +563,20 @@ def looks_real(name: str) -> bool:
     """
     if len(name) <= 3:
         return False
-    if re.match(r'^[A-Z][0-9]+$', name):
+    if re.match(r"^[A-Z][0-9]+$", name):
         return False
     if " " not in name:
         return False
-    if re.match(r'^[^a-z]*$', name) and len(name) <= 16:
-        return False
-    return True
+    return not (re.match(r"^[^a-z]*$", name) and len(name) <= 16)
 
 
-def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | None = None,
-                  preexisting: set[Path] | None = None) -> None:
+def rename_staged(
+    display: str,
+    stage_dir: Path,
+    suffix: str = "t",
+    part: int | None = None,
+    preexisting: set[Path] | None = None,
+) -> None:
     """Rename junk-labeled .mkv files.
 
     Titles become <display>_tNN[.pN].mkv; extras become <display> - Extra NN[.pN].mkv.
@@ -494,11 +596,11 @@ def rename_staged(display: str, stage_dir: Path, suffix: str = "t", part: int | 
             continue
         base = mkv.stem
         # Extract _tNN suffix
-        m = re.search(r'_t(\d+)$', base)
+        m = re.search(r"_t(\d+)$", base)
         if not m:
             continue
         title_num = int(m.group(1))
-        cur = base[:m.start()]
+        cur = base[: m.start()]
 
         # Skip if already this display; extras (-E) rename everything else —
         # bonus discs label files from the disc name ("... Bonus Disc_t00"),
@@ -533,7 +635,18 @@ def subtitle_note(stage_dir: Path, run=subprocess.run) -> str:
     """
     langs = set()
     for mkv in stage_dir.glob("*.mkv"):
-        cmd = ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream_tags=language", "-of", "csv=p=0", str(mkv)]
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream_tags=language",
+            "-of",
+            "csv=p=0",
+            str(mkv),
+        ]
         result = run(cmd, capture_output=True, text=True)
         for line in result.stdout.strip().splitlines():
             line = line.strip()
@@ -574,7 +687,18 @@ def subtitle_shortfall(files_promises: dict[Path, set[str]], run=subprocess.run)
     for mkv, promised in sorted(files_promises.items()):
         if not promised:
             continue
-        cmd = ["ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream_tags=language", "-of", "csv=p=0", str(mkv)]
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream_tags=language",
+            "-of",
+            "csv=p=0",
+            str(mkv),
+        ]
         result = run(cmd, capture_output=True, text=True)
         staged = set()
         for line in result.stdout.strip().splitlines():
@@ -585,7 +709,8 @@ def subtitle_shortfall(files_promises: dict[Path, set[str]], run=subprocess.run)
         missing = promised - staged
         if missing:
             shortfalls.append(
-                f"{mkv.name}: scan promised {','.join(sorted(missing))}, staged none of it")
+                f"{mkv.name}: scan promised {','.join(sorted(missing))}, staged none of it"
+            )
     return shortfalls
 
 
@@ -601,8 +726,18 @@ def silent_staged(files: list[Path], run=subprocess.run) -> list[Path]:
     """
     silent = []
     for f in files:
-        cmd = ["ffprobe", "-v", "error", "-select_streams", "a",
-               "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(f)]
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            str(f),
+        ]
         result = run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             continue  # unreadable file: a probe failure, not a silent rip
@@ -628,4 +763,4 @@ def _qval(line: str) -> str:
     b = line.rfind('"')
     if a < 0 or b <= a:
         return ""
-    return line[a + 1:b]
+    return line[a + 1 : b]

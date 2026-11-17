@@ -20,15 +20,14 @@ import json
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 from typing import NamedTuple
 
 from rich.table import Table
 from rich.text import Text
 
-from skive.tmdb import fetch_by_id, fetch_season, search_first
 from skive import ui
+from skive.tmdb import fetch_by_id, fetch_season, search_first
 from skive.tv_match import RATIO_GREEN  # re-exported: one band, never a copy
 
 VALIDATION_FILENAME = "validation.json"
@@ -48,12 +47,15 @@ def read_extras_marker(doc: dict | None) -> dict:
     if not isinstance(m, dict) or not isinstance(m.get("include"), bool):
         return dict(EXTRAS_MARKER_DEFAULT)
     quality = m.get("quality")
-    return {"include": m["include"],
-            "quality": quality if quality in ("superfast", "full") else "superfast"}
+    return {
+        "include": m["include"],
+        "quality": quality if quality in ("superfast", "full") else "superfast",
+    }
 
 
-def set_extras_marker(path: Path, include: bool, quality: str = "superfast",
-                      force: bool = False) -> bool:
+def set_extras_marker(
+    path: Path, include: bool, quality: str = "superfast", force: bool = False
+) -> bool:
     """Write the extras marker into validation.json at `path`. Idempotent
     unless force=True: a document that already carries any extras key is left
     untouched, so manual keep-edits survive backlog re-runs. Returns True when
@@ -66,17 +68,25 @@ def set_extras_marker(path: Path, include: bool, quality: str = "superfast",
     doc["extras"] = {"include": include, "quality": quality}
     write_validation(path, doc)
     return True
+
+
 """The document's one name in every title folder it travels through."""
 
 
-def album_document(source: str, release: str | None, tracks: list[dict],
-                   disc_number: int | str = 1, tag_run: str | None = None,
-                   filing_date: str | None = None, mode: str = "autotag",
-                   reconstructed: bool = False,
-                   discs: dict | None = None,
-                   tracks_found: int | None = None,
-                   tracktotal: int | None = None,
-                   disctotal: int | None = None) -> dict:
+def album_document(
+    source: str,
+    release: str | None,
+    tracks: list[dict],
+    disc_number: int | str = 1,
+    tag_run: str | None = None,
+    filing_date: str | None = None,
+    mode: str = "autotag",
+    reconstructed: bool = False,
+    discs: dict | None = None,
+    tracks_found: int | None = None,
+    tracktotal: int | None = None,
+    disctotal: int | None = None,
+) -> dict:
     """Build the provenance document written beside a filed music album.
 
     ``tracks`` entries are ``{"file", "dur_s", "format"}``.  Disc
@@ -88,14 +98,17 @@ def album_document(source: str, release: str | None, tracks: list[dict],
     filing records.
     """
     if discs is None:
-        discs = {str(disc_number): {
-            "tag_run": tag_run,
-            "filed_at": filing_date,
-            "mode": mode,
-        }}
+        discs = {
+            str(disc_number): {
+                "tag_run": tag_run,
+                "filed_at": filing_date,
+                "mode": mode,
+            }
+        }
     else:
-        discs = {str(number): dict(entry) for number, entry in discs.items()
-                 if isinstance(entry, dict)}
+        discs = {
+            str(number): dict(entry) for number, entry in discs.items() if isinstance(entry, dict)
+        }
     doc = {
         "kind": "album",
         "source": source,
@@ -107,8 +120,7 @@ def album_document(source: str, release: str | None, tracks: list[dict],
     # Counts are only part of reconstructed records. Omitting them by default
     # keeps the filing plugin's established document shape unchanged.
     if any(value is not None for value in (tracks_found, tracktotal, disctotal)):
-        doc.update({"tracks_found": tracks_found, "tracktotal": tracktotal,
-                    "disctotal": disctotal})
+        doc.update({"tracks_found": tracks_found, "tracktotal": tracktotal, "disctotal": disctotal})
     return doc
 
 
@@ -125,11 +137,21 @@ def merge_album_document(old: dict, doc: dict) -> dict:
     new_discs = doc.get("discs", {}) if isinstance(doc, dict) else {}
     combined = {}
     if isinstance(old_discs, dict):
-        combined.update({str(number): dict(entry) for number, entry in old_discs.items()
-                         if isinstance(entry, dict)})
+        combined.update(
+            {
+                str(number): dict(entry)
+                for number, entry in old_discs.items()
+                if isinstance(entry, dict)
+            }
+        )
     if isinstance(new_discs, dict):
-        combined.update({str(number): dict(entry) for number, entry in new_discs.items()
-                         if isinstance(entry, dict)})
+        combined.update(
+            {
+                str(number): dict(entry)
+                for number, entry in new_discs.items()
+                if isinstance(entry, dict)
+            }
+        )
     merged["discs"] = combined
     if merged.get("release") is None and isinstance(old, dict):
         merged["release"] = old.get("release")
@@ -139,9 +161,15 @@ def merge_album_document(old: dict, doc: dict) -> dict:
     return merged
 
 
-def movie_document(tmdb_id: str, title: str, runtime_s: int | None,
-                   volume_label: str | None, run: str | None,
-                   main: str | None, titles: list[dict]) -> dict:
+def movie_document(
+    tmdb_id: str,
+    title: str,
+    runtime_s: int | None,
+    volume_label: str | None,
+    run: str | None,
+    main: str | None,
+    titles: list[dict],
+) -> dict:
     """The movie document at rip time, in the shape transcode and the checker read.
 
     `titles` entries are {"file", "t", "dur_s", "ratio", "band"} — one per
@@ -177,8 +205,15 @@ def movie_document(tmdb_id: str, title: str, runtime_s: int | None,
     }
 
 
-def tv_document(tmdb_id: str, title: str, season: int, volume_label: str,
-                run: str, staged: list[int], episodes: list[dict]) -> dict:
+def tv_document(
+    tmdb_id: str,
+    title: str,
+    season: int,
+    volume_label: str,
+    run: str,
+    staged: list[int],
+    episodes: list[dict],
+) -> dict:
     """The TV document at rip time: the shared identity block plus the
     per-season record — episodes and the disc index.
 
@@ -208,12 +243,13 @@ def tv_document(tmdb_id: str, title: str, season: int, volume_label: str,
     """
     return {
         "tmdb": {"id": tmdb_id, "type": "tv", "title": title},
-        "seasons": [{
-            "season": season,
-            "episodes": list(episodes),
-            "discs": [{"volume_label": volume_label, "run": run,
-                       "staged": list(staged)}],
-        }],
+        "seasons": [
+            {
+                "season": season,
+                "episodes": list(episodes),
+                "discs": [{"volume_label": volume_label, "run": run, "staged": list(staged)}],
+            }
+        ],
         "encodes": [],
     }
 
@@ -228,8 +264,7 @@ def write_validation(path: Path, doc: dict) -> None:
         path: Destination validation.json (<title_dir>/validation.json)
         doc: Document from movie_document/tv_document, or a loaded one
     """
-    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
+    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def load_validation(path: Path) -> dict | None:
@@ -328,8 +363,9 @@ def biggest_title(titles: list[tuple[int, int, int]]) -> tuple[int, int, int] | 
     return max(titles, key=lambda t: (t[2], t[1]), default=None)
 
 
-def arbitrate_main(candidates: list[tuple[int, int, int]],
-                   runtime_s: int | None) -> MainArbitration:
+def arbitrate_main(
+    candidates: list[tuple[int, int, int]], runtime_s: int | None
+) -> MainArbitration:
     """The main-feature decision (map.md decision 4): one candidate near the
     TMDB runtime wins automatically, several near need the human, none near
     — or no runtime at all — falls back to biggest bytes silently. Both
@@ -355,10 +391,12 @@ def arbitrate_main(candidates: list[tuple[int, int, int]],
     if len(near) == 1:
         return MainArbitration("sole", [], near[0])
     if len(near) > 1:
-        return MainArbitration("several",
-                               [(n, s, s / runtime_s) for n, s, _ in sorted(near)],
-                               biggest_title(near),
-                               f"{len(near)} titles near the runtime")
+        return MainArbitration(
+            "several",
+            [(n, s, s / runtime_s) for n, s, _ in sorted(near)],
+            biggest_title(near),
+            f"{len(near)} titles near the runtime",
+        )
     return MainArbitration("zero", [], biggest_title(candidates))
 
 
@@ -404,15 +442,19 @@ def movie_row(file: str, t: int, dur_s: int | None, runtime_s: int | None) -> di
     Returns:
         {"file", "t", "dur_s", "ratio", "band"} for the titles list
     """
-    graded = (grade_main(dur_s, runtime_s)
-              if dur_s is not None and dur_s >= MAIN_FLOOR_S else None)
-    return {"file": file, "t": t, "dur_s": dur_s,
-            "ratio": round(graded[0], 2) if graded else None,
-            "band": graded[1] if graded else None}
+    graded = grade_main(dur_s, runtime_s) if dur_s is not None and dur_s >= MAIN_FLOOR_S else None
+    return {
+        "file": file,
+        "t": t,
+        "dur_s": dur_s,
+        "ratio": round(graded[0], 2) if graded else None,
+        "band": graded[1] if graded else None,
+    }
 
 
-def resolve_main(chosen_main: str | None, graded_rows: list[dict],
-                 staged_rows: list[dict]) -> str | None:
+def resolve_main(
+    chosen_main: str | None, graded_rows: list[dict], staged_rows: list[dict]
+) -> str | None:
     """The table's chosen main resolved to a real staged file number.
 
     Table numbers are MakeMKV numbers, so the file whose final _tNN equals
@@ -438,8 +480,9 @@ def resolve_main(chosen_main: str | None, graded_rows: list[dict],
     scanned = next((r["dur_s"] for r in graded_rows if r["t"] == main_t), None)
     if scanned is None:
         return None
-    matches = sorted(r["t"] for r in staged_rows
-                     if r["dur_s"] is not None and abs(r["dur_s"] - scanned) <= 1)
+    matches = sorted(
+        r["t"] for r in staged_rows if r["dur_s"] is not None and abs(r["dur_s"] - scanned) <= 1
+    )
     if len(matches) == 1:
         return f"t{matches[0]}"
     return None
@@ -462,8 +505,9 @@ def merge_movie_document(old: dict, doc: dict) -> dict:
     """
     old_titles = old.get("titles")
     merged = dict(doc)
-    merged["titles"] = (list(old_titles) if isinstance(old_titles, list) else []) \
-        + list(doc["titles"])
+    merged["titles"] = (list(old_titles) if isinstance(old_titles, list) else []) + list(
+        doc["titles"]
+    )
     if merged["main"] is None:
         merged["main"] = old.get("main")
     return merged
@@ -472,8 +516,7 @@ def merge_movie_document(old: dict, doc: dict) -> dict:
 # --- TV post-rip record (map.md decision 6) ----------------------------------
 
 
-def tv_row(ep: int, file: str, t: int | None, dur_s: int | None,
-           runtime_s: int | None) -> dict:
+def tv_row(ep: int, file: str, t: int | None, dur_s: int | None, runtime_s: int | None) -> dict:
     """One TV-document episodes entry: a staged episode's probed duration,
     graded against that episode's TMDB runtime.
 
@@ -498,11 +541,16 @@ def tv_row(ep: int, file: str, t: int | None, dur_s: int | None,
         the episodes list
     """
     runtime_s = runtime_s or None
-    graded = (grade_main(dur_s, runtime_s) if dur_s is not None else None)
-    return {"ep": ep, "file": file, "t": t, "dur_s": dur_s,
-            "runtime_s": runtime_s,
-            "ratio": round(graded[0], 2) if graded else None,
-            "band": graded[1] if graded else None}
+    graded = grade_main(dur_s, runtime_s) if dur_s is not None else None
+    return {
+        "ep": ep,
+        "file": file,
+        "t": t,
+        "dur_s": dur_s,
+        "runtime_s": runtime_s,
+        "ratio": round(graded[0], 2) if graded else None,
+        "band": graded[1] if graded else None,
+    }
 
 
 def _tv_seasons(doc: dict) -> list[dict]:
@@ -525,10 +573,13 @@ def _tv_seasons(doc: dict) -> list[dict]:
     if not isinstance(season, int):
         return []
     eps = doc.get("episodes")
-    return [{"season": season,
-             "episodes": [r for r in eps if isinstance(r, dict)]
-             if isinstance(eps, list) else [],
-             "discs": []}]
+    return [
+        {
+            "season": season,
+            "episodes": [r for r in eps if isinstance(r, dict)] if isinstance(eps, list) else [],
+            "discs": [],
+        }
+    ]
 
 
 def merge_tv_document(old: dict, doc: dict) -> dict:
@@ -551,8 +602,7 @@ def merge_tv_document(old: dict, doc: dict) -> dict:
     Returns:
         The merged document, this run's shape throughout
     """
-    old_by_season = {s["season"]: s for s in _tv_seasons(old)
-                     if isinstance(s.get("season"), int)}
+    old_by_season = {s["season"]: s for s in _tv_seasons(old) if isinstance(s.get("season"), int)}
     merged = dict(doc)
     seasons: list[dict] = []
     for entry in doc["seasons"]:
@@ -562,15 +612,19 @@ def merge_tv_document(old: dict, doc: dict) -> dict:
             continue
         old_rows = prev.get("episodes")
         redone = {r.get("ep") for r in entry.get("episodes", [])}
-        episodes = [r for r in (old_rows if isinstance(old_rows, list) else [])
-                    if isinstance(r, dict) and r.get("ep") not in redone] \
-            + list(entry.get("episodes", []))
+        episodes = [
+            r
+            for r in (old_rows if isinstance(old_rows, list) else [])
+            if isinstance(r, dict) and r.get("ep") not in redone
+        ] + list(entry.get("episodes", []))
         entry_discs = entry.get("discs") or []
         run = entry_discs[0].get("run") if entry_discs else None
         old_discs = prev.get("discs")
-        discs = [d for d in (old_discs if isinstance(old_discs, list) else [])
-                 if isinstance(d, dict) and d.get("run") != run] \
-            + list(entry_discs)
+        discs = [
+            d
+            for d in (old_discs if isinstance(old_discs, list) else [])
+            if isinstance(d, dict) and d.get("run") != run
+        ] + list(entry_discs)
         seasons.append({**entry, "episodes": episodes, "discs": discs})
     seasons.extend(old_by_season.values())
     seasons.sort(key=lambda s: s["season"] if isinstance(s.get("season"), int) else -1)
@@ -690,8 +744,16 @@ def probe_duration(path: Path, run=subprocess.run) -> int | None:
     Returns:
         Duration in whole seconds, or None when unreadable
     """
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-           "-of", "csv=p=0", str(path)]
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
     try:
         result = run(cmd, capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired):
@@ -712,10 +774,11 @@ def staging_name_findings(folder: Path, rel: str) -> list[Finding]:
     Returns:
         One "staging name" finding per offending file, sorted by path
     """
-    return [Finding(rel, "staging name", str(p.relative_to(folder)),
-                    path=str(p.relative_to(folder)))
-            for p in sorted(folder.rglob("*"))
-            if p.is_file() and STAGING_NAME.search(p.name)]
+    return [
+        Finding(rel, "staging name", str(p.relative_to(folder)), path=str(p.relative_to(folder)))
+        for p in sorted(folder.rglob("*"))
+        if p.is_file() and STAGING_NAME.search(p.name)
+    ]
 
 
 def fix_staging_names(root: Path) -> list[tuple[Path, Path]]:
@@ -761,14 +824,16 @@ def _doc_identity(block: object) -> tuple[str, str, int | None] | None:
         return None
     kind = block.get("type")
     runtime = block.get("runtime_s")
-    return (kind if kind in ("movie", "tv") else "movie",
-            str(block["id"]),
-            runtime if isinstance(runtime, int) and runtime > 0 else None)
+    return (
+        kind if kind in ("movie", "tv") else "movie",
+        str(block["id"]),
+        runtime if isinstance(runtime, int) and runtime > 0 else None,
+    )
 
 
-def _ratio_finding(rel: str, relpath: str, dur_s: int,
-                   runtime_s: int | None,
-                   ep_label: str | None = None) -> Finding:
+def _ratio_finding(
+    rel: str, relpath: str, dur_s: int, runtime_s: int | None, ep_label: str | None = None
+) -> Finding:
     """One ratio row: the file's probed duration graded in the shared band.
 
     Unknown runtime (or a zero-duration probe read): a blank cell — band None,
@@ -781,14 +846,19 @@ def _ratio_finding(rel: str, relpath: str, dur_s: int,
         return Finding(rel, "ratio", relpath, path=relpath)
     label = f"  {ep_label}" if ep_label else ""
     exact = graded[0]
-    return Finding(rel, "ratio", f"{relpath}{label}  {exact:.2f}",
-                   ratio_severity(exact), path=relpath,
-                   ratio=round(exact, 2), delta=band_delta(exact))
+    return Finding(
+        rel,
+        "ratio",
+        f"{relpath}{label}  {exact:.2f}",
+        ratio_severity(exact),
+        path=relpath,
+        ratio=round(exact, 2),
+        delta=band_delta(exact),
+    )
 
 
 def _unreadable_finding(rel: str, relpath: str) -> Finding:
-    return Finding(rel, "unreadable", f"{relpath}: duration unreadable",
-                   path=relpath)
+    return Finding(rel, "unreadable", f"{relpath}: duration unreadable", path=relpath)
 
 
 def _double_runtime(runtimes: dict[int, int | None], lo: int, hi: int) -> int | None:
@@ -810,8 +880,9 @@ def _double_runtime(runtimes: dict[int, int | None], lo: int, hi: int) -> int | 
     return runtimes.get(lo)
 
 
-def _search_identity(kind: str, rel: str, folder_name: str, search,
-                     findings: list[Finding]) -> str | None:
+def _search_identity(
+    kind: str, rel: str, folder_name: str, search, findings: list[Finding]
+) -> str | None:
     """A legacy folder's identity by name+year search: the trailing (YYYY)
     splits off, the first search hit names the id — a LEAD, not a verdict.
 
@@ -821,26 +892,28 @@ def _search_identity(kind: str, rel: str, folder_name: str, search,
     """
     m = YEAR_SUFFIX.match(folder_name)
     if m is None:
-        findings.append(Finding(rel, "unidentified",
-                                "no validation.json and no (Year) in the folder name"))
+        findings.append(
+            Finding(rel, "unidentified", "no validation.json and no (Year) in the folder name")
+        )
         return None
     name, year = m.group(1), m.group(2)
     try:
         pick = search(kind, name, year)
     except (RuntimeError, ValueError) as e:
         ui.warn(f"TMDB search failed for {folder_name} ({e})")
-        findings.append(Finding(rel, "unidentified",
-                                f'TMDB search failed for "{name}"'))
+        findings.append(Finding(rel, "unidentified", f'TMDB search failed for "{name}"'))
         return None
     if pick is None:
-        findings.append(Finding(rel, "unidentified",
-                                f'TMDB search: no match for "{name}" ({year})'))
+        findings.append(
+            Finding(rel, "unidentified", f'TMDB search: no match for "{name}" ({year})')
+        )
         return None
     return pick.id
 
 
-def _movie_ratio_findings(folder: Path, rel: str, runtime_s: int | None,
-                          run=subprocess.run) -> list[Finding]:
+def _movie_ratio_findings(
+    folder: Path, rel: str, runtime_s: int | None, run=subprocess.run
+) -> list[Finding]:
     """Ratio rows for a movie folder: the main encode, plus every other .mkv
     in the folder tree that reaches the main floor.
 
@@ -856,8 +929,7 @@ def _movie_ratio_findings(folder: Path, rel: str, runtime_s: int | None,
     if not main.is_file():
         root_mkvs = [p for p in folder.glob("*.mkv") if p.is_file()]
         main = max(root_mkvs, key=lambda p: p.stat().st_size, default=None)
-    others = [p for p in sorted(folder.rglob("*.mkv"))
-              if p.is_file() and p != main]
+    others = [p for p in sorted(folder.rglob("*.mkv")) if p.is_file() and p != main]
     findings: list[Finding] = []
     for path in ([main] if main is not None else []) + others:
         relpath = str(path.relative_to(folder))
@@ -871,9 +943,9 @@ def _movie_ratio_findings(folder: Path, rel: str, runtime_s: int | None,
     return findings
 
 
-def check_movie_folder(folder: Path, rel: str, *, run=subprocess.run,
-                       search=search_first,
-                       fetch_details=fetch_by_id) -> tuple[list[Finding], tuple[str, str] | None]:
+def check_movie_folder(
+    folder: Path, rel: str, *, run=subprocess.run, search=search_first, fetch_details=fetch_by_id
+) -> tuple[list[Finding], tuple[str, str] | None]:
     """One movie folder: staging names, ratio rows, and the folder's identity.
 
     Identity: the folder's validation.json (its id and recorded runtime), else
@@ -905,11 +977,12 @@ def check_movie_folder(folder: Path, rel: str, *, run=subprocess.run,
         details = fetch_details("movie", id_)
     except (RuntimeError, ValueError) as e:
         ui.warn(f"TMDB details fetch failed for {folder.name} ({e})")
-        findings.append(Finding(rel, "unidentified",
-                                f"TMDB details fetch failed for id {id_}"))
+        findings.append(Finding(rel, "unidentified", f"TMDB details fetch failed for id {id_}"))
         return findings + staging, None
-    return _movie_ratio_findings(folder, rel, details.runtime_secs, run) \
-        + findings + staging, ("movie", id_)
+    return _movie_ratio_findings(folder, rel, details.runtime_secs, run) + findings + staging, (
+        "movie",
+        id_,
+    )
 
 
 def _episode_runs(eps: list[int]) -> str:
@@ -926,8 +999,15 @@ def _episode_runs(eps: list[int]) -> str:
     return ", ".join(parts)
 
 
-def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
-                        doc: dict | None, season_list, run=subprocess.run) -> list[Finding]:
+def _tv_season_findings(
+    folder: Path,
+    rel: str,
+    season_dir: Path,
+    show_id: str,
+    doc: dict | None,
+    season_list,
+    run=subprocess.run,
+) -> list[Finding]:
     """One Season NN folder: a ratio row per episode file, and the
     missing-episode check.
 
@@ -945,8 +1025,7 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
     findings: list[Finding] = []
     doc_rows: dict[int, dict] = {}
     if doc is not None:
-        entry = next((s for s in _tv_seasons(doc) if s.get("season") == season),
-                     None)
+        entry = next((s for s in _tv_seasons(doc) if s.get("season") == season), None)
         if entry is not None:
             rows = entry.get("episodes")
             for row in rows if isinstance(rows, list) else []:
@@ -955,14 +1034,13 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
     try:
         listed = season_list(show_id, season)
     except (RuntimeError, ValueError) as e:
-        ui.warn(f"TMDB season fetch failed for "
-                f"{folder.name} Season {season:02d} ({e})")
+        ui.warn(f"TMDB season fetch failed for {folder.name} Season {season:02d} ({e})")
         listed = None
     runtimes: dict[int, int | None] = {}
     for ep, row in doc_rows.items():
         rt = row.get("runtime_s")
         runtimes[ep] = rt if isinstance(rt, int) and rt > 0 else None
-    for ep, _name, rt in (listed or []):
+    for ep, _name, rt in listed or []:
         runtimes.setdefault(ep, rt or None)
     files: dict[int, Path] = {}
     episode_files: dict[Path, tuple[int, int]] = {}
@@ -986,9 +1064,7 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
             findings.append(_unreadable_finding(rel, relpath))
             continue
         label = _episode_runs(list(range(lo, hi + 1))) if hi > lo else None
-        findings.append(_ratio_finding(rel, relpath, dur,
-                                       _double_runtime(runtimes, lo, hi),
-                                       label))
+        findings.append(_ratio_finding(rel, relpath, dur, _double_runtime(runtimes, lo, hi), label))
     if listed is not None:
         expected, source = sorted(ep for ep, _n, _rt in listed), "TMDB season list"
     elif doc_rows:
@@ -997,15 +1073,19 @@ def _tv_season_findings(folder: Path, rel: str, season_dir: Path, show_id: str,
         return findings  # nothing to compare against — the check skips
     missing = [ep for ep in expected if ep not in files]
     if missing:
-        findings.append(Finding(rel, "missing episodes",
-                                f"Season {season:02d} missing "
-                                f"{_episode_runs(missing)} ({source})"))
+        findings.append(
+            Finding(
+                rel,
+                "missing episodes",
+                f"Season {season:02d} missing {_episode_runs(missing)} ({source})",
+            )
+        )
     return findings
 
 
-def check_tv_folder(folder: Path, rel: str, *, run=subprocess.run,
-                    search=search_first,
-                    season_list=fetch_season) -> tuple[list[Finding], tuple[str, str] | None]:
+def check_tv_folder(
+    folder: Path, rel: str, *, run=subprocess.run, search=search_first, season_list=fetch_season
+) -> tuple[list[Finding], tuple[str, str] | None]:
     """One TV show folder: staging names, then per-season ratio rows and
     missing-episode checks.
 
@@ -1026,9 +1106,10 @@ def check_tv_folder(folder: Path, rel: str, *, run=subprocess.run,
         None when unresolved
     """
     staging = staging_name_findings(folder, rel)
-    season_dirs = sorted((d for d in folder.iterdir()
-                          if d.is_dir() and SEASON_DIR.match(d.name)),
-                         key=lambda d: d.name)
+    season_dirs = sorted(
+        (d for d in folder.iterdir() if d.is_dir() and SEASON_DIR.match(d.name)),
+        key=lambda d: d.name,
+    )
     docs: dict[Path, dict] = {}
     show_id: str | None = None
     for d in season_dirs:
@@ -1046,14 +1127,15 @@ def check_tv_folder(folder: Path, rel: str, *, run=subprocess.run,
         return findings + staging, None
     season_rows: list[Finding] = []
     for d in season_dirs:
-        season_rows.extend(_tv_season_findings(folder, rel, d, show_id,
-                                               docs.get(d), season_list, run))
+        season_rows.extend(
+            _tv_season_findings(folder, rel, d, show_id, docs.get(d), season_list, run)
+        )
     return season_rows + findings + staging, ("tv", show_id)
 
 
-def validate_library(root: Path, *, run=subprocess.run, search=None,
-                     fetch_details=None,
-                     season_list=None) -> list[Finding]:
+def validate_library(
+    root: Path, *, run=subprocess.run, search=None, fetch_details=None, season_list=None
+) -> list[Finding]:
     """Walk `library/movies` + `library/tv` under the share root and collect
     the report's findings.
 
@@ -1087,23 +1169,26 @@ def validate_library(root: Path, *, run=subprocess.run, search=None,
         base = root / sub
         if not base.is_dir():
             continue
-        for folder in sorted((f for f in base.iterdir() if f.is_dir()),
-                             key=lambda f: f.name):
+        for folder in sorted((f for f in base.iterdir() if f.is_dir()), key=lambda f: f.name):
             rel = f"{sub}/{folder.name}"
             if sub == "movies":
                 rows, identity = check_movie_folder(
-                    folder, rel, run=run, search=search, fetch_details=fetch_details)
+                    folder, rel, run=run, search=search, fetch_details=fetch_details
+                )
             else:
                 rows, identity = check_tv_folder(
-                    folder, rel, run=run, search=search, season_list=season_list)
+                    folder, rel, run=run, search=search, season_list=season_list
+                )
             findings.extend(rows)
             if identity is not None:
                 seen.setdefault(identity, []).append(rel)
     for (kind, id_), rels in sorted(seen.items()):
         if len(rels) > 1:
-            findings.append(Finding(rels[0], "duplicate id",
-                                    f"tmdb {kind} {id_} also under "
-                                    f"{'; '.join(rels[1:])}"))
+            findings.append(
+                Finding(
+                    rels[0], "duplicate id", f"tmdb {kind} {id_} also under {'; '.join(rels[1:])}"
+                )
+            )
     return findings
 
 
@@ -1132,30 +1217,41 @@ def is_issue(finding: Finding) -> bool:
 def _ratio_action(r: Finding) -> str:
     """One manual-review sentence for a ratio issue row."""
     where = r.path or r.detail
-    is_movie_main = r.folder.startswith("movies/") \
-        and not (r.path or "").startswith("extras/")
+    is_movie_main = r.folder.startswith("movies/") and not (r.path or "").startswith("extras/")
     reading = f"{'main ' if is_movie_main else ''}{where} reads {r.ratio:.2f}"
     if r.band == "green":  # a graded extra inside the norm
-        return (f"{reading} — a full-length extra beside the main (the "
-                f"two-candidates signature); confirm the right title is the main")
+        return (
+            f"{reading} — a full-length extra beside the main (the "
+            f"two-candidates signature); confirm the right title is the main"
+        )
     off = f"{abs(r.delta):.0%} short" if r.delta < 0 else f"{abs(r.delta):.0%} over"
     extra = (r.path or "").startswith("extras/")
     if r.band == "red":
         if extra:
-            return (f"{reading} ({off}) — a feature-length extra far off the "
-                    f"film runtime; check which disc title this is")
-        return (f"{reading} ({off}) — beyond what any PAL-vs-NTSC conversion "
-                f"or cut difference explains; suspect a partial/broken encode "
-                f"or the wrong file as main: verify against validation.json "
-                f"and re-rip if needed")
+            return (
+                f"{reading} ({off}) — a feature-length extra far off the "
+                f"film runtime; check which disc title this is"
+            )
+        return (
+            f"{reading} ({off}) — beyond what any PAL-vs-NTSC conversion "
+            f"or cut difference explains; suspect a partial/broken encode "
+            f"or the wrong file as main: verify against validation.json "
+            f"and re-rip if needed"
+        )
     if extra:
-        return (f"{reading} ({off}) — a feature-length extra off the film "
-                f"runtime; check which disc title this is")
+        return (
+            f"{reading} ({off}) — a feature-length extra off the film "
+            f"runtime; check which disc title this is"
+        )
     if r.delta < 0:
-        return (f"{reading} ({off}) — just outside the norm; check the TMDB "
-                f"runtime names the intended cut before re-ripping")
-    return (f"{reading} ({off}) — likely an extended cut vs the TMDB "
-            f"runtime; confirm which cut you want")
+        return (
+            f"{reading} ({off}) — just outside the norm; check the TMDB "
+            f"runtime names the intended cut before re-ripping"
+        )
+    return (
+        f"{reading} ({off}) — likely an extended cut vs the TMDB "
+        f"runtime; confirm which cut you want"
+    )
 
 
 def _row_recommendation(f: Finding) -> str:
@@ -1177,23 +1273,28 @@ def _row_recommendation(f: Finding) -> str:
     if f.check == "duplicate id":
         return f"{f.detail} — deduplicate the folders"
     if f.check == "unidentified":
-        return (f"{f.detail} — identify the folder manually (re-rip with a "
-                f"TMDB match or add validation.json)")
+        return (
+            f"{f.detail} — identify the folder manually (re-rip with a "
+            f"TMDB match or add validation.json)"
+        )
     if f.check == "staging name":
-        return (f"rename {f.path or f.detail} to the ` - Extra NN` form "
-                f"(`skive validate --fix` does the extras/ files)")
+        return (
+            f"rename {f.path or f.detail} to the ` - Extra NN` form "
+            f"(`skive validate --fix` does the extras/ files)"
+        )
     return f.detail
 
 
 def _folder_actions(rows: list[Finding]) -> list[str]:
     """The action lines for one folder's issues: the per-row sentences in
     walk order, staging names as one counted line pointing at --fix."""
-    actions = [_row_recommendation(r) for r in rows
-               if r.check != "staging name"]
+    actions = [_row_recommendation(r) for r in rows if r.check != "staging name"]
     staging = [r for r in rows if r.check == "staging name"]
     if staging:
-        actions.append(f"{len(staging)} file(s) still carry `_tNN` staging "
-                       f"labels — run `skive validate --fix` to rename them")
+        actions.append(
+            f"{len(staging)} file(s) still carry `_tNN` staging "
+            f"labels — run `skive validate --fix` to rename them"
+        )
     return actions
 
 
@@ -1220,11 +1321,9 @@ def recommendations(findings: list[Finding]) -> list[dict]:
                 prio = "red"
             elif r.check == "ratio" and r.band == "yellow" and prio != "red":
                 prio = "yellow"
-            elif r.check == "ratio" and r.band == "green" \
-                    and prio not in ("red", "yellow"):
+            elif r.check == "ratio" and r.band == "green" and prio not in ("red", "yellow"):
                 prio = "yellow"  # the full-length-extra lead still asks
-        plan.append({"folder": folder, "priority": prio,
-                     "actions": _folder_actions(rows)})
+        plan.append({"folder": folder, "priority": prio, "actions": _folder_actions(rows)})
     plan.sort(key=lambda e: {"red": 0, "yellow": 1, "note": 2}[e["priority"]])
     return plan
 
@@ -1260,9 +1359,11 @@ def _collapse_staging(issues: list[Finding]) -> list[Finding]:
             collapsed.append(f)
         elif f.folder not in emitted:
             paths = counts[f.folder]
-            collapsed.append(Finding(f.folder, "staging name",
-                                     f"{len(paths)} files with _tNN names, "
-                                     f"e.g. {paths[0]}"))
+            collapsed.append(
+                Finding(
+                    f.folder, "staging name", f"{len(paths)} files with _tNN names, e.g. {paths[0]}"
+                )
+            )
             emitted.add(f.folder)
     return collapsed
 
@@ -1289,8 +1390,7 @@ def _findings_table(findings: list[Finding]) -> Table:
     the Δ-from-norm column on graded rows."""
     table = ui.table("folder", "check", "detail", "Δ")
     for f in findings:
-        detail = Text(f.detail, style=_band_style(f.band)) \
-            if f.band else f.detail
+        detail = Text(f.detail, style=_band_style(f.band)) if f.band else f.detail
         table.add_row(f.folder, _check_cell(f), detail, _delta_cell(f))
     return table
 
@@ -1311,8 +1411,7 @@ def _result_line(findings: list[Finding], *, collapsed: bool) -> None:
         ui.ok("no issues")
         return
     n, folders = len(issues), len({f.folder for f in issues})
-    ui.warn(f"{n} issue{'s' if n != 1 else ''} in "
-            f"{folders} folder{'s' if folders != 1 else ''}")
+    ui.warn(f"{n} issue{'s' if n != 1 else ''} in {folders} folder{'s' if folders != 1 else ''}")
 
 
 def print_findings(findings: list[Finding], root: Path) -> None:
@@ -1352,15 +1451,20 @@ def print_issues(findings: list[Finding], root: Path) -> None:
     for entry in recommendations(findings):
         if styled:
             prio = {"red": "fail", "yellow": "warn"}.get(entry["priority"], "dim")
-            ui.console.print(Text.assemble((f"\u25b8 {entry['folder']}", "item"),
-                                           " — ", (entry["priority"], prio)),
-                             soft_wrap=True)
+            ui.console.print(
+                Text.assemble(
+                    (f"\u25b8 {entry['folder']}", "item"), " — ", (entry["priority"], prio)
+                ),
+                soft_wrap=True,
+            )
         else:
-            ui.console.print(f"  {entry['folder']} — {entry['priority']}",
-                             soft_wrap=True, markup=False)
+            ui.console.print(
+                f"  {entry['folder']} — {entry['priority']}", soft_wrap=True, markup=False
+            )
         for action in entry["actions"]:
-            ui.console.print(f"  • {action}" if styled else f"    • {action}",
-                             soft_wrap=True, markup=False)
+            ui.console.print(
+                f"  • {action}" if styled else f"    • {action}", soft_wrap=True, markup=False
+            )
     _result_line(findings, collapsed=True)
 
 
@@ -1387,23 +1491,39 @@ def json_report(findings: list[Finding], root: Path, *, issues: bool = False) ->
             other[f.check] = other.get(f.check, 0) + 1
     return {
         "root": str(root),
-        "ratio_band": {"norm": list(RATIO_GREEN),
-                       "red_beyond": [round(RATIO_GREEN[0] - PAL_NTSC_SPEEDUP, 4),
-                                      round(RATIO_GREEN[1] + PAL_NTSC_SPEEDUP, 4)]},
-        "summary": {"findings": len(rows), "ratio": ratio_counts,
-                    "other": other},
-        "findings": [{"folder": f.folder, "check": f.check, "path": f.path,
-                      "detail": f.detail, "band": f.band, "ratio": f.ratio,
-                      "delta": f.delta,
-                      "recommendation": _row_recommendation(f) if is_issue(f)
-                      else None} for f in rows],
+        "ratio_band": {
+            "norm": list(RATIO_GREEN),
+            "red_beyond": [
+                round(RATIO_GREEN[0] - PAL_NTSC_SPEEDUP, 4),
+                round(RATIO_GREEN[1] + PAL_NTSC_SPEEDUP, 4),
+            ],
+        },
+        "summary": {"findings": len(rows), "ratio": ratio_counts, "other": other},
+        "findings": [
+            {
+                "folder": f.folder,
+                "check": f.check,
+                "path": f.path,
+                "detail": f.detail,
+                "band": f.band,
+                "ratio": f.ratio,
+                "delta": f.delta,
+                "recommendation": _row_recommendation(f) if is_issue(f) else None,
+            }
+            for f in rows
+        ],
         "recommendations": recommendations(findings),
     }
 
 
-def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
-                 json_: bool = False, issues: bool = False,
-                 fix: bool = False) -> None:
+def run_validate(
+    videos_root: Path | None = None,
+    *,
+    run=subprocess.run,
+    json_: bool = False,
+    issues: bool = False,
+    fix: bool = False,
+) -> None:
     """The `skive validate` entry: resolve the share root ($VIDEOS_MOUNT, else
     /mnt/videos), optionally apply the safe automatic fix (--fix renames
     staging-labelled extras files), then walk its library/ and print — the
@@ -1425,8 +1545,12 @@ def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
     if not library.is_dir():
         message = f"no library/ under {share}"
         if json_:
-            ui.out(json.dumps({"root": str(library), "error": message,
-                               "findings": [], "recommendations": []}, indent=2))
+            ui.out(
+                json.dumps(
+                    {"root": str(library), "error": message, "findings": [], "recommendations": []},
+                    indent=2,
+                )
+            )
         else:
             ui.fail(message)
         return
@@ -1435,9 +1559,10 @@ def run_validate(videos_root: Path | None = None, *, run=subprocess.run,
     if json_:
         report = json_report(findings, library, issues=issues)
         if fix:
-            report["fixed"] = [{"from": str(o.relative_to(library)),
-                                "to": str(n.relative_to(library))}
-                               for o, n in renames]
+            report["fixed"] = [
+                {"from": str(o.relative_to(library)), "to": str(n.relative_to(library))}
+                for o, n in renames
+            ]
         ui.out(json.dumps(report, indent=2, ensure_ascii=False))
         return
     for old, new in renames:

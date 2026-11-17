@@ -3,20 +3,30 @@
 import errno
 import inspect
 import os
+import pty
 import selectors
 import subprocess
 import sys
 import time
-import pty
 from pathlib import Path
 
-from skive.common import RipLog, ensure_share, kill_child_after_grace
 from skive import ui
+from skive.common import RipLog, ensure_share, kill_child_after_grace
 
 SOURCES = ("cd", "other", "bandcamp")
-AUDIO_EXTENSIONS = frozenset({
-    ".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aiff", ".alac", ".wma",
-})
+AUDIO_EXTENSIONS = frozenset(
+    {
+        ".flac",
+        ".mp3",
+        ".m4a",
+        ".ogg",
+        ".opus",
+        ".wav",
+        ".aiff",
+        ".alac",
+        ".wma",
+    }
+)
 
 
 def _is_empty_dir(path: Path) -> bool:
@@ -34,20 +44,23 @@ def _album_folders(source_dir: Path) -> list[Path]:
     """List the album directories present immediately below a source."""
     if not source_dir.is_dir():
         return []
-    return sorted((entry for entry in source_dir.iterdir() if entry.is_dir()),
-                  key=lambda entry: entry.name)
+    return sorted(
+        (entry for entry in source_dir.iterdir() if entry.is_dir()), key=lambda entry: entry.name
+    )
 
 
 def _has_audio(folder: Path) -> bool:
     """Whether *folder* still contains a supported audio file."""
     if not folder.is_dir():
         return False
-    return any(path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
-               for path in folder.rglob("*"))
+    return any(
+        path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS for path in folder.rglob("*")
+    )
 
 
-def _log_album_outcomes(log: RipLog, source: str, source_dir: Path,
-                        folders: list[Path]) -> tuple[int, int]:
+def _log_album_outcomes(
+    log: RipLog, source: str, source_dir: Path, folders: list[Path]
+) -> tuple[int, int]:
     """List the source again, record filed/left for prior album folders in the
     run log and print one symbol line per album. Returns (filed, left)."""
     after = {folder.name: folder for folder in _album_folders(source_dir)}
@@ -77,8 +90,7 @@ def _record_output(log: RipLog, output, tool: str = "beets") -> None:
         log.raw(tool, line.rstrip("\r"))
 
 
-def _run_beets_pty(cmd: list[str], log: RipLog,
-                   env: dict[str, str] | None = None) -> int:
+def _run_beets_pty(cmd: list[str], log: RipLog, env: dict[str, str] | None = None) -> int:
     """Run beets on a pseudo-terminal, relaying its session to the console.
 
     A pty is required rather than pipes because beets prompts based on whether
@@ -91,7 +103,11 @@ def _run_beets_pty(cmd: list[str], log: RipLog,
     stdin_fd = None
     try:
         process = subprocess.Popen(
-            cmd, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+            cmd,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
             env=env,
         )
         os.close(slave)
@@ -155,8 +171,7 @@ def _run_beets_pty(cmd: list[str], log: RipLog,
         os.close(master)
 
 
-def _run_beets(cmd: list[str], log: RipLog, run=None,
-               env: dict[str, str] | None = None) -> int:
+def _run_beets(cmd: list[str], log: RipLog, run=None, env: dict[str, str] | None = None) -> int:
     """Run beets, using an injected non-pty runner for tests."""
     if run is None:
         return _run_beets_pty(cmd, log, env=env)
@@ -164,9 +179,10 @@ def _run_beets(cmd: list[str], log: RipLog, run=None,
     # inspect the exact child environment.
     try:
         parameters = inspect.signature(run).parameters.values()
-        accepts_env = any(parameter.name == "env" or
-                          parameter.kind == inspect.Parameter.VAR_KEYWORD
-                          for parameter in parameters)
+        accepts_env = any(
+            parameter.name == "env" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
     except (TypeError, ValueError):
         accepts_env = False
     result = run(cmd, env=env) if accepts_env else run(cmd)
@@ -193,8 +209,7 @@ def tag(args, run=None) -> None:
 
     sources = [args.source] if getattr(args, "source", None) else list(SOURCES)
     rip_dir = Path(music_mnt) / "rip"
-    active_sources = [source for source in sources
-                      if not _is_empty_dir(rip_dir / source)]
+    active_sources = [source for source in sources if not _is_empty_dir(rip_dir / source)]
 
     if not active_sources:
         ui.result_line("ok", "nothing to import")
@@ -219,8 +234,7 @@ def tag(args, run=None) -> None:
         for source in active_sources:
             source_dir = rip_dir / source
             # Only folders holding audio before beets ran can be filed or left.
-            before = [folder for folder in _album_folders(source_dir)
-                      if _has_audio(folder)]
+            before = [folder for folder in _album_folders(source_dir) if _has_audio(folder)]
             log.phase(source)
             os.environ["SKIVE_TAG_MODE"] = "as-is" if source == "bandcamp" else "autotag"
             cmd = [sys.executable, "-m", "beets", "-c", str(config_path), "import"]
@@ -265,8 +279,13 @@ def tag(args, run=None) -> None:
             log.keep_raw()
         log.finish(rc)
 
-    _result_line(rc, n_filed, n_left, int(time.monotonic() - started),
-                 f"see {Path(music_mnt) / 'logs' / 'rip.jsonl'} (run {log.run})")
+    _result_line(
+        rc,
+        n_filed,
+        n_left,
+        int(time.monotonic() - started),
+        f"see {Path(music_mnt) / 'logs' / 'rip.jsonl'} (run {log.run})",
+    )
     if rc != 0:
         sys.exit(rc)
 
@@ -278,8 +297,7 @@ def _result_line(rc: int, filed: int, left: int, elapsed: int, see: str) -> None
     if rc == 130:
         ui.result_line("fail", "interrupted", *counts, elapsed=elapsed, note=see)
     elif rc != 0:
-        ui.result_line("fail", f"beets failed (exit {rc})", *counts,
-                       elapsed=elapsed, note=see)
+        ui.result_line("fail", f"beets failed (exit {rc})", *counts, elapsed=elapsed, note=see)
     elif left:
         ui.result_line("warn", *counts, elapsed=elapsed, note=see)
     else:

@@ -38,9 +38,18 @@ sys.path.insert(0, str(_repo))  # the skive package
 
 from skive.tmdb import fetch_season, search_first, title_matches
 from skive.validation import (
-    STAGING_LABEL, VALIDATION_FILENAME, YEAR_SUFFIX, _double_runtime,
-    load_validation, merge_tv_document, movie_document, movie_row,
-    probe_duration, tv_document, tv_row, write_validation,
+    STAGING_LABEL,
+    VALIDATION_FILENAME,
+    YEAR_SUFFIX,
+    _double_runtime,
+    load_validation,
+    merge_tv_document,
+    movie_document,
+    movie_row,
+    probe_duration,
+    tv_document,
+    tv_row,
+    write_validation,
 )
 
 
@@ -67,8 +76,9 @@ def _search(kind: str, folder: Path):
         # (every "Danskernes egen historie" query returns the same three
         # hits) — a year-matching hit whose title differs is a guess, and
         # the backfill never guesses.
-        print(f"skip {folder.name}: no TMDB hit titled {m.group(1)!r} ({m.group(2)})",
-              file=sys.stderr)
+        print(
+            f"skip {folder.name}: no TMDB hit titled {m.group(1)!r} ({m.group(2)})", file=sys.stderr
+        )
         return None
     return pick
 
@@ -83,19 +93,23 @@ def backfill_movie(folder: Path) -> dict | None:
     main/volume_label/run null: the reconstruction cannot know what the rip
     run knew.
     """
-    staged = [p for p in sorted(folder.glob("*.mkv"))
-              if STAGING_LABEL.match(p.stem)]
+    staged = [p for p in sorted(folder.glob("*.mkv")) if STAGING_LABEL.match(p.stem)]
     if not staged:
         print(f"skip {folder.name}: no staged sources", file=sys.stderr)
         return None
     pick = _search("movie", folder)
     if pick is None:
         return None
-    rows = [movie_row(p.name, int(STAGING_LABEL.match(p.stem).group("num")),
-                      probe_duration(p), pick.runtime_secs)
-            for p in staged]
-    return movie_document(pick.id, folder.name, pick.runtime_secs,
-                          None, None, None, rows)
+    rows = [
+        movie_row(
+            p.name,
+            int(STAGING_LABEL.match(p.stem).group("num")),
+            probe_duration(p),
+            pick.runtime_secs,
+        )
+        for p in staged
+    ]
+    return movie_document(pick.id, folder.name, pick.runtime_secs, None, None, None, rows)
 
 
 def backfill_show(folder: Path) -> dict | None:
@@ -107,8 +121,10 @@ def backfill_show(folder: Path) -> dict | None:
     pick = _search("tv", folder)
     if pick is None:
         return None
-    pattern = re.compile(rf"^{re.escape(folder.name)}"
-                         r"_S(?P<sn>\d+)E(?P<en>\d+)(?:-E(?P<hi>\d+))?$")
+    pattern = re.compile(
+        rf"^{re.escape(folder.name)}"
+        r"_S(?P<sn>\d+)E(?P<en>\d+)(?:-E(?P<hi>\d+))?$"
+    )
     by_season: dict[int, list[Path]] = {}
     for p in sorted(folder.glob("*.mkv")):
         m = pattern.match(p.stem)
@@ -122,8 +138,10 @@ def backfill_show(folder: Path) -> dict | None:
         try:
             listed = fetch_season(pick.id, season)
         except (RuntimeError, ValueError) as e:
-            print(f"skip {folder.name} season {season:02d}: "
-                  f"TMDB season fetch failed ({e})", file=sys.stderr)
+            print(
+                f"skip {folder.name} season {season:02d}: TMDB season fetch failed ({e})",
+                file=sys.stderr,
+            )
             continue
         runtimes = {ep: rt or None for ep, _name, rt in listed}
         rows = []
@@ -131,10 +149,10 @@ def backfill_show(folder: Path) -> dict | None:
             m = pattern.match(p.stem)
             lo = int(m.group("en"))
             hi = max(lo, int(m.group("hi"))) if m.group("hi") else lo
-            rows.append(tv_row(lo, p.name, None, probe_duration(p),
-                               _double_runtime(runtimes, lo, hi)))
-        season_doc = tv_document(pick.id, folder.name, season,
-                                 None, None, [], rows)
+            rows.append(
+                tv_row(lo, p.name, None, probe_duration(p), _double_runtime(runtimes, lo, hi))
+            )
+        season_doc = tv_document(pick.id, folder.name, season, None, None, [], rows)
         doc = season_doc if doc is None else merge_tv_document(doc, season_doc)
     if doc is None:
         return None
@@ -147,12 +165,17 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="backfill_validation.py",
         description="Write validation.json for rips made before the record "
-                    "existed (dry-run by default).")
-    p.add_argument("--apply", action="store_true",
-                   help="write the documents (default: print the plan only)")
-    p.add_argument("--root", metavar="PATH",
-                   default=os.environ.get("VIDEOS_MOUNT", "/mnt/videos"),
-                   help="share root (default: $VIDEOS_MOUNT or /mnt/videos)")
+        "existed (dry-run by default).",
+    )
+    p.add_argument(
+        "--apply", action="store_true", help="write the documents (default: print the plan only)"
+    )
+    p.add_argument(
+        "--root",
+        metavar="PATH",
+        default=os.environ.get("VIDEOS_MOUNT", "/mnt/videos"),
+        help="share root (default: $VIDEOS_MOUNT or /mnt/videos)",
+    )
     args = p.parse_args(argv)
     root = Path(args.root)
 
@@ -174,8 +197,7 @@ def main(argv=None) -> int:
                 skipped += 1
                 continue
             lib = root / "library" / "movies" / folder.name
-            copy_to = lib if lib.is_dir() \
-                and not (lib / VALIDATION_FILENAME).exists() else None
+            copy_to = lib if lib.is_dir() and not (lib / VALIDATION_FILENAME).exists() else None
             note = f" (+ copy to library/movies/{folder.name})" if copy_to else ""
             print(f"write  {rel}: {len(doc['titles'])} titles, main=null{note}")
             if args.apply:
@@ -200,8 +222,9 @@ def main(argv=None) -> int:
             if doc is None:
                 skipped += 1
                 continue
-            seasons = ", ".join(f"S{e['season']:02d} ({len(e['episodes'])} eps)"
-                                for e in doc["seasons"])
+            seasons = ", ".join(
+                f"S{e['season']:02d} ({len(e['episodes'])} eps)" for e in doc["seasons"]
+            )
             verb = "rebuild" if existing is not None else "write"
             print(f"{verb} {rel}: {seasons}, discs=[]")
             if args.apply:
@@ -209,8 +232,10 @@ def main(argv=None) -> int:
             written += 1
 
     tail = f", {copied} librar{'y' if copied == 1 else 'ies'}" if args.apply else ""
-    print(f"\n{'wrote' if args.apply else 'would write'} "
-          f"{written} document(s){tail}; {skipped} skipped")
+    print(
+        f"\n{'wrote' if args.apply else 'would write'} "
+        f"{written} document(s){tail}; {skipped} skipped"
+    )
     return 0
 
 

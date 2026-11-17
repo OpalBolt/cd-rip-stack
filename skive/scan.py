@@ -4,9 +4,9 @@ and the ISO language helper."""
 import os
 import re
 import subprocess
-from collections import Counter
 import sys
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,58 +14,193 @@ from skive import ui
 from skive.common import RipLog
 from skive.makemkv import _qval
 
-
 # ISO 639-1 → ISO 639-2 table sourced from the ISO 639-2 code list (Library
 # of Congress, https://www.loc.gov/standards/iso639-2/php/code_list.php) and
 # MakeMKV's published language list. B and T forms both work: MakeMKV
 # normalizes 639-2 variants (a `fra` selection matches `fre` tracks, ADR 0022).
 _ISO2B = {
-        "aa": "aar", "ab": "abk", "ae": "ave", "af": "afr",
-        "ak": "aka", "am": "amh", "an": "arg", "ar": "ara",
-        "as": "asm", "av": "ava", "ay": "aym", "az": "aze",
-        "ba": "bak", "be": "bel", "bg": "bul", "bh": "bih",
-        "bi": "bis", "bm": "bam", "bo": "bod", "br": "bre",
-        "bs": "bos", "ca": "cat", "ce": "che", "ch": "cha",
-        "co": "cos", "cr": "cre", "cs": "ces", "cu": "chu",
-        "cv": "chv", "cy": "cym", "da": "dan", "de": "deu",
-        "dv": "div", "dz": "dzo", "ee": "ewe", "el": "gre", "en": "eng",
-        "eo": "epo", "es": "spa", "et": "est", "eu": "eus",
-        "fa": "fas", "ff": "ful", "fi": "fin", "fj": "fij",
-        "fo": "fao", "fr": "fra", "fy": "fry", "ga": "gle",
-        "gd": "gla", "gl": "glg", "gn": "grn", "gu": "guj",
-        "gv": "glv", "ha": "hau", "he": "heb", "hi": "hin",
-        "ho": "hmo", "hr": "hrv", "ht": "hat", "hu": "hun",
-        "hy": "arm", "hz": "her", "ia": "ina", "id": "ind",
-        "ie": "ile", "ig": "ibo",
-        "ii": "iii", "ik": "ipk", "io": "ido", "is": "isl",
-        "it": "ita", "iu": "iku", "ja": "jpn", "jv": "jav",
-        "ka": "kat", "kg": "kon", "ki": "kik", "kj": "kua",
-        "kk": "kaz", "kl": "kal", "km": "khm", "kn": "kan",
-        "ko": "kor", "kr": "kau", "ks": "kas", "ku": "kur",
-        "kv": "kom", "kw": "cor", "ky": "kir", "la": "lat",
-        "lb": "ltz", "lg": "lug", "li": "lim", "ln": "lin",
-        "lo": "lao", "lt": "lit", "lu": "lub", "lv": "lav",
-        "mg": "mlg", "mh": "mah", "mi": "mri", "mk": "mkd",
-        "ml": "mal", "mn": "mon", "mr": "mar", "ms": "msa",
-        "mt": "mlt", "my": "bur", "na": "nau", "nb": "nob",
-        "nd": "nde", "ne": "nep", "ng": "ndo", "nl": "nld",
-        "nn": "nno", "no": "nor", "nr": "nbl", "nv": "nav",
-        "ny": "nya", "oc": "oci", "oj": "oji", "om": "orm",
-        "os": "oss", "pa": "pan", "pi": "pli", "pl": "pol",
-        "ps": "pus", "pt": "por", "qu": "que", "rm": "roh",
-        "rn": "run", "ro": "ron", "ru": "rus", "rw": "kin",
-        "sa": "san", "sc": "srd", "sd": "snd", "se": "sme",
-        "sg": "sag", "si": "sin", "sk": "slk", "sl": "slv",
-        "sm": "smo", "sn": "sna", "so": "som", "sq": "alb",
-        "sr": "srp", "ss": "ssw", "st": "sot", "su": "sun",
-        "sv": "swe", "sw": "swa", "ta": "tam", "te": "tel",
-        "tg": "tgk", "th": "tha", "ti": "tir", "tk": "tuk",
-        "tl": "tgl", "tn": "tsn", "to": "ton", "tr": "tur",
-        "ts": "tso", "tt": "tat", "tw": "twi", "ty": "tah",
-        "ug": "uig", "uk": "ukr", "ur": "urd", "uz": "uzb",
-        "ve": "ven", "vi": "vie", "vo": "vol", "wa": "wln",
-        "wo": "wol", "xh": "xho", "yi": "yid", "yo": "yor",
-        "za": "zha", "zh": "chi", "zu": "zul",
+    "aa": "aar",
+    "ab": "abk",
+    "ae": "ave",
+    "af": "afr",
+    "ak": "aka",
+    "am": "amh",
+    "an": "arg",
+    "ar": "ara",
+    "as": "asm",
+    "av": "ava",
+    "ay": "aym",
+    "az": "aze",
+    "ba": "bak",
+    "be": "bel",
+    "bg": "bul",
+    "bh": "bih",
+    "bi": "bis",
+    "bm": "bam",
+    "bo": "bod",
+    "br": "bre",
+    "bs": "bos",
+    "ca": "cat",
+    "ce": "che",
+    "ch": "cha",
+    "co": "cos",
+    "cr": "cre",
+    "cs": "ces",
+    "cu": "chu",
+    "cv": "chv",
+    "cy": "cym",
+    "da": "dan",
+    "de": "deu",
+    "dv": "div",
+    "dz": "dzo",
+    "ee": "ewe",
+    "el": "gre",
+    "en": "eng",
+    "eo": "epo",
+    "es": "spa",
+    "et": "est",
+    "eu": "eus",
+    "fa": "fas",
+    "ff": "ful",
+    "fi": "fin",
+    "fj": "fij",
+    "fo": "fao",
+    "fr": "fra",
+    "fy": "fry",
+    "ga": "gle",
+    "gd": "gla",
+    "gl": "glg",
+    "gn": "grn",
+    "gu": "guj",
+    "gv": "glv",
+    "ha": "hau",
+    "he": "heb",
+    "hi": "hin",
+    "ho": "hmo",
+    "hr": "hrv",
+    "ht": "hat",
+    "hu": "hun",
+    "hy": "arm",
+    "hz": "her",
+    "ia": "ina",
+    "id": "ind",
+    "ie": "ile",
+    "ig": "ibo",
+    "ii": "iii",
+    "ik": "ipk",
+    "io": "ido",
+    "is": "isl",
+    "it": "ita",
+    "iu": "iku",
+    "ja": "jpn",
+    "jv": "jav",
+    "ka": "kat",
+    "kg": "kon",
+    "ki": "kik",
+    "kj": "kua",
+    "kk": "kaz",
+    "kl": "kal",
+    "km": "khm",
+    "kn": "kan",
+    "ko": "kor",
+    "kr": "kau",
+    "ks": "kas",
+    "ku": "kur",
+    "kv": "kom",
+    "kw": "cor",
+    "ky": "kir",
+    "la": "lat",
+    "lb": "ltz",
+    "lg": "lug",
+    "li": "lim",
+    "ln": "lin",
+    "lo": "lao",
+    "lt": "lit",
+    "lu": "lub",
+    "lv": "lav",
+    "mg": "mlg",
+    "mh": "mah",
+    "mi": "mri",
+    "mk": "mkd",
+    "ml": "mal",
+    "mn": "mon",
+    "mr": "mar",
+    "ms": "msa",
+    "mt": "mlt",
+    "my": "bur",
+    "na": "nau",
+    "nb": "nob",
+    "nd": "nde",
+    "ne": "nep",
+    "ng": "ndo",
+    "nl": "nld",
+    "nn": "nno",
+    "no": "nor",
+    "nr": "nbl",
+    "nv": "nav",
+    "ny": "nya",
+    "oc": "oci",
+    "oj": "oji",
+    "om": "orm",
+    "os": "oss",
+    "pa": "pan",
+    "pi": "pli",
+    "pl": "pol",
+    "ps": "pus",
+    "pt": "por",
+    "qu": "que",
+    "rm": "roh",
+    "rn": "run",
+    "ro": "ron",
+    "ru": "rus",
+    "rw": "kin",
+    "sa": "san",
+    "sc": "srd",
+    "sd": "snd",
+    "se": "sme",
+    "sg": "sag",
+    "si": "sin",
+    "sk": "slk",
+    "sl": "slv",
+    "sm": "smo",
+    "sn": "sna",
+    "so": "som",
+    "sq": "alb",
+    "sr": "srp",
+    "ss": "ssw",
+    "st": "sot",
+    "su": "sun",
+    "sv": "swe",
+    "sw": "swa",
+    "ta": "tam",
+    "te": "tel",
+    "tg": "tgk",
+    "th": "tha",
+    "ti": "tir",
+    "tk": "tuk",
+    "tl": "tgl",
+    "tn": "tsn",
+    "to": "ton",
+    "tr": "tur",
+    "ts": "tso",
+    "tt": "tat",
+    "tw": "twi",
+    "ty": "tah",
+    "ug": "uig",
+    "uk": "ukr",
+    "ur": "urd",
+    "uz": "uzb",
+    "ve": "ven",
+    "vi": "vie",
+    "vo": "vol",
+    "wa": "wln",
+    "wo": "wol",
+    "xh": "xho",
+    "yi": "yid",
+    "yo": "yor",
+    "za": "zha",
+    "zh": "chi",
+    "zu": "zul",
 }
 
 
@@ -109,8 +244,12 @@ def _parse_label(out: str, disc: int = 0) -> str:
         m = re.match(rf'^DRV:{disc},2,\d+,\d+,"[^"]*","([^"]*)"', line)
         if m:
             label = re.sub(r"[ _]+", " ", m.group(1))
-            label = re.sub(r"\s*[\(\[]?(?:(?:disc|disk)\s*\d+(?:\s*of\s*\d+)?|side\s*[a-d0-9])[\)\]]?\s*$",
-                           "", label, flags=re.IGNORECASE)
+            label = re.sub(
+                r"\s*[\(\[]?(?:(?:disc|disk)\s*\d+(?:\s*of\s*\d+)?|side\s*[a-d0-9])[\)\]]?\s*$",
+                "",
+                label,
+                flags=re.IGNORECASE,
+            )
             return label.strip()
     return ""
 
@@ -165,7 +304,7 @@ def is_recordable(media: str) -> bool:
 
     # Recordable families — bash patterns
     # DVD+R*, DVD+RW*, DVD-RW*, DVD-RAM*, BD-RE*, CD-RW*
-    if re.match(r'^(DVD\+R|DVD\+RW|DVD-RW|DVD-RAM|BD-RE|CD-RW)', media):
+    if re.match(r"^(DVD\+R|DVD\+RW|DVD-RW|DVD-RAM|BD-RE|CD-RW)", media):
         return True
 
     # Exact matches: DVD-R, CD-R, BD-R
@@ -173,17 +312,15 @@ def is_recordable(media: str) -> bool:
         return True
 
     # Trailing variants: "DVD-R ", "DVD-R-", "BD-R "
-    if re.match(r'^(DVD-R|BD-R) ', media):
+    if re.match(r"^(DVD-R|BD-R) ", media):
         return True
-    if re.match(r'^DVD-R-', media):
-        return True
-
-    return False
+    return bool(re.match(r"^DVD-R-", media))
 
 
 @dataclass
 class TitleInfo:
     """One disc title, as shown in the interactive menu."""
+
     number: int
     seconds: int
     size: int
@@ -256,8 +393,17 @@ def _parse_titles(out: str) -> list[TitleInfo]:
                 t = int(head[1])
             except ValueError:
                 continue
-            rec = data.setdefault(t, {"secs": 0, "size": 0, "scrambled": False,
-                                      "segmap": "", "stypes": {}, "slangs": {}})
+            rec = data.setdefault(
+                t,
+                {
+                    "secs": 0,
+                    "size": 0,
+                    "scrambled": False,
+                    "segmap": "",
+                    "stypes": {},
+                    "slangs": {},
+                },
+            )
             code = f[1] if len(f) > 1 else ""
             val = _qval(line)
             if code == "9":
@@ -277,8 +423,9 @@ def _parse_titles(out: str) -> list[TitleInfo]:
                 t = int(head[1])
             except ValueError:
                 continue
-            rec = data.setdefault(t, {"secs": 0, "size": 0, "scrambled": False,
-                                      "stypes": {}, "slangs": {}})
+            rec = data.setdefault(
+                t, {"secs": 0, "size": 0, "scrambled": False, "stypes": {}, "slangs": {}}
+            )
             stream = f[1] if len(f) > 1 else ""
             code = f[2] if len(f) > 2 else ""
             val = _qval(line)
@@ -299,22 +446,25 @@ def _parse_titles(out: str) -> list[TitleInfo]:
         rec = data[t]
         if rec["secs"] <= 0 or rec["size"] <= 0:
             continue
-        result.append(TitleInfo(
-            number=t,
-            seconds=rec["secs"],
-            size=rec["size"],
-            audio=_audio_str(rec["stypes"], rec["slangs"]),
-            subtitles=_subs_str(rec["stypes"], rec["slangs"]),
-            scrambled=rec["scrambled"],
-            decoy_cluster=(clusters[rec["segmap"]]
-                           if rec["segmap"] and clusters[rec["segmap"]] >= 3
-                           else 0),
-        ))
+        result.append(
+            TitleInfo(
+                number=t,
+                seconds=rec["secs"],
+                size=rec["size"],
+                audio=_audio_str(rec["stypes"], rec["slangs"]),
+                subtitles=_subs_str(rec["stypes"], rec["slangs"]),
+                scrambled=rec["scrambled"],
+                decoy_cluster=(
+                    clusters[rec["segmap"]] if rec["segmap"] and clusters[rec["segmap"]] >= 3 else 0
+                ),
+            )
+        )
     return result
 
 
-def scan_disc(minlength: int, run=subprocess.run, disc: int = 0,
-              log: RipLog | None = None) -> tuple[str, str, list[TitleInfo]]:
+def scan_disc(
+    minlength: int, run=subprocess.run, disc: int = 0, log: RipLog | None = None
+) -> tuple[str, str, list[TitleInfo]]:
     """One `makemkvcon info` run: media token, volume label, parsed titles.
 
     With a log, the verbatim output is persisted as a scan dump (CONTEXT.md:
@@ -330,16 +480,14 @@ def scan_disc(minlength: int, run=subprocess.run, disc: int = 0,
         # expired-eval makemkvcon, read errors). Keep the raw output for diagnosis.
         dump = Path(tempfile.gettempdir()) / "skive-scan-failed.txt"
         dump.write_text(out)
-        if ("Evaluation period has expired" in out
-                or "shareware functionality unavailable" in out):
+        if "Evaluation period has expired" in out or "shareware functionality unavailable" in out:
             # ADR 0016: remind, never fetch or write the key ourselves.
             ui.fail("MakeMKV key expired — BD ripping needs a valid app_Key")
             ui.info("free key: https://forum.makemkv.com/forum/viewtopic.php?t=1053")
             ui.info('write app_Key = "…" into ~/.MakeMKV/settings.conf on the rip box, then re-run')
             ui.info("DVD and CD rips are unaffected")
             if log is not None:
-                log.note("scan", "makemkv key expired — update app_Key (forum t=1053)",
-                         echo=False)
+                log.note("scan", "makemkv key expired — update app_Key (forum t=1053)", echo=False)
         else:
             ui.fail(f"disc scan returned no titles ({media}) — raw output saved to {dump}")
             ui.info("refusing to rip blind (this is how scrambled duplicates get ripped).")
@@ -371,10 +519,16 @@ def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str, str]:
     override = os.environ.get("MAKEMKV_INFO")
     if override:
         # Replay captured dump via the command in override
-        out = subprocess.run(override, shell=True, capture_output=True, text=True).stdout
+        out = subprocess.run(
+            override, shell=True, capture_output=True, text=True, check=False
+        ).stdout
         return _parse_media(out, disc), _parse_label(out, disc), _parse_device(out, disc)
-    proc = run(["makemkvcon", "-r", "info", f"disc:{disc}"],
-               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    proc = run(
+        ["makemkvcon", "-r", "info", f"disc:{disc}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
     drv_line = ""
     try:
         for line in proc.stdout:

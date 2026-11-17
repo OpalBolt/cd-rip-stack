@@ -15,7 +15,8 @@ import pytest
 _REPO = pathlib.Path(__file__).parent.parent
 
 _spec = importlib.util.spec_from_file_location(
-    "migrate_layout", _REPO / "scripts" / "migrate_layout.py")
+    "migrate_layout", _REPO / "scripts" / "migrate_layout.py"
+)
 migrate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(migrate)
 
@@ -69,12 +70,19 @@ def test_dry_run_default_prints_plan_and_moves_nothing(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert f"would move {tmp_path}/library/Old Movie (1999) -> {tmp_path}/library/movies/Old Movie (1999)" in out
+    assert (
+        f"would move {tmp_path}/library/Old Movie (1999) -> {tmp_path}/library/movies/Old Movie (1999)"
+        in out
+    )
     assert f"would move {tmp_path}/rip-DONE -> {tmp_path}/lossless" in out
-    assert (f"would move {tmp_path}/lossless/Movie (2001)_t01.mkv"
-            f" -> {tmp_path}/lossless/movies/Movie (2001)/Movie (2001)_t01.mkv") in out
-    assert (f"would move {tmp_path}/rip/movies/Movie (2002)_t00.mkv"
-            f" -> {tmp_path}/rip/movies/Movie (2002)/Movie (2002)_t00.mkv") in out
+    assert (
+        f"would move {tmp_path}/lossless/Movie (2001)_t01.mkv"
+        f" -> {tmp_path}/lossless/movies/Movie (2001)/Movie (2001)_t01.mkv"
+    ) in out
+    assert (
+        f"would move {tmp_path}/rip/movies/Movie (2002)_t00.mkv"
+        f" -> {tmp_path}/rip/movies/Movie (2002)/Movie (2002)_t00.mkv"
+    ) in out
     assert "dry-run: nothing changed (use --apply to execute)" in out
     assert "4 move(s)" in out
     # nothing moved, nothing created
@@ -106,23 +114,24 @@ def test_apply_library_root_entry_moves_into_movies(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (tmp_path / "library" / "movies" / "Old Movie (1999)"
-            / "Old Movie (1999)_t01.mkv").exists()
+    assert (
+        tmp_path / "library" / "movies" / "Old Movie (1999)" / "Old Movie (1999)_t01.mkv"
+    ).exists()
     assert not (tmp_path / "library" / "Old Movie (1999)").exists()
     assert stray.read_bytes() == b"notes"  # non-folder entry reported, not moved
     assert f"skip {tmp_path}/library/note.txt (not a folder -- left in place)" in out
 
 
 def test_apply_tv_tree_renamed_to_tv(tmp_path, capsys):
-    mkfile(tmp_path / "library" / "TV" / "Show (2010)" / "Season 01"
-           / "Show (2010) - S01E01.mkv")
+    mkfile(tmp_path / "library" / "TV" / "Show (2010)" / "Season 01" / "Show (2010) - S01E01.mkv")
 
     rc = run(tmp_path, apply=True)
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (tmp_path / "library" / "tv" / "Show (2010)" / "Season 01"
-            / "Show (2010) - S01E01.mkv").exists()  # whole tree rides the rename
+    assert (
+        tmp_path / "library" / "tv" / "Show (2010)" / "Season 01" / "Show (2010) - S01E01.mkv"
+    ).exists()  # whole tree rides the rename
     assert not (tmp_path / "library" / "TV").exists()
     assert f"move {tmp_path}/library/TV -> {tmp_path}/library/tv" in out
 
@@ -179,8 +188,10 @@ def test_apply_rip_done_renamed_and_retreed(tmp_path, capsys):
     # a bare extra in the flat rip-DONE context is a guess the name cannot
     # support: carried to the lossless root, reported, never re-treed
     assert (lossless / "Show (2020) - Extra 02.mkv").exists()
-    assert (f"skip {lossless}/Show (2020) - Extra 02.mkv"
-            f" (ambiguous extra (no type dir: tv or movies?) -- left in place)") in out
+    assert (
+        f"skip {lossless}/Show (2020) - Extra 02.mkv"
+        f" (ambiguous extra (no type dir: tv or movies?) -- left in place)"
+    ) in out
     # junk rides the rename but is reported, never re-treed
     assert not junk.exists()
     assert (lossless / "B1_t00.mkv").exists()
@@ -200,8 +211,9 @@ def test_apply_rip_done_merges_into_existing_lossless(tmp_path):
 
 
 def test_rip_done_collision_keeps_source_and_folder(tmp_path, capsys):
-    kept = mkfile(tmp_path / "lossless" / "movies" / "Movie (2001)"
-                  / "Movie (2001)_t01.mkv", b"kept")
+    kept = mkfile(
+        tmp_path / "lossless" / "movies" / "Movie (2001)" / "Movie (2001)_t01.mkv", b"kept"
+    )
     stray = mkfile(tmp_path / "rip-DONE" / "Movie (2001)_t01.mkv", b"stray")
 
     rc = run(tmp_path, apply=True)
@@ -223,7 +235,10 @@ def test_rip_done_unparsed_straggler_blocks_prune_and_is_reported(tmp_path, caps
 
     assert rc == 0
     assert not log.exists()  # carried by the rename, not re-treed
-    assert f"skip {tmp_path}/lossless/rip.log (old text rip.log -- left unread -- left in place)" in out
+    assert (
+        f"skip {tmp_path}/lossless/rip.log (old text rip.log -- left unread -- left in place)"
+        in out
+    )
     assert (tmp_path / "lossless" / "rip.log").read_bytes() == b"old text log"
     assert (tmp_path / "rip-DONE").exists() is False  # rename carried everything
 
@@ -267,8 +282,7 @@ def test_unparseable_and_junk_leftovers_reported_and_kept(tmp_path, capsys):
 
 
 def test_staging_collision_skips_leftover(tmp_path, capsys):
-    kept = mkfile(tmp_path / "rip" / "movies" / "Movie (2004)"
-                  / "Movie (2004)_t01.mkv", b"kept")
+    kept = mkfile(tmp_path / "rip" / "movies" / "Movie (2004)" / "Movie (2004)_t01.mkv", b"kept")
     flat = mkfile(tmp_path / "rip" / "movies" / "Movie (2004)_t01.mkv", b"flat")
 
     rc = run(tmp_path, apply=True)
@@ -354,8 +368,13 @@ def test_apply_prunes_empty_dirs_but_never_managed_roots(tmp_path):
     assert not (tmp_path / "rip" / "tv" / "Dead (1999)").exists()
     assert not (tmp_path / "rip" / "tv" / "d3").exists()
     # the managed roots and their structural children survive
-    for kept in (tmp_path / "rip", tmp_path / "rip" / "movies", tmp_path / "rip" / "tv",
-                 tmp_path / "lossless", tmp_path / "library"):
+    for kept in (
+        tmp_path / "rip",
+        tmp_path / "rip" / "movies",
+        tmp_path / "rip" / "tv",
+        tmp_path / "lossless",
+        tmp_path / "library",
+    ):
         assert kept.exists()
 
 
@@ -404,8 +423,9 @@ def test_dry_run_then_apply_matches_apply_directly(tmp_path, capsys):
 def test_flat_context_extra_without_library_title_still_ambiguous(tmp_path, capsys):
     # merge mode: rip-DONE child and lossless-root straggler are both flat --
     # the library holds neither extra's title, so no type dir is provable
-    mkfile(tmp_path / "library" / "movies" / "Other (1999)"
-           / "Other (1999)_t01.mkv")  # a library to look in, no matching title
+    mkfile(
+        tmp_path / "library" / "movies" / "Other (1999)" / "Other (1999)_t01.mkv"
+    )  # a library to look in, no matching title
     mkfile(tmp_path / "lossless" / "movies" / "Old (2000)" / "Old (2000)_t01.mkv")
     done_extra = mkfile(tmp_path / "rip-DONE" / "Movie (2001) - Extra 02.mkv")
     root_extra = mkfile(tmp_path / "lossless" / "Show (2020) - Extra 03.mkv")
@@ -416,10 +436,12 @@ def test_flat_context_extra_without_library_title_still_ambiguous(tmp_path, caps
     assert rc == 0
     assert done_extra.exists() and root_extra.exists()  # reported, never re-treed
     assert (tmp_path / "rip-DONE").exists()  # the kept extra keeps rip-DONE alive
-    assert (f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?)"
-            f" -- left in place)") in out
-    assert (f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?)"
-            f" -- left in place)") in out
+    assert (
+        f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?) -- left in place)"
+    ) in out
+    assert (
+        f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?) -- left in place)"
+    ) in out
 
 
 def test_flat_extra_typed_by_title_at_library_root_moves_as_movie(tmp_path, capsys):
@@ -449,34 +471,31 @@ def test_flat_extra_typed_by_title_at_library_root_moves_as_movie(tmp_path, caps
 
 def test_flat_extra_typed_by_title_in_library_movies_moves_as_movie(tmp_path, capsys):
     # post-apply world: the title already lives in library/movies/
-    mkfile(tmp_path / "library" / "movies" / "Movie (2001)"
-           / "Movie (2001)_t01.mkv")
+    mkfile(tmp_path / "library" / "movies" / "Movie (2001)" / "Movie (2001)_t01.mkv")
     root_extra = mkfile(tmp_path / "lossless" / "Movie (2001) - Extra 03.mkv")
 
     rc = run(tmp_path, apply=True)
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (tmp_path / "lossless" / "movies" / "Movie (2001)"
-            / "Movie (2001) - Extra 03.mkv").exists()
+    assert (
+        tmp_path / "lossless" / "movies" / "Movie (2001)" / "Movie (2001) - Extra 03.mkv"
+    ).exists()
     assert not root_extra.exists()
     assert "ambiguous" not in out
 
 
 @pytest.mark.parametrize("spelling", ["TV", "tv"])
-def test_flat_extra_typed_by_title_in_library_tv_moves_as_tv(tmp_path, capsys,
-                                                             spelling):
+def test_flat_extra_typed_by_title_in_library_tv_moves_as_tv(tmp_path, capsys, spelling):
     # both TV spellings count as evidence: TV/ pre-move, tv/ post-apply
-    mkfile(tmp_path / "library" / spelling / "Show (2020)"
-           / "Show (2020) - S01E01.mkv")
+    mkfile(tmp_path / "library" / spelling / "Show (2020)" / "Show (2020) - S01E01.mkv")
     done_extra = mkfile(tmp_path / "rip-DONE" / "Show (2020) - Extra 02.mkv")
 
     rc = run(tmp_path, apply=True)
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (tmp_path / "lossless" / "tv" / "Show (2020)"
-            / "Show (2020) - Extra 02.mkv").exists()
+    assert (tmp_path / "lossless" / "tv" / "Show (2020)" / "Show (2020) - Extra 02.mkv").exists()
     assert not done_extra.exists()
     assert "ambiguous" not in out
 
@@ -484,8 +503,7 @@ def test_flat_extra_typed_by_title_in_library_tv_moves_as_tv(tmp_path, capsys,
 def test_flat_extra_homed_in_both_library_sides_still_ambiguous(tmp_path, capsys):
     # a same-named title in both homes proves nothing: keep the skip
     mkfile(tmp_path / "library" / "movies" / "Twin (2015)" / "Twin (2015)_t01.mkv")
-    mkfile(tmp_path / "library" / "tv" / "Twin (2015)"
-           / "Twin (2015) - S01E01.mkv")
+    mkfile(tmp_path / "library" / "tv" / "Twin (2015)" / "Twin (2015) - S01E01.mkv")
     done_extra = mkfile(tmp_path / "rip-DONE" / "Twin (2015) - Extra 02.mkv")
     root_extra = mkfile(tmp_path / "lossless" / "Twin (2015) - Extra 03.mkv")
 
@@ -494,23 +512,23 @@ def test_flat_extra_homed_in_both_library_sides_still_ambiguous(tmp_path, capsys
 
     assert rc == 0
     assert done_extra.exists() and root_extra.exists()  # reported, never re-treed
-    assert (f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?)"
-            f" -- left in place)") in out
-    assert (f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?)"
-            f" -- left in place)") in out
+    assert (
+        f"skip {done_extra} (ambiguous extra (no type dir: tv or movies?) -- left in place)"
+    ) in out
+    assert (
+        f"skip {root_extra} (ambiguous extra (no type dir: tv or movies?) -- left in place)"
+    ) in out
 
 
-def test_flat_extra_library_typed_route_refuses_target_collision(tmp_path,
-                                                                 capsys):
+def test_flat_extra_library_typed_route_refuses_target_collision(tmp_path, capsys):
     # lossless-root stray: the library types it (title in library/movies/),
     # but its lossless title folder already holds that extra -- the typed
     # route refuses at the target, same as any move
-    mkfile(tmp_path / "library" / "movies" / "Movie (2001)"
-           / "Movie (2001)_t01.mkv")
-    kept = mkfile(tmp_path / "lossless" / "movies" / "Movie (2001)"
-                  / "Movie (2001) - Extra 02.mkv", b"kept")
-    stray = mkfile(tmp_path / "lossless" / "Movie (2001) - Extra 02.mkv",
-                   b"stray")
+    mkfile(tmp_path / "library" / "movies" / "Movie (2001)" / "Movie (2001)_t01.mkv")
+    kept = mkfile(
+        tmp_path / "lossless" / "movies" / "Movie (2001)" / "Movie (2001) - Extra 02.mkv", b"kept"
+    )
+    stray = mkfile(tmp_path / "lossless" / "Movie (2001) - Extra 02.mkv", b"stray")
 
     rc = run(tmp_path)  # dry-run: the plan already shows the refusal
     out = capsys.readouterr().out
@@ -524,8 +542,9 @@ def test_flat_extra_library_typed_route_refuses_target_collision(tmp_path,
     assert kept.read_bytes() == b"kept" and stray.read_bytes() == b"stray"
     assert stray.exists()  # left at the lossless root, never re-treed
     assert f"skip {stray} (target exists -- left in place)" in out
-    assert (tmp_path / "lossless" / "movies" / "Movie (2001)"
-            / "Movie (2001) - Extra 02.mkv").read_bytes() == b"kept"
+    assert (
+        tmp_path / "lossless" / "movies" / "Movie (2001)" / "Movie (2001) - Extra 02.mkv"
+    ).read_bytes() == b"kept"
 
 
 def test_typed_context_extra_keeps_positional_type(tmp_path, capsys):
@@ -535,8 +554,9 @@ def test_typed_context_extra_keeps_positional_type(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (tmp_path / "rip" / "tv" / "Show (2020)"
-            / "Show (2020) - Extra 02.mkv").exists()  # type dir owns the type
+    assert (
+        tmp_path / "rip" / "tv" / "Show (2020)" / "Show (2020) - Extra 02.mkv"
+    ).exists()  # type dir owns the type
     assert not extra.exists()
     assert "ambiguous" not in out
 
@@ -577,8 +597,9 @@ def test_symlinked_lossless_root_is_skipped_never_followed(tmp_path, capsys):
         assert_untouched(out, outside, before)
         # the managed root itself and its would-be move sources are refused
         assert f"skip {root}/lossless (path traverses a symlink -- left in place)" in out
-        assert (f"skip {root}/rip-DONE/Movie (2001)_t01.mkv"
-                f" (path traverses a symlink -- left in place)") in out
+        assert (
+            f"skip {root}/rip-DONE/Movie (2001)_t01.mkv (path traverses a symlink -- left in place)"
+        ) in out
         assert (root / "rip-DONE" / "Movie (2001)_t01.mkv").exists()
         assert (root / "lossless").is_symlink()
 
@@ -611,16 +632,17 @@ def test_symlinked_rip_type_dir_is_skipped_never_followed(tmp_path, capsys):
         out = capsys.readouterr().out
         assert rc == 0
         assert_untouched(out, outside, before)
-        assert (f"skip {root}/rip/movies/Movie (2002)_t00.mkv"
-                f" (path traverses a symlink -- left in place)") in out
+        assert (
+            f"skip {root}/rip/movies/Movie (2002)_t00.mkv"
+            f" (path traverses a symlink -- left in place)"
+        ) in out
         assert (root / "rip" / "movies").is_symlink()
 
 
 def test_symlinked_title_dir_inside_lossless_is_skipped_never_followed(tmp_path, capsys):
     root, outside = symlink_case(tmp_path)
     (root / "lossless" / "tv").mkdir(parents=True)
-    (root / "lossless" / "tv" / "Show (2020)").symlink_to(outside,
-                                                          target_is_directory=True)
+    (root / "lossless" / "tv" / "Show (2020)").symlink_to(outside, target_is_directory=True)
     mkfile(root / "rip-DONE" / "Show (2020)_S01E01.mkv")
 
     for apply in (False, True):
@@ -629,8 +651,10 @@ def test_symlinked_title_dir_inside_lossless_is_skipped_never_followed(tmp_path,
         out = capsys.readouterr().out
         assert rc == 0
         assert_untouched(out, outside, before)
-        assert (f"skip {root}/rip-DONE/Show (2020)_S01E01.mkv"
-                f" (path traverses a symlink -- left in place)") in out
+        assert (
+            f"skip {root}/rip-DONE/Show (2020)_S01E01.mkv"
+            f" (path traverses a symlink -- left in place)"
+        ) in out
         assert (root / "rip-DONE" / "Show (2020)_S01E01.mkv").exists()
         assert (root / "lossless" / "tv" / "Show (2020)").is_symlink()
 
@@ -640,8 +664,7 @@ def test_symlink_report_names_the_hazard_not_a_collision_through_it(tmp_path, ca
     # name; the skip must cite the symlink, not a "target exists" through it
     root, outside = symlink_case(tmp_path)
     (root / "lossless" / "tv").mkdir(parents=True)
-    (root / "lossless" / "tv" / "Show (2020)").symlink_to(outside,
-                                                          target_is_directory=True)
+    (root / "lossless" / "tv" / "Show (2020)").symlink_to(outside, target_is_directory=True)
     mkfile(outside / "Show (2020)_S01E01.mkv", b"bait")
     mkfile(root / "rip-DONE" / "Show (2020)_S01E01.mkv", b"stray")
 
@@ -652,8 +675,10 @@ def test_symlink_report_names_the_hazard_not_a_collision_through_it(tmp_path, ca
         assert rc == 0
         assert_untouched(out, outside, before)
         assert (outside / "Show (2020)_S01E01.mkv").read_bytes() == b"bait"
-        assert (f"skip {root}/rip-DONE/Show (2020)_S01E01.mkv"
-                f" (path traverses a symlink -- left in place)") in out
+        assert (
+            f"skip {root}/rip-DONE/Show (2020)_S01E01.mkv"
+            f" (path traverses a symlink -- left in place)"
+        ) in out
         assert "target exists" not in out
 
 
@@ -676,8 +701,7 @@ def test_failed_move_leaves_no_scaffold(tmp_path, capsys, monkeypatch):
     assert f"skip {flat1} (move failed: nope -- left in place)" in out
 
 
-def test_failed_carry_reports_dependents_at_real_location(tmp_path, capsys,
-                                                          monkeypatch):
+def test_failed_carry_reports_dependents_at_real_location(tmp_path, capsys, monkeypatch):
     def boom(self, target):
         raise OSError("nope")
 
@@ -709,8 +733,7 @@ def mock_source(root):
     mkfile(root / "library" / "Old Movie (1999)" / "Old Movie (1999)_t01.mkv")
     mkfile(root / "library" / "Old Movie (1999)" / "logs" / "2024" / "encode.log")
     (root / "library" / "link-to-rip-DONE").symlink_to("../rip-DONE")
-    mkfile(root / "library" / "TV" / "Show (2010)" / "Season 01"
-           / "Show (2010) - S01E01.mkv")
+    mkfile(root / "library" / "TV" / "Show (2010)" / "Season 01" / "Show (2010) - S01E01.mkv")
     mkfile(root / "rip-DONE" / "Movie (2001)_t01.mkv")
     mkfile(root / "rip-DONE" / "Show (2020) - Extra 02.mkv")
     mkfile(root / "rip" / "movies" / "Movie (2002)_t00.mkv")
@@ -766,27 +789,29 @@ def test_mock_mirrors_structure_and_applies_inside_it(tmp_path, capsys):
     # the source was only ever read: identical names, kinds, bytes, targets
     assert tree_snapshot(source) == before
     # the mirror line (with the mirrored counts) and the closing hint
-    assert (f"mock tree at {mirror} (structure only, empty files): "
-            "14 dir(s), 9 file(s), 1 symlink(s)") in out
+    assert (
+        f"mock tree at {mirror} (structure only, empty files): 14 dir(s), 9 file(s), 1 symlink(s)"
+    ) in out
     assert f"inspect with: find {mirror} -type d | sort" in out
     # --mock implies apply: normal plan/apply lines and summary, no dry-run
     assert f"move {mirror}/rip-DONE -> {mirror}/lossless" in out
     assert f"migrate report -- {mirror}" in out
     assert "dry-run" not in out
     # migrated layout inside the mirror -- and every file zero bytes
-    for zero in ("library/movies/Old Movie (1999)/Old Movie (1999)_t01.mkv",
-                 "library/movies/Old Movie (1999)/logs/2024/encode.log",
-                 "library/tv/Show (2010)/Season 01/Show (2010) - S01E01.mkv",
-                 "lossless/movies/Movie (2001)/Movie (2001)_t01.mkv",
-                 "lossless/Show (2020) - Extra 02.mkv",
-                 "rip/movies/Movie (2002)/Movie (2002)_t00.mkv",
-                 "rip/movies/B2_t03.mkv",
-                 "rip/tv/Show (2021)/Show (2021)_S02E05.mkv"):
+    for zero in (
+        "library/movies/Old Movie (1999)/Old Movie (1999)_t01.mkv",
+        "library/movies/Old Movie (1999)/logs/2024/encode.log",
+        "library/tv/Show (2010)/Season 01/Show (2010) - S01E01.mkv",
+        "lossless/movies/Movie (2001)/Movie (2001)_t01.mkv",
+        "lossless/Show (2020) - Extra 02.mkv",
+        "rip/movies/Movie (2002)/Movie (2002)_t00.mkv",
+        "rip/movies/B2_t03.mkv",
+        "rip/tv/Show (2021)/Show (2021)_S02E05.mkv",
+    ):
         f = mirror / zero
         assert f.is_file() and f.stat().st_size == 0, zero
     # the old locations are gone inside the mirror
-    for gone in ("rip-DONE", "library/TV", "library/Old Movie (1999)",
-                 "rip/tv/d1"):
+    for gone in ("rip-DONE", "library/TV", "library/Old Movie (1999)", "rip/tv/d1"):
         assert not (mirror / gone).exists(), gone
     # only the managed roots were walked: unrelated top-level entries did not
     # cross over
@@ -801,8 +826,9 @@ def test_mock_mirrors_structure_and_applies_inside_it(tmp_path, capsys):
     # rename) and the rehearsed apply refuses to move through them
     assert (mirror / "library" / "link-to-rip-DONE").is_symlink()
     assert os.readlink(mirror / "library" / "link-to-rip-DONE") == "../rip-DONE"
-    assert (f"skip {mirror}/library/link-to-rip-DONE"
-            " (path traverses a symlink -- left in place)") in out
+    assert (
+        f"skip {mirror}/library/link-to-rip-DONE (path traverses a symlink -- left in place)"
+    ) in out
 
 
 def test_mock_tree_mirrors_only_the_managed_roots(tmp_path):
@@ -816,8 +842,7 @@ def test_mock_tree_mirrors_only_the_managed_roots(tmp_path):
     mkfile(source / "rip" / "movies" / "Movie (2002)_t00.mkv", b"media")
     mkfile(source / "rip-DONE" / "Movie (2001)_t01.mkv", b"media")
     (source / "rip-DONE" / "link-to-lossless").symlink_to("lossless")
-    mkfile(source / "lossless" / "tv" / "Show (2020)"
-           / "Show (2020) - S01E01.mkv", b"media")
+    mkfile(source / "lossless" / "tv" / "Show (2020)" / "Show (2020) - S01E01.mkv", b"media")
     (source / "issues").mkdir()  # an empty managed root still gets mirrored
     (source / "logs-real" / "2024").mkdir(parents=True)  # unrelated target
     mkfile(source / "logs-real" / "2024" / "real.log", b"media")
@@ -833,15 +858,16 @@ def test_mock_tree_mirrors_only_the_managed_roots(tmp_path):
     assert counts == (9, 4, 2)
     # exactly the managed roots that exist -- nothing else at the top level
     assert sorted(p.name for p in mirror.iterdir()) == sorted(
-        ("library", "rip", "rip-DONE", "lossless", "issues", "logs"))
+        ("library", "rip", "rip-DONE", "lossless", "issues", "logs")
+    )
     # structure, empty files, symlinks inside them
-    assert (mirror / "library" / "Old (1999)"
-            / "Old (1999)_t01.mkv").stat().st_size == 0
+    assert (mirror / "library" / "Old (1999)" / "Old (1999)_t01.mkv").stat().st_size == 0
     assert (mirror / "rip" / "movies").is_dir()  # empty dir mirrored
     assert (mirror / "rip-DONE" / "link-to-lossless").is_symlink()
     assert os.readlink(mirror / "rip-DONE" / "link-to-lossless") == "lossless"
-    assert (mirror / "lossless" / "tv" / "Show (2020)"
-            / "Show (2020) - S01E01.mkv").stat().st_size == 0
+    assert (
+        mirror / "lossless" / "tv" / "Show (2020)" / "Show (2020) - S01E01.mkv"
+    ).stat().st_size == 0
     # an empty managed root exists in the mirror, empty
     assert (mirror / "issues").is_dir()
     assert not any((mirror / "issues").iterdir())
@@ -864,8 +890,9 @@ def test_mock_accepts_existing_empty_dir(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (mirror / "lossless" / "movies" / "Movie (2001)"
-            / "Movie (2001)_t01.mkv").stat().st_size == 0
+    assert (
+        mirror / "lossless" / "movies" / "Movie (2001)" / "Movie (2001)_t01.mkv"
+    ).stat().st_size == 0
     assert "mock tree at" in out
 
 
@@ -880,8 +907,7 @@ def test_mock_refuses_existing_non_empty_path(tmp_path, capsys):
     captured = capsys.readouterr()
 
     assert rc == 1
-    assert (f"{mirror} already exists and is not empty (remove it first)"
-            in captured.err)
+    assert f"{mirror} already exists and is not empty (remove it first)" in captured.err
     assert keep.read_bytes() == b"keep"  # nothing touched, nothing built
     assert captured.out == ""  # no mock line, no migration output at all
     assert tree_snapshot(source) == before
@@ -897,14 +923,12 @@ def test_stray_dir_at_lossless_root_reported_and_kept(tmp_path, capsys):
 
     assert rc == 0
     assert stray.exists()
-    assert (f"skip {tmp_path}/lossless/Random Stuff"
-            f" (unexpected shape -- left in place)") in out
+    assert (f"skip {tmp_path}/lossless/Random Stuff (unexpected shape -- left in place)") in out
     assert f"skip {tmp_path}/lossless/movies" not in out  # type dirs are structural
 
 
 def test_stray_file_in_tv_merge_reported_and_keeps_tv_alive(tmp_path, capsys):
-    mkfile(tmp_path / "library" / "TV" / "Show (2010)"
-           / "Show (2010) - S01E01.mkv")
+    mkfile(tmp_path / "library" / "TV" / "Show (2010)" / "Show (2010) - S01E01.mkv")
     stray = mkfile(tmp_path / "library" / "TV" / "rip.log", b"old text log")
     mkfile(tmp_path / "library" / "tv" / "ShowB (2013)" / "b.mkv")
 
@@ -912,8 +936,9 @@ def test_stray_file_in_tv_merge_reported_and_keeps_tv_alive(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert (tmp_path / "library" / "tv" / "Show (2010)"
-            / "Show (2010) - S01E01.mkv").exists()  # the tree merges
+    assert (
+        tmp_path / "library" / "tv" / "Show (2010)" / "Show (2010) - S01E01.mkv"
+    ).exists()  # the tree merges
     assert stray.read_bytes() == b"old text log"  # reported, not carried into tv/
     assert f"skip {stray} (unexpected shape -- left in place)" in out
     assert (tmp_path / "library" / "TV").exists()  # the stray keeps TV/ alive

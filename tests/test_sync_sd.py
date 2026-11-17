@@ -4,20 +4,29 @@ import io
 import shutil
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import ANY, Mock, patch
 
 import pytest
 
-from skive.sync_sd import (
-    sync_sd, find_mounted_cards, list_unmounted_disks, disk_info,
-    resolve_partition, mount_card, unmount_card, rsync_library,
-    parse_rsync_progress, format_bytes,
-)
 from skive import ui
+from skive.sync_sd import (
+    disk_info,
+    find_mounted_cards,
+    format_bytes,
+    list_unmounted_disks,
+    mount_card,
+    parse_rsync_progress,
+    resolve_partition,
+    rsync_library,
+    sync_sd,
+    unmount_card,
+)
 
 
 class FakeArgs:
     """Minimal argparse.Namespace for sync_sd."""
+
     def __init__(self, mountpoint=None):
         self.mountpoint = mountpoint
 
@@ -31,7 +40,7 @@ class FakeResult:
 
 def scripted_run(*responses):
     """Build a run callable returning a FakeResult per command substring."""
-    calls = []
+    calls: ClassVar[list] = []
 
     def run(cmd, **kwargs):
         calls.append(cmd)
@@ -46,6 +55,7 @@ def scripted_run(*responses):
 
 class QueueRun:
     """run callable consuming FakeResults in order (mount fallback, exceptions)."""
+
     def __init__(self, results):
         self.results = list(results)
         self.calls = []
@@ -78,6 +88,7 @@ def _stage_root(tmp_path, monkeypatch):
 
 # --- detection: find_mounted_cards -------------------------------------------
 
+
 @pytest.fixture
 def ask(monkeypatch):
     """Stand-in for the shared prompt: set .return_value (or .side_effect)."""
@@ -101,34 +112,41 @@ def test_mounted_detection_media_path_counts_when_rm_false():
 
 def test_mounted_detection_child_partition_mountpoint_counts():
     """A card's root sits on a partition; nested children must count."""
-    j = ('{"blockdevices":[{"name":"sdb","rm":true,"mountpoint":null,'
-         '"children":[{"name":"sdb1","rm":true,"mountpoint":"/run/media/user/CARD"}]}]}')
+    j = (
+        '{"blockdevices":[{"name":"sdb","rm":true,"mountpoint":null,'
+        '"children":[{"name":"sdb1","rm":true,"mountpoint":"/run/media/user/CARD"}]}]}'
+    )
     run, _ = scripted_run(("lsblk", FakeResult(stdout=j)))
     assert find_mounted_cards(run=run) == ["/run/media/user/CARD"]
 
 
 def test_mounted_detection_distinct_sorted():
-    j = ('{"blockdevices":['
-         '{"name":"sdb","rm":true,"mountpoint":"/media/B"},'
-         '{"name":"sdc","rm":true,"mountpoint":"/media/A"},'
-         '{"name":"sdd","rm":true,"mountpoint":null}]}')
+    j = (
+        '{"blockdevices":['
+        '{"name":"sdb","rm":true,"mountpoint":"/media/B"},'
+        '{"name":"sdc","rm":true,"mountpoint":"/media/A"},'
+        '{"name":"sdd","rm":true,"mountpoint":null}]}'
+    )
     run, _ = scripted_run(("lsblk", FakeResult(stdout=j)))
     assert find_mounted_cards(run=run) == ["/media/A", "/media/B"]
 
 
 # --- detection: list_unmounted_disks -----------------------------------------
 
+
 def test_unmounted_disks_listing():
     """sdx + mmcblk shown; non-removable, non-disk, and partially-mounted excluded."""
-    j = ('{"blockdevices":['
-         '{"name":"sda","rm":false,"type":"disk","mountpoint":null,'
-         '  "children":[{"name":"sda1","type":"part","mountpoint":"/"}]},'
-         '{"name":"sdb","rm":true,"type":"disk","mountpoint":null,'
-         '  "children":[{"name":"sdb1","type":"part","mountpoint":null}]},'
-         '{"name":"mmcblk0","rm":false,"type":"disk","mountpoint":null},'
-         '{"name":"sr0","rm":true,"type":"rom","mountpoint":null},'
-         '{"name":"sdc","rm":true,"type":"disk","mountpoint":null,'
-         '  "children":[{"name":"sdc1","type":"part","mountpoint":"/media/x"}]}]}')
+    j = (
+        '{"blockdevices":['
+        '{"name":"sda","rm":false,"type":"disk","mountpoint":null,'
+        '  "children":[{"name":"sda1","type":"part","mountpoint":"/"}]},'
+        '{"name":"sdb","rm":true,"type":"disk","mountpoint":null,'
+        '  "children":[{"name":"sdb1","type":"part","mountpoint":null}]},'
+        '{"name":"mmcblk0","rm":false,"type":"disk","mountpoint":null},'
+        '{"name":"sr0","rm":true,"type":"rom","mountpoint":null},'
+        '{"name":"sdc","rm":true,"type":"disk","mountpoint":null,'
+        '  "children":[{"name":"sdc1","type":"part","mountpoint":"/media/x"}]}]}'
+    )
     run, _ = scripted_run(("lsblk", FakeResult(stdout=j)))
     # sda: non-removable. sr0: not a disk. sdc: child mounted. Only sdb + mmcblk0.
     assert list_unmounted_disks(run=run) == ["sdb", "mmcblk0"]
@@ -146,6 +164,7 @@ def test_disk_info_failure():
 
 # --- partition resolution ----------------------------------------------------
 
+
 def test_resolve_partition_first_part():
     run, _ = scripted_run(("lsblk", FakeResult(stdout="sdb1 part\nsdb2 part\n")))
     assert resolve_partition("sdb", run=run) == "sdb1"
@@ -157,6 +176,7 @@ def test_resolve_partition_partitionless_falls_back_to_disk():
 
 
 # --- mount/unmount -----------------------------------------------------------
+
 
 def test_mount_card_uid_opts_first():
     run, calls = scripted_run(("sudo", FakeResult(returncode=0)))
@@ -196,9 +216,11 @@ def test_unmount_card_failure_warns(capsys):
 
 # --- rsync argv --------------------------------------------------------------
 
+
 class FakePopen:
     """Popen stand-in: .stdout yields the given bytes; records argv."""
-    calls = []
+
+    calls: ClassVar[list] = []
 
     def __init__(self, output=b"", returncode=0):
         self.stdout = io.BytesIO(output)
@@ -221,13 +243,20 @@ def test_rsync_argv_excludes_sidecars():
     rc, copied = rsync_library(Path("/mnt/music/library"), "/media/CARD", popen=FakePopen())
     assert (rc, copied) == (0, 0)
     assert FakePopen.calls[0] == [
-        "rsync", "-r", "--size-only", "--info=progress2",
-        "--exclude=validation.json", "--exclude=*.log", "--exclude=*.cue",
-        "/mnt/music/library/", "/media/CARD/",
+        "rsync",
+        "-r",
+        "--size-only",
+        "--info=progress2",
+        "--exclude=validation.json",
+        "--exclude=*.log",
+        "--exclude=*.cue",
+        "/mnt/music/library/",
+        "/media/CARD/",
     ]
 
 
 # --- rsync progress ----------------------------------------------------------
+
 
 def test_parse_rsync_progress_line():
     line = "  1,234,567  61%    1.20GB/s    0:03:21 (xfr#3, to-chk=10/50)"
@@ -250,10 +279,12 @@ def test_format_bytes():
 
 
 def test_rsync_library_plain_progress_every_ten_percent_and_bytes(capsys):
-    out = (b"      1,000   5%  1.00MB/s  0:00:10\r"
-           b"    120,000  12%  1.00MB/s  0:00:09\r"
-           b"    130,000  14%  1.00MB/s  0:00:08\r"
-           b"  1,000,000 100%  1.00MB/s  0:00:00 (xfr#2, to-chk=0/3)\n")
+    out = (
+        b"      1,000   5%  1.00MB/s  0:00:10\r"
+        b"    120,000  12%  1.00MB/s  0:00:09\r"
+        b"    130,000  14%  1.00MB/s  0:00:08\r"
+        b"  1,000,000 100%  1.00MB/s  0:00:00 (xfr#2, to-chk=0/3)\n"
+    )
     rc, copied = rsync_library(Path("/lib"), "/media/CARD", popen=FakePopen(out))
     assert (rc, copied) == (0, 1000000)
     err = capsys.readouterr().err.splitlines()
@@ -282,28 +313,40 @@ def test_rsync_library_tty_feeds_the_footer_not_the_scroll(capsys):
 
 
 def test_rsync_library_records_warnings_in_the_raw_log(tmp_path, monkeypatch):
-    from skive.common import RipLog
     import json
+
+    from skive.common import RipLog
+
     log = RipLog("skive sync-sd", "rsync", "CARD", root=tmp_path)
     log.start()
-    out = (b"  500  61%  1.20GB/s  0:03:21\r"
-           b"rsync: send_files failed to open /lib/x: Permission denied (13)\n")
+    out = (
+        b"  500  61%  1.20GB/s  0:03:21\r"
+        b"rsync: send_files failed to open /lib/x: Permission denied (13)\n"
+    )
     rsync_library(Path("/lib"), "/media/CARD", popen=FakePopen(out, returncode=23), log=log)
-    raw = [json.loads(line) for line in
-           (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").read_text().splitlines()]
+    raw = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "raw" / f"{log.run}.jsonl").read_text().splitlines()
+    ]
     assert [(r["tool"], r["line"]) for r in raw] == [
-        ("rsync", "rsync: send_files failed to open /lib/x: Permission denied (13)")]
+        ("rsync", "rsync: send_files failed to open /lib/x: Permission denied (13)")
+    ]
 
 
 def test_sync_sd_failed_run_keeps_rsync_diagnostics_in_raw_log(tmp_path, capsys):
     import json
+
     card = tmp_path / "card"
     card.mkdir()
     (tmp_path / "library").mkdir()
     out = b"rsync: send_files failed to open /lib/x: Permission denied (13)\n"
-    with stub(find_mounted_cards=Mock(return_value=[str(card)]), ensure_share=Mock(),
-              rsync_library=lambda src, card, log=None: rsync_library(
-                  src, card, popen=FakePopen(out, returncode=23), log=log)):
+    with stub(
+        find_mounted_cards=Mock(return_value=[str(card)]),
+        ensure_share=Mock(),
+        rsync_library=lambda src, card, log=None: rsync_library(
+            src, card, popen=FakePopen(out, returncode=23), log=log
+        ),
+    ):
         with pytest.raises(SystemExit) as e:
             sync_sd(FakeArgs())
     assert e.value.code == 23
@@ -318,8 +361,9 @@ def test_sync_sd_live_tty_view_has_no_perf_sampler(tmp_path, monkeypatch):
     monkeypatch.setattr(ui, "PerfSampler", sampler)
     monkeypatch.setattr(ui.RunView, "_start_live", lambda self: None)
     real_init = ui.RunView.__init__
-    monkeypatch.setattr(ui.RunView, "__init__",
-                        lambda self, tty=None, **kw: real_init(self, tty=True, **kw))
+    monkeypatch.setattr(
+        ui.RunView, "__init__", lambda self, tty=None, **kw: real_init(self, tty=True, **kw)
+    )
     seen = {}
 
     def fake_rsync(src, card, log=None):
@@ -329,15 +373,21 @@ def test_sync_sd_live_tty_view_has_no_perf_sampler(tmp_path, monkeypatch):
     card = tmp_path / "card"
     card.mkdir()
     (tmp_path / "library").mkdir()
-    with stub(find_mounted_cards=Mock(return_value=[str(card)]), ensure_share=Mock(),
-              rsync_library=fake_rsync):
-        with pytest.raises(SystemExit):
-            sync_sd(FakeArgs())
+    with (
+        stub(
+            find_mounted_cards=Mock(return_value=[str(card)]),
+            ensure_share=Mock(),
+            rsync_library=fake_rsync,
+        ),
+        pytest.raises(SystemExit),
+    ):
+        sync_sd(FakeArgs())
     assert seen["view"].tty
     sampler.assert_not_called()
 
 
 # --- sync_sd orchestration ---------------------------------------------------
+
 
 def test_sync_sd_mountpoint_argument_bypasses_detection(tmp_path):
     """No lsblk calls at all when a mountpoint is given."""
@@ -376,7 +426,7 @@ def test_sync_sd_mounted_card_used(tmp_path):
 
 
 def test_sync_sd_several_mounted_prompt_list_and_pick(capsys, tmp_path, ask):
-    ask.return_value = '2'
+    ask.return_value = "2"
     a = tmp_path / "a"
     b = tmp_path / "b"
     a.mkdir()
@@ -399,7 +449,7 @@ def test_sync_sd_several_mounted_prompt_list_and_pick(capsys, tmp_path, ask):
 
 
 def test_sync_sd_several_mounted_blank_aborts(tmp_path, ask):
-    ask.return_value = ''
+    ask.return_value = ""
     with stub(
         find_mounted_cards=Mock(return_value=[str(tmp_path / "a"), str(tmp_path / "b")]),
     ):
@@ -419,7 +469,7 @@ def test_sync_sd_no_card_no_disks(tmp_path):
 
 
 def test_sync_sd_unmounted_pick_then_mount_then_unmount(capsys, tmp_path, ask):
-    ask.return_value = '1'
+    ask.return_value = "1"
     (tmp_path / "library").mkdir()
     cardmnt = tmp_path / "cardmnt"
     cardmnt.mkdir()
@@ -445,7 +495,7 @@ def test_sync_sd_unmounted_pick_then_mount_then_unmount(capsys, tmp_path, ask):
 
 
 def test_sync_sd_unmount_on_rsync_failure(tmp_path, ask):
-    ask.return_value = '1'
+    ask.return_value = "1"
     (tmp_path / "library").mkdir()
     cardmnt = tmp_path / "cardmnt"
     cardmnt.mkdir()
@@ -467,7 +517,7 @@ def test_sync_sd_unmount_on_rsync_failure(tmp_path, ask):
 
 
 def test_sync_sd_unmount_on_keyboard_interrupt(tmp_path, ask):
-    ask.return_value = '1'
+    ask.return_value = "1"
     (tmp_path / "library").mkdir()
     cardmnt = tmp_path / "cardmnt"
     cardmnt.mkdir()
@@ -489,7 +539,7 @@ def test_sync_sd_unmount_on_keyboard_interrupt(tmp_path, ask):
 
 
 def test_sync_sd_mount_failure_exits_and_cleans_tmpdir(tmp_path, ask):
-    ask.return_value = '1'
+    ask.return_value = "1"
     cardmnt = tmp_path / "cardmnt"
     cardmnt.mkdir()
     umount = Mock()
@@ -565,6 +615,7 @@ def test_sync_sd_end_to_end_copies_files(tmp_path):
 
 # --- prompts and result lines ------------------------------------------------
 
+
 def test_sync_sd_pick_aborts_when_stdin_is_closed(ask, tmp_path):
     ask.side_effect = EOFError
     with stub(find_mounted_cards=Mock(return_value=[str(tmp_path / "a"), str(tmp_path / "b")])):
@@ -577,10 +628,15 @@ def _run_with_rsync(tmp_path, capsys, outcome):
     card = tmp_path / "card"
     card.mkdir()
     (tmp_path / "library").mkdir()
-    with stub(find_mounted_cards=Mock(return_value=[str(card)]),
-              ensure_share=Mock(), rsync_library=outcome):
-        with pytest.raises(SystemExit) as e:
-            sync_sd(FakeArgs())
+    with (
+        stub(
+            find_mounted_cards=Mock(return_value=[str(card)]),
+            ensure_share=Mock(),
+            rsync_library=outcome,
+        ),
+        pytest.raises(SystemExit) as e,
+    ):
+        sync_sd(FakeArgs())
     return e.value.code, capsys.readouterr().err.splitlines()
 
 
@@ -610,8 +666,7 @@ def test_sync_sd_interrupt_result_line(tmp_path, capsys):
 
 def test_sync_sd_no_result_line_when_rsync_never_ran(tmp_path, capsys):
     (tmp_path / "card").mkdir()
-    with stub(ensure_share=Mock()):
-        with pytest.raises(SystemExit):
-            sync_sd(FakeArgs(mountpoint=str(tmp_path / "card")))  # no library dir
+    with stub(ensure_share=Mock()), pytest.raises(SystemExit):
+        sync_sd(FakeArgs(mountpoint=str(tmp_path / "card")))  # no library dir
     err = capsys.readouterr().err
     assert "no library at" in err and "synced" not in err

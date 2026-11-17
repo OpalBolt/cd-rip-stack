@@ -12,12 +12,12 @@ import sys
 _REPO = pathlib.Path(__file__).parent.parent
 
 _spec = importlib.util.spec_from_file_location(
-    "backlog_delete", _REPO / "scripts" / "backlog-delete-unmarked.py")
+    "backlog_delete", _REPO / "scripts" / "backlog-delete-unmarked.py"
+)
 backlog_delete = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(backlog_delete)
 
-from skive.validation import (VALIDATION_FILENAME, load_validation,
-                              write_validation)
+from skive.validation import VALIDATION_FILENAME, load_validation, write_validation
 
 MAIN = "Movie (2001)_t00.mkv"
 EXTRA = "Movie (2001)_t01.mkv"
@@ -29,10 +29,17 @@ def _staged_movie(root):
     folder.mkdir(parents=True)
     for name, mb in ((MAIN, 2), (EXTRA, 1)):
         (folder / name).write_bytes(b"x" * 1048576 * mb)
-    write_validation(folder / VALIDATION_FILENAME, {
-        "main": "t0", "extras": MARK_FALSE,
-        "titles": [{"t": 0, "dur_s": 6000, "file": MAIN},
-                   {"t": 1, "dur_s": 300, "file": EXTRA}]})
+    write_validation(
+        folder / VALIDATION_FILENAME,
+        {
+            "main": "t0",
+            "extras": MARK_FALSE,
+            "titles": [
+                {"t": 0, "dur_s": 6000, "file": MAIN},
+                {"t": 1, "dur_s": 300, "file": EXTRA},
+            ],
+        },
+    )
     return folder
 
 
@@ -42,8 +49,7 @@ def _library_movie(root, name, marker):
     enc.mkdir(parents=True)
     for n in (1, 2):
         (enc / f"{name} - Extra 0{n}.mkv").write_bytes(b"x" * 1048576)
-    write_validation(folder / VALIDATION_FILENAME,
-                     {"extras": marker} if marker is not None else {})
+    write_validation(folder / VALIDATION_FILENAME, {"extras": marker} if marker is not None else {})
     return folder
 
 

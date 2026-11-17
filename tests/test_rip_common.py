@@ -12,8 +12,8 @@ from skive.scan import TitleInfo
 from skive.tmdb import TMDBPick
 from skive.validation import VALIDATION_FILENAME, movie_document, write_validation
 
-
 # -- Interrupt exit (CONTEXT.md: Interrupt): partial purge + log + 130 --------
+
 
 def _tmp_log(tmp_path):
     log = RipLog("skive rip movie", "makemkvcon", "Test", root=str(tmp_path))
@@ -22,8 +22,7 @@ def _tmp_log(tmp_path):
 
 
 def _run_log_lines(tmp_path) -> list[dict]:
-    return [json.loads(line)
-            for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    return [json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
 
 
 def test_interrupted_exit_purges_junk_keeps_renamed_exits_130(tmp_path, capsys):
@@ -32,8 +31,8 @@ def test_interrupted_exit_purges_junk_keeps_renamed_exits_130(tmp_path, capsys):
     exits 130."""
     stage = tmp_path / "d1"
     stage.mkdir()
-    (stage / "B1_t0.mkv").touch()                # in-flight partial (junk label)
-    (stage / "Show (2020)_S01E01.mkv").touch()   # completed, renamed
+    (stage / "B1_t0.mkv").touch()  # in-flight partial (junk label)
+    (stage / "Show (2020)_S01E01.mkv").touch()  # completed, renamed
     log = _tmp_log(tmp_path)
 
     with pytest.raises(SystemExit) as e:
@@ -69,14 +68,13 @@ def test_preamble_interrupt_logs_interrupted_and_reraises(tmp_path, monkeypatch)
     the interrupt up for the one-line exit."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     monkeypatch.setattr(rip_common, "ensure_share", Mock())
-    monkeypatch.setattr(rip_common, "sniff_disc",
-                        Mock(return_value=("DVD-ROM", "", "")))
-    monkeypatch.setattr(rip_common, "scan_disc",
-                        Mock(side_effect=KeyboardInterrupt))
+    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
+    monkeypatch.setattr(rip_common, "scan_disc", Mock(side_effect=KeyboardInterrupt))
 
     with pytest.raises(KeyboardInterrupt):
-        rip_common.rip_preamble("movie", "skive rip movie",
-                                SimpleNamespace(tmdbid=None, verified=False))
+        rip_common.rip_preamble(
+            "movie", "skive rip movie", SimpleNamespace(tmdbid=None, verified=False)
+        )
 
     lines = _run_log_lines(tmp_path)
     assert lines[-1]["status"] == "interrupted"
@@ -98,15 +96,16 @@ def _mock_preamble_seams(monkeypatch, media="DVD-ROM", real_log=False):
 
 def _tv_args(**kw):
     """TV args: no -T, no --extras."""
-    fields = dict(tmdbid=None, verified=False)  # movie -T/-E/-i are dead
+    fields = {"tmdbid": None, "verified": False}  # movie -T/-E/-i are dead
     fields.update(kw)
     return SimpleNamespace(**fields)
 
 
 def _mock_search(monkeypatch, pick=None):
     """Keep the TMDB search loop out of preamble tests."""
-    monkeypatch.setattr(rip_common, "search_loop",
-                        Mock(return_value=pick or TMDBPick("Show", "-", "-", "tv", "7")))
+    monkeypatch.setattr(
+        rip_common, "search_loop", Mock(return_value=pick or TMDBPick("Show", "-", "-", "tv", "7"))
+    )
 
 
 def test_movie_preamble_returns_shared_values(tmp_path, monkeypatch):
@@ -199,8 +198,9 @@ def test_preamble_junk_purge_scoped_to_title_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "", "")))
     monkeypatch.setattr(rip_common, "scan_disc", Mock(return_value=("DVD-ROM", "", [])))
     monkeypatch.setattr(rip_common, "require_online", Mock())
-    monkeypatch.setattr(rip_common, "search_loop",
-                        Mock(return_value=TMDBPick("Show", "2000", "en", "tv", "7")))
+    monkeypatch.setattr(
+        rip_common, "search_loop", Mock(return_value=TMDBPick("Show", "2000", "en", "tv", "7"))
+    )
 
     sibling = tmp_path / "rip" / "tv" / "Other Show (1999)"
     sibling.mkdir(parents=True)
@@ -220,8 +220,9 @@ def test_preamble_junk_purge_scoped_to_title_folder(tmp_path, monkeypatch):
 
 # --- One disc scan (ADR 0021): the preamble always runs scan_disc -----------
 
+
 def _movie_args(**kw):
-    fields = dict(tmdbid=None, verified=False)  # movie -T/-E/-i are dead
+    fields = {"tmdbid": None, "verified": False}  # movie -T/-E/-i are dead
     fields.update(kw)
     return SimpleNamespace(**fields)
 
@@ -231,7 +232,9 @@ def test_preamble_always_takes_the_one_disc_scan(tmp_path, monkeypatch):
     reach the table; no fast scan, no synthesized titles."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     log = _mock_preamble_seams(monkeypatch)
-    monkeypatch.setattr(rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "GENERATION KILL", "")))
+    monkeypatch.setattr(
+        rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "GENERATION KILL", ""))
+    )
     full_titles = [TitleInfo(21, 3932, 100, "dan", "", False)]
     rip_common.scan_disc.return_value = ("DVD-ROM", "GENERATION KILL", full_titles)
     _mock_search(monkeypatch)
@@ -249,8 +252,9 @@ def test_preamble_device_from_drv_line_reaches_preamble(tmp_path, monkeypatch):
     callers — NOT the /dev/sr{disc} guess."""
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
-    monkeypatch.setattr(rip_common, "sniff_disc",
-                        Mock(return_value=("DVD-ROM", "GENERATION KILL", "/dev/sr1")))
+    monkeypatch.setattr(
+        rip_common, "sniff_disc", Mock(return_value=("DVD-ROM", "GENERATION KILL", "/dev/sr1"))
+    )
     _mock_search(monkeypatch)
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())
@@ -290,15 +294,16 @@ def _movie_run(monkeypatch, answers=()):
 
 def _gate_notes(log):
     """The (phase, text) notes a mock RipLog recorded under phase "gate"."""
-    return [(c.args[0], c.args[1]) for c in log.note.call_args_list
-            if c.args[0] == "gate"]
+    return [(c.args[0], c.args[1]) for c in log.note.call_args_list if c.args[0] == "gate"]
 
 
 # -- pure helpers (no prompts) --
 
+
 def test_recorded_identity_reads_id_and_title(tmp_path):
-    folder = _validation(tmp_path / "rip" / "movies" / "Mamma Mia! (2008)",
-                         "157", "Mamma Mia! (2008)")
+    folder = _validation(
+        tmp_path / "rip" / "movies" / "Mamma Mia! (2008)", "157", "Mamma Mia! (2008)"
+    )
     assert rip_common._recorded_identity(folder) == ("157", "Mamma Mia! (2008)")
 
 
@@ -308,8 +313,7 @@ def test_recorded_identity_unusable_documents_read_none(tmp_path):
     folder = tmp_path / "legacy"
     assert rip_common._recorded_identity(folder) is None  # no file at all
     folder.mkdir()
-    for text in ("{not json", '["a list"]', '{"run": "x"}',
-                 '{"tmdb": "157"}', '{"tmdb": {}}'):
+    for text in ("{not json", '["a list"]', '{"run": "x"}', '{"tmdb": "157"}', '{"tmdb": {}}'):
         (folder / VALIDATION_FILENAME).write_text(text)
         assert rip_common._recorded_identity(folder) is None, text
 
@@ -352,12 +356,14 @@ def test_duplicate_id_folders_never_matches_without_a_document(tmp_path):
 
 # -- gate (a): already ripped --
 
+
 def test_duplicate_gate_bare_enter_refuses_before_staging(tmp_path, monkeypatch, capsys):
     """The picked id already under rip/movies prompts; bare Enter (default No)
     refuses: exit 1, no staging folder created, purge never runs, the refusal
     logged under phase "gate" and the matching folder listed on stderr."""
-    existing = _validation(tmp_path / "rip" / "movies" / "Mamma Mia! (2008)",
-                           "157", "Mamma Mia! (2008)")
+    existing = _validation(
+        tmp_path / "rip" / "movies" / "Mamma Mia! (2008)", "157", "Mamma Mia! (2008)"
+    )
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     log, prompts = _movie_run(monkeypatch, answers=[""])
 
@@ -376,8 +382,9 @@ def test_duplicate_gate_bare_enter_refuses_before_staging(tmp_path, monkeypatch,
 
 def test_duplicate_gate_explicit_yes_proceeds(tmp_path, monkeypatch):
     """An explicit y confirms the already-ripped warning and the rip goes on."""
-    existing = _validation(tmp_path / "rip" / "movies" / "Mamma Mia! (2008)",
-                           "157", "Mamma Mia! (2008)")
+    existing = _validation(
+        tmp_path / "rip" / "movies" / "Mamma Mia! (2008)", "157", "Mamma Mia! (2008)"
+    )
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _movie_run(monkeypatch, answers=["y"])
 
@@ -410,8 +417,7 @@ def test_duplicate_gate_eof_reads_as_no(tmp_path, monkeypatch):
 def test_gate_refusal_lands_in_the_run_log(tmp_path, monkeypatch):
     """No → the refusal is a real phase-"gate" line in the shared run log
     (real RipLog, real JSONL)."""
-    _validation(tmp_path / "lossless" / "movies" / "Mamma Mia! (2008)",
-                "157", "Mamma Mia! (2008)")
+    _validation(tmp_path / "lossless" / "movies" / "Mamma Mia! (2008)", "157", "Mamma Mia! (2008)")
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch, real_log=True)
     monkeypatch.setattr(rip_common, "search_loop", Mock(return_value=MAMMA_PICK))
@@ -428,6 +434,7 @@ def test_gate_refusal_lands_in_the_run_log(tmp_path, monkeypatch):
 
 # -- gate (b): wrong name --
 
+
 def test_wrong_name_gate_names_both_films_default_no(tmp_path, monkeypatch, capsys):
     """The title folder exists but records a different film (the Mamma Mia
     case): the prompt names both films; bare Enter refuses, nothing staged."""
@@ -443,15 +450,20 @@ def test_wrong_name_gate_names_both_films_default_no(tmp_path, monkeypatch, caps
     assert not (folder / "d0").exists()
     gate = _gate_notes(log)
     assert len(gate) == 1 and "not the picked film" in gate[0][1]
-    assert prompts == ['folder "Mamma Mia! (2008)" holds "RED (2010)", '
-                       'you picked "Mamma Mia! (2008)" — continue? (y/N): ']
+    assert prompts == [
+        (
+            'folder "Mamma Mia! (2008)" holds "RED (2010)", '
+            'you picked "Mamma Mia! (2008)" — continue? (y/N): '
+        )
+    ]
 
 
 def test_wrong_name_gate_silent_when_folder_records_the_same_id(tmp_path, monkeypatch):
     """Same id in the title folder is the documented re-rip path: only gate
     (a)'s already-ripped confirm fires — gate (b) never prompts."""
-    folder = _validation(tmp_path / "rip" / "movies" / "Mamma Mia! (2008)",
-                         "157", "Mamma Mia! (2008)")
+    folder = _validation(
+        tmp_path / "rip" / "movies" / "Mamma Mia! (2008)", "157", "Mamma Mia! (2008)"
+    )
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     _mock_preamble_seams(monkeypatch)
     monkeypatch.setattr(rip_common, "search_loop", Mock(return_value=MAMMA_PICK))
@@ -468,6 +480,7 @@ def test_wrong_name_gate_silent_when_folder_records_the_same_id(tmp_path, monkey
     assert result.stage == folder / "d0"
     assert result.stage.is_dir()
     assert prompts == ["might already be ripped — continue? (y/N): "]
+
 
 def test_duplicate_gate_name_match_catches_a_legacy_folder(tmp_path, monkeypatch, capsys):
     """A same-name folder with no validation.json trips the gate on name
@@ -515,6 +528,7 @@ def test_already_ripped_gate_fires_without_the_extras_carve_out(tmp_path, monkey
 
 # -- TV rip preflight (season gate) --
 
+
 def test_tv_season_gate_exact_season_escalates_default_no(tmp_path, monkeypatch, capsys):
     """The exact season on disk prints the folders and escalates to the
     default-No confirm; bare Enter refuses (exit 1, gate note in the log)."""
@@ -528,7 +542,9 @@ def test_tv_season_gate_exact_season_escalates_default_no(tmp_path, monkeypatch,
 
     assert e.value.code == 1
     assert log.note.call_args.args == (
-        "gate", '"Show (2020)" S01 might already be ripped — nothing ripped')
+        "gate",
+        '"Show (2020)" S01 might already be ripped — nothing ripped',
+    )
     assert str(show) in capsys.readouterr().err
 
 
@@ -549,6 +565,7 @@ def test_tv_season_gate_other_seasons_only_inform(tmp_path, monkeypatch, capsys)
 
 # -- movies only: TV untouched --
 
+
 def test_tv_preamble_runs_no_gates(tmp_path, monkeypatch):
     """TV (kind == "tv") is untouched: a duplicate id under the movie roots
     and a wrong-name TV title folder trigger neither prompt nor refusal."""
@@ -556,8 +573,9 @@ def test_tv_preamble_runs_no_gates(tmp_path, monkeypatch):
     _mock_preamble_seams(monkeypatch)
     _validation(tmp_path / "rip" / "movies" / "Mamma Mia! (2008)", "42", "Mamma Mia! (2008)")
     _validation(tmp_path / "rip" / "tv" / "Show (2000)", "999", "RED (2010)")
-    monkeypatch.setattr(rip_common, "search_loop",
-                        Mock(return_value=TMDBPick("Show", "2000", "en", "tv", "42")))
+    monkeypatch.setattr(
+        rip_common, "search_loop", Mock(return_value=TMDBPick("Show", "2000", "en", "tv", "42"))
+    )
     monkeypatch.setattr("builtins.input", lambda _p: pytest.fail("TV must not prompt"))
 
     result = rip_common.rip_preamble("tv", "skive rip tv", _tv_args())

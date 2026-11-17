@@ -44,8 +44,9 @@ def requeue(title: str, root: str, ffprobe: str, run: bool, expected_fn=expected
     src = os.path.join(lossless, f"{title}_t00.mkv")
     if not os.path.isfile(src) or not os.path.isfile(os.path.join(lib, f"{title}.mkv")):
         return f"skip {title} (no lossless source or library encode)"
-    missing = sorted(n for n in expected_fn(src, title, ffprobe)
-                     if not os.path.exists(os.path.join(lib, n)))
+    missing = sorted(
+        n for n in expected_fn(src, title, ffprobe) if not os.path.exists(os.path.join(lib, n))
+    )
     if not missing:
         return ""
     if os.path.isdir(rip) and any(n != VALIDATION for n in os.listdir(rip)):
@@ -61,8 +62,11 @@ def requeue(title: str, root: str, ffprobe: str, run: bool, expected_fn=expected
     if os.path.isfile(lib_doc):
         shutil.copy2(lib_doc, os.path.join(rip, VALIDATION))
     # only after the source is safely staged
-    for path in [os.path.join(lib, f"{title}.mkv"), lib_doc,
-                 *glob.glob(os.path.join(glob.escape(lib), f"{glob.escape(title)}.*.srt"))]:
+    for path in [
+        os.path.join(lib, f"{title}.mkv"),
+        lib_doc,
+        *glob.glob(os.path.join(glob.escape(lib), f"{glob.escape(title)}.*.srt")),
+    ]:
         if os.path.isfile(path):
             os.remove(path)
     return line + "  -> requeued"

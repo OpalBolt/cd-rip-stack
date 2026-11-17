@@ -9,8 +9,6 @@ import json
 import pathlib
 import threading
 
-import pytest
-
 from skive import subs
 
 
@@ -45,8 +43,7 @@ def test_decide_forced_plus_full_pair():
 
 def test_decide_skips_stragglers_per_language():
     keeps, notes = subs.decide(
-        [trk(4, "swe"), trk(2, "eng", forced=True), trk(5, "swe"),
-         trk(6, "und"), trk(7, "nor")]
+        [trk(4, "swe"), trk(2, "eng", forced=True), trk(5, "swe"), trk(6, "und"), trk(7, "nor")]
     )
     assert [(k.track.index, k.flag) for k in keeps] == [(2, "forced")]
     assert notes == [
@@ -92,13 +89,18 @@ def test_count_events_robust_to_trailing_newlines(tmp_path):
 
 # -- inventory (canned ffprobe) --------------------------------------------------
 def test_inventory_missing_language_tag_is_und(monkeypatch):
-    canned = {"streams": [
-        {"index": 3, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0}},
-        {"index": 4, "codec_name": "dvd_subtitle", "disposition": {"forced": 1},
-         "tags": {"language": "dan"}},
-    ]}
-    monkeypatch.setattr(subs.subprocess, "run",
-                        lambda cmd, **kw: R(0, json.dumps(canned), ""))
+    canned = {
+        "streams": [
+            {"index": 3, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0}},
+            {
+                "index": 4,
+                "codec_name": "dvd_subtitle",
+                "disposition": {"forced": 1},
+                "tags": {"language": "dan"},
+            },
+        ]
+    }
+    monkeypatch.setattr(subs.subprocess, "run", lambda cmd, **kw: R(0, json.dumps(canned), ""))
     assert subs.inventory("x.mkv", "ffprobe.exe") == [
         subs.Track(3, "und", "hdmv_pgs_subtitle", False),
         subs.Track(4, "dan", "dvd_subtitle", True),
@@ -109,14 +111,25 @@ def test_inventory_maps_noncontiguous_track_numbers(monkeypatch):
     """MakeMKV writes gaps in Matroska TrackNumbers (Corpse Bride: 1..4 then
     6): the dan track at ffprobe index 4 is TrackNumber 6 — the old index + 1
     guess asked seconv for track 5, which matched nothing."""
-    canned = {"streams": [
-        {"index": 3, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0},
-         "tags": {"language": "eng"}},
-        {"index": 4, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0},
-         "tags": {"language": "dan"}},
-    ]}
-    numbers = {"tracks": [{"id": 3, "properties": {"number": 4}},
-                          {"id": 4, "properties": {"number": 6}}]}
+    canned = {
+        "streams": [
+            {
+                "index": 3,
+                "codec_name": "hdmv_pgs_subtitle",
+                "disposition": {"forced": 0},
+                "tags": {"language": "eng"},
+            },
+            {
+                "index": 4,
+                "codec_name": "hdmv_pgs_subtitle",
+                "disposition": {"forced": 0},
+                "tags": {"language": "dan"},
+            },
+        ]
+    }
+    numbers = {
+        "tracks": [{"id": 3, "properties": {"number": 4}}, {"id": 4, "properties": {"number": 6}}]
+    }
 
     def run(cmd, **kw):
         if pathlib.Path(cmd[0]).name.startswith("mkvmerge"):
@@ -140,24 +153,45 @@ def test_convert_selects_real_track_number(tmp_path, monkeypatch):
         return R(0, "", "")
 
     monkeypatch.setattr(subs.subprocess, "run", run)
-    srt = subs.convert("x.mkv",
-                       subs.Track(4, "dan", "hdmv_pgs_subtitle", False, number=6),
-                       "seconv.exe", str(tmp_path))
+    srt = subs.convert(
+        "x.mkv",
+        subs.Track(4, "dan", "hdmv_pgs_subtitle", False, number=6),
+        "seconv.exe",
+        str(tmp_path),
+    )
     assert seen == ["--track-number:6"]
     assert subs.count_events(srt) == 5
 
 
 # -- run_pass (stubbed tools) -----------------------------------------------------
-INV = {"streams": [
-    {"index": 2, "codec_name": "dvd_subtitle", "disposition": {"forced": 1},
-     "tags": {"language": "dan"}},
-    {"index": 3, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0},
-     "tags": {"language": "eng"}},
-    {"index": 4, "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0},
-     "tags": {"language": "eng"}},
-    {"index": 5, "codec_name": "dvd_subtitle", "disposition": {"forced": 0},
-     "tags": {"language": "swe"}},
-]}
+INV = {
+    "streams": [
+        {
+            "index": 2,
+            "codec_name": "dvd_subtitle",
+            "disposition": {"forced": 1},
+            "tags": {"language": "dan"},
+        },
+        {
+            "index": 3,
+            "codec_name": "hdmv_pgs_subtitle",
+            "disposition": {"forced": 0},
+            "tags": {"language": "eng"},
+        },
+        {
+            "index": 4,
+            "codec_name": "hdmv_pgs_subtitle",
+            "disposition": {"forced": 0},
+            "tags": {"language": "eng"},
+        },
+        {
+            "index": 5,
+            "codec_name": "dvd_subtitle",
+            "disposition": {"forced": 0},
+            "tags": {"language": "swe"},
+        },
+    ]
+}
 CUES = {3: 6, 4: 100, 5: 40, 6: 9}  # keyed by the TID seconv receives (contiguous fake: index + 1)
 
 
@@ -165,11 +199,17 @@ def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0, barren_track=0):
     """Fake mkvmerge + ffprobe (canned inventory) + fake seconv writing
     <stem>.<lang>.srt into its --output-folder — the same name for both eng
     full tracks, so a shared dir would collide and the test would catch it."""
+
     def run(cmd, **kw):
         if pathlib.Path(cmd[0]).name.startswith("mkvmerge"):
             # contiguous TrackNumbers: id i -> number i+1, so CUES keys stay index + 1
-            return R(0, json.dumps({"tracks": [
-                {"id": i, "properties": {"number": i + 1}} for i in range(10)]}), "")
+            return R(
+                0,
+                json.dumps(
+                    {"tracks": [{"id": i, "properties": {"number": i + 1}} for i in range(10)]}
+                ),
+                "",
+            )
         if pathlib.Path(cmd[0]).name.startswith("ffprobe"):
             return R(0, json.dumps(INV), "")
         num = int(next(a.split(":", 1)[1] for a in cmd if a.startswith("--track-number:")))
@@ -180,8 +220,10 @@ def stub_run(monkeypatch, dirs, fail_track=0, empty_track=0, barren_track=0):
             return R(1, "No subtitle tracks matched", "")
         if num == fail_track:
             return R(1, "3 image(s) produced no OCR text and were dropped", "boom")
-        write_srt(pathlib.Path(out_dir) / f"Movie (2001).{lang}.srt",
-                  0 if num == empty_track else CUES[num])
+        write_srt(
+            pathlib.Path(out_dir) / f"Movie (2001).{lang}.srt",
+            0 if num == empty_track else CUES[num],
+        )
         return R(0, "", "")
 
     monkeypatch.setattr(subs.subprocess, "run", run)
@@ -191,8 +233,9 @@ def test_run_pass_temp_dir_isolation_and_final_renames(tmp_path, monkeypatch):
     dirs = []
     stub_run(monkeypatch, dirs)
     out = tmp_path / "out"
-    res = subs.run_pass(str(tmp_path / "Movie (2001).mkv"), str(out), "Movie (2001)",
-                        "seconv.exe", "ffprobe.exe")
+    res = subs.run_pass(
+        str(tmp_path / "Movie (2001).mkv"), str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe"
+    )
 
     # one fresh temp dir per converted track, all cleaned up afterwards
     assert len(dirs) == 3 and len(set(dirs)) == 3
@@ -200,11 +243,15 @@ def test_run_pass_temp_dir_isolation_and_final_renames(tmp_path, monkeypatch):
 
     assert res.ok
     assert res.sidecars == [
-        "Movie (2001).dan.forced.srt", "Movie (2001).eng.srt", "Movie (2001).eng.sdh.srt",
+        "Movie (2001).dan.forced.srt",
+        "Movie (2001).eng.srt",
+        "Movie (2001).eng.sdh.srt",
     ]
-    for name, cues in [("Movie (2001).dan.forced.srt", 6),
-                       ("Movie (2001).eng.srt", 100),
-                       ("Movie (2001).eng.sdh.srt", 40)]:
+    for name, cues in [
+        ("Movie (2001).dan.forced.srt", 6),
+        ("Movie (2001).eng.srt", 100),
+        ("Movie (2001).eng.sdh.srt", 40),
+    ]:
         assert subs.count_events(out / name) == cues
     assert "skip swe (tracks 5): not eng/dan" in res.notes
     assert not any(n.startswith("FAIL") for n in res.notes)
@@ -253,8 +300,7 @@ def test_convert_real_failure_replays_full_output_on_console(tmp_path, monkeypat
     on stderr -- the Conan diagnosis lived in stdout."""
     dirs = []
     stub_run(monkeypatch, dirs, fail_track=5)
-    subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)",
-                  "seconv.exe", "ffprobe.exe")
+    subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)", "seconv.exe", "ffprobe.exe")
     err = capsys.readouterr().err
     assert "seconv failed: track 4 (eng)" in err
     assert "3 image(s) produced no OCR text and were dropped" in err  # stdout
@@ -269,8 +315,13 @@ def test_run_pass_ocrs_kept_tracks_concurrently(tmp_path, monkeypatch):
 
     def run(cmd, **kw):
         if pathlib.Path(cmd[0]).name.startswith("mkvmerge"):
-            return R(0, json.dumps({"tracks": [
-                {"id": i, "properties": {"number": i + 1}} for i in range(10)]}), "")
+            return R(
+                0,
+                json.dumps(
+                    {"tracks": [{"id": i, "properties": {"number": i + 1}} for i in range(10)]}
+                ),
+                "",
+            )
         if pathlib.Path(cmd[0]).name.startswith("ffprobe"):
             return R(0, json.dumps(INV), "")
         num = int(next(a.split(":", 1)[1] for a in cmd if a.startswith("--track-number:")))
@@ -283,24 +334,33 @@ def test_run_pass_ocrs_kept_tracks_concurrently(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subs.subprocess, "run", run)
     out = tmp_path / "out"
-    res = subs.run_pass(str(tmp_path / "Movie (2001).mkv"), str(out), "Movie (2001)",
-                        "seconv.exe", "ffprobe.exe")
+    res = subs.run_pass(
+        str(tmp_path / "Movie (2001).mkv"), str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe"
+    )
 
     # reassembly in keeps order: same settlement as the sequential pass
     assert res.ok
     assert res.sidecars == [
-        "Movie (2001).dan.forced.srt", "Movie (2001).eng.srt", "Movie (2001).eng.sdh.srt",
+        "Movie (2001).dan.forced.srt",
+        "Movie (2001).eng.srt",
+        "Movie (2001).eng.sdh.srt",
     ]
     assert len(dirs) == 3 and len(set(dirs)) == 3
 
 
 def test_run_pass_no_eng_dan_tracks(tmp_path, monkeypatch):
-    canned = {"streams": [{"index": 9, "codec_name": "dvd_subtitle",
-                           "disposition": {"forced": 0}, "tags": {"language": "nor"}}]}
-    monkeypatch.setattr(subs.subprocess, "run",
-                        lambda cmd, **kw: R(0, json.dumps(canned), ""))
-    res = subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)",
-                        "seconv.exe", "ffprobe.exe")
+    canned = {
+        "streams": [
+            {
+                "index": 9,
+                "codec_name": "dvd_subtitle",
+                "disposition": {"forced": 0},
+                "tags": {"language": "nor"},
+            }
+        ]
+    }
+    monkeypatch.setattr(subs.subprocess, "run", lambda cmd, **kw: R(0, json.dumps(canned), ""))
+    res = subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)", "seconv.exe", "ffprobe.exe")
     assert res.ok and res.sidecars == []
     assert res.notes == ["skip nor (tracks 9): not eng/dan"]
 
@@ -322,8 +382,7 @@ def test_run_pass_each_ocr_track_gets_a_live_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(subs.ui, "view", lambda: FakeView())
     dirs = []
     stub_run(monkeypatch, dirs)
-    res = subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)",
-                        "seconv.exe", "ffprobe.exe")
+    res = subs.run_pass("x.mkv", str(tmp_path / "out"), "Movie (2001)", "seconv.exe", "ffprobe.exe")
     assert res.ok
     set_ = [k for op, k in lanes if op == "set"]
     cleared = [k for op, k in lanes if op == "clear"]

@@ -13,9 +13,10 @@ violations are pure functions/classes here, the exactly-one-main rule stays
 in skive.validation and the episode math in skive.tv_match."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable
+from typing import ClassVar
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -28,13 +29,25 @@ from skive import ui
 from skive.makemkv import hsize
 from skive.scan import TitleInfo
 from skive.tv_match import (
-    audit_cell as episode_audit_cell, episode_clashes, past_end_claims,
-    prefill_assignment, staged_claims, sub_floor_titles, tv_floor,
+    audit_cell as episode_audit_cell,
+)
+from skive.tv_match import (
+    episode_clashes,
+    past_end_claims,
+    prefill_assignment,
+    staged_claims,
+    sub_floor_titles,
+    tv_floor,
     unfilled_episodes,
 )
 from skive.validation import (
-    MAIN_ACTION, MAIN_FLOOR_S, arbitrate_main, biggest_title, exactly_one_main,
-    grade_main, main_candidates,
+    MAIN_ACTION,
+    MAIN_FLOOR_S,
+    arbitrate_main,
+    biggest_title,
+    exactly_one_main,
+    grade_main,
+    main_candidates,
 )
 
 QUIT = "quit"
@@ -66,8 +79,9 @@ def _note(log, phase: str, text: str) -> None:
         log.note(phase, text)
 
 
-def prefill(titles: list[TitleInfo], runtime_s: int | None,
-            log=None) -> tuple[dict[int, str], dict[int, str]]:
+def prefill(
+    titles: list[TitleInfo], runtime_s: int | None, log=None
+) -> tuple[dict[int, str], dict[int, str]]:
     """The audited prefill: main arbitration picks the main, everything else
     skips. Several candidates near the runtime prefill biggest with the
     ambiguity named in the main row's notes; zero or unknown prefills
@@ -89,23 +103,23 @@ def prefill(titles: list[TitleInfo], runtime_s: int | None,
     notes: dict[int, str] = {}
     decoys = [t for t in ordered if t.decoy_cluster or t.scrambled]
     for t in decoys:
-        notes[t.number] = (f"decoy cluster ×{t.decoy_cluster}"
-                           if t.decoy_cluster else "shuffled map")
+        notes[t.number] = f"decoy cluster ×{t.decoy_cluster}" if t.decoy_cluster else "shuffled map"
     skip_note = f" — skipped {len(decoys)} decoys" if decoys else ""
 
     if not triples:
         _note(log, "main", "main=none — no candidate main on the disc")
         return actions, notes
 
-    clean = [(n, s, size)
-             for t, (n, s, size) in zip(ordered, triples)
-             if not t.decoy_cluster and not t.scrambled]
+    clean = [
+        (n, s, size)
+        for t, (n, s, size) in zip(ordered, triples)
+        if not t.decoy_cluster and not t.scrambled
+    ]
     arb = arbitrate_main(main_candidates(clean), runtime_s)
     if arb.pick is None and not decoys:
         main_number = biggest_title(triples)[0]
         notes[main_number] = "biggest bytes — no candidate main"
-        _note(log, "main",
-              f"main=t{main_number} biggest bytes — no candidate main on the disc")
+        _note(log, "main", f"main=t{main_number} biggest bytes — no candidate main on the disc")
     elif arb.pick is None:
         main_number = biggest_title(clean or triples)[0]
         if clean:
@@ -113,24 +127,28 @@ def prefill(titles: list[TitleInfo], runtime_s: int | None,
             # cluster fact would be false on this main's row.
             why = "biggest bytes — no candidate main"
             notes[main_number] = why
-            _note(log, "main",
-                  f"main=t{main_number} {why} on the disc" + skip_note)
+            _note(log, "main", f"main=t{main_number} {why} on the disc" + skip_note)
         else:
             why = "biggest bytes — every title decoy-clustered"
-            notes[main_number] = (notes.get(main_number, "") + " "
-                                  if notes.get(main_number) else "") + why
-            _note(log, "main",
-                  f"main=t{main_number} {why}" + skip_note)
+            notes[main_number] = (
+                notes.get(main_number, "") + " " if notes.get(main_number) else ""
+            ) + why
+            _note(log, "main", f"main=t{main_number} {why}" + skip_note)
     else:
         main_number = arb.pick[0]
-        how = {"sole": "near the runtime — automatic",
-               "zero": "biggest bytes — nothing near the runtime",
-               "unknown": "biggest bytes — runtime unknown",
-               "several": "default (biggest bytes)"}[arb.kind]
-        _note(log, "main",
-              f"main=t{main_number} {how}"
-              + (f" — {len(arb.near)} titles near the runtime"
-                 if arb.kind == "several" else "") + skip_note)
+        how = {
+            "sole": "near the runtime — automatic",
+            "zero": "biggest bytes — nothing near the runtime",
+            "unknown": "biggest bytes — runtime unknown",
+            "several": "default (biggest bytes)",
+        }[arb.kind]
+        _note(
+            log,
+            "main",
+            f"main=t{main_number} {how}"
+            + (f" — {len(arb.near)} titles near the runtime" if arb.kind == "several" else "")
+            + skip_note,
+        )
         if arb.note is not None:
             notes[main_number] = arb.note
 
@@ -150,8 +168,7 @@ def graded_rows(titles: list[TitleInfo], runtime_s: int | None) -> list[dict]:
             graded = grade_main(t.seconds, runtime_s)
             if graded is not None:
                 ratio, band = graded
-        rows.append({"t": t.number, "dur_s": t.seconds,
-                     "ratio": ratio, "band": band})
+        rows.append({"t": t.number, "dur_s": t.seconds, "ratio": ratio, "band": band})
     return rows
 
 
@@ -163,8 +180,11 @@ def rip_set_line(actions: dict[int, str]) -> str:
     extras = sorted(n for n, a in actions.items() if a == EXTRA_ACTION)
     if not extras:
         return f"rip set: t{main_number} only"
-    return (f"rip set: t{main_number} + extras "
-            + ", ".join(f"t{n}" for n in extras) + " (extras marked for encoding)")
+    return (
+        f"rip set: t{main_number} + extras "
+        + ", ".join(f"t{n}" for n in extras)
+        + " (extras marked for encoding)"
+    )
 
 
 def audit_cell(t: TitleInfo, runtime_s: int | None) -> Text:
@@ -178,19 +198,23 @@ def audit_cell(t: TitleInfo, runtime_s: int | None) -> Text:
     return Text("")
 
 
-def _row_cells(t: TitleInfo, actions: dict[int, str],
-               notes: dict[int, str], runtime_s: int | None) -> tuple:
+def _row_cells(
+    t: TitleInfo, actions: dict[int, str], notes: dict[int, str], runtime_s: int | None
+) -> tuple:
     action = actions.get(t.number, SKIP_ACTION)
-    return (Text(str(t.number), style="bold"),
-            Text(hms(t.seconds)),
-            Text(hsize(t.size) if t.size else ""),
-            audit_cell(t, runtime_s),
-            Text(action, style=ACTION_STYLE.get(action, "")),
-            Text(notes.get(t.number, "")))
+    return (
+        Text(str(t.number), style="bold"),
+        Text(hms(t.seconds)),
+        Text(hsize(t.size) if t.size else ""),
+        audit_cell(t, runtime_s),
+        Text(action, style=ACTION_STYLE.get(action, "")),
+        Text(notes.get(t.number, "")),
+    )
 
 
-def print_accepted(display: str, titles: list[TitleInfo],
-                   actions: dict[int, str], runtime_s: int | None) -> None:
+def print_accepted(
+    display: str, titles: list[TitleInfo], actions: dict[int, str], runtime_s: int | None
+) -> None:
     """Echo the accepted table as plain lines into scrollback, before the
     run opener — the evidence trail for an interrupted run. Built through
     ui.table, so it is pipe-safe and NO_COLOR-safe by construction."""
@@ -216,7 +240,7 @@ class _Table(App):
     #hint { height: auto; color: $text-muted; }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("up,k", "move(-1)", show=False, priority=True),
         Binding("down,j", "move(1)", show=False, priority=True),
         Binding("enter", "accept", "accept", priority=True),
@@ -253,8 +277,7 @@ class _Table(App):
         self._col_keys = list(table.columns.keys())
         self._row_keys: dict[int, object] = {}
         for t in self.titles:
-            self._row_keys[t.number] = table.add_row(*self._cells(t),
-                                                     key=str(t.number))
+            self._row_keys[t.number] = table.add_row(*self._cells(t), key=str(t.number))
 
     def _cursor_title(self) -> TitleInfo:
         return self.titles[self.query_one(DataTable).cursor_row]
@@ -263,8 +286,7 @@ class _Table(App):
         t = next(t for t in self.titles if t.number == number)
         table = self.query_one(DataTable)
         for col_key, cell in zip(self._col_keys, self._cells(t)):
-            table.update_cell(self._row_keys[number], col_key, cell,
-                              update_width=True)
+            table.update_cell(self._row_keys[number], col_key, cell, update_width=True)
 
     def action_move(self, delta: int) -> None:
         table = self.query_one(DataTable)
@@ -291,7 +313,7 @@ class SelectionTable(_Table):
     row, whose action can only be moved with `m`. Enter accepts and returns
     the title→action map."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("m", "main", "main"),
         Binding("e", "verb('extra')", "extra"),
         Binding("s", "verb('skip')", "skip"),
@@ -299,8 +321,7 @@ class SelectionTable(_Table):
 
     HINT = "↑/↓ j/k move · m main · e extra · s skip · Enter accept · q quit"
 
-    def __init__(self, display: str, titles: list[TitleInfo],
-                 runtime_s: int | None, log=None):
+    def __init__(self, display: str, titles: list[TitleInfo], runtime_s: int | None, log=None):
         super().__init__(display, sorted(titles, key=lambda t: t.number))
         self.runtime_s = runtime_s
         self.run_log = log
@@ -334,8 +355,9 @@ class SelectionTable(_Table):
         self.exit(dict(self.actions))
 
 
-def run_selection_table(log, display: str, titles: list[TitleInfo],
-                        runtime_s: int | None) -> dict[int, str] | str:
+def run_selection_table(
+    log, display: str, titles: list[TitleInfo], runtime_s: int | None
+) -> dict[int, str] | str:
     """Run the table over the scan and return the accepted title→action map,
     QUIT (the caller exits 1 with nothing ripped) or INTERRUPT (the caller
     re-raises KeyboardInterrupt — exit 130 — once Textual has restored the
@@ -369,6 +391,7 @@ class EpisodeMap:
     action, the TMDB facts the rows grade against, and the episodes already
     staged. Violations and warnings are derived from the actions — never
     stored — so every edit re-grades the whole map."""
+
     season: int
     titles: list[TitleInfo]  # table order: scan order, sub-floor titles last
     assign: dict[int, EpisodeAction]
@@ -382,8 +405,7 @@ class EpisodeMap:
         return max(self.ep_names, default=0)
 
     def _episodes(self) -> dict[int, tuple[int, int]]:
-        return {t: r for t, r in self.assign.items()
-                if r is not None and r[0] >= 1}
+        return {t: r for t, r in self.assign.items() if r is not None and r[0] >= 1}
 
     def blocks(self) -> dict[int, list[str]]:
         """Title -> its blocking reasons (Enter refuses while any exist):
@@ -398,8 +420,7 @@ class EpisodeMap:
         for e, t in staged_claims(eps, self.staged):
             out.setdefault(t, []).append(f"✗ E{e:02d} already staged")
         for e, t in past_end_claims(eps, self.max_ep):
-            out.setdefault(t, []).append(
-                f"✗ E{e:02d} past the season's last (E{self.max_ep:02d})")
+            out.setdefault(t, []).append(f"✗ E{e:02d} past the season's last (E{self.max_ep:02d})")
         return out
 
     def unfilled(self) -> list[int]:
@@ -408,13 +429,15 @@ class EpisodeMap:
         eps = self._episodes()
         if not eps:
             return []
-        return [e for e in unfilled_episodes(min(r[0] for r in eps.values()),
-                                             max(r[1] for r in eps.values()),
-                                             eps)
-                if e not in self.staged]
+        return [
+            e
+            for e in unfilled_episodes(
+                min(r[0] for r in eps.values()), max(r[1] for r in eps.values()), eps
+            )
+            if e not in self.staged
+        ]
 
-    def cells(self, t: TitleInfo, blocks: dict[int, list[str]],
-              marked: bool = False) -> tuple:
+    def cells(self, t: TitleInfo, blocks: dict[int, list[str]], marked: bool = False) -> tuple:
         """One row's six cells; a blocked row renders red whole, its reasons
         named in the notes cell."""
         n = t.number
@@ -426,19 +449,20 @@ class EpisodeMap:
         else:
             action = f"E{lohi[0]:02d}" + (f"-E{lohi[1]:02d}" if lohi[1] > lohi[0] else "")
             style = "bold green"
-        audit = (episode_audit_cell(t.seconds, *lohi, self.ep_runtimes)
-                 if lohi is not None else None)
+        audit = episode_audit_cell(t.seconds, *lohi, self.ep_runtimes) if lohi is not None else None
         parts = list(blocks.get(n, []))
         if lohi is not None and lohi[0] >= 1 and self.ep_names.get(lohi[0]):
             parts.append(self.ep_names[lohi[0]])
         if n in self.evidence:
             parts.append(self.evidence[n])
-        row = (Text(("* " if marked else "") + str(n), style="bold"),
-               Text(hms(t.seconds)),
-               Text(hsize(t.size) if t.size else ""),
-               Text(audit[0], style=audit[1]) if audit else Text(""),
-               Text(action, style=style),
-               Text(" · ".join(parts)))
+        row = (
+            Text(("* " if marked else "") + str(n), style="bold"),
+            Text(hms(t.seconds)),
+            Text(hsize(t.size) if t.size else ""),
+            Text(audit[0], style=audit[1]) if audit else Text(""),
+            Text(action, style=style),
+            Text(" · ".join(parts)),
+        )
         if n in blocks:
             for cell in row:
                 cell.stylize("red")
@@ -453,10 +477,15 @@ def decoy_numbers(titles: list[TitleInfo]) -> set[int]:
     return {t.number for t in titles if t.decoy_cluster or t.scrambled}
 
 
-def episode_map(season: int, titles: list[TitleInfo], minlength: int,
-                playalls: dict[int, tuple[str, list[int]]],
-                ep_names: dict[int, str], ep_runtimes: dict[int, int],
-                staged: set[int]) -> EpisodeMap:
+def episode_map(
+    season: int,
+    titles: list[TitleInfo],
+    minlength: int,
+    playalls: dict[int, tuple[str, list[int]]],
+    ep_names: dict[int, str],
+    ep_runtimes: dict[int, int],
+    staged: set[int],
+) -> EpisodeMap:
     """The audited prefill as an EpisodeMap: the episode guess walks from the
     first unstaged episode over the eligible titles; play-alls prefill skip
     with their `≈ sum of …` evidence; sub-floor titles list last with their
@@ -474,20 +503,20 @@ def episode_map(season: int, titles: list[TitleInfo], minlength: int,
     """
     floor = tv_floor(minlength)
     decoys = decoy_numbers(titles)
-    info = [(t.number, t.seconds, t.size) for t in titles
-            if t.seconds >= floor and t.number not in decoys]
-    guessed = prefill_assignment(info, set(playalls), ep_runtimes, staged,
-                                 ep_names)
-    below = set(sub_floor_titles([(t.number, t.seconds, t.size) for t in titles],
-                                 minlength))
+    info = [
+        (t.number, t.seconds, t.size)
+        for t in titles
+        if t.seconds >= floor and t.number not in decoys
+    ]
+    guessed = prefill_assignment(info, set(playalls), ep_runtimes, staged, ep_names)
+    below = set(sub_floor_titles([(t.number, t.seconds, t.size) for t in titles], minlength))
     assign: dict[int, EpisodeAction] = {}
     evidence: dict[int, str] = {}
     for t in titles:
         n = t.number
         if n in decoys:
             assign[n] = None
-            evidence[n] = (f"decoy cluster ×{t.decoy_cluster}"
-                           if t.decoy_cluster else "shuffled map")
+            evidence[n] = f"decoy cluster ×{t.decoy_cluster}" if t.decoy_cluster else "shuffled map"
         elif n in below:
             assign[n] = None
             evidence[n] = "below the TV floor"
@@ -496,14 +525,15 @@ def episode_map(season: int, titles: list[TitleInfo], minlength: int,
             evidence[n] = "≈ sum of " + ", ".join(str(c) for c in sorted(playalls[n][1]))
         else:
             assign[n] = guessed[n]
-    ordered = [t for t in titles if t.number not in below] + \
-              [t for t in titles if t.number in below]
-    return EpisodeMap(season, ordered, assign, evidence, ep_names,
-                      ep_runtimes, set(staged))
+    ordered = [t for t in titles if t.number not in below] + [
+        t for t in titles if t.number in below
+    ]
+    return EpisodeMap(season, ordered, assign, evidence, ep_names, ep_runtimes, set(staged))
 
 
-def print_accepted_episodes(display: str, emap: EpisodeMap,
-                            accepted: dict[int, EpisodeAction]) -> None:
+def print_accepted_episodes(
+    display: str, emap: EpisodeMap, accepted: dict[int, EpisodeAction]
+) -> None:
     """Echo the accepted episode map as plain lines into scrollback, before
     the run opener — the same six columns as the table. Built through
     ui.table, so it is pipe-safe and NO_COLOR-safe by construction."""
@@ -526,7 +556,7 @@ class ConfirmClear(ModalScreen[bool]):
     #files { height: auto; max-height: 14; }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("y", "answer(True)", "delete"),
         Binding("n,escape", "answer(False)", "keep"),
     ]
@@ -538,8 +568,11 @@ class ConfirmClear(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Static(Text(f"delete {len(self.names)} staged files for "
-                              f"{self.display_name}?", style="bold"))
+            yield Static(
+                Text(
+                    f"delete {len(self.names)} staged files for {self.display_name}?", style="bold"
+                )
+            )
             with VerticalScroll(id="files"):
                 yield Static(Text("\n".join(self.names)))
             yield Static(Text("y delete · n / Esc keep (default)", style="dim"))
@@ -561,7 +594,7 @@ class EpisodeTable(_Table):
     any row is red (clash / staged claim / past the season's end) and when
     nothing would rip. An unfilled episode only warns."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("e", "verb('extra')", "extra"),
         Binding("s", "verb('skip')", "skip"),
         Binding("space", "mark", "mark"),
@@ -572,16 +605,22 @@ class EpisodeTable(_Table):
         *[Binding(d, f"type('{d}')", show=False) for d in "0123456789"],
     ]
 
-    HINT = ("↑/↓ j/k move · 3 / 3-4 type episode, Enter sets · Space mark run · "
-            "e extra · s skip · c clear staged · Enter accept · q quit")
+    HINT = (
+        "↑/↓ j/k move · 3 / 3-4 type episode, Enter sets · Space mark run · "
+        "e extra · s skip · c clear staged · Enter accept · q quit"
+    )
 
-    def __init__(self, display: str, emap: EpisodeMap,
-                 list_staging: Callable[[], list[Path]] | None = None,
-                 clear_staging: Callable[[list[Path]], set[int]] | None = None):
+    def __init__(
+        self,
+        display: str,
+        emap: EpisodeMap,
+        list_staging: Callable[[], list[Path]] | None = None,
+        clear_staging: Callable[[list[Path]], set[int]] | None = None,
+    ):
         super().__init__(f"{display} — season {emap.season:02d}", emap.titles)
         self.show_display = display
         self.emap = emap
-        self.list_staging = list_staging or (lambda: [])
+        self.list_staging = list_staging or (list)
         self.clear_staging = clear_staging or (lambda doomed: set())
         self.marked: set[int] = set()
         self.pending = ""
@@ -598,16 +637,24 @@ class EpisodeTable(_Table):
         lines = []
         if self.emap.staged:
             eps = ", ".join(f"E{e:02d}" for e in sorted(self.emap.staged))
-            lines.append(Text(f"already staged: {eps} — c clears the show's "
-                              "staged files", style="dim"))
+            lines.append(
+                Text(f"already staged: {eps} — c clears the show's staged files", style="dim")
+            )
         if self._blocks:
             rows = ", ".join(f"t{n}" for n in sorted(self._blocks))
-            lines.append(Text(f"✗ blocked: fix the red rows ({rows}) — "
-                              "Enter refused", style="bold red"))
+            lines.append(
+                Text(f"✗ blocked: fix the red rows ({rows}) — Enter refused", style="bold red")
+            )
         unfilled = self.emap.unfilled()
         if unfilled:
-            lines.append(Text("! unfilled: " + ", ".join(f"E{e:02d}" for e in unfilled)
-                              + " — Enter still accepts", style="bold yellow"))
+            lines.append(
+                Text(
+                    "! unfilled: "
+                    + ", ".join(f"E{e:02d}" for e in unfilled)
+                    + " — Enter still accepts",
+                    style="bold yellow",
+                )
+            )
         if self.pending:
             lines.append(Text(f"episode ▸ {self.pending}▏  (Enter sets it)"))
         if self.message:
@@ -682,7 +729,8 @@ class EpisodeTable(_Table):
             return
         self._commit()
         self.emap.assign[self._cursor_title().number] = (
-            EXTRA_EPISODES if verb == EXTRA_ACTION else None)
+            EXTRA_EPISODES if verb == EXTRA_ACTION else None
+        )
         self._regrade()
 
     def action_mark(self) -> None:
@@ -725,14 +773,15 @@ class EpisodeTable(_Table):
             self.emap.staged = self.clear_staging(doomed)
             self._regrade(f"deleted {len(doomed)} staged files")
 
-        self.push_screen(ConfirmClear(self.show_display, [f.name for f in doomed]),
-                         answered)
+        self.push_screen(ConfirmClear(self.show_display, [f.name for f in doomed]), answered)
 
 
-def run_episode_table(display: str, emap: EpisodeMap,
-                      list_staging: Callable[[], list[Path]],
-                      clear_staging: Callable[[list[Path]], set[int]]
-                      ) -> dict[int, EpisodeAction] | str:
+def run_episode_table(
+    display: str,
+    emap: EpisodeMap,
+    list_staging: Callable[[], list[Path]],
+    clear_staging: Callable[[list[Path]], set[int]],
+) -> dict[int, EpisodeAction] | str:
     """Run the TV table over the episode map and return the accepted
     title -> EpisodeAction map, QUIT or INTERRUPT (see run_selection_table).
 
@@ -759,6 +808,7 @@ class CdTrack:
     """One table row: the disc track number and its TOC duration (a CD has
     no size or scan — the row rides the shared table with the other columns
     blank)."""
+
     number: int
     seconds: int
 
@@ -774,22 +824,26 @@ def cd_audit_cell(toc_s: int, mb_s: int | None) -> Text:
     return Text(f"{ratio:.2f}", style=style)
 
 
-def cd_row_cells(t: CdTrack, actions: dict[int, str],
-                 mb_durations: dict[int, int] | None) -> tuple:
+def cd_row_cells(t: CdTrack, actions: dict[int, str], mb_durations: dict[int, int] | None) -> tuple:
     """One CD row's six cells: number · TOC length · blank size · audit ·
     action · blank notes."""
     action = actions.get(t.number, RIP_ACTION)
-    return (Text(str(t.number), style="bold"),
-            Text(hms(t.seconds)),
-            Text(""),
-            cd_audit_cell(t.seconds, (mb_durations or {}).get(t.number)),
-            Text(action, style=CD_ACTION_STYLE.get(action, "")),
-            Text(""))
+    return (
+        Text(str(t.number), style="bold"),
+        Text(hms(t.seconds)),
+        Text(""),
+        cd_audit_cell(t.seconds, (mb_durations or {}).get(t.number)),
+        Text(action, style=CD_ACTION_STYLE.get(action, "")),
+        Text(""),
+    )
 
 
-def print_accepted_cd(display: str, tracks: list[CdTrack],
-                      accepted: dict[int, str],
-                      mb_durations: dict[int, int] | None = None) -> None:
+def print_accepted_cd(
+    display: str,
+    tracks: list[CdTrack],
+    accepted: dict[int, str],
+    mb_durations: dict[int, int] | None = None,
+) -> None:
     """Echo the accepted CD table as plain lines into scrollback, before the
     drive spins — the same six columns, built through ui.table so it is
     pipe-safe and NO_COLOR-safe by construction."""
@@ -805,15 +859,16 @@ class CdTable(_Table):
     or j/k move; `s` skips a known-bad track, `r` restores it; Enter accepts
     and returns the track→action map; `q` quits with nothing ripped."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("s", "verb('skip')", "skip"),
         Binding("r", "verb('rip')", "restore"),
     ]
 
     HINT = "↑/↓ j/k move · s skip · r restore · Enter accept · q quit"
 
-    def __init__(self, display: str, tracks: list[CdTrack],
-                 mb_durations: dict[int, int] | None = None):
+    def __init__(
+        self, display: str, tracks: list[CdTrack], mb_durations: dict[int, int] | None = None
+    ):
         super().__init__(display, sorted(tracks, key=lambda t: t.number))
         self.mb_durations = mb_durations
         self.actions = {t.number: RIP_ACTION for t in self.titles}
@@ -828,15 +883,16 @@ class CdTable(_Table):
 
     def action_accept(self) -> None:
         if all(a == SKIP_ACTION for a in self.actions.values()):
-            self.query_one("#hint", Static).update(
-                "nothing to rip — every track is skipped")
+            self.query_one("#hint", Static).update("nothing to rip — every track is skipped")
             return
         self.exit(dict(self.actions))
 
 
-def run_cd_table(display: str, tracks: list[CdTrack],
-                 mb_durations: dict[int, int] | None = None,
-                 ) -> dict[int, str] | str:
+def run_cd_table(
+    display: str,
+    tracks: list[CdTrack],
+    mb_durations: dict[int, int] | None = None,
+) -> dict[int, str] | str:
     """Run the CD track table and return the accepted track→action map,
     QUIT (the caller exits 1 with nothing ripped) or INTERRUPT (see
     run_selection_table)."""

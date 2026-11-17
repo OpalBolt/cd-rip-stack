@@ -13,8 +13,8 @@ from typing import NamedTuple
 
 from rich.text import Text
 
-from skive.common import ensure_share
 from skive import ui
+from skive.common import ensure_share
 from skive.tag import SOURCES
 
 STATES: tuple[tuple[str, str], ...] = (
@@ -31,8 +31,7 @@ _SEASON_DIR = re.compile(r"Season (\d+)")
 
 def fmt_seasons(seasons: set[int]) -> str:
     """Season numbers as display text: sorted, zero spelled 'Specials'."""
-    return ", ".join("Specials" if s == 0 else f"S{s:02d}"
-                     for s in sorted(seasons))
+    return ", ".join("Specials" if s == 0 else f"S{s:02d}" for s in sorted(seasons))
 
 
 def seasons_in(folder: Path) -> set[int]:
@@ -43,7 +42,7 @@ def seasons_in(folder: Path) -> set[int]:
         if p.is_dir():
             if p.name == "Specials":
                 seasons.add(0)
-            elif (m := _SEASON_DIR.fullmatch(p.name)):
+            elif m := _SEASON_DIR.fullmatch(p.name):
                 seasons.add(int(m.group(1)))
         elif p.suffix.lower() == ".mkv" and (m := _SEASON_FILE.search(p.stem)):
             seasons.add(int(m.group(1)))
@@ -99,8 +98,7 @@ def _title_names(videos_mnt: Path, kinds: tuple[str, ...] = ("movies", "tv")) ->
     return names
 
 
-def find_hits(query: str, videos_mnt: Path,
-              kinds: tuple[str, ...] = ("movies", "tv")) -> list[Hit]:
+def find_hits(query: str, videos_mnt: Path, kinds: tuple[str, ...] = ("movies", "tv")) -> list[Hit]:
     """Every on-disk title whose folder name contains the query
     (case-insensitive), merged across states, sorted by name."""
     low = query.casefold()
@@ -113,18 +111,24 @@ def find_hits(query: str, videos_mnt: Path,
             for child in base.iterdir():
                 if child.is_dir() and low in child.name.casefold():
                     found.setdefault((child.name, kind), {})[state] = child
-    return [Hit(name, "movie" if kind == "movies" else kind,
-                [(state, seasons_in(f) if kind == "tv" else set())
-                 for state, f in folders.items()])
-            for (name, kind), folders in sorted(found.items())]
+    return [
+        Hit(
+            name,
+            "movie" if kind == "movies" else kind,
+            [(state, seasons_in(f) if kind == "tv" else set()) for state, f in folders.items()],
+        )
+        for (name, kind), folders in sorted(found.items())
+    ]
 
 
-def suggestions(query: str, videos_mnt: Path,
-                kinds: tuple[str, ...] = ("movies", "tv")) -> list[str]:
+def suggestions(
+    query: str, videos_mnt: Path, kinds: tuple[str, ...] = ("movies", "tv")
+) -> list[str]:
     """Near-miss title names for a zero-hit query — difflib, three at most."""
     names = _title_names(videos_mnt, kinds)
-    return [names[m] for m in difflib.get_close_matches(
-        query.casefold(), list(names), n=3, cutoff=0.6)]
+    return [
+        names[m] for m in difflib.get_close_matches(query.casefold(), list(names), n=3, cutoff=0.6)
+    ]
 
 
 def find_music_hits(query: str, music_mnt: Path) -> list[AlbumHit]:
@@ -157,21 +161,24 @@ def find_music_hits(query: str, music_mnt: Path) -> list[AlbumHit]:
             if not artist_dir.is_dir():
                 continue
             for album_dir in artist_dir.iterdir():
-                if album_dir.is_dir() and (low in artist_dir.name.casefold()
-                                           or low in album_dir.name.casefold()):
+                if album_dir.is_dir() and (
+                    low in artist_dir.name.casefold() or low in album_dir.name.casefold()
+                ):
                     display = f"{artist_dir.name} / {album_dir.name}"
                     found.setdefault(display, set()).add("library")
-    state_order = {"staging (cd)": 0, "staging (other)": 1,
-                   "staging (bandcamp)": 2, "library": 3}
-    return [AlbumHit(name, "album", sorted(states, key=state_order.__getitem__))
-            for name, states in sorted(found.items(), key=lambda item: item[0].casefold())]
+    state_order = {"staging (cd)": 0, "staging (other)": 1, "staging (bandcamp)": 2, "library": 3}
+    return [
+        AlbumHit(name, "album", sorted(states, key=state_order.__getitem__))
+        for name, states in sorted(found.items(), key=lambda item: item[0].casefold())
+    ]
 
 
 def music_suggestions(query: str, music_mnt: Path) -> list[str]:
     """Near-miss music album names from the two music roots."""
     names = {hit.name.casefold(): hit.name for hit in find_music_hits("", music_mnt)}
-    return [names[m] for m in difflib.get_close_matches(
-        query.casefold(), list(names), n=3, cutoff=0.6)]
+    return [
+        names[m] for m in difflib.get_close_matches(query.casefold(), list(names), n=3, cutoff=0.6)
+    ]
 
 
 def _require_or_note(mount: str, label: str) -> bool:
@@ -190,8 +197,7 @@ def _require_or_note(mount: str, label: str) -> bool:
 def run_search(args) -> None:
     """The scoped search entry: mount selected shares, walk, report — exit 0."""
     scope = args.scope
-    video_kinds = {"movie": ("movies",), "tv": ("tv",),
-                   "video": ("movies", "tv")}
+    video_kinds = {"movie": ("movies",), "tv": ("tv",), "video": ("movies", "tv")}
     videos_mnt = os.environ.get("VIDEOS_MOUNT", "/mnt/videos")
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
     hits: list[Hit | AlbumHit] = []
@@ -203,31 +209,35 @@ def run_search(args) -> None:
             searched_any = True
             hits.extend(find_hits(args.query, Path(videos_mnt), kinds))
             near.extend(suggestions(args.query, Path(videos_mnt), kinds))
-    if scope in ("music", "all"):
-        if _require_or_note(music_mnt, "music"):
-            searched_any = True
-            hits.extend(find_music_hits(args.query, Path(music_mnt)))
-            near.extend(music_suggestions(args.query, Path(music_mnt)))
+    if scope in ("music", "all") and _require_or_note(music_mnt, "music"):
+        searched_any = True
+        hits.extend(find_music_hits(args.query, Path(music_mnt)))
+        near.extend(music_suggestions(args.query, Path(music_mnt)))
     # a terminal reads headings and symbols; a pipe gets plain data lines
     pretty = sys.stdout.isatty() and ui.console.is_terminal
     if not hits:
         if not searched_any:
             return
         unique_near = list(dict.fromkeys(near))
-        line = "no hits" + (f" — did you mean: {', '.join(unique_near)}?"
-                             if unique_near else "")
+        line = "no hits" + (f" — did you mean: {', '.join(unique_near)}?" if unique_near else "")
         if pretty:
             ui.console.print(ui.mark("info", line), soft_wrap=True)
         else:
             ui.out(line)
         return
     for hit in hits:
-        rows = ([(state, "") for state in hit.states] if isinstance(hit, AlbumHit)
-                else [(state, fmt_seasons(seasons) if hit.kind == "tv" else "")
-                      for state, seasons in hit.states])
+        rows = (
+            [(state, "") for state in hit.states]
+            if isinstance(hit, AlbumHit)
+            else [
+                (state, fmt_seasons(seasons) if hit.kind == "tv" else "")
+                for state, seasons in hit.states
+            ]
+        )
         if pretty:
-            ui.console.print(Text.assemble((hit.name, "item"),
-                                           (f" · {hit.kind}", "dim")), soft_wrap=True)
+            ui.console.print(
+                Text.assemble((hit.name, "item"), (f" · {hit.kind}", "dim")), soft_wrap=True
+            )
             for state, seasons in rows:
                 kind, label = _state_mark(state)
                 row = Text("  ").append_text(ui.mark(kind, label))
@@ -248,5 +258,5 @@ def _state_mark(state: str) -> tuple[str, str]:
     if state == "issues":
         return "warn", "in issues"
     if state.startswith("staging"):
-        return "info", "staged" + state[len("staging"):]
+        return "info", "staged" + state[len("staging") :]
     return "info", state

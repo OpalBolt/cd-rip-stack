@@ -2,8 +2,12 @@
 
 from pathlib import Path
 
-from skive.cyanrip_log import (disc_number_from_log, parse_cyanrip_log,
-                               parse_musicbrainz_miss, parse_track_durations)
+from skive.cyanrip_log import (
+    disc_number_from_log,
+    parse_cyanrip_log,
+    parse_musicbrainz_miss,
+    parse_track_durations,
+)
 
 
 def test_disc_number_uses_header_then_cd_stem_then_one():
@@ -35,43 +39,44 @@ Offset:         + samples
         "album": None,
         "album_artist": None,
         "tracks": [
-            {"track": 1, "status": "accurate", "confidence": 9,
-             "crc32": "ABCDEF01", "dur_s": 269},
-            {"track": 2, "status": "partial", "confidence": 10,
-             "crc32": None, "dur_s": None},
+            {"track": 1, "status": "accurate", "confidence": 9, "crc32": "ABCDEF01", "dur_s": 269},
+            {"track": 2, "status": "partial", "confidence": 10, "crc32": None, "dur_s": None},
         ],
     }
 
 
 def test_parse_real_report_fixture():
-    text = (Path(__file__).parent / "fixtures" / "cyanrip"
-            / "summertime-blues.log").read_text(encoding="utf-8")
+    text = (Path(__file__).parent / "fixtures" / "cyanrip" / "summertime-blues.log").read_text(
+        encoding="utf-8"
+    )
     parsed = parse_cyanrip_log(text)
     assert parsed["release"] == "0ba5b04b-db78-46cd-95e9-9fcf1945fa23"
     assert parsed["album"] == "Summertime Blues"
     assert parsed["album_artist"] == "Various Artists"
     tracks = parsed["tracks"]
     assert len(tracks) == 19
-    assert all(track["track"] == number
-               for number, track in enumerate(tracks, 1))
-    assert all(track["status"] == "accurate" and track["confidence"] == 3
-               for track in tracks)
-    assert all(track["crc32"] is not None and track["dur_s"] is not None
-               for track in tracks)
+    assert all(track["track"] == number for number, track in enumerate(tracks, 1))
+    assert all(track["status"] == "accurate" and track["confidence"] == 3 for track in tracks)
+    assert all(track["crc32"] is not None and track["dur_s"] is not None for track in tracks)
     assert tracks[0]["crc32"] == "6C421A41"
     assert tracks[0]["dur_s"] == 269
 
 
 def test_parse_missing_sections_is_empty_and_never_raises():
     assert parse_cyanrip_log("cyanrip changed its output\n") == {
-        "offset": None, "release": None, "album": None,
-        "album_artist": None, "tracks": []}
+        "offset": None,
+        "release": None,
+        "album": None,
+        "album_artist": None,
+        "tracks": [],
+    }
     track_only = parse_cyanrip_log(
         "Track 1 ripped and encoded successfully!\n"
-        "  Accurip v1:  12345678 (accurately ripped, confidence 2)\n")
+        "  Accurip v1:  12345678 (accurately ripped, confidence 2)\n"
+    )
     assert track_only["tracks"] == [
-        {"track": 1, "status": "accurate", "confidence": 2,
-         "crc32": None, "dur_s": None}]
+        {"track": 1, "status": "accurate", "confidence": 2, "crc32": None, "dur_s": None}
+    ]
 
 
 # Real transcript: run 83a8c814's raw log (/mnt/music/logs/raw/83a8c814.jsonl).
@@ -111,37 +116,66 @@ Please specify which release to use by adding the -R argument with an index or I
     assert (miss["case"], miss["discid"], miss["tracks"]) == ("multiple", "aBcD-", 12)
     assert miss["url"] == "https://musicbrainz.org/cdtoc/aBcD-"
     assert miss["candidates"] == [
-        {"index": 1, "mbid": "11111111-aaaa-bbbb-cccc-000000000001", "album": "Blue",
-         "disambiguation": None, "country": "GB", "cds": None, "date": "1999-03-01"},
-        {"index": 2, "mbid": "11111111-aaaa-bbbb-cccc-000000000002", "album": "Blue",
-         "disambiguation": "remaster", "country": "US", "cds": 2, "date": "2004"},
-        {"index": 3, "mbid": "11111111-aaaa-bbbb-cccc-000000000003", "album": "Blue",
-         "disambiguation": None, "country": None, "cds": None, "date": None},
+        {
+            "index": 1,
+            "mbid": "11111111-aaaa-bbbb-cccc-000000000001",
+            "album": "Blue",
+            "disambiguation": None,
+            "country": "GB",
+            "cds": None,
+            "date": "1999-03-01",
+        },
+        {
+            "index": 2,
+            "mbid": "11111111-aaaa-bbbb-cccc-000000000002",
+            "album": "Blue",
+            "disambiguation": "remaster",
+            "country": "US",
+            "cds": 2,
+            "date": "2004",
+        },
+        {
+            "index": 3,
+            "mbid": "11111111-aaaa-bbbb-cccc-000000000003",
+            "album": "Blue",
+            "disambiguation": None,
+            "country": None,
+            "cds": None,
+            "date": None,
+        },
     ]
 
 
 def test_musicbrainz_miss_stub_and_no_miss():
     stub = parse_musicbrainz_miss(
         "Found a CD stub for this disc!\n"
-        "https://musicbrainz.org/cdtoc/attach?toc=1+2+9150+150+4650&tracks=2&id=XyZ-\n")
+        "https://musicbrainz.org/cdtoc/attach?toc=1+2+9150+150+4650&tracks=2&id=XyZ-\n"
+    )
     assert (stub["case"], stub["discid"], stub["tracks"], stub["length"]) == (
-        "stub", "XyZ-", 2, "2:00")
+        "stub",
+        "XyZ-",
+        2,
+        "2:00",
+    )
     assert parse_musicbrainz_miss("Read error\n") is None
 
 
 # -- Stall guard: cyanrip -I durations (ADR 0018) ----------------------------
 
+
 def test_parse_track_durations_from_info_blocks():
     """Each Track n block's Duration (hour field optional); header lines that
     merely mention tracks and data tracks without a Duration are skipped."""
-    text = ("Disc tracks:    3\n"
-            "    33 frame pregap in track 1, unmerged\n"
-            "Tracks:\n"
-            "Track 1 info:\n"
-            "    Duration:    00:04:48.000\n"
-            "Track 2 info:\n"
-            "    Data bytes:  1234 (0.00 Mib)\n"
-            "Track 3 info:\n"
-            "    Duration:    01:02:03.500\n")
+    text = (
+        "Disc tracks:    3\n"
+        "    33 frame pregap in track 1, unmerged\n"
+        "Tracks:\n"
+        "Track 1 info:\n"
+        "    Duration:    00:04:48.000\n"
+        "Track 2 info:\n"
+        "    Data bytes:  1234 (0.00 Mib)\n"
+        "Track 3 info:\n"
+        "    Duration:    01:02:03.500\n"
+    )
     assert parse_track_durations(text) == {1: 288.0, 3: 3723.5}
     assert parse_track_durations("") == {}

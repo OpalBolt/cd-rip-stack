@@ -9,14 +9,17 @@ import pytest
 
 import skive.main as skive_main
 from skive.main import build_parser
-from skive.validation import Finding, movie_document, write_validation, VALIDATION_FILENAME
+from skive.validation import VALIDATION_FILENAME, Finding, movie_document, write_validation
 
 
-@pytest.mark.parametrize("argv, expected", [
-    (["rip", "music", "100"], 0),
-    (["-v", "rip", "music", "100"], 1),
-    (["-vv", "rip", "music", "100"], 2),
-])
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["rip", "music", "100"], 0),
+        (["-v", "rip", "music", "100"], 1),
+        (["-vv", "rip", "music", "100"], 2),
+    ],
+)
 def test_verbose_levels_on_top_level_parser(argv, expected):
     """-v counts on the top-level parser: absent -> 0, -v -> 1, -vv -> 2."""
     args = build_parser().parse_args(argv)
@@ -38,6 +41,7 @@ def test_rip_tv_has_no_title_or_extras_flags(flag):
 
 
 # -- Interrupt fallback (CONTEXT.md: Interrupt): one line, exit 130 ------------
+
 
 def test_main_interrupt_fallback_one_line_exit_130(monkeypatch, capsys):
     """A KeyboardInterrupt escaping a command (prompt paths without staging of
@@ -107,8 +111,8 @@ def test_validate_library_full_of_findings_still_exits_zero(tmp_path, monkeypatc
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     monkeypatch.setattr(
         "skive.validation.validate_library",
-        Mock(return_value=[Finding("movies/X (2000)", "ratio",
-                                   "X (2000).mkv  0.50", "yellow")]))
+        Mock(return_value=[Finding("movies/X (2000)", "ratio", "X (2000).mkv  0.50", "yellow")]),
+    )
     monkeypatch.setattr(skive_main, "install_interrupt_handler", lambda: None)
     monkeypatch.setattr(sys, "argv", ["skive", "validate"])
 
@@ -140,16 +144,20 @@ def test_validate_doc_folder_walk_needs_no_network(tmp_path, monkeypatch, capsys
     folder = root / "movies" / "X (2000)"
     folder.mkdir(parents=True)
     (folder / "X (2000).mkv").touch()  # 0 bytes: no ffprobe can read it
-    write_validation(folder / VALIDATION_FILENAME,
-                     movie_document("5", "X (2000)", 6000, "V", "run12345",
-                                    "t1", []))
+    write_validation(
+        folder / VALIDATION_FILENAME,
+        movie_document("5", "X (2000)", 6000, "V", "run12345", "t1", []),
+    )
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))  # the share root
-    monkeypatch.setattr("skive.validation.search_first",
-                        Mock(side_effect=AssertionError("no network in tests")))
-    monkeypatch.setattr("skive.validation.fetch_by_id",
-                        Mock(side_effect=AssertionError("no network in tests")))
-    monkeypatch.setattr("skive.validation.fetch_season",
-                        Mock(side_effect=AssertionError("no network in tests")))
+    monkeypatch.setattr(
+        "skive.validation.search_first", Mock(side_effect=AssertionError("no network in tests"))
+    )
+    monkeypatch.setattr(
+        "skive.validation.fetch_by_id", Mock(side_effect=AssertionError("no network in tests"))
+    )
+    monkeypatch.setattr(
+        "skive.validation.fetch_season", Mock(side_effect=AssertionError("no network in tests"))
+    )
     monkeypatch.setattr(skive_main, "install_interrupt_handler", lambda: None)
     monkeypatch.setattr(sys, "argv", ["skive", "validate"])
 

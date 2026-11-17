@@ -94,8 +94,11 @@ def parse_name(name: str) -> tuple[str, bool] | str:
     """
     if _JUNK.match(name):
         return "junk label"
-    for rx, is_tv in ((transcode._RX_EP, True), (transcode._RX_EXTRA, True),
-                      (transcode._RX_TITLE, False)):
+    for rx, is_tv in (
+        (transcode._RX_EP, True),
+        (transcode._RX_EXTRA, True),
+        (transcode._RX_TITLE, False),
+    ):
         m = rx.match(name)
         if m:
             title = m.group("movie")
@@ -293,8 +296,7 @@ def _plan_flat_children(root: Path, plan: Plan, listing: Path, virtual: Path) ->
         if is_tv and transcode._RX_EXTRA.match(child.name):
             _plan_flat_extra(root, plan, virtual / child.name, title)
             continue
-        _plan_file_move(plan, virtual / child.name,
-                        _title_dir(root / "lossless", title, is_tv))
+        _plan_file_move(plan, virtual / child.name, _title_dir(root / "lossless", title, is_tv))
 
 
 def _plan_done(root: Path, plan: Plan) -> None:
@@ -347,6 +349,7 @@ def _count_new_shape(plan: Plan, title_dir: Path) -> None:
     """Files resting directly in a title folder or in its d{disc} subdirs are
     the new shape: already correct, only counted. Junk labels are still
     reported (never counted as content); unexpected subdirs are reported."""
+
     def count_file(f: Path) -> None:
         if not f.name.endswith(".mkv"):
             return
@@ -379,8 +382,7 @@ def _plan_rip(root: Path, plan: Plan) -> None:
     for entry in sorted(rip.iterdir()):
         if entry.is_file():
             parsed = parse_name(entry.name)
-            _report_unparsed(plan, entry, parsed if isinstance(parsed, str)
-                             else "unexpected shape")
+            _report_unparsed(plan, entry, parsed if isinstance(parsed, str) else "unexpected shape")
     for typedir in sorted(p for p in rip.iterdir() if p.is_dir()):
         for level1 in sorted(typedir.iterdir()):
             if level1.is_file():
@@ -471,8 +473,7 @@ def _apply(plan: Plan) -> tuple[int, int]:
     if failed_carries:
         # a failed carrying rename leaves its dependents where they really
         # are: cite the pre-rename location, not the virtual in-root path
-        plan.skips = [(_real_path(p, failed_carries), reason)
-                      for p, reason in plan.skips]
+        plan.skips = [(_real_path(p, failed_carries), reason) for p, reason in plan.skips]
     pruned = 0
     for d in plan.prunes:
         try:
@@ -490,8 +491,7 @@ def run_migration(root: Path, apply_mode: bool) -> int:
     if not root.is_dir():
         print(f"migrate_layout: {root} is not a directory", file=sys.stderr)
         return 1
-    if not any((root / n).is_dir()
-               for n in ("library", "rip", "rip-DONE", "lossless", "issues")):
+    if not any((root / n).is_dir() for n in ("library", "rip", "rip-DONE", "lossless", "issues")):
         print(f"nothing to do under {root}")
         return 0
     plan = Plan(root)
@@ -518,8 +518,10 @@ def run_migration(root: Path, apply_mode: bool) -> int:
     n_moves = moved if apply_mode else len(plan.moves)
     n_prunes = pruned if apply_mode else len(plan.prunes)
     print(f"migrate report -- {root}")
-    print(f"{n_moves} move(s), {len(plan.skips)} skipped, {plan.already} already-correct"
-          + (f", {n_prunes} pruned" if n_prunes else ""))
+    print(
+        f"{n_moves} move(s), {len(plan.skips)} skipped, {plan.already} already-correct"
+        + (f", {n_prunes} pruned" if n_prunes else "")
+    )
     if not apply_mode:
         print("dry-run: nothing changed (use --apply to execute)")
     return 0
@@ -590,19 +592,23 @@ def run_mock(source: Path, mirror: Path) -> int:
     if not source.is_dir():
         print(f"migrate_layout: {source} is not a directory", file=sys.stderr)
         return 1
-    if mirror.exists() or mirror.is_symlink():
-        if mirror.is_symlink() or not mirror.is_dir() or any(mirror.iterdir()):
-            print(f"migrate_layout: {mirror} already exists and is not empty"
-                  " (remove it first)", file=sys.stderr)
-            return 1
+    if (mirror.exists() or mirror.is_symlink()) and (
+        mirror.is_symlink() or not mirror.is_dir() or any(mirror.iterdir())
+    ):
+        print(
+            f"migrate_layout: {mirror} already exists and is not empty (remove it first)",
+            file=sys.stderr,
+        )
+        return 1
     try:
         ndir, nfile, nlink = _build_mock_tree(source, mirror)
     except OSError as e:
-        print(f"migrate_layout: could not build the mock tree: {e}",
-              file=sys.stderr)
+        print(f"migrate_layout: could not build the mock tree: {e}", file=sys.stderr)
         return 1
-    print(f"mock tree at {mirror} (structure only, empty files): "
-          f"{ndir} dir(s), {nfile} file(s), {nlink} symlink(s)")
+    print(
+        f"mock tree at {mirror} (structure only, empty files): "
+        f"{ndir} dir(s), {nfile} file(s), {nlink} symlink(s)"
+    )
     rc = run_migration(mirror, apply_mode=True)
     print(f"inspect with: find {mirror} -type d | sort")
     return rc
@@ -612,19 +618,33 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="migrate_layout.py",
         description="One-shot re-tree of the videos share to the per-title layout "
-                    "(library/{movies,tv}, lossless/, rip/<type>/<Name (Year)>/). "
-                    "Dry-run by default; idempotent; anything unclassifiable is "
-                    "reported and skipped, never touched.",
+        "(library/{movies,tv}, lossless/, rip/<type>/<Name (Year)>/). "
+        "Dry-run by default; idempotent; anything unclassifiable is "
+        "reported and skipped, never touched.",
     )
-    p.add_argument("--apply", action="store_true",
-                   help="execute the planned moves and prunes (default: dry-run)")
-    p.add_argument("--root", metavar="PATH", type=Path, default=None,
-                   help="videos share root (default: $VIDEOS_MOUNT, else /mnt/videos)")
-    p.add_argument("--mock", nargs="?", const=Path("/tmp/migrate-layout-mock"),
-                   metavar="PATH", type=Path, default=None,
-                   help="rehearse the apply on a structure-only mirror of the "
-                        "managed roots at PATH (default: /tmp/migrate-layout-mock): "
-                        "empty files, no media bytes; the source is never written")
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="execute the planned moves and prunes (default: dry-run)",
+    )
+    p.add_argument(
+        "--root",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help="videos share root (default: $VIDEOS_MOUNT, else /mnt/videos)",
+    )
+    p.add_argument(
+        "--mock",
+        nargs="?",
+        const=Path("/tmp/migrate-layout-mock"),
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help="rehearse the apply on a structure-only mirror of the "
+        "managed roots at PATH (default: /tmp/migrate-layout-mock): "
+        "empty files, no media bytes; the source is never written",
+    )
     return p.parse_args(argv)
 
 

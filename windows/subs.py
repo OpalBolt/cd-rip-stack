@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Shared subtitle pass — extract + OCR embedded bitmap subs into SRT sidecars.
 
 Library encodes must ship with zero subtitle tracks: bitmap VobSub/PGS forces
@@ -82,11 +81,14 @@ def settle(per_language: list[tuple[Track, int]]) -> tuple[list[Keep], list[str]
             keeps.append(Keep(t, "sdh"))
             sdh = t
         elif sdh is None:
-            notes.append(f"drop {t.lang} track {t.index} ({n} events): "
-                         f"below 30% of track {win.index} ({wn} events)")
+            notes.append(
+                f"drop {t.lang} track {t.index} ({n} events): "
+                f"below 30% of track {win.index} ({wn} events)"
+            )
         else:
-            notes.append(f"drop {t.lang} track {t.index} ({n} events): "
-                         f"sdh taken by track {sdh.index}")
+            notes.append(
+                f"drop {t.lang} track {t.index} ({n} events): sdh taken by track {sdh.index}"
+            )
     return keeps, notes
 
 
@@ -105,10 +107,21 @@ def inventory(mkv: str, ffprobe_exe: str, log=None, verbose: int = 0) -> list[Tr
     """ffprobe the file's subtitle streams: index, codec, language tag, forced.
     verbose: -vv passes the captured ffprobe output through to the console."""
     r = subprocess.run(
-        [ffprobe_exe, "-v", "error", "-select_streams", "s",
-         "-show_entries", "stream=index,codec_name:stream_tags=language:stream_disposition=forced",
-         "-of", "json", mkv],
-        capture_output=True, text=True,
+        [
+            ffprobe_exe,
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream=index,codec_name:stream_tags=language:stream_disposition=forced",
+            "-of",
+            "json",
+            mkv,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     _raw(log, "ffprobe", r.stdout + r.stderr, verbose)
     if r.returncode != 0:
@@ -131,8 +144,9 @@ def count_events(srt_path: str) -> int:
         return sum(1 for line in fh if " --> " in line)
 
 
-def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
-            verbose: int = 0) -> str | None:
+def convert(
+    mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None, verbose: int = 0
+) -> str | None:
     """OCR one track into a FRESH temp subdir of out_dir (seconv names its
     output `<stem>.<lang>[.forced].srt`, so same-language tracks would collide
     in one dir). Returns the produced SRT path, or None (stderr note) on
@@ -141,22 +155,33 @@ def convert(mkv: str, track: Track, seconv_exe: str, out_dir: str, log=None,
     work = tempfile.mkdtemp(dir=out_dir, prefix=f"track{track.index}-")
     r = subprocess.run(
         # seconv --track-number is the 1-based Matroska TID; ffprobe index is 0-based
-        [seconv_exe, mkv, "subrip",
-         f"--track-number:{track.index + 1}", f"--ocr-language:{track.lang}",
-         f"--output-folder:{work}"],
-        capture_output=True, text=True,
+        [
+            seconv_exe,
+            mkv,
+            "subrip",
+            f"--track-number:{track.index + 1}",
+            f"--ocr-language:{track.lang}",
+            f"--output-folder:{work}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     _raw(log, "seconv", r.stdout + r.stderr, verbose)
     produced = sorted(f for f in os.listdir(work) if f.endswith(".srt"))
     if r.returncode != 0 or not produced:
-        print(f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
-              f"rc={r.returncode}\n{r.stderr.strip()}", file=sys.stderr)
+        print(
+            f"seconv failed: track {track.index} ({track.lang}) in {mkv}, "
+            f"rc={r.returncode}\n{r.stderr.strip()}",
+            file=sys.stderr,
+        )
         return None
     return os.path.join(work, produced[0])
 
 
-def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
-             ffprobe_exe: str, log=None, verbose: int = 0) -> PassResult:
+def run_pass(
+    mkv: str, out_dir: str, base: str, seconv_exe: str, ffprobe_exe: str, log=None, verbose: int = 0
+) -> PassResult:
     """The whole pass, orchestration only: inventory -> decide -> OCR each keep
     in its own temp dir -> settle full tracks per language -> move winners into
     out_dir under their final sidecar names. ok=False if any selected track
@@ -167,8 +192,10 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
     tracks = inventory(mkv, ffprobe_exe, log=log, verbose=verbose)
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
-    print(f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
-          f"{os.path.basename(mkv)}")
+    print(
+        f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
+        f"{os.path.basename(mkv)}"
+    )
     if not keeps:
         return PassResult(True, [], notes)
 
@@ -179,8 +206,10 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
         os.makedirs(out_dir, exist_ok=True)
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
         for k in keeps:
-            print(f"  OCR {k.track.lang} track {k.track.index}"
-                  f"{' (forced)' if k.track.forced else ''}...")
+            print(
+                f"  OCR {k.track.lang} track {k.track.index}"
+                f"{' (forced)' if k.track.forced else ''}..."
+            )
             srt = convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
             if srt is None:
                 ok = False
@@ -189,7 +218,9 @@ def run_pass(mkv: str, out_dir: str, base: str, seconv_exe: str,
             n = count_events(srt)
             if n == 0:
                 ok = False
-                notes.append(f"FAIL {k.track.lang} (track {k.track.index}): empty sidecar (0 events)")
+                notes.append(
+                    f"FAIL {k.track.lang} (track {k.track.index}): empty sidecar (0 events)"
+                )
                 continue
             done.append((k, srt, n))
 

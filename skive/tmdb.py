@@ -16,6 +16,7 @@ from skive import ui
 @dataclass
 class TMDBPick:
     """A TMDB result from search or by-id fetch."""
+
     title: str
     year: str  # "-" if none
     original_language: str  # "-" if none
@@ -92,7 +93,8 @@ def parse_tmdbid(arg: str, kind: str) -> tuple[str, str]:
     # URL pasting: themoviedb.org/movie/N or themoviedb.org/tv/N
     if "themoviedb.org" in arg:
         import re
-        m = re.search(r'/(\w+)/(\d+)', arg)
+
+        m = re.search(r"/(\w+)/(\d+)", arg)
         if not m:
             raise ValueError(f"no movie or tv id found in URL '{arg}'")
         url_type = m.group(1)
@@ -100,7 +102,9 @@ def parse_tmdbid(arg: str, kind: str) -> tuple[str, str]:
         if url_type not in ("movie", "tv"):
             raise ValueError(f"unknown type in URL: {url_type}")
         if url_type != kind:
-            raise ValueError(f"that is a {url_type} id; {kind} needs {'tv:N' if kind == 'tv' else 'a movie id'}")
+            raise ValueError(
+                f"that is a {url_type} id; {kind} needs {'tv:N' if kind == 'tv' else 'a movie id'}"
+            )
         return url_type, num
 
     # Type prefix: movie:123 or tv:123
@@ -184,8 +188,14 @@ def fetch_by_id(type_: str, id_: str) -> TMDBPick:
     # unknown — episode runtimes arrive at season level via fetch_season.
     runtime_secs = _runtime_secs_from_details(data) if type_ == "movie" else None
 
-    return TMDBPick(title=title, year=year, original_language=orig_lang, type=type_, id=tmdb_id,
-                    runtime_secs=runtime_secs)
+    return TMDBPick(
+        title=title,
+        year=year,
+        original_language=orig_lang,
+        type=type_,
+        id=tmdb_id,
+        runtime_secs=runtime_secs,
+    )
 
 
 def search_loop(kind: str, prefill: str = "") -> TMDBPick:
@@ -243,8 +253,14 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
 
         # Show top 5 in the shared table look; only the pick number is styled
         top = results[:5]
-        table = ui.table("#", "Title", "Year", "Lang", "ID",
-                         title=f'TMDB "{query}" — top {len(top)} {kind} results')
+        table = ui.table(
+            "#",
+            "Title",
+            "Year",
+            "Lang",
+            "ID",
+            title=f'TMDB "{query}" — top {len(top)} {kind} results',
+        )
         for i, r in enumerate(top, 1):
             title = r.get("title") or r.get("name", "-")
             date_str = r.get("release_date") or r.get("first_air_date", "-")
@@ -278,9 +294,17 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
                     tmdb_id = str(r.get("id", "-"))
                     # Search results lack runtime, so a movie pick resolves it
                     # from the details endpoint (failure degrades to unknown).
-                    runtime_secs = _resolve_movie_runtime(api_key, tmdb_id) if kind == "movie" else None
-                    return TMDBPick(title=title, year=year, original_language=orig_lang, type=kind, id=tmdb_id,
-                                    runtime_secs=runtime_secs)
+                    runtime_secs = (
+                        _resolve_movie_runtime(api_key, tmdb_id) if kind == "movie" else None
+                    )
+                    return TMDBPick(
+                        title=title,
+                        year=year,
+                        original_language=orig_lang,
+                        type=kind,
+                        id=tmdb_id,
+                        runtime_secs=runtime_secs,
+                    )
                 else:
                     ui.warn(f"pick 1-{len(top)}")
             except ValueError:
@@ -329,9 +353,13 @@ def search_first(kind: str, query: str, year: str | None = None) -> TMDBPick | N
     title = r.get("title") or r.get("name", "-")
     date_str = r.get("release_date") or r.get("first_air_date", "-")
     date_year = date_str[:4] if date_str and date_str != "-" else "-"
-    return TMDBPick(title=title, year=date_year,
-                    original_language=r.get("original_language", "-"),
-                    type=kind, id=str(r.get("id", "-")))
+    return TMDBPick(
+        title=title,
+        year=date_year,
+        original_language=r.get("original_language", "-"),
+        type=kind,
+        id=str(r.get("id", "-")),
+    )
 
 
 def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:

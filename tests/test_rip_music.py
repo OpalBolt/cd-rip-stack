@@ -5,15 +5,15 @@ import subprocess
 import tempfile
 import urllib.error
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from skive import common
 from skive.rip_music import (
     _cyanrip_run,
-    _newest_flac_album,
     _metaflac_tag,
+    _newest_flac_album,
     _purge_pass_stubs,
     _toc_prepass,
     _write_cd_record,
@@ -26,12 +26,12 @@ from skive.rip_music import (
 def _stage_root(tmp_path, monkeypatch):
     """Keep staging off the real /mnt/music, and the DRV sniff off makemkv."""
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
-    monkeypatch.setattr("skive.rip_music.sniff_disc",
-                        lambda disc=0: ("CD", "", "/dev/sr0"))
+    monkeypatch.setattr("skive.rip_music.sniff_disc", lambda disc=0: ("CD", "", "/dev/sr0"))
 
 
 class FakeArgs:
     """Minimal argparse.Namespace for rip_music."""
+
     def __init__(self, offset=None, cyanrip_flags=None, disc=0):
         self.offset = offset
         self.cyanrip_flags = cyanrip_flags or []
@@ -74,26 +74,28 @@ def test_cyanrip_run_cmdline_drive():
 def test_rip_music_resolves_disc_number_to_device(monkeypatch):
     """-d N uses makemkv's DRV-line device; the srN guess is only the fallback
     when the DRV line prints no path (same rule as rip movie/tv)."""
-    monkeypatch.setattr("skive.rip_music.sniff_disc",
-                        lambda disc=0: ("CD", "", "/dev/sr1"))
+    monkeypatch.setattr("skive.rip_music.sniff_disc", lambda disc=0: ("CD", "", "/dev/sr1"))
     args = FakeArgs(offset="6", disc=1)
 
-    with patch("skive.rip_music.ensure_share"), \
-         patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
-         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run,
+        patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+    ):
         try:
             rip_music(args)
         except SystemExit:
             pass
         assert mock_run.call_args.kwargs["drive"] == "/dev/sr1"
 
-    monkeypatch.setattr("skive.rip_music.sniff_disc",
-                        lambda disc=0: ("CD", "", ""))
-    with patch("skive.rip_music.ensure_share"), \
-         patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
-         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+    monkeypatch.setattr("skive.rip_music.sniff_disc", lambda disc=0: ("CD", "", ""))
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run,
+        patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+    ):
         try:
             rip_music(FakeArgs(offset="6", disc=1))
         except SystemExit:
@@ -114,24 +116,28 @@ def test_rip_music_claims_trailing_minus_d(monkeypatch):
     monkeypatch.setattr("skive.rip_music.sniff_disc", fake_sniff)
     args = FakeArgs(offset="6", cyanrip_flags=["-d", "1"])
 
-    with patch("skive.rip_music.ensure_share"), \
-         patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
-         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run,
+        patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+    ):
         try:
             rip_music(args)
         except SystemExit:
             pass
         assert sniffed["disc"] == 1
-        assert mock_run.call_args.args[1] == []          # -d 1 no longer passed through
+        assert mock_run.call_args.args[1] == []  # -d 1 no longer passed through
         assert mock_run.call_args.kwargs["drive"] == "/dev/sr1"
 
     # a non-numeric -d value is cyanrip's own (device path) — untouched
     args = FakeArgs(offset="6", cyanrip_flags=["-d", "/dev/sr0"], disc=1)
-    with patch("skive.rip_music.ensure_share"), \
-         patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
-         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run,
+        patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+    ):
         try:
             rip_music(args)
         except SystemExit:
@@ -179,7 +185,7 @@ def test_cyanrip_run_raw_passthrough_at_v2(capsys, monkeypatch):
         process.wait.return_value = 0
 
         with patch("subprocess.Popen", return_value=process):
-            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+            rc, _captured = _cyanrip_run("100", [], Path(tmpdir))
 
         assert rc == 0
         assert capsys.readouterr().err == "cyanrip  Ripping track 1\ncyanrip  Rip complete\n"
@@ -193,7 +199,7 @@ def test_cyanrip_run_failure_replays_captured(capsys, monkeypatch):
         process.wait.return_value = 1
 
         with patch("subprocess.Popen", return_value=process):
-            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+            rc, _captured = _cyanrip_run("100", [], Path(tmpdir))
 
         assert rc == 1
         assert capsys.readouterr().err == "cyanrip  Ripping track 1\ncyanrip  Read error\n"
@@ -214,9 +220,7 @@ def test_require_online_uses_stdlib_head_probe():
 
 def test_require_online_accepts_http_error_response():
     """Test any MusicBrainz HTTP response counts as online."""
-    error = urllib.error.HTTPError(
-        "https://musicbrainz.org/", 503, "unavailable", {}, None
-    )
+    error = urllib.error.HTTPError("https://musicbrainz.org/", 503, "unavailable", {}, None)
 
     with patch("urllib.request.urlopen", side_effect=error):
         require_online()
@@ -234,7 +238,7 @@ def test_require_online_exits_on_network_failure(capsys):
 
 def test_online_gate_skipped_with_minus_N():
     """Test online gate is skipped when -N in flags."""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory():
         args = FakeArgs(offset="100", cyanrip_flags=["-N"])
 
         with patch("skive.rip_music.require_online") as mock_require:
@@ -249,7 +253,7 @@ def test_online_gate_skipped_with_minus_N():
 
 def test_online_gate_without_minus_N():
     """Test online gate probes MusicBrainz without -N."""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory():
         args = FakeArgs(offset="100")
 
         with patch("skive.rip_music.ensure_share"):
@@ -283,6 +287,7 @@ def test_cd_record_merges_newest_log_for_each_disc(tmp_path):
     _write_cd_record(tmp_path, folder.name, "20", log)
 
     import json
+
     doc = json.loads((folder / "validation.json").read_text())
     assert set(doc["discs"]) == {"1", "2"}
     assert doc["discs"]["1"]["offset"] == 10
@@ -311,8 +316,13 @@ def test_cd_record_stalled_key_and_old_record_round_trip(tmp_path):
     assert "stalled" not in doc["discs"]["1"]
 
     # A record written before the key existed loads and merges unchanged.
-    from skive.validation import (album_document, load_validation,
-                                  merge_album_document, write_validation)
+    from skive.validation import (
+        album_document,
+        load_validation,
+        merge_album_document,
+        write_validation,
+    )
+
     old_disc = {"rip_run": "old", "offset": 10}
     old_doc = album_document("cd", None, [], discs={"2": old_disc})
     write_validation(folder / "validation.json", old_doc)
@@ -335,6 +345,7 @@ def test_rip_name_from_tags():
 
         # Make newest actually newer
         import time
+
         time.sleep(0.1)
         new_flac.touch()
 
@@ -429,9 +440,11 @@ def test_rip_music_logs_under_music_mount_and_notes_folder(tmp_path):
             return "Artist"
         return ""
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-            patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+        patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
@@ -488,8 +501,7 @@ SUMMERTIME_HEADER = [
 def _rip_jsonl(tmp_path):
     import json
 
-    return [json.loads(line)
-            for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    return [json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
 
 
 def test_header_pair_names_run_on_success(tmp_path):
@@ -500,10 +512,12 @@ def test_header_pair_names_run_on_success(tmp_path):
     process = Mock(stdout=iter(SUMMERTIME_HEADER))
     process.wait.return_value = 0
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit) as exc,
+    ):
+        rip_music(args)
 
     assert exc.value.code == 0
     lines = _rip_jsonl(tmp_path)
@@ -511,8 +525,7 @@ def test_header_pair_names_run_on_success(tmp_path):
     # 'started' printed before cyanrip ran; everything after the pair
     # streamed mid-rip carries the name, the rip ok phase line included.
     assert lines[0]["name"] == "-"
-    assert all(line["name"] == "Various Artists - Summertime Blues"
-               for line in lines[1:])
+    assert all(line["name"] == "Various Artists - Summertime Blues" for line in lines[1:])
     ok = [line for line in lines if line["phase"] == "rip" and line["status"] == "ok"]
     assert ok and ok[0]["name"] == "Various Artists - Summertime Blues"
 
@@ -524,10 +537,12 @@ def test_header_pair_names_failed_run_on_total_line(tmp_path):
     process = Mock(stdout=iter(SUMMERTIME_HEADER))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit) as exc,
+    ):
+        rip_music(args)
 
     assert exc.value.code == 1
     lines = _rip_jsonl(tmp_path)
@@ -549,14 +564,17 @@ def test_header_pair_names_interrupted_run(tmp_path, monkeypatch):
 
     process = Mock(stdout=gen())
     args = FakeArgs(offset="100", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit) as exc,
+    ):
+        rip_music(args)
 
     assert exc.value.code == 130
-    lines = [json.loads(line)
-             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    lines = [
+        json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    ]
     interrupted = [line for line in lines if line["status"] == "interrupted"]
     assert interrupted and interrupted[0]["name"] == "Various Artists - Summertime Blues"
 
@@ -568,22 +586,26 @@ def test_album_header_without_artist_success_uses_flac_tags(tmp_path):
     album_dir = tmp_path / "rip" / "cd" / "My Album"
     album_dir.mkdir(parents=True)
     (album_dir / "track.flac").touch()
-    process = Mock(stdout=iter(["Album:          My Album\n",
-                                "Track 1 ripped and encoded successfully!\n"]))
+    process = Mock(
+        stdout=iter(["Album:          My Album\n", "Track 1 ripped and encoded successfully!\n"])
+    )
     process.wait.return_value = 0
 
     def mock_metaflac(flac_path, tag):
         return {"ALBUM": "My Album", "ARTIST": "Artist"}.get(tag, "")
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process), \
-            patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        patch("skive.rip_music._metaflac_tag", side_effect=mock_metaflac),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
     assert exc.value.code == 0
-    ok = [line for line in _rip_jsonl(tmp_path)
-          if line["phase"] == "rip" and line["status"] == "ok"]
+    ok = [
+        line for line in _rip_jsonl(tmp_path) if line["phase"] == "rip" and line["status"] == "ok"
+    ]
     assert ok and ok[0]["name"] == "Artist - My Album"
 
 
@@ -597,9 +619,11 @@ def test_album_header_without_artist_failure_keeps_album_name(tmp_path):
     process = Mock(stdout=iter(["Album:          My Album\n", "Read error\n"]))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process), \
-            patch("skive.rip_music._metaflac_tag", return_value="Old Artist"):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        patch("skive.rip_music._metaflac_tag", return_value="Old Artist"),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
@@ -623,17 +647,18 @@ def test_failed_run_without_header_inherits_nothing_from_staging(tmp_path):
     process = Mock(stdout=iter(["Ripping track 1\n", "Read error\n"]))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process), \
-            patch("skive.rip_music._metaflac_tag", return_value="Old Artist"):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        patch("skive.rip_music._metaflac_tag", return_value="Old Artist"),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
     assert exc.value.code == 1
     lines = _rip_jsonl(tmp_path)
     assert all(line["name"] == "-" for line in lines)
-    folder_notes = [line["status"] for line in lines
-                    if line["status"].startswith("folder:")]
+    folder_notes = [line["status"] for line in lines if line["status"].startswith("folder:")]
     assert folder_notes == []  # nothing ripped: no folder note
     rip = [line["status"] for line in lines if line["phase"] == "rip"]
     assert rip == ["FAIL(1)"]  # never a false ok
@@ -644,22 +669,24 @@ def test_no_release_failure_notes_submit_url(tmp_path):
     run's own captured output (fixture lines, nothing hard-coded)."""
     fixture = Path(__file__).parent / "fixtures" / "cyanrip" / "no-release.txt"
     out_lines = [line + "\n" for line in fixture.read_text().splitlines()]
-    url = next(line for line in out_lines
-               if line.startswith("https://musicbrainz.org/cdtoc/attach?")).strip()
+    url = next(
+        line for line in out_lines if line.startswith("https://musicbrainz.org/cdtoc/attach?")
+    ).strip()
 
     args = FakeArgs(offset="100", cyanrip_flags=["-N"])
     process = Mock(stdout=iter(out_lines))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit) as exc,
+    ):
+        rip_music(args)
 
     assert exc.value.code == 1
     lines = _rip_jsonl(tmp_path)
-    notes = [line["status"] for line in lines
-             if "no MusicBrainz release" in line["status"]]
+    notes = [line["status"] for line in lines if "no MusicBrainz release" in line["status"]]
     assert notes == [f"no MusicBrainz release: submit this disc — {url}"]
     assert all(line["name"] == "-" for line in lines)
 
@@ -686,18 +713,19 @@ def test_not_found_miss_never_prompts_and_logs_rip_fail(tmp_path, capsys):
     process = Mock(stdout=iter(_no_release_lines()))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music.ui.ask") as ask, \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(args)
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music.ui.ask") as ask,
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit) as exc,
+    ):
+        rip_music(args)
 
     assert exc.value.code == 1
     ask.assert_not_called()
     err = capsys.readouterr().err
-    assert ("warn  not on MusicBrainz: DiscID bOpGMzWaoGKqV7OC6onCHgXytfE- · 19 tracks"
-            in err)
+    assert "warn  not on MusicBrainz: DiscID bOpGMzWaoGKqV7OC6onCHgXytfE- · 19 tracks" in err
     assert "warn  Open the link, attach this disc to its release, then re-run." in err
     assert "warn  https://musicbrainz.org/cdtoc/attach?toc=1+19+354705" in err
     assert "fail  not on MusicBrainz · " in err
@@ -714,12 +742,17 @@ def test_not_found_miss_prints_box_and_full_url_on_a_tty(tmp_path, monkeypatch):
     MusicBrainz`, then the full URL unwrapped on its own line, then the
     `✗ not on MusicBrainz · <t>` result line."""
     import io
+
     from rich.console import Console
+
     from skive import ui
 
     buf = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(
-        file=buf, force_terminal=True, color_system=None, width=80, theme=ui.THEME))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(file=buf, force_terminal=True, color_system=None, width=80, theme=ui.THEME),
+    )
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "xterm")
     lines = _no_release_lines()
@@ -729,12 +762,14 @@ def test_not_found_miss_prints_box_and_full_url_on_a_tty(tmp_path, monkeypatch):
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.rip_music.ensure_share"), \
-                patch("skive.rip_music.require_online"), \
-                patch("skive.rip_music.ui.ask") as ask, \
-                patch("subprocess.Popen", return_value=process):
-            with pytest.raises(SystemExit):
-                rip_music(FakeArgs(offset="6"))
+        with (
+            patch("skive.rip_music.ensure_share"),
+            patch("skive.rip_music.require_online"),
+            patch("skive.rip_music.ui.ask") as ask,
+            patch("subprocess.Popen", return_value=process),
+            pytest.raises(SystemExit),
+        ):
+            rip_music(FakeArgs(offset="6"))
     finally:
         ui.clear_view()
 
@@ -755,18 +790,22 @@ def test_multiple_releases_miss_lists_candidates_and_rerun_command(tmp_path, cap
     process = Mock(stdout=iter(MULTIPLE_RELEASES))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music.ui.ask") as ask, \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit) as exc:
-            rip_music(FakeArgs(offset="6"))
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music.ui.ask") as ask,
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit) as exc,
+    ):
+        rip_music(FakeArgs(offset="6"))
 
     assert exc.value.code == 1
     ask.assert_not_called()
     err = capsys.readouterr().err
-    assert ("warn    2  Blue · remaster · US · 2 CDs · 2004 · "
-            "https://musicbrainz.org/release/11111111-aaaa-bbbb-cccc-000000000002") in err
+    assert (
+        "warn    2  Blue · remaster · US · 2 CDs · 2004 · "
+        "https://musicbrainz.org/release/11111111-aaaa-bbbb-cccc-000000000002"
+    ) in err
     assert "https://musicbrainz.org/cdtoc/aBcD-" in err
     assert "skive rip music 6 -- -R <n>" in err
     assert "fail  several MusicBrainz releases · " in err
@@ -779,20 +818,32 @@ def test_miss_rerun_command_quotes_flags_for_the_shell(tmp_path, capsys):
     """The re-run command round-trips through a shell: a flag value with a
     space stays one argument."""
     import shlex
+
     process = Mock(stdout=iter(MULTIPLE_RELEASES))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("subprocess.Popen", return_value=process):
-        with pytest.raises(SystemExit):
-            rip_music(FakeArgs(offset="6", cyanrip_flags=["-D", "My Album"]))
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("subprocess.Popen", return_value=process),
+        pytest.raises(SystemExit),
+    ):
+        rip_music(FakeArgs(offset="6", cyanrip_flags=["-D", "My Album"]))
 
     err = capsys.readouterr().err
     line = next(l for l in err.splitlines() if "skive rip music 6" in l)
-    command = line[line.index("skive rip music"):line.index("<n>") + 3]
-    assert shlex.split(command) == ["skive", "rip", "music", "6", "--",
-                                    "-D", "My Album", "-R", "<n>"]
+    command = line[line.index("skive rip music") : line.index("<n>") + 3]
+    assert shlex.split(command) == [
+        "skive",
+        "rip",
+        "music",
+        "6",
+        "--",
+        "-D",
+        "My Album",
+        "-R",
+        "<n>",
+    ]
 
 
 def test_miss_rerun_command_keeps_drive_and_drops_separator(capsys, monkeypatch):
@@ -811,15 +862,16 @@ def test_miss_rerun_command_keeps_drive_and_drops_separator(capsys, monkeypatch)
     process = Mock(stdout=iter(MULTIPLE_RELEASES))
     process.wait.return_value = 1
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("subprocess.Popen", return_value=process) as mock_popen:
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("subprocess.Popen", return_value=process) as mock_popen,
+    ):
         with pytest.raises(SystemExit):
             rip_music(FakeArgs(offset="6", cyanrip_flags=["-d", "2", "--", "-R", "1"]))
 
     assert sniffed["disc"] == 2
-    assert mock_popen.call_args.args[0] == ["cyanrip", "-s", "6",
-                                             "-d", "/dev/sr1", "-R", "1"]
+    assert mock_popen.call_args.args[0] == ["cyanrip", "-s", "6", "-d", "/dev/sr1", "-R", "1"]
     err = capsys.readouterr().err
     assert "skive rip music -d 2 6 -- -R <n>" in err
 
@@ -840,13 +892,17 @@ def test_repo_sweep_no_local_paths():
             assert "~/media" not in content, f"~/media found in {py_file}"
             assert "media/audio" not in content, f"media/audio found in {py_file}"
 
+
 # -- Interrupt (Ctrl+C) (CONTEXT.md: Interrupt) --------------------------------
+
 
 def _stdout_then_interrupt(lines):
     """A fake cyanrip stdout that streams lines, then the interrupt lands."""
+
     def gen():
         yield from lines
         raise KeyboardInterrupt
+
     return gen()
 
 
@@ -854,13 +910,11 @@ def test_cyanrip_run_interrupt_kills_child_and_reraises(monkeypatch):
     """Ctrl+C during the cyanrip stream: the child goes through the
     forward/kill helper and the interrupt propagates to rip_music's handler."""
     killed = []
-    monkeypatch.setattr("skive.rip_music.kill_child_after_grace",
-                        lambda proc: killed.append(proc))
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace", lambda proc: killed.append(proc))
     process = Mock(stdout=_stdout_then_interrupt(["Ripping track 1\n"]))
 
-    with patch("subprocess.Popen", return_value=process):
-        with pytest.raises(KeyboardInterrupt):
-            _cyanrip_run("100", [], Path("/tmp/rip"))
+    with patch("subprocess.Popen", return_value=process), pytest.raises(KeyboardInterrupt):
+        _cyanrip_run("100", [], Path("/tmp/rip"))
 
     assert killed == [process]
 
@@ -874,14 +928,17 @@ def test_rip_music_interrupt_records_interrupted_and_exits_130(tmp_path, monkeyp
     monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
     args = FakeArgs(offset="100", cyanrip_flags=["-N"])
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt),
+    ):
         with pytest.raises(SystemExit) as e:
             rip_music(args)
 
     assert e.value.code == 130
-    lines = [json.loads(line)
-             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    lines = [
+        json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    ]
     assert [line["status"] for line in lines] == ["started", "interrupted"]
     err = capsys.readouterr().err
     assert "fail  interrupted · 0 ok" in err
@@ -901,9 +958,11 @@ def test_clean_rip_writes_cd_record_from_cyanrip_log(tmp_path):
     )
     (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
     args = FakeArgs(offset="123", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
     assert exc.value.code == 0
@@ -922,8 +981,7 @@ def test_holed_run_records_stalled_tracks_in_disc_index(tmp_path, monkeypatch):
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
     album = tmp_path / "rip" / "cd" / "Album"
 
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         album.mkdir(parents=True, exist_ok=True)
         (album / "Album.log").write_text(
             "Offset:         +123 samples\n"
@@ -938,11 +996,13 @@ def test_holed_run_records_stalled_tracks_in_disc_index(tmp_path, monkeypatch):
         return 0, ""
 
     args = FakeArgs(offset="123", cyanrip_flags=[])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
-            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
     assert exc.value.code == 1
@@ -956,13 +1016,14 @@ def test_unparsed_cyanrip_log_keeps_record_and_raw_note(tmp_path, capsys):
 
     album = tmp_path / "rip" / "cd" / "Album"
     album.mkdir(parents=True)
-    (album / "Album.log").write_text("unexpected cyanrip output\nfirst detail\n",
-                                     encoding="utf-8")
+    (album / "Album.log").write_text("unexpected cyanrip output\nfirst detail\n", encoding="utf-8")
     (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
     args = FakeArgs(offset="123", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
     assert exc.value.code == 0
@@ -981,15 +1042,18 @@ def test_unparsed_cyanrip_log_keeps_record_and_raw_note(tmp_path, capsys):
 
 def _fixture_report() -> str:
     """The real cyanrip report (spec: genuine output, not guesses)."""
-    return (Path(__file__).parent / "fixtures" / "cyanrip"
-            / "summertime-blues.log").read_text(encoding="utf-8")
+    return (Path(__file__).parent / "fixtures" / "cyanrip" / "summertime-blues.log").read_text(
+        encoding="utf-8"
+    )
 
 
 def _rip_statuses(tmp_path):
     import json
 
-    return [json.loads(line)["status"]
-            for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    return [
+        json.loads(line)["status"]
+        for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    ]
 
 
 def test_clean_rip_writes_born_complete_record_from_real_report(tmp_path):
@@ -1005,16 +1069,21 @@ def test_clean_rip_writes_born_complete_record_from_real_report(tmp_path):
     report = _fixture_report()
     (album / "Summertime Blues.log").write_text(report, encoding="utf-8")
     (album / "Summertime Blues.cue").write_text("FILE image.flac\n", encoding="utf-8")
-    flac_names = [Path(line.strip()).name for line in report.splitlines()
-                  if line.strip().endswith(".flac")]
+    flac_names = [
+        Path(line.strip()).name for line in report.splitlines() if line.strip().endswith(".flac")
+    ]
     for name in flac_names:
         (album / name).touch()
 
     args = FakeArgs(offset="6", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-            patch("skive.rip_music._newest_flac_album",
-                  return_value=("Various Artists - Summertime Blues", folder_name)):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+        patch(
+            "skive.rip_music._newest_flac_album",
+            return_value=("Various Artists - Summertime Blues", folder_name),
+        ),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
@@ -1054,15 +1123,18 @@ def test_validation_note_extends_not_found_and_partial(tmp_path):
         (album / name).touch()
 
     args = FakeArgs(offset="123", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
     assert exc.value.code == 0
-    assert ("validation: 3 tracks, 1 accurate (conf 7), 1 not_found, 1 partial"
-            in _rip_statuses(tmp_path))
+    assert "validation: 3 tracks, 1 accurate (conf 7), 1 not_found, 1 partial" in _rip_statuses(
+        tmp_path
+    )
 
 
 def test_offline_minus_N_record_lists_files_without_report_facts(tmp_path):
@@ -1075,8 +1147,7 @@ def test_offline_minus_N_record_lists_files_without_report_facts(tmp_path):
     album = tmp_path / "rip" / "cd" / "Album"
     album.mkdir(parents=True)
     (album / "Album.log").write_text(
-        "Offset:         +6 samples\n"
-        "Album:          Unknown Album\n",
+        "Offset:         +6 samples\nAlbum:          Unknown Album\n",
         encoding="utf-8",
     )
     (album / "Album.cue").write_text("FILE Album.flac\n", encoding="utf-8")
@@ -1084,9 +1155,11 @@ def test_offline_minus_N_record_lists_files_without_report_facts(tmp_path):
     (album / "02 - Two.flac").touch()
 
     args = FakeArgs(offset="6", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-            patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
@@ -1113,8 +1186,10 @@ def test_interrupted_run_writes_no_record(tmp_path):
     (album / "01 - One.flac").touch()
 
     args = FakeArgs(offset="123", cyanrip_flags=["-N"])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
 
@@ -1197,17 +1272,23 @@ def test_cyanrip_track_heading_and_footer_plain(monkeypatch, capsys):
     monkeypatch.setattr(common, "VERBOSITY", 0)
     view = ui.RunView(tty=False, live=False)
     ui.set_view(view)
-    process = Mock(stdout=iter([
-        "Disc tracks: 2\n",
-        "Track 1 ripped and encoded successfully!\n",
-        "title: First song\n",
-        "Track 2 ripped and encoded successfully!\n",
-        "title: Second song\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 2\n",
+                "Track 1 ripped and encoded successfully!\n",
+                "title: First song\n",
+                "Track 2 ripped and encoded successfully!\n",
+                "title: Second song\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             rc, _ = _cyanrip_run("+6", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1228,13 +1309,21 @@ def test_cyanrip_run_tool_lines_and_footer_at_v1(monkeypatch, capsys):
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        process = Mock(stdout=iter(["Track 1 of 12\n",
-                                    "Ripping and encoding track 1, progress - 45.00%\n",
-                                    "Track 1 ripped and encoded successfully!\n"]))
+        process = Mock(
+            stdout=iter(
+                [
+                    "Track 1 of 12\n",
+                    "Ripping and encoding track 1, progress - 45.00%\n",
+                    "Track 1 ripped and encoded successfully!\n",
+                ]
+            )
+        )
         process.wait.return_value = 0
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
-            rc, captured = _cyanrip_run("100", [], Path(tmpdir))
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
+            rc, _captured = _cyanrip_run("100", [], Path(tmpdir))
     finally:
         ui.clear_view()
 
@@ -1258,10 +1347,12 @@ def test_album_name_lands_in_status_via_header_watch(tmp_path):
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.rip_music.ensure_share"), \
-                patch("subprocess.Popen", return_value=process):
-            with pytest.raises(SystemExit) as exc:
-                rip_music(args)
+        with (
+            patch("skive.rip_music.ensure_share"),
+            patch("subprocess.Popen", return_value=process),
+            pytest.raises(SystemExit) as exc,
+        ):
+            rip_music(args)
     finally:
         ui.clear_view()
 
@@ -1276,22 +1367,28 @@ def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
     from skive import ui
 
     args = FakeArgs(offset="+6", cyanrip_flags=["-N"])
-    process = Mock(stdout=iter([
-        "Disc tracks: 2\n",
-        "Album:          Test Album\n",
-        "Album artist:   Test Artist\n",
-        "Track 1 ripped and encoded successfully!\n",
-        "title: First song\n",
-        "Track 2 ripped and encoded successfully!\n",
-        "title: Second song\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 2\n",
+                "Album:          Test Album\n",
+                "Album artist:   Test Artist\n",
+                "Track 1 ripped and encoded successfully!\n",
+                "title: First song\n",
+                "Track 2 ripped and encoded successfully!\n",
+                "title: Second song\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.rip_music.ensure_share"), \
-                patch("subprocess.Popen", return_value=process), \
-                patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+        with (
+            patch("skive.rip_music.ensure_share"),
+            patch("subprocess.Popen", return_value=process),
+            patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+        ):
             with pytest.raises(SystemExit) as exc:
                 rip_music(args)
     finally:
@@ -1304,10 +1401,10 @@ def test_album_opener_and_track_footer_use_shared_run_view(tmp_path, capsys):
     assert err.index("│ offset +6 ") < err.index("╭─ 1/2  First song")
     # no progress line timed these tracks: each frame closes with its result
     # and an untimed rip phase line, never an invented 0s
-    first = err[err.index("╭─ 1/2  First song"):err.index("╭─ 2/2  Second song")]
+    first = err[err.index("╭─ 1/2  First song") : err.index("╭─ 2/2  Second song")]
     assert "│ ✓ rip       track 1 " in first and "track 1 \u2026" not in first
     assert "╰─ ✓ done ─" in first
-    second = err[err.index("╭─ 2/2  Second song"):]
+    second = err[err.index("╭─ 2/2  Second song") :]
     assert "│ ✓ rip       track 2 " in second
     assert "╰─ ✓ done ─" in second
     assert "done 0s" not in err
@@ -1329,8 +1426,10 @@ def test_hidden_replay_lands_tool_prefixed_under_a_view(monkeypatch, capsys):
     try:
         process = Mock(stdout=iter(["Ripping track 1\n", "Read error\n"]))
         process.wait.return_value = 1
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             rc, _ = _cyanrip_run("100", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1352,8 +1451,9 @@ def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
     report = _fixture_report()
     (album / "Summertime Blues.log").write_text(report, encoding="utf-8")
     (album / "Summertime Blues.cue").write_text("FILE image.flac\n", encoding="utf-8")
-    for name in [Path(line.strip()).name for line in report.splitlines()
-                 if line.strip().endswith(".flac")]:
+    for name in [
+        Path(line.strip()).name for line in report.splitlines() if line.strip().endswith(".flac")
+    ]:
         (album / name).touch()
 
     args = FakeArgs(offset="6", cyanrip_flags=["-N"])
@@ -1362,13 +1462,16 @@ def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
     seen = []
     real = ui.run_summary
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(ui, "run_summary",
-                   lambda *a, **k: seen.append(view._closed) or real(*a, **k))
+    monkey.setattr(ui, "run_summary", lambda *a, **k: seen.append(view._closed) or real(*a, **k))
     try:
-        with patch("skive.rip_music.ensure_share"), \
-                patch("skive.rip_music._cyanrip_run", return_value=(0, "")), \
-                patch("skive.rip_music._newest_flac_album",
-                      return_value=("Various Artists - Summertime Blues", folder_name)):
+        with (
+            patch("skive.rip_music.ensure_share"),
+            patch("skive.rip_music._cyanrip_run", return_value=(0, "")),
+            patch(
+                "skive.rip_music._newest_flac_album",
+                return_value=("Various Artists - Summertime Blues", folder_name),
+            ),
+        ):
             with pytest.raises(SystemExit) as exc:
                 rip_music(args)
     finally:
@@ -1380,8 +1483,7 @@ def test_run_summary_rows_and_count_after_close(tmp_path, capsys):
     err = capsys.readouterr().err
     for col in ("track", "duration", "result"):
         assert col in err
-    assert any(l.strip().startswith("1") and "0:04:29" in l and "ok" in l
-               for l in err.splitlines())
+    assert any(l.strip().startswith("1") and "0:04:29" in l and "ok" in l for l in err.splitlines())
     assert "ok    19 ok · " in err
 
 
@@ -1394,8 +1496,10 @@ def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.rip_music.ensure_share"), \
-                patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt):
+        with (
+            patch("skive.rip_music.ensure_share"),
+            patch("skive.rip_music._cyanrip_run", side_effect=KeyboardInterrupt),
+        ):
             with pytest.raises(SystemExit) as e:
                 rip_music(args)
     finally:
@@ -1414,8 +1518,11 @@ def test_interrupt_closes_view_and_fails_once(tmp_path, capsys):
 def _fixture_track_title_lines(count):
     """The first `count` indented title lines of the real cyanrip report."""
     path = Path(__file__).parent / "fixtures" / "cyanrip" / "summertime-blues.log"
-    return [line for line in path.read_text(encoding="utf-8").splitlines(keepends=True)
-            if line.strip().startswith("title:")][:count]
+    return [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines(keepends=True)
+        if line.strip().startswith("title:")
+    ][:count]
 
 
 def test_indented_real_titles_head_every_track(monkeypatch, capsys):
@@ -1433,8 +1540,10 @@ def test_indented_real_titles_head_every_track(monkeypatch, capsys):
     process = Mock(stdout=iter(stream))
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1457,15 +1566,21 @@ def test_track_frame_carries_timed_rip_phase_line(monkeypatch, capsys):
     monkeypatch.setattr(common, "VERBOSITY", 0)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
-    process = Mock(stdout=iter([
-        "Disc tracks: 1\n",
-        "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
-        "Track 1 ripped and encoded successfully!\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 1\n",
+                "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
+                "Track 1 ripped and encoded successfully!\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1484,16 +1599,22 @@ def test_untitled_pending_track_closes_before_next_tracks_frame(monkeypatch, cap
     monkeypatch.setattr("skive.rip_music.time.monotonic", lambda: 100.0)
     monkeypatch.setattr(common, "VERBOSITY", 0)
     ui.set_view(ui.RunView(tty=True, live=False))
-    process = Mock(stdout=iter([
-        "Disc tracks: 2\n",
-        "Track 1 ripped and encoded successfully!\n",
-        "Ripping and encoding track 2, progress - 10.00%, ETA - 30s\n",
-        "Track 2 ripped and encoded successfully!\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 2\n",
+                "Track 1 ripped and encoded successfully!\n",
+                "Ripping and encoding track 2, progress - 10.00%, ETA - 30s\n",
+                "Track 2 ripped and encoded successfully!\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1516,18 +1637,24 @@ def test_track_frame_closes_after_its_trailing_metadata(monkeypatch, capsys):
     monkeypatch.setattr("skive.rip_music.time.monotonic", lambda: 100.0)
     monkeypatch.setattr(common, "VERBOSITY", 2)
     ui.set_view(ui.RunView(tty=True, live=False))
-    process = Mock(stdout=iter([
-        "Disc tracks: 2\n",
-        "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
-        "Track 1 ripped and encoded successfully!\n",
-        "    title:                         The Healer\n",
-        "    artist:                        B.B. King\n",
-        "Ripping and encoding track 2, progress - 10.00%, ETA - 30s\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 2\n",
+                "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
+                "Track 1 ripped and encoded successfully!\n",
+                "    title:                         The Healer\n",
+                "    artist:                        B.B. King\n",
+                "Ripping and encoding track 2, progress - 10.00%, ETA - 30s\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1543,14 +1670,17 @@ def test_track_frame_closes_after_its_trailing_metadata(monkeypatch, capsys):
 
 def test_track_frame_plain_has_no_rip_phase_line(capsys):
     """Plain mode keeps today's track output: the heading, no phase line."""
-    process = Mock(stdout=iter([
-        "Disc tracks: 1\n",
-        "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
-        "Track 1 ripped and encoded successfully!\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 1\n",
+                "Ripping and encoding track 1, progress - 10.00%, ETA - 30s\n",
+                "Track 1 ripped and encoded successfully!\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
-    with tempfile.TemporaryDirectory() as tmpdir, \
-            patch("subprocess.Popen", return_value=process):
+    with tempfile.TemporaryDirectory() as tmpdir, patch("subprocess.Popen", return_value=process):
         _cyanrip_run("+6", [], Path(tmpdir))
     err = capsys.readouterr().err
     assert "info  1/1  track 1" in err
@@ -1565,14 +1695,20 @@ def test_progress_stream_drives_heading_and_footer_at_default_verbosity(monkeypa
     monkeypatch.setattr(common, "VERBOSITY", 0)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
-    process = Mock(stdout=iter([
-        "Disc tracks: 4\n",
-        "Ripping and encoding track 2, progress - 50.00%, ETA - 30s\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 4\n",
+                "Ripping and encoding track 2, progress - 50.00%, ETA - 30s\n",
+            ]
+        )
+    )
     process.wait.return_value = 1
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
         footer = view.render()
         err = capsys.readouterr().err
@@ -1605,8 +1741,10 @@ def test_album_without_artist_opens_before_track_work(monkeypatch, capsys):
     ui.set_view(view)
     header = {}
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=Mock(stdout=gen())):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=Mock(stdout=gen())),
+        ):
             with pytest.raises(KeyboardInterrupt):
                 _cyanrip_run("+6", [], Path(tmpdir), None, header)
     finally:
@@ -1636,8 +1774,10 @@ def test_interrupt_summary_keeps_track_outcomes_and_truthful_note(monkeypatch, c
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
     try:
-        with patch("skive.rip_music.ensure_share"), \
-                patch("subprocess.Popen", return_value=Mock(stdout=gen())):
+        with (
+            patch("skive.rip_music.ensure_share"),
+            patch("subprocess.Popen", return_value=Mock(stdout=gen())),
+        ):
             with pytest.raises(SystemExit) as e:
                 rip_music(FakeArgs(offset="100", cyanrip_flags=["-N"]))
     finally:
@@ -1656,13 +1796,16 @@ def test_interrupt_summary_keeps_track_outcomes_and_truthful_note(monkeypatch, c
     assert "nothing deleted" in err
 
 
-@pytest.mark.parametrize("line, eta", [
-    ("Ripping and encoding track 1, progress - 0.01%, ETA - 303h 2m", "303h 2m"),
-    ("Ripping and encoding track 1, progress - 41.50%, ETA - 1h 2m", "1h 2m"),
-    ("Ripping and encoding track 1, progress - 41.50%, ETA - 27m", "27m"),
-    ("Ripping and encoding track 1, progress - 41.50%, ETA - 45s", "45s"),
-    ("Ripping and encoding track 1, progress - 41.50%", None),
-])
+@pytest.mark.parametrize(
+    "line, eta",
+    [
+        ("Ripping and encoding track 1, progress - 0.01%, ETA - 303h 2m", "303h 2m"),
+        ("Ripping and encoding track 1, progress - 41.50%, ETA - 1h 2m", "1h 2m"),
+        ("Ripping and encoding track 1, progress - 41.50%, ETA - 27m", "27m"),
+        ("Ripping and encoding track 1, progress - 41.50%, ETA - 45s", "45s"),
+        ("Ripping and encoding track 1, progress - 41.50%", None),
+    ],
+)
 def test_progress_regex_parses_disc_eta(line, eta):
     from skive.rip_music import _TRACK_PROGRESS
 
@@ -1676,14 +1819,20 @@ def test_disc_eta_reaches_the_footer(monkeypatch, capsys):
     monkeypatch.setattr(common, "VERBOSITY", 0)
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
-    process = Mock(stdout=iter([
-        "Disc tracks: 16\n",
-        "Ripping and encoding track 3, progress - 63.00%, ETA - 27m\n",
-    ]))
+    process = Mock(
+        stdout=iter(
+            [
+                "Disc tracks: 16\n",
+                "Ripping and encoding track 3, progress - 63.00%, ETA - 27m\n",
+            ]
+        )
+    )
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
         footer = view.render()
     finally:
@@ -1704,8 +1853,10 @@ def test_percent_line_that_is_not_progress_shows_on_a_tty_at_v1(monkeypatch, cap
     process = Mock(stdout=iter(["    title:     100% Pure Love\n"]))
     process.wait.return_value = 0
     try:
-        with tempfile.TemporaryDirectory() as tmpdir, \
-                patch("subprocess.Popen", return_value=process):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("subprocess.Popen", return_value=process),
+        ):
             _cyanrip_run("+6", [], Path(tmpdir))
     finally:
         ui.clear_view()
@@ -1718,15 +1869,18 @@ def test_raw_log_throttles_progress_and_drops_unrecognised(monkeypatch):
     whole percent, the track's last line kept; libmusicbrainz Unrecognised
     lines never reach it."""
     monkeypatch.setattr(common, "VERBOSITY", 0)
-    progress = [f"Ripping and encoding track 1, progress - {i * 99.99 / 12999:.2f}%, ETA - 1m\n"
-                for i in range(13000)]
-    unrecognised = ["Unrecognised disc element: 'offset-list'\n",
-                    "Unrecognised artist attribute: 'type-id'\n"]
+    progress = [
+        f"Ripping and encoding track 1, progress - {i * 99.99 / 12999:.2f}%, ETA - 1m\n"
+        for i in range(13000)
+    ]
+    unrecognised = [
+        "Unrecognised disc element: 'offset-list'\n",
+        "Unrecognised artist attribute: 'type-id'\n",
+    ]
     process = Mock(stdout=iter(unrecognised + progress))
     process.wait.return_value = 0
     log = Mock()
-    with tempfile.TemporaryDirectory() as tmpdir, \
-            patch("subprocess.Popen", return_value=process):
+    with tempfile.TemporaryDirectory() as tmpdir, patch("subprocess.Popen", return_value=process):
         _cyanrip_run("+6", [], Path(tmpdir), log)
 
     raw = [call.args[1] for call in log.raw.call_args_list]
@@ -1737,24 +1891,26 @@ def test_raw_log_throttles_progress_and_drops_unrecognised(monkeypatch):
 
 # -- Stall guard (ADR 0018) ----------------------------------------------------
 
+
 def test_toc_prepass_parses_info_text(tmp_path):
     """The cyanrip -I pre-pass runs with the same offset/drive/flags and its
     Track n info blocks yield every track's duration plus the raw text."""
-    info = ("Total time:     00:11:15.120\n"
-            "Tracks:\n"
-            "Track 1 info:\n"
-            "  Preemphasis:   none detected\n\n"
-            "  Properties:\n"
-            "    Duration:    00:02:15.120\n"
-            "    Samples:     5966436\n"
-            "Track 2 info:\n"
-            "  Properties:\n"
-            "    Duration:    00:09:00.000\n")
+    info = (
+        "Total time:     00:11:15.120\n"
+        "Tracks:\n"
+        "Track 1 info:\n"
+        "  Preemphasis:   none detected\n\n"
+        "  Properties:\n"
+        "    Duration:    00:02:15.120\n"
+        "    Samples:     5966436\n"
+        "Track 2 info:\n"
+        "  Properties:\n"
+        "    Duration:    00:09:00.000\n"
+    )
     result = Mock(returncode=0, stdout=info)
     with patch("skive.rip_music.subprocess.run", return_value=result) as mock_run:
         durations, text = _toc_prepass("6", ["-R", "1"], "/dev/sr0")
-    assert mock_run.call_args.args[0] == ["cyanrip", "-I", "-s", "6",
-                                          "-d", "/dev/sr0", "-R", "1"]
+    assert mock_run.call_args.args[0] == ["cyanrip", "-I", "-s", "6", "-d", "/dev/sr0", "-R", "1"]
     assert durations == {1: 135.12, 2: 540.0}
     assert text == info
 
@@ -1762,11 +1918,12 @@ def test_toc_prepass_parses_info_text(tmp_path):
 def test_toc_prepass_none_on_any_failure(tmp_path):
     """Nonzero rc, unparseable output or a spawn error all leave the guard
     unarmed ((None, stdout))."""
-    with patch("skive.rip_music.subprocess.run",
-               return_value=Mock(returncode=1, stdout="raw")):
+    with patch("skive.rip_music.subprocess.run", return_value=Mock(returncode=1, stdout="raw")):
         assert _toc_prepass("6", [], None) == (None, "raw")
-    with patch("skive.rip_music.subprocess.run",
-               return_value=Mock(returncode=0, stdout="no track info here")):
+    with patch(
+        "skive.rip_music.subprocess.run",
+        return_value=Mock(returncode=0, stdout="no track info here"),
+    ):
         assert _toc_prepass("6", [], None) == (None, "no track info here")
     with patch("skive.rip_music.subprocess.run", side_effect=FileNotFoundError):
         assert _toc_prepass("6", [], None) == (None, "")
@@ -1779,8 +1936,7 @@ def test_cyanrip_run_budget_trips_and_kills(monkeypatch, capsys):
     import time as time_mod
 
     killed = []
-    monkeypatch.setattr("skive.rip_music.kill_child_after_grace",
-                        lambda proc: killed.append(proc))
+    monkeypatch.setattr("skive.rip_music.kill_child_after_grace", lambda proc: killed.append(proc))
     monkeypatch.setattr(common, "VERBOSITY", 0)
 
     def gen():
@@ -1792,8 +1948,7 @@ def test_cyanrip_run_budget_trips_and_kills(monkeypatch, capsys):
     process.wait.return_value = 0
     header: dict = {}
     with patch("subprocess.Popen", return_value=process):
-        rc, _ = _cyanrip_run("6", [], Path("/tmp/rip"), header=header,
-                             budgets={1: 0.05})
+        rc, _ = _cyanrip_run("6", [], Path("/tmp/rip"), header=header, budgets={1: 0.05})
 
     assert rc == 1  # the child exited 0; the trip fails the pass
     assert header["_tracks"] == {1: "stalled"}
@@ -1820,8 +1975,7 @@ def test_cyanrip_run_footer_shows_stall_countdown_and_count(monkeypatch):
         process = Mock(stdout=gen())
         process.wait.return_value = 0
         with patch("subprocess.Popen", return_value=process):
-            _cyanrip_run("6", [], Path("/tmp/rip"), header={"_stalled": [2]},
-                         budgets={3: 600.0})
+            _cyanrip_run("6", [], Path("/tmp/rip"), header={"_stalled": [2]}, budgets={3: 600.0})
     finally:
         ui.clear_view()
 
@@ -1842,17 +1996,19 @@ def test_cyanrip_run_without_budgets_never_trips(monkeypatch, capsys):
 def test_rip_music_stalled_rows_in_summary(tmp_path, monkeypatch, capsys):
     """A tripped pass fails the run; the summary shows one row per seen
     track — ok for finished, stalled for the tripped one."""
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         header["_tracks"] = {1: "ok", 2: "stalled"}
         header["_stalled"] = [2]
         header["album"], header["album_artist"] = "Album", "Artist"
         return 1, ""
 
-    with patch("skive.rip_music.ensure_share"), \
-         patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-         patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
 
@@ -1866,17 +2022,20 @@ def test_rip_music_disarms_guard_with_z_flag(tmp_path, monkeypatch):
     """-Z anywhere in the pass-through flags skips the TOC pre-pass: no
     pre-pass call at all, and the rip itself still runs."""
     toc = Mock()
-    with patch("skive.rip_music.ensure_share"), \
-         patch("skive.rip_music.require_online"), \
-         patch("skive.rip_music._toc_prepass", toc) as mock_prepass, \
-         patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run, \
-         patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", toc) as mock_prepass,
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run,
+        patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=["-Z"]))
     assert exc.value.code == 0
     assert mock_prepass.call_count == 0
     assert mock_run.call_count == 1
     assert "-I" not in mock_run.call_args[0][1]  # no pre-pass flags leaked
+
 
 def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypatch, capsys):
     """After a trip the pass re-runs with -l minus the stalled track; a clean
@@ -1889,8 +2048,7 @@ def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypa
     calls = []
     outcomes_seen = []
 
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         calls.append(list(flags))
         header.setdefault("_tracks", {})[1] = "ok"
         if len(calls) == 1:
@@ -1903,15 +2061,18 @@ def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypa
         outcomes_seen.append(dict(header["_tracks"]))
         return 0, ""
 
-    record = [{"file": "01 - A.flac", "dur_s": 100, "format": "flac"},
-              {"file": "03 - C.flac", "dur_s": 200, "format": "flac"}]
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
-            patch("skive.rip_music._newest_flac_album",
-                  return_value=("Album", "Album")), \
-            patch("skive.rip_music._write_cd_record", return_value=record):
+    record = [
+        {"file": "01 - A.flac", "dur_s": 100, "format": "flac"},
+        {"file": "03 - C.flac", "dur_s": 200, "format": "flac"},
+    ]
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+        patch("skive.rip_music._write_cd_record", return_value=record),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
 
@@ -1920,8 +2081,9 @@ def test_rip_music_stall_continues_with_l_and_holed_run_fails(tmp_path, monkeypa
     assert outcomes_seen[-1] == {1: "ok", 2: "stalled", 3: "ok"}  # outcome kept
     captured = capsys.readouterr()
     assert "stalled" in captured.out + captured.err
-    lines = [json.loads(line)
-             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    lines = [
+        json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    ]
     notes = [line["status"] for line in lines if "hand re-rip" in line["status"]]
     assert len(notes) == 1
     assert "skive rip music 6 -- -l 2" in notes[0]
@@ -1936,8 +2098,7 @@ def test_rip_music_three_stalls_hit_cap(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
     calls = []
 
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         calls.append(list(flags))
         stalled = header.setdefault("_stalled", [])
         number = len(stalled) + 1
@@ -1946,10 +2107,12 @@ def test_rip_music_three_stalls_hit_cap(tmp_path, monkeypatch, capsys):
         header["_tracks"] = {n: "stalled" for n in stalled}
         return 1, ""
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
 
@@ -1957,8 +2120,9 @@ def test_rip_music_three_stalls_hit_cap(tmp_path, monkeypatch, capsys):
     assert len(calls) == 3
     assert calls[1][-2:] == ["-l", "2,3"]
     assert calls[2][-2:] == ["-l", "3"]
-    lines = [json.loads(line)
-             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    lines = [
+        json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    ]
     wipe = [line["status"] for line in lines if "wipe or replace" in line["status"]]
     assert len(wipe) == 1
     for n in (1, 2, 3):
@@ -1970,8 +2134,7 @@ def test_rip_music_continuation_own_failure_fails_run(tmp_path, monkeypatch, cap
     the existing failure path — no further passes."""
     calls = []
 
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         calls.append(list(flags))
         if len(calls) == 1:
             header["_disc_tracks"] = 2
@@ -1980,10 +2143,12 @@ def test_rip_music_continuation_own_failure_fails_run(tmp_path, monkeypatch, cap
             return 1, ""
         return 1, ""  # own failure (e.g. MusicBrainz miss)
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
 
@@ -2006,8 +2171,7 @@ def test_purge_pass_stubs_window(tmp_path):
     full = tmp_path / "sub" / "full.flac"
     full.parent.mkdir()
     full.write_bytes(b"x")
-    fresh = [tmp_path / "fresh.flac", tmp_path / "sub" / "fresh.log",
-             tmp_path / "fresh.cue"]
+    fresh = [tmp_path / "fresh.flac", tmp_path / "sub" / "fresh.log", tmp_path / "fresh.cue"]
     for path in fresh:
         path.touch()
 
@@ -2036,8 +2200,7 @@ def test_rip_music_continuation_intersects_operator_l(tmp_path, monkeypatch):
     with the operator's own -l, minus the stalled track."""
     calls = []
 
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         calls.append(list(flags))
         if len(calls) == 1:
             header["_disc_tracks"] = 4
@@ -2047,13 +2210,14 @@ def test_rip_music_continuation_intersects_operator_l(tmp_path, monkeypatch):
         header["_tracks"].update({1: "ok", 4: "ok"})
         return 0, ""
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
-            patch("skive.rip_music._newest_flac_album",
-                  return_value=("Album", "Album")), \
-            patch("skive.rip_music._write_cd_record", return_value=[]):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+        patch("skive.rip_music._write_cd_record", return_value=[]),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=["-l", "2,3,4"]))
 
@@ -2070,8 +2234,7 @@ def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("MUSIC_MOUNT", str(tmp_path))
     calls = []
 
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         calls.append(list(flags))
         stalled = header.setdefault("_stalled", [])
         number = len(stalled) + 1
@@ -2080,10 +2243,12 @@ def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
         header["_tracks"] = {n: "stalled" for n in stalled}
         return 1, ""
 
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music._toc_prepass", return_value=(None, "")), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music._toc_prepass", return_value=(None, "")),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(FakeArgs(offset="6", cyanrip_flags=[]))
 
@@ -2091,52 +2256,63 @@ def test_rip_music_four_track_disc_stalls_three_then_cap(tmp_path, monkeypatch):
     assert len(calls) == 3  # cap at three stalls — no fourth pass
     assert calls[1][-2:] == ["-l", "2,3,4"]
     assert calls[2][-2:] == ["-l", "3,4"]
-    lines = [json.loads(line)
-             for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()]
+    lines = [
+        json.loads(line) for line in (tmp_path / "logs" / "rip.jsonl").read_text().splitlines()
+    ]
     wipe = [line["status"] for line in lines if "wipe or replace" in line["status"]]
     assert len(wipe) == 1
     for n in (1, 2, 3):
         assert str(n) in wipe[0]
 
+
 # --- The pre-rip resolve and the CD selection table (selection-table slice 05)
 
-_INFO_TEXT = ("Disc tracks: 2\n"
-              "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
-              "&tracks=2&toc=1+2+180000+150+90000\n")
-_NOT_FOUND_TEXT = ("Disc tracks: 2\n"
-                   "Unable to find release info\n"
-                   "https://musicbrainz.org/cdtoc/attach?id=ZzYyXw987654"
-                   "&tracks=2&toc=1+2+180000+150+90000\n")
-_MULTIPLE_TEXT = ("Disc tracks: 2\n"
-                  "Multiple releases found in database for DiscID MnoPqr111111\n"
-                  "    1 (ID: aaa-111): Test Album One (2001)\n"
-                  "    2 (ID: bbb-222): Test Album Two (2008)\n")
-_STUB_TEXT = ("Disc tracks: 2\n"
-              "stub release found\n"
-              "https://musicbrainz.org/cdtoc/attach?id=StuVw12345678"
-              "&tracks=2&toc=1+2+180000+150+90000\n")
+_INFO_TEXT = (
+    "Disc tracks: 2\n"
+    "https://musicbrainz.org/cdtoc/attach?id=AbCdEf123456"
+    "&tracks=2&toc=1+2+180000+150+90000\n"
+)
+_NOT_FOUND_TEXT = (
+    "Disc tracks: 2\n"
+    "Unable to find release info\n"
+    "https://musicbrainz.org/cdtoc/attach?id=ZzYyXw987654"
+    "&tracks=2&toc=1+2+180000+150+90000\n"
+)
+_MULTIPLE_TEXT = (
+    "Disc tracks: 2\n"
+    "Multiple releases found in database for DiscID MnoPqr111111\n"
+    "    1 (ID: aaa-111): Test Album One (2001)\n"
+    "    2 (ID: bbb-222): Test Album Two (2008)\n"
+)
+_STUB_TEXT = (
+    "Disc tracks: 2\n"
+    "stub release found\n"
+    "https://musicbrainz.org/cdtoc/attach?id=StuVw12345678"
+    "&tracks=2&toc=1+2+180000+150+90000\n"
+)
 
 
-def _rip_with_table(tmp_text, table_result, track_lengths_result,
-                    durations={1: 200.0, 2: 300.0}, cyanrip_flags=None):
+def _rip_with_table(
+    tmp_text, table_result, track_lengths_result, durations=None, cyanrip_flags=None
+):
     """Run rip_music with the TOC pre-pass resolving `tmp_text` and stubs for
     everything past the table. `durations` may be None — a real miss yields
     no ``Track n info:`` blocks, so the miss path is driven by the text
     shape, not by durations. Returns (mock_run, mock_table, exit code)."""
+    if durations is None:
+        durations = {1: 200.0, 2: 300.0}
     args = FakeArgs(offset="6", cyanrip_flags=cyanrip_flags or [])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music.RipLog"), \
-            patch("skive.rip_music._toc_prepass",
-                  return_value=(durations, tmp_text)), \
-            patch("skive.rip_music.track_lengths",
-                  return_value=track_lengths_result), \
-            patch("skive.ui.terminal_present", return_value=True), \
-            patch("skive.rip_music.run_cd_table",
-                  return_value=table_result) as mock_table, \
-            patch("skive.rip_music._cyanrip_run",
-                  return_value=(0, "")) as mock_run, \
-            patch("skive.rip_music._newest_flac_album", return_value=("-", "-")):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music.RipLog"),
+        patch("skive.rip_music._toc_prepass", return_value=(durations, tmp_text)),
+        patch("skive.rip_music.track_lengths", return_value=track_lengths_result),
+        patch("skive.ui.terminal_present", return_value=True),
+        patch("skive.rip_music.run_cd_table", return_value=table_result) as mock_table,
+        patch("skive.rip_music._cyanrip_run", return_value=(0, "")) as mock_run,
+        patch("skive.rip_music._newest_flac_album", return_value=("-", "-")),
+    ):
         code = None
         try:
             rip_music(args)
@@ -2150,7 +2326,8 @@ def test_cd_table_skips_leave_the_rip_and_name_the_summary(tmp_path, capsys):
     with no operator -l), is named once in the run summary, and reaches the
     disc index as a manual skip."""
     mock_run, mock_table, code = _rip_with_table(
-        _INFO_TEXT, {1: "rip", 2: "skip"}, {1: 200, 2: 300})
+        _INFO_TEXT, {1: "rip", 2: "skip"}, {1: 200, 2: 300}
+    )
     assert code == 0
     pass_flags = mock_run.call_args[0][1]
     assert ["-l", "1"] == pass_flags[-2:]
@@ -2175,14 +2352,14 @@ def test_pre_rip_not_found_miss_fails_before_the_table(capsys):
     """A not-found disc fails pre-rip: the yellow-box warn lines print with
     the -R re-run guidance, and neither the table app nor cyanrip launches."""
     mock_run, mock_table, code = _rip_with_table(
-        _NOT_FOUND_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300}, durations=None)
+        _NOT_FOUND_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300}, durations=None
+    )
     assert code == 1
     assert not mock_run.called
     assert not mock_table.called
     err = capsys.readouterr().err
     assert "not on MusicBrainz" in err
-    assert ("Open the link, attach this disc to its release, then re-run."
-            in err)
+    assert "Open the link, attach this disc to its release, then re-run." in err
     assert "https://musicbrainz.org/cdtoc/attach?id=ZzYyXw987654" in err
 
 
@@ -2190,7 +2367,8 @@ def test_pre_rip_multiple_miss_fails_before_the_table(capsys):
     """Several releases: the candidates and the detach/re-run guidance print
     pre-rip; the drive never spins."""
     mock_run, mock_table, code = _rip_with_table(
-        _MULTIPLE_TEXT, {1: "rip", 2: "rip"}, None, durations=None)
+        _MULTIPLE_TEXT, {1: "rip", 2: "rip"}, None, durations=None
+    )
     assert code == 1
     assert not mock_run.called
     assert not mock_table.called
@@ -2202,7 +2380,8 @@ def test_pre_rip_multiple_miss_fails_before_the_table(capsys):
 
 def test_pre_rip_stub_miss_fails_before_the_table(capsys):
     mock_run, mock_table, code = _rip_with_table(
-        _STUB_TEXT, {1: "rip", 2: "rip"}, None, durations=None)
+        _STUB_TEXT, {1: "rip", 2: "rip"}, None, durations=None
+    )
     assert code == 1
     assert not mock_run.called
     assert not mock_table.called
@@ -2213,13 +2392,13 @@ def test_continuation_universe_excludes_manual_skips():
     """One continuation universe: a stalled continuation pass never re-rips
     a manually skipped track."""
     from skive.rip_music import _continuation_pass
-    flags = _continuation_pass([], {"_disc_tracks": 4, "_stalled": [3],
-                                    "_skipped": [2]})
+
+    flags = _continuation_pass([], {"_disc_tracks": 4, "_stalled": [3], "_skipped": [2]})
     assert flags == ["-l", "1,4"]
     # the operator's own -l still narrows the universe first
-    flags = _continuation_pass(["-l", "2,3,4"],
-                               {"_disc_tracks": 4, "_stalled": [],
-                                "_skipped": [2]})
+    flags = _continuation_pass(
+        ["-l", "2,3,4"], {"_disc_tracks": 4, "_stalled": [], "_skipped": [2]}
+    )
     assert flags == ["-l", "3,4"]
 
 
@@ -2229,9 +2408,9 @@ def test_cd_record_manual_skips_key(tmp_path):
     folder.mkdir()
     (folder / "Album.log").write_text("Offset:         +10 samples\n")
     (folder / "Album.cue").write_text("cue")
-    _write_cd_record(tmp_path, "Album", "10", Mock(run="rip-1"),
-                     stalled=[3], skipped=[2])
+    _write_cd_record(tmp_path, "Album", "10", Mock(run="rip-1"), stalled=[3], skipped=[2])
     import json
+
     doc = json.loads((folder / "validation.json").read_text())
     assert doc["discs"]["1"]["skipped"] == [2]
     assert doc["discs"]["1"]["stalled"] == [3]
@@ -2240,9 +2419,9 @@ def test_cd_record_manual_skips_key(tmp_path):
 def test_bare_operator_l_never_crashes_when_skips_pending():
     """A bare `-l` (no value) with manual skips pending appends the skip list
     instead of indexing past the end of the flags."""
-    mock_run, mock_table, code = _rip_with_table(
-        _INFO_TEXT, {1: "rip", 2: "skip"}, {1: 200, 2: 300},
-        cyanrip_flags=["-l"])
+    mock_run, _mock_table, code = _rip_with_table(
+        _INFO_TEXT, {1: "rip", 2: "skip"}, {1: 200, 2: 300}, cyanrip_flags=["-l"]
+    )
     assert code == 0
     pass_flags = mock_run.call_args[0][1]
     assert ["-l", "1"] == pass_flags[-2:]
@@ -2252,8 +2431,8 @@ def test_holed_run_names_manual_skips_in_the_summary(tmp_path, capsys):
     """A holed run (clean continuation after a stall) names manually skipped
     tracks in the summary — the stream never saw them, so it's the only
     place they appear."""
-    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None,
-                 budgets=None):
+
+    def fake_run(offset, flags, rip_dir, log=None, header=None, drive=None, budgets=None):
         calls.append(list(flags))
         if len(calls) == 1:
             header["_disc_tracks"] = 3
@@ -2264,19 +2443,21 @@ def test_holed_run_names_manual_skips_in_the_summary(tmp_path, capsys):
 
     calls = []
     args = FakeArgs(offset="6", cyanrip_flags=[])
-    with patch("skive.rip_music.ensure_share"), \
-            patch("skive.rip_music.require_online"), \
-            patch("skive.rip_music.RipLog"), \
-            patch("skive.rip_music._toc_prepass",
-                  return_value=({1: 200.0, 2: 300.0, 3: 400.0}, _INFO_TEXT)), \
-            patch("skive.rip_music.track_lengths", return_value=None), \
-            patch("skive.ui.terminal_present", return_value=True), \
-            patch("skive.rip_music.run_cd_table",
-                  return_value={1: "rip", 2: "skip", 3: "rip"}), \
-            patch("skive.rip_music._cyanrip_run", side_effect=fake_run), \
-            patch("skive.rip_music._newest_flac_album",
-                  return_value=("Album", "Album")), \
-            patch("skive.rip_music._write_cd_record", return_value=[]):
+    with (
+        patch("skive.rip_music.ensure_share"),
+        patch("skive.rip_music.require_online"),
+        patch("skive.rip_music.RipLog"),
+        patch(
+            "skive.rip_music._toc_prepass",
+            return_value=({1: 200.0, 2: 300.0, 3: 400.0}, _INFO_TEXT),
+        ),
+        patch("skive.rip_music.track_lengths", return_value=None),
+        patch("skive.ui.terminal_present", return_value=True),
+        patch("skive.rip_music.run_cd_table", return_value={1: "rip", 2: "skip", 3: "rip"}),
+        patch("skive.rip_music._cyanrip_run", side_effect=fake_run),
+        patch("skive.rip_music._newest_flac_album", return_value=("Album", "Album")),
+        patch("skive.rip_music._write_cd_record", return_value=[]),
+    ):
         with pytest.raises(SystemExit) as exc:
             rip_music(args)
     assert exc.value.code == 1
@@ -2290,8 +2471,8 @@ def test_n_flag_behaves_like_z_no_resolve_no_table(capsys):
     """Under -N there is no resolve and no selection table: the offline
     passthrough run goes straight to the rip, and skips are impossible."""
     mock_run, mock_table, code = _rip_with_table(
-        _INFO_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300},
-        cyanrip_flags=["-N"])
+        _INFO_TEXT, {1: "rip", 2: "rip"}, {1: 200, 2: 300}, cyanrip_flags=["-N"]
+    )
     assert code == 0
     assert not mock_table.called
     assert mock_run.called

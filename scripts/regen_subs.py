@@ -35,8 +35,12 @@ def main() -> int:
     ap.add_argument("titles", nargs="*")
     ap.add_argument("--run", action="store_true", help="do the OCR (default: dry-run)")
     ap.add_argument("--root", default=os.environ.get("VIDEOS", "/mnt/videos"))
-    ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 4),
-                    help="titles OCR'd at once (default: cpus // 4)")
+    ap.add_argument(
+        "--jobs",
+        type=int,
+        default=max(1, (os.cpu_count() or 4) // 4),
+        help="titles OCR'd at once (default: cpus // 4)",
+    )
     a = ap.parse_args()
     seconv, ffprobe = shutil.which("seconv"), shutil.which("ffprobe")
     mkvmerge = shutil.which("mkvmerge")
@@ -54,8 +58,9 @@ def main() -> int:
         if not os.path.isfile(src) or not os.path.isdir(dest):
             print(f"skip {title} (no lossless source or library folder)")
             continue
-        missing = sorted(n for n in expected(src, title, ffprobe)
-                         if not os.path.exists(os.path.join(dest, n)))
+        missing = sorted(
+            n for n in expected(src, title, ffprobe) if not os.path.exists(os.path.join(dest, n))
+        )
         if missing:
             print(f"{title}: missing {', '.join(missing)}")
             todo.append((title, src, dest, missing))
@@ -69,17 +74,33 @@ def main() -> int:
             # read hits the small local copy (was: one full NFS scan per track)
             local = os.path.join(cache, f"{title}.subs.mkv")
             try:
-                print(f"  [{title}] extracting subtitle tracks (reads the whole "
-                      f"source over the network, can take minutes)...", flush=True)
+                print(
+                    f"  [{title}] extracting subtitle tracks (reads the whole "
+                    f"source over the network, can take minutes)...",
+                    flush=True,
+                )
                 r = subprocess.run(
-                    [mkvmerge, "-o", local, "--no-video", "--no-audio",
-                     "--no-chapters", "--no-attachments", "--no-global-tags", src],
-                    capture_output=True, text=True)
+                    [
+                        mkvmerge,
+                        "-o",
+                        local,
+                        "--no-video",
+                        "--no-audio",
+                        "--no-chapters",
+                        "--no-attachments",
+                        "--no-global-tags",
+                        src,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
                 if r.returncode > 1:  # 1 = warnings only
                     print(f"  [{title}] FAIL mkvmerge extract: {r.stdout.strip()[-200:]}")
                     return False
-                print(f"  [{title}] extracted {os.path.getsize(local) >> 20} MiB, OCR...",
-                      flush=True)
+                print(
+                    f"  [{title}] extracted {os.path.getsize(local) >> 20} MiB, OCR...", flush=True
+                )
                 res = subs.run_pass(local, tmp, title, seconv, ffprobe)
             finally:
                 if os.path.exists(local):

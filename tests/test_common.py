@@ -4,7 +4,6 @@ import json
 import re
 import signal
 import subprocess
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -19,8 +18,10 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 class TestSanitize:
     def test_strips_smb_hostile_chars(self):
-        assert skive.common.sanitize("Team America: World Police (2004)") == \
-            "Team America World Police (2004)"
+        assert (
+            skive.common.sanitize("Team America: World Police (2004)")
+            == "Team America World Police (2004)"
+        )
         assert skive.common.sanitize('A/B?C*D"E<F>G|H') == "A-BCDEFGH"
 
 
@@ -30,8 +31,9 @@ class TestRipLog:
     @staticmethod
     def _log(tmp_path, times):
         ts_iter = iter(times)
-        return skive.common.RipLog("rip-movie", "makemkv", "Test Movie",
-                                   root=str(tmp_path), now=lambda: next(ts_iter))
+        return skive.common.RipLog(
+            "rip-movie", "makemkv", "Test Movie", root=str(tmp_path), now=lambda: next(ts_iter)
+        )
 
     @staticmethod
     def _run_lines(tmp_path) -> list[dict]:
@@ -48,7 +50,9 @@ class TestRipLog:
     def test_run_log_defaults_to_videos_mount(self, tmp_path, monkeypatch):
         """Without an explicit root the run log lives on the videos share."""
         monkeypatch.setenv("VIDEOS_MOUNT", str(tmp_path))
-        log = skive.common.RipLog("rip-movie", "makemkv", now=lambda: datetime(2024, 1, 15, 10, 30, 0))
+        log = skive.common.RipLog(
+            "rip-movie", "makemkv", now=lambda: datetime(2024, 1, 15, 10, 30, 0)
+        )
         log.start()
         assert len(self._run_lines(tmp_path)) == 1
 
@@ -58,14 +62,26 @@ class TestRipLog:
         lines = self._run_lines(tmp_path)
         assert len(lines) == 1
         assert lines[0] == {
-            "ts": "2024-01-15T10:30:00", "run": log.run, "script": "rip-movie",
-            "software": "makemkv", "name": "Test Movie", "phase": "-",
-            "status": "started", "elapsed_s": 0,
+            "ts": "2024-01-15T10:30:00",
+            "run": log.run,
+            "script": "rip-movie",
+            "software": "makemkv",
+            "name": "Test Movie",
+            "phase": "-",
+            "status": "started",
+            "elapsed_s": 0,
         }
 
     def test_phase_line(self, tmp_path):
         # start, phase start, phase end
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0), datetime(2024, 1, 15, 10, 35, 30)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 31, 0),
+                datetime(2024, 1, 15, 10, 35, 30),
+            ],
+        )
         log.start()
         log.phase("scan")
         log.phase_end()
@@ -76,7 +92,9 @@ class TestRipLog:
         assert lines[1]["elapsed_s"] == 270  # 10:31:00 -> 10:35:30 = 4m30
 
     def test_note_line(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 5)])
+        log = self._log(
+            tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 5)]
+        )
         log.start()
         log.note("scan", "audio kept=eng detected=eng")
         lines = self._run_lines(tmp_path)
@@ -87,7 +105,9 @@ class TestRipLog:
 
     def test_note_tees_to_stderr(self, tmp_path, capsys):
         """Note lines also surface on stderr (the old WARNING tee)."""
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 5)])
+        log = self._log(
+            tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 5)]
+        )
         log.start()
         log.note("scan", "audio kept=eng detected=eng")
         err = capsys.readouterr().err
@@ -95,7 +115,15 @@ class TestRipLog:
         assert "scan" in err
 
     def test_total_skipped_on_single_successful_phase(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0), datetime(2024, 1, 15, 10, 35, 0), datetime(2024, 1, 15, 10, 40, 0)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 31, 0),
+                datetime(2024, 1, 15, 10, 35, 0),
+                datetime(2024, 1, 15, 10, 40, 0),
+            ],
+        )
         log.start()
         log.phase("rip")
         log.phase_end()
@@ -105,7 +133,15 @@ class TestRipLog:
         assert "total" not in [line["phase"] for line in lines]
 
     def test_total_logged_on_failure(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0), datetime(2024, 1, 15, 10, 35, 0), datetime(2024, 1, 15, 10, 40, 0)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 31, 0),
+                datetime(2024, 1, 15, 10, 35, 0),
+                datetime(2024, 1, 15, 10, 40, 0),
+            ],
+        )
         log.start()
         log.phase("rip")
         log.phase_end()
@@ -113,13 +149,28 @@ class TestRipLog:
         lines = self._run_lines(tmp_path)
         assert len(lines) == 3  # started + phase + total
         assert lines[2] == {
-            "ts": "2024-01-15T10:40:00", "run": log.run, "script": "rip-movie",
-            "software": "makemkv", "name": "Test Movie", "phase": "total",
-            "status": "FAIL(3)", "elapsed_s": 600,
+            "ts": "2024-01-15T10:40:00",
+            "run": log.run,
+            "script": "rip-movie",
+            "software": "makemkv",
+            "name": "Test Movie",
+            "phase": "total",
+            "status": "FAIL(3)",
+            "elapsed_s": 600,
         }
 
     def test_total_logged_on_multi_phase(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0), datetime(2024, 1, 15, 10, 32, 0), datetime(2024, 1, 15, 10, 35, 0), datetime(2024, 1, 15, 10, 36, 0), datetime(2024, 1, 15, 10, 40, 0)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 31, 0),
+                datetime(2024, 1, 15, 10, 32, 0),
+                datetime(2024, 1, 15, 10, 35, 0),
+                datetime(2024, 1, 15, 10, 36, 0),
+                datetime(2024, 1, 15, 10, 40, 0),
+            ],
+        )
         log.start()
         log.phase("scan")
         log.phase_end()
@@ -135,17 +186,30 @@ class TestRipLog:
     # -- raw log: logs/raw/<run>.jsonl ---------------------------------------
 
     def test_raw_line_schema(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1)])
+        log = self._log(
+            tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1)]
+        )
         log.start()
         log.raw("cyanrip", "Ripping track 1")
         lines = _read_jsonl(self._raw_path(tmp_path, log))
-        assert lines == [{
-            "ts": "2024-01-15T10:30:01", "run": log.run,
-            "tool": "cyanrip", "line": "Ripping track 1",
-        }]
+        assert lines == [
+            {
+                "ts": "2024-01-15T10:30:01",
+                "run": log.run,
+                "tool": "cyanrip",
+                "line": "Ripping track 1",
+            }
+        ]
 
     def test_raw_log_deleted_on_clean_exit(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1), datetime(2024, 1, 15, 10, 30, 2)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 30, 1),
+                datetime(2024, 1, 15, 10, 30, 2),
+            ],
+        )
         log.start()
         log.raw("makemkvcon", "MSG: done")
         log.finish(0)
@@ -153,7 +217,15 @@ class TestRipLog:
 
     def test_raw_log_deleted_even_when_total_skipped(self, tmp_path):
         """rc 0 + exactly one phase skips the total line — the raw log still goes."""
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 31, 0), datetime(2024, 1, 15, 10, 35, 0), datetime(2024, 1, 15, 10, 35, 1)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 31, 0),
+                datetime(2024, 1, 15, 10, 35, 0),
+                datetime(2024, 1, 15, 10, 35, 1),
+            ],
+        )
         log.start()
         log.phase("rip")
         log.phase_end()
@@ -163,7 +235,14 @@ class TestRipLog:
         assert len(self._run_lines(tmp_path)) == 2  # started + phase, no total
 
     def test_raw_log_kept_on_failure(self, tmp_path):
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1), datetime(2024, 1, 15, 10, 30, 2)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 30, 1),
+                datetime(2024, 1, 15, 10, 30, 2),
+            ],
+        )
         log.start()
         log.raw("makemkvcon", "MSG: failed")
         log.finish(3)
@@ -173,10 +252,17 @@ class TestRipLog:
     def test_scan_dump_survives_clean_exit(self, tmp_path):
         """finish(0) deletes the raw log but never the scan dump — the dump
         is the one log written before anyone knows a run will go wrong."""
-        log = self._log(tmp_path, [datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 30, 1), datetime(2024, 1, 15, 10, 30, 2)])
+        log = self._log(
+            tmp_path,
+            [
+                datetime(2024, 1, 15, 10, 30, 0),
+                datetime(2024, 1, 15, 10, 30, 1),
+                datetime(2024, 1, 15, 10, 30, 2),
+            ],
+        )
         log.start()
         log.raw("makemkvcon", "MSG: done")
-        log.scan_dump("ROGUE_ONE", "DRV:0,2,0,0,\"DVD-ROM\"\n")
+        log.scan_dump("ROGUE_ONE", 'DRV:0,2,0,0,"DVD-ROM"\n')
         log.finish(0)
         assert not self._raw_path(tmp_path, log).exists()
         dump = tmp_path / "logs" / "scan" / f"{log.run}_ROGUE_ONE.txt"
@@ -194,6 +280,7 @@ class TestEnsureShare:
 
     def test_mountpoint_passes_silently(self, monkeypatch, capsys):
         """Path is a mountpoint -> returns quietly, nothing spawned."""
+
         def no_run(cmd, *args, **kwargs):
             raise AssertionError(f"no command may run, got {cmd}")
 
@@ -215,8 +302,7 @@ class TestEnsureShare:
         mountpoint and passes (a link to the NAS share is as good)."""
         link = tmp_path / "vid-link"
         link.symlink_to("/mnt/videos")
-        monkeypatch.setattr(Path, "is_mount",
-                            lambda self: str(self) == "/mnt/videos")
+        monkeypatch.setattr(Path, "is_mount", lambda self: str(self) == "/mnt/videos")
         skive.common.ensure_share(str(link))
 
     def test_missing_path_errors(self, monkeypatch, tmp_path):
@@ -305,8 +391,7 @@ def test_sigint_handler_second_exits_without_cleanup(monkeypatch):
 def test_install_interrupt_handler_resets_counter(monkeypatch):
     """Installing the handler resets the second-SIGINT counter from any prior run."""
     installed = []
-    monkeypatch.setattr("signal.signal",
-                        lambda sig, handler: installed.append((sig, handler)))
+    monkeypatch.setattr("signal.signal", lambda sig, handler: installed.append((sig, handler)))
     skive.common._sigint_count = 3
     skive.common.install_interrupt_handler()
     assert installed == [(2, skive.common._sigint_handler)]
@@ -347,22 +432,29 @@ class TestInterruptedRunLog:
 
     def test_interrupted_line(self, tmp_path):
         ts = iter([datetime(2024, 1, 15, 10, 30, 0), datetime(2024, 1, 15, 10, 42, 0)])
-        log = skive.common.RipLog("rip-movie", "makemkv", "Test Movie",
-                                  root=str(tmp_path), now=lambda: next(ts))
+        log = skive.common.RipLog(
+            "rip-movie", "makemkv", "Test Movie", root=str(tmp_path), now=lambda: next(ts)
+        )
         log.start()
         log.interrupted()
         lines = _read_jsonl(tmp_path / "logs" / "rip.jsonl")
         assert len(lines) == 2  # started + interrupted total
         assert lines[1] == {
-            "ts": "2024-01-15T10:42:00", "run": log.run, "script": "rip-movie",
-            "software": "makemkv", "name": "Test Movie", "phase": "total",
-            "status": "interrupted", "elapsed_s": 720,
+            "ts": "2024-01-15T10:42:00",
+            "run": log.run,
+            "script": "rip-movie",
+            "software": "makemkv",
+            "name": "Test Movie",
+            "phase": "total",
+            "status": "interrupted",
+            "elapsed_s": 720,
         }
 
     def test_interrupted_keeps_raw_log_and_finish_stays_silent(self, tmp_path):
         ts = iter(datetime(2024, 1, 15, 10, 30, 0) + timedelta(seconds=n) for n in range(5))
-        log = skive.common.RipLog("rip-movie", "makemkv", "Test Movie",
-                                  root=str(tmp_path), now=lambda: next(ts))
+        log = skive.common.RipLog(
+            "rip-movie", "makemkv", "Test Movie", root=str(tmp_path), now=lambda: next(ts)
+        )
         log.start()
         log.raw("makemkvcon", "MSG: mid-title")
         log.interrupted()

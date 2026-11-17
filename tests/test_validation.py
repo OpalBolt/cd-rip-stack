@@ -7,14 +7,36 @@ from types import SimpleNamespace
 from skive.tmdb import TMDBPick
 from skive.tv_match import RATIO_GREEN as TV_RATIO_GREEN
 from skive.validation import (
-    RATIO_GREEN, MAIN_FLOOR_S, VALIDATION_FILENAME,
-    Finding, MainArbitration, arbitrate_main, band_delta, biggest_title,
-    fix_staging_names, grade_main, is_issue, json_report, main_candidates,
-    merge_movie_document, movie_row, print_issues, recommendations,
-    resolve_main, ratio_severity, staging_name_findings,
-    movie_document, tv_document, write_validation, load_validation,
-    merge_tv_document, tv_row,
-    probe_duration, validate_library, print_findings, run_validate,
+    MAIN_FLOOR_S,
+    RATIO_GREEN,
+    VALIDATION_FILENAME,
+    Finding,
+    MainArbitration,
+    arbitrate_main,
+    band_delta,
+    biggest_title,
+    fix_staging_names,
+    grade_main,
+    is_issue,
+    json_report,
+    load_validation,
+    main_candidates,
+    merge_movie_document,
+    merge_tv_document,
+    movie_document,
+    movie_row,
+    print_findings,
+    print_issues,
+    probe_duration,
+    ratio_severity,
+    recommendations,
+    resolve_main,
+    run_validate,
+    staging_name_findings,
+    tv_document,
+    tv_row,
+    validate_library,
+    write_validation,
 )
 
 
@@ -22,16 +44,38 @@ from skive.validation import (
 def test_movie_document_shape():
     """The movie document keeps the confirmed shape; encodes starts empty."""
     doc = movie_document(
-        tmdb_id="123", title="Mamma Mia! (2008)", runtime_s=6480,
-        volume_label="MAMMA_MIA", run="a1b2c3d4", main="t21",
-        titles=[{"file": "Mamma Mia! (2008)_t21.mkv", "t": 21, "dur_s": 6252,
-                 "ratio": 0.97, "band": "green"}],
+        tmdb_id="123",
+        title="Mamma Mia! (2008)",
+        runtime_s=6480,
+        volume_label="MAMMA_MIA",
+        run="a1b2c3d4",
+        main="t21",
+        titles=[
+            {
+                "file": "Mamma Mia! (2008)_t21.mkv",
+                "t": 21,
+                "dur_s": 6252,
+                "ratio": 0.97,
+                "band": "green",
+            }
+        ],
     )
     assert list(doc) == ["tmdb", "volume_label", "run", "main", "titles", "encodes"]
-    assert doc["tmdb"] == {"id": "123", "type": "movie",
-                           "title": "Mamma Mia! (2008)", "runtime_s": 6480}
-    assert doc["titles"] == [{"file": "Mamma Mia! (2008)_t21.mkv", "t": 21,
-                              "dur_s": 6252, "ratio": 0.97, "band": "green"}]
+    assert doc["tmdb"] == {
+        "id": "123",
+        "type": "movie",
+        "title": "Mamma Mia! (2008)",
+        "runtime_s": 6480,
+    }
+    assert doc["titles"] == [
+        {
+            "file": "Mamma Mia! (2008)_t21.mkv",
+            "t": 21,
+            "dur_s": 6252,
+            "ratio": 0.97,
+            "band": "green",
+        }
+    ]
     assert doc["encodes"] == []
 
 
@@ -39,22 +83,43 @@ def test_tv_document_shape():
     """The TV document keeps the shared identity block; the season entry
     carries the episode rows and the disc provenance index."""
     doc = tv_document(
-        tmdb_id="456", title="Show (2019)", season=2,
-        volume_label="SHOW_S2", run="a1b2c3d4", staged=[5, 6],
-        episodes=[{"ep": 5, "file": "Show S02E05.mkv", "t": 12, "dur_s": 2611,
-                   "runtime_s": 2580, "ratio": 0.99, "band": "green"}],
+        tmdb_id="456",
+        title="Show (2019)",
+        season=2,
+        volume_label="SHOW_S2",
+        run="a1b2c3d4",
+        staged=[5, 6],
+        episodes=[
+            {
+                "ep": 5,
+                "file": "Show S02E05.mkv",
+                "t": 12,
+                "dur_s": 2611,
+                "runtime_s": 2580,
+                "ratio": 0.99,
+                "band": "green",
+            }
+        ],
     )
     assert list(doc) == ["tmdb", "seasons", "encodes"]
-    assert doc["tmdb"] == {"id": "456", "type": "tv",
-                           "title": "Show (2019)"}
-    assert doc["seasons"] == [{
-        "season": 2,
-        "episodes": [{"ep": 5, "file": "Show S02E05.mkv", "t": 12,
-                      "dur_s": 2611, "runtime_s": 2580,
-                      "ratio": 0.99, "band": "green"}],
-        "discs": [{"volume_label": "SHOW_S2", "run": "a1b2c3d4",
-                   "staged": [5, 6]}],
-    }]
+    assert doc["tmdb"] == {"id": "456", "type": "tv", "title": "Show (2019)"}
+    assert doc["seasons"] == [
+        {
+            "season": 2,
+            "episodes": [
+                {
+                    "ep": 5,
+                    "file": "Show S02E05.mkv",
+                    "t": 12,
+                    "dur_s": 2611,
+                    "runtime_s": 2580,
+                    "ratio": 0.99,
+                    "band": "green",
+                }
+            ],
+            "discs": [{"volume_label": "SHOW_S2", "run": "a1b2c3d4", "staged": [5, 6]}],
+        }
+    ]
     assert doc["encodes"] == []
 
 
@@ -62,13 +127,23 @@ def test_movie_round_trip(tmp_path):
     """The full movie document — titles, recorded main, appended encodes —
     survives write -> load unchanged."""
     doc = movie_document(
-        tmdb_id="123", title="Mamma Mia! (2008)", runtime_s=6480,
-        volume_label="MAMMA_MIA", run="a1b2c3d4", main="t21",
-        titles=[{"file": "Mamma Mia! (2008)_t21.mkv", "t": 21, "dur_s": 6252,
-                 "ratio": 0.97, "band": "green"}],
+        tmdb_id="123",
+        title="Mamma Mia! (2008)",
+        runtime_s=6480,
+        volume_label="MAMMA_MIA",
+        run="a1b2c3d4",
+        main="t21",
+        titles=[
+            {
+                "file": "Mamma Mia! (2008)_t21.mkv",
+                "t": 21,
+                "dur_s": 6252,
+                "ratio": 0.97,
+                "band": "green",
+            }
+        ],
     )
-    doc["encodes"].append({"file": "Mamma Mia! (2008).mkv", "src": "t21",
-                           "dur_s": 6249})
+    doc["encodes"].append({"file": "Mamma Mia! (2008).mkv", "src": "t21", "dur_s": 6249})
     path = tmp_path / "validation.json"
     write_validation(path, doc)
     assert load_validation(path) == doc
@@ -78,12 +153,32 @@ def test_tv_round_trip(tmp_path):
     """The full TV document — seasons with their episode rows and disc
     index — survives write -> load unchanged."""
     doc = tv_document(
-        tmdb_id="456", title="Show (2019)", season=2,
-        volume_label="SHOW_S2", run="a1b2c3d4", staged=[5, 6],
-        episodes=[{"ep": 5, "file": "Show S02E05.mkv", "t": 12, "dur_s": 2611,
-                   "runtime_s": 2580, "ratio": 0.99, "band": "green"},
-                  {"ep": 6, "file": "Show S02E06.mkv", "t": 13, "dur_s": 2602,
-                   "runtime_s": 2580, "ratio": 1.01, "band": "green"}],
+        tmdb_id="456",
+        title="Show (2019)",
+        season=2,
+        volume_label="SHOW_S2",
+        run="a1b2c3d4",
+        staged=[5, 6],
+        episodes=[
+            {
+                "ep": 5,
+                "file": "Show S02E05.mkv",
+                "t": 12,
+                "dur_s": 2611,
+                "runtime_s": 2580,
+                "ratio": 0.99,
+                "band": "green",
+            },
+            {
+                "ep": 6,
+                "file": "Show S02E06.mkv",
+                "t": 13,
+                "dur_s": 2602,
+                "runtime_s": 2580,
+                "ratio": 1.01,
+                "band": "green",
+            },
+        ],
     )
     path = tmp_path / "validation.json"
     write_validation(path, doc)
@@ -93,10 +188,15 @@ def test_tv_round_trip(tmp_path):
 def test_round_trip_unicode_title(tmp_path):
     """A non-ascii title survives write -> load (utf-8 in, utf-8 out)."""
     doc = movie_document(
-        tmdb_id="74", title="Amélie (2001)", runtime_s=7320,
-        volume_label="AMELIE", run="a1b2c3d4", main="t1",
-        titles=[{"file": "Amélie (2001)_t1.mkv", "t": 1, "dur_s": 7300,
-                 "ratio": 1.0, "band": "green"}],
+        tmdb_id="74",
+        title="Amélie (2001)",
+        runtime_s=7320,
+        volume_label="AMELIE",
+        run="a1b2c3d4",
+        main="t1",
+        titles=[
+            {"file": "Amélie (2001)_t1.mkv", "t": 1, "dur_s": 7300, "ratio": 1.0, "band": "green"}
+        ],
     )
     path = tmp_path / "validation.json"
     write_validation(path, doc)
@@ -167,8 +267,7 @@ def test_arbitrate_sole_near_is_automatic():
 def test_arbitrate_several_near_needs_human_and_carries_the_near_list():
     """Two candidates near the runtime (the Mamma Mia shape): human pick —
     near carries them in title order with exact ratios, default biggest."""
-    arb = arbitrate_main([(21, 6252, 4_300_000_000), (12, 6662, 19_000_000_000)],
-                         6480)
+    arb = arbitrate_main([(21, 6252, 4_300_000_000), (12, 6662, 19_000_000_000)], 6480)
     assert arb.kind == "several"
     assert arb.near == [(12, 6662, 6662 / 6480), (21, 6252, 6252 / 6480)]
     assert arb.pick == (12, 6662, 19_000_000_000)
@@ -176,10 +275,14 @@ def test_arbitrate_several_near_needs_human_and_carries_the_near_list():
 
 def test_arbitrate_several_default_is_biggest_among_the_near():
     """A yellow giant must not become the default: biggest of the NEAR ones."""
-    arb = arbitrate_main([(3, 6300, 30_000_000_000),   # near, huge
-                          (4, 6400, 5_000_000_000),    # near, small
-                          (9, 5000, 40_000_000_000)],  # out of band, biggest overall
-                         6480)
+    arb = arbitrate_main(
+        [
+            (3, 6300, 30_000_000_000),  # near, huge
+            (4, 6400, 5_000_000_000),  # near, small
+            (9, 5000, 40_000_000_000),
+        ],  # out of band, biggest overall
+        6480,
+    )
     assert arb.kind == "several"
     assert arb.near == [(3, 6300, 6300 / 6480), (4, 6400, 6400 / 6480)]
     assert arb.pick == (3, 6300, 30_000_000_000)
@@ -241,19 +344,38 @@ def test_biggest_title_empty_reads_none():
 def test_movie_row_grades_the_probed_actual():
     """A probed duration at/above the floor: exact quotient banded, 2dp stored."""
     assert movie_row("Mamma Mia! (2008)_t21.mkv", 21, 6249, 6480) == {
-        "file": "Mamma Mia! (2008)_t21.mkv", "t": 21, "dur_s": 6249,
-        "ratio": 0.96, "band": "green"}
+        "file": "Mamma Mia! (2008)_t21.mkv",
+        "t": 21,
+        "dur_s": 6249,
+        "ratio": 0.96,
+        "band": "green",
+    }
 
 
 def test_movie_row_unknowns_and_sub_floor_stay_null():
     """Unknown duration or runtime — or a sub-floor short — keeps the grade
     blank (never yellow); dur_s itself is still recorded."""
     assert movie_row("f_t1.mkv", 1, 600, 6480) == {
-        "file": "f_t1.mkv", "t": 1, "dur_s": 600, "ratio": None, "band": None}
+        "file": "f_t1.mkv",
+        "t": 1,
+        "dur_s": 600,
+        "ratio": None,
+        "band": None,
+    }
     assert movie_row("f_t1.mkv", 1, None, 6480) == {
-        "file": "f_t1.mkv", "t": 1, "dur_s": None, "ratio": None, "band": None}
+        "file": "f_t1.mkv",
+        "t": 1,
+        "dur_s": None,
+        "ratio": None,
+        "band": None,
+    }
     assert movie_row("f_t1.mkv", 1, 6249, None) == {
-        "file": "f_t1.mkv", "t": 1, "dur_s": 6249, "ratio": None, "band": None}
+        "file": "f_t1.mkv",
+        "t": 1,
+        "dur_s": 6249,
+        "ratio": None,
+        "band": None,
+    }
 
 
 def test_movie_row_band_grades_exact_quotient_ratio_stores_2dp():
@@ -288,8 +410,10 @@ def test_resolve_main_no_match_is_null():
 
 def test_resolve_main_ambiguous_join_is_null():
     """Two staged files within ±1s of the scanned duration: never guess."""
-    staged = [{"file": "M_t04.mkv", "t": 4, "dur_s": 7020, "ratio": None, "band": None},
-              {"file": "M_t05.mkv", "t": 5, "dur_s": 7021, "ratio": None, "band": None}]
+    staged = [
+        {"file": "M_t04.mkv", "t": 4, "dur_s": 7020, "ratio": None, "band": None},
+        {"file": "M_t05.mkv", "t": 5, "dur_s": 7021, "ratio": None, "band": None},
+    ]
     graded = [{"t": 9, "dur_s": 7021, "ratio": None, "band": None}]
     assert resolve_main("t9", graded, staged) is None
 
@@ -305,16 +429,28 @@ def test_resolve_main_ambiguous_or_unknown_is_null():
 def test_merge_movie_document_appends_rows_and_applies_main_run_rules():
     """Same-film re-rip: old rows kept, this run's appended; this run's main
     resolution wins when present, else the old one stands; run: latest."""
-    old = movie_document("157", "Mamma Mia! (2008)", 6480, "OLD", "oldrun", "t12",
-                         [{"file": "M_t12.mkv", "t": 12, "dur_s": 6662,
-                           "ratio": 1.03, "band": "green"}])
-    new = movie_document("157", "Mamma Mia! (2008)", 6480, "NEW", "newrun", None,
-                         [{"file": "M_t21.mkv", "t": 21, "dur_s": 6252,
-                           "ratio": 0.96, "band": "green"}])
+    old = movie_document(
+        "157",
+        "Mamma Mia! (2008)",
+        6480,
+        "OLD",
+        "oldrun",
+        "t12",
+        [{"file": "M_t12.mkv", "t": 12, "dur_s": 6662, "ratio": 1.03, "band": "green"}],
+    )
+    new = movie_document(
+        "157",
+        "Mamma Mia! (2008)",
+        6480,
+        "NEW",
+        "newrun",
+        None,
+        [{"file": "M_t21.mkv", "t": 21, "dur_s": 6252, "ratio": 0.96, "band": "green"}],
+    )
 
     merged = merge_movie_document(old, new)
     assert merged["titles"] == old["titles"] + new["titles"]
-    assert merged["main"] == "t12"    # this run resolved nothing — old stands
+    assert merged["main"] == "t12"  # this run resolved nothing — old stands
     assert merged["run"] == "newrun"  # latest wins
     assert merged["encodes"] == []
 
@@ -323,9 +459,15 @@ def test_merge_movie_document_appends_rows_and_applies_main_run_rules():
 
 def test_merge_movie_document_tolerates_rowless_old():
     """An old document without a readable titles list merges as empty."""
-    new = movie_document("157", "Mamma Mia! (2008)", 6480, "NEW", "newrun", "t21",
-                         [{"file": "M_t21.mkv", "t": 21, "dur_s": 6252,
-                           "ratio": 0.96, "band": "green"}])
+    new = movie_document(
+        "157",
+        "Mamma Mia! (2008)",
+        6480,
+        "NEW",
+        "newrun",
+        "t21",
+        [{"file": "M_t21.mkv", "t": 21, "dur_s": 6252, "ratio": 0.96, "band": "green"}],
+    )
     merged = merge_movie_document({"tmdb": {"id": "157"}}, new)
     assert merged["titles"] == new["titles"]
 
@@ -337,19 +479,37 @@ def test_tv_row_grades_the_probed_actual():
     """A probed duration with a known runtime: exact quotient banded, 2dp
     stored, the episode's TMDB runtime recorded beside it."""
     assert tv_row(5, "Show (2019)_S02E05.mkv", 12, 2611, 2580) == {
-        "ep": 5, "file": "Show (2019)_S02E05.mkv", "t": 12, "dur_s": 2611,
-        "runtime_s": 2580, "ratio": 1.01, "band": "green"}
+        "ep": 5,
+        "file": "Show (2019)_S02E05.mkv",
+        "t": 12,
+        "dur_s": 2611,
+        "runtime_s": 2580,
+        "ratio": 1.01,
+        "band": "green",
+    }
 
 
 def test_tv_row_unknowns_stay_null_and_never_yellow():
     """Unknown duration or runtime keeps the grade blank (never yellow); the
     fetch's 0 reads as unknown — recorded null, never graded."""
     assert tv_row(5, "f.mkv", None, 2611, 0) == {
-        "ep": 5, "file": "f.mkv", "t": None, "dur_s": 2611,
-        "runtime_s": None, "ratio": None, "band": None}
+        "ep": 5,
+        "file": "f.mkv",
+        "t": None,
+        "dur_s": 2611,
+        "runtime_s": None,
+        "ratio": None,
+        "band": None,
+    }
     assert tv_row(5, "f.mkv", None, None, 2580) == {
-        "ep": 5, "file": "f.mkv", "t": None, "dur_s": None,
-        "runtime_s": 2580, "ratio": None, "band": None}
+        "ep": 5,
+        "file": "f.mkv",
+        "t": None,
+        "dur_s": None,
+        "runtime_s": 2580,
+        "ratio": None,
+        "band": None,
+    }
 
 
 def test_tv_row_band_grades_exact_quotient_ratio_stores_2dp():
@@ -364,17 +524,53 @@ def test_merge_tv_document_appends_rows_and_replaces_by_ep():
     """Same-show, same-season re-rip: old rows kept, this run's appended; an
     ep already recorded is replaced by this run's row, not duplicated; the
     run's disc entry appends to the season's index; encodes start empty."""
-    old = tv_document("456", "Show (2019)", 2, "OLD", "oldrun", [5],
-                      [{"ep": 5, "file": "Show (2019)_S02E05.mkv", "t": 12,
-                        "dur_s": 2611, "runtime_s": 2580, "ratio": 1.01,
-                        "band": "green"}])
-    new = tv_document("456", "Show (2019)", 2, "NEW", "newrun", [5, 6],
-                      [{"ep": 5, "file": "Show (2019)_S02E05.mkv", "t": None,
-                        "dur_s": 2600, "runtime_s": 2580, "ratio": 1.01,
-                        "band": "green"},
-                       {"ep": 6, "file": "Show (2019)_S02E06.mkv", "t": 13,
-                        "dur_s": 2602, "runtime_s": 2580, "ratio": 1.01,
-                        "band": "green"}])
+    old = tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "OLD",
+        "oldrun",
+        [5],
+        [
+            {
+                "ep": 5,
+                "file": "Show (2019)_S02E05.mkv",
+                "t": 12,
+                "dur_s": 2611,
+                "runtime_s": 2580,
+                "ratio": 1.01,
+                "band": "green",
+            }
+        ],
+    )
+    new = tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "NEW",
+        "newrun",
+        [5, 6],
+        [
+            {
+                "ep": 5,
+                "file": "Show (2019)_S02E05.mkv",
+                "t": None,
+                "dur_s": 2600,
+                "runtime_s": 2580,
+                "ratio": 1.01,
+                "band": "green",
+            },
+            {
+                "ep": 6,
+                "file": "Show (2019)_S02E06.mkv",
+                "t": 13,
+                "dur_s": 2602,
+                "runtime_s": 2580,
+                "ratio": 1.01,
+                "band": "green",
+            },
+        ],
+    )
 
     merged = merge_tv_document(old, new)
     season = merged["seasons"][0]
@@ -391,30 +587,52 @@ def test_merge_tv_document_second_season_merges_by_season():
     """A second season's rip merges into the same document: each season
     keeps its own rows and discs, the list sorts by season number whatever
     order the discs ripped in."""
-    s1 = tv_document("456", "Show (2019)", 1, "S1", "run1", [1],
-                     [tv_row(1, "Show (2019)_S01E01.mkv", 0, 2600, 2580)])
-    s2 = tv_document("456", "Show (2019)", 2, "S2", "run2", [1],
-                     [tv_row(1, "Show (2019)_S02E01.mkv", 3, 2600, 2580)])
+    s1 = tv_document(
+        "456",
+        "Show (2019)",
+        1,
+        "S1",
+        "run1",
+        [1],
+        [tv_row(1, "Show (2019)_S01E01.mkv", 0, 2600, 2580)],
+    )
+    s2 = tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "S2",
+        "run2",
+        [1],
+        [tv_row(1, "Show (2019)_S02E01.mkv", 3, 2600, 2580)],
+    )
 
     merged = merge_tv_document(s2, s1)  # season 1 ripped after season 2
 
     assert [s["season"] for s in merged["seasons"]] == [1, 2]
     assert merged["seasons"][1]["episodes"][0]["file"] == "Show (2019)_S02E01.mkv"
-    assert merged["seasons"][1]["discs"] == [
-        {"volume_label": "S2", "run": "run2", "staged": [1]}]
+    assert merged["seasons"][1]["discs"] == [{"volume_label": "S2", "run": "run2", "staged": [1]}]
 
 
 def test_merge_tv_document_migrates_one_season_shape():
     """An old one-season document (tmdb.season + episodes, no seasons key —
     the first schema) migrates on the merge: its rows survive as a seasons
     entry with no disc provenance, this run's shape throughout."""
-    old = {"tmdb": {"id": "456", "type": "tv", "title": "Show (2019)",
-                    "season": 3},
-           "volume_label": "OLD", "run": "oldrun",
-           "episodes": [tv_row(1, "Show (2019)_S03E01.mkv", 0, 2600, 2580)],
-           "encodes": []}
-    new = tv_document("456", "Show (2019)", 1, "S1", "newrun", [1],
-                      [tv_row(1, "Show (2019)_S01E01.mkv", 0, 2600, 2580)])
+    old = {
+        "tmdb": {"id": "456", "type": "tv", "title": "Show (2019)", "season": 3},
+        "volume_label": "OLD",
+        "run": "oldrun",
+        "episodes": [tv_row(1, "Show (2019)_S03E01.mkv", 0, 2600, 2580)],
+        "encodes": [],
+    }
+    new = tv_document(
+        "456",
+        "Show (2019)",
+        1,
+        "S1",
+        "newrun",
+        [1],
+        [tv_row(1, "Show (2019)_S01E01.mkv", 0, 2600, 2580)],
+    )
 
     merged = merge_tv_document(old, new)
 
@@ -427,8 +645,15 @@ def test_merge_tv_document_migrates_one_season_shape():
 def test_merge_tv_document_remerge_same_run_replaces_disc_entry():
     """Idempotent re-merge: the same run's disc entry replaces its own old
     one, never duplicates; episode rows replace per ep as always."""
-    doc = tv_document("456", "Show (2019)", 2, "S2", "run1", [5],
-                      [tv_row(5, "Show (2019)_S02E05.mkv", 0, 2600, 2580)])
+    doc = tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "S2",
+        "run1",
+        [5],
+        [tv_row(5, "Show (2019)_S02E05.mkv", 0, 2600, 2580)],
+    )
 
     merged = merge_tv_document(doc, doc)
 
@@ -453,12 +678,13 @@ MAMMA = "Mamma Mia! (2008)"
 def _fake_probe(durations: dict[str, int]):
     """An injectable run(): ffprobe replies keyed by the probed file's name;
     any other file fails to probe (nonzero rc, empty stdout)."""
+
     def run(cmd, capture_output, text):
         name = Path(cmd[-1]).name
         if name in durations:
-            return SimpleNamespace(returncode=0, stdout=f"{durations[name]}.0\n",
-                                   stderr="")
+            return SimpleNamespace(returncode=0, stdout=f"{durations[name]}.0\n", stderr="")
         return SimpleNamespace(returncode=1, stdout="", stderr="probe failed")
+
     return run
 
 
@@ -479,26 +705,34 @@ def _library(tmp_path):
 
 
 def _mamma_doc():
-    return movie_document(tmdb_id="471", title=MAMMA, runtime_s=6480,
-                          volume_label="MAMMA_MIA", run="a1b2c3d4", main="t21",
-                          titles=[])
+    return movie_document(
+        tmdb_id="471",
+        title=MAMMA,
+        runtime_s=6480,
+        volume_label="MAMMA_MIA",
+        run="a1b2c3d4",
+        main="t21",
+        titles=[],
+    )
 
 
 def _mamma_search():
     def search(kind, query, year=None):
         assert (kind, query, year) == ("movie", "Mamma Mia!", "2008")
         return TMDBPick("Mamma Mia!", "2008", "en", "movie", "471")
+
     return search
 
 
 def _details(runtime_s):
     def fetch_details(type_, id_):
-        return TMDBPick("Mamma Mia!", "2008", "en", "movie", id_,
-                        runtime_secs=runtime_s)
+        return TMDBPick("Mamma Mia!", "2008", "en", "movie", id_, runtime_secs=runtime_s)
+
     return fetch_details
 
 
 # probe_duration — the rename_tv_fast probe shape
+
 
 def test_probe_duration_reads_ffprobe_csv():
     """format=duration csv output parses to whole seconds; the command shape
@@ -510,8 +744,7 @@ def test_probe_duration_reads_ffprobe_csv():
         return SimpleNamespace(returncode=0, stdout="6251.0\n", stderr="")
 
     assert probe_duration(Path("/x/M.mkv"), run=run) == 6251
-    assert calls[0][:5] == ["ffprobe", "-v", "error", "-show_entries",
-                            "format=duration"]
+    assert calls[0][:5] == ["ffprobe", "-v", "error", "-show_entries", "format=duration"]
     assert calls[0][5:7] == ["-of", "csv=p=0"]
     assert calls[0][-1] == "/x/M.mkv"
 
@@ -519,10 +752,13 @@ def test_probe_duration_reads_ffprobe_csv():
 def test_probe_duration_unreadable_is_none_never_a_crash():
     """Nonzero rc, garbage stdout, a missing ffprobe: all None — the caller
     reports the file unreadable instead of crashing the walk."""
+
     def bad_rc(cmd, capture_output, text):
         return SimpleNamespace(returncode=1, stdout="", stderr="no")
+
     def garbage(cmd, capture_output, text):
         return SimpleNamespace(returncode=0, stdout="N/A\n", stderr="")
+
     def no_tool(cmd, capture_output, text):
         raise FileNotFoundError("ffprobe")
 
@@ -533,6 +769,7 @@ def test_probe_duration_unreadable_is_none_never_a_crash():
 
 # Movies: identity from the doc, else name+year search (a LEAD)
 
+
 def test_validate_movie_doc_folder_grades_main_encode(tmp_path):
     """A doc folder needs no TMDB: the `<folder>.mkv` main encode probes and
     grades against the doc's recorded runtime."""
@@ -542,11 +779,18 @@ def test_validate_movie_doc_folder_grades_main_encode(tmp_path):
     (folder / f"{MAMMA}.mkv").touch()
     write_validation(folder / VALIDATION_FILENAME, _mamma_doc())
 
-    findings = validate_library(root, run=_fake_probe({f"{MAMMA}.mkv": 6252}),
-                                search=_no_search, season_list=_no_season_list)
+    findings = validate_library(
+        root,
+        run=_fake_probe({f"{MAMMA}.mkv": 6252}),
+        search=_no_search,
+        season_list=_no_season_list,
+    )
 
-    assert findings == [Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  0.96",
-                                "green", f"{MAMMA}.mkv", 0.96, 0.04)]
+    assert findings == [
+        Finding(
+            "movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  0.96", "green", f"{MAMMA}.mkv", 0.96, 0.04
+        )
+    ]
 
 
 def test_validate_movie_far_off_band_ratio_reads_red(tmp_path):
@@ -558,11 +802,18 @@ def test_validate_movie_far_off_band_ratio_reads_red(tmp_path):
     (folder / f"{MAMMA}.mkv").touch()
     write_validation(folder / VALIDATION_FILENAME, _mamma_doc())
 
-    findings = validate_library(root, run=_fake_probe({f"{MAMMA}.mkv": 5000}),
-                                search=_no_search, season_list=_no_season_list)
+    findings = validate_library(
+        root,
+        run=_fake_probe({f"{MAMMA}.mkv": 5000}),
+        search=_no_search,
+        season_list=_no_season_list,
+    )
 
-    assert findings == [Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  0.77",
-                                "red", f"{MAMMA}.mkv", 0.77, -0.15)]
+    assert findings == [
+        Finding(
+            "movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  0.77", "red", f"{MAMMA}.mkv", 0.77, -0.15
+        )
+    ]
 
 
 def test_validate_movie_unknown_runtime_is_blank_never_yellow(tmp_path):
@@ -572,15 +823,17 @@ def test_validate_movie_unknown_runtime_is_blank_never_yellow(tmp_path):
     folder = root / "movies" / MAMMA
     folder.mkdir()
     (folder / f"{MAMMA}.mkv").touch()
-    doc = {"tmdb": {"id": "471", "type": "movie", "title": MAMMA,
-                    "runtime_s": None}, "main": None}
+    doc = {"tmdb": {"id": "471", "type": "movie", "title": MAMMA, "runtime_s": None}, "main": None}
     write_validation(folder / VALIDATION_FILENAME, doc)
 
-    findings = validate_library(root, run=_fake_probe({f"{MAMMA}.mkv": 6662}),
-                                search=_no_search, season_list=_no_season_list)
+    findings = validate_library(
+        root,
+        run=_fake_probe({f"{MAMMA}.mkv": 6662}),
+        search=_no_search,
+        season_list=_no_season_list,
+    )
 
-    assert findings == [Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv",
-                                path=f"{MAMMA}.mkv")]
+    assert findings == [Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv", path=f"{MAMMA}.mkv")]
 
 
 def test_validate_movie_legacy_resolves_via_name_year_search(tmp_path):
@@ -591,12 +844,18 @@ def test_validate_movie_legacy_resolves_via_name_year_search(tmp_path):
     folder.mkdir()
     (folder / f"{MAMMA}.mkv").touch()
 
-    findings = validate_library(root, run=_fake_probe({f"{MAMMA}.mkv": 6662}),
-                                search=_mamma_search(),
-                                fetch_details=_details(6480))
+    findings = validate_library(
+        root,
+        run=_fake_probe({f"{MAMMA}.mkv": 6662}),
+        search=_mamma_search(),
+        fetch_details=_details(6480),
+    )
 
-    assert findings == [Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  1.03",
-                                "green", f"{MAMMA}.mkv", 1.03, 0.01)]
+    assert findings == [
+        Finding(
+            "movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  1.03", "green", f"{MAMMA}.mkv", 1.03, 0.01
+        )
+    ]
 
 
 def test_validate_mamma_mia_fixture_two_candidates_and_staging_names(tmp_path):
@@ -614,23 +873,39 @@ def test_validate_mamma_mia_fixture_two_candidates_and_staging_names(tmp_path):
 
     findings = validate_library(
         root,
-        run=_fake_probe({f"{MAMMA}.mkv": 6662, f"{MAMMA}_t21.mkv": 6251,
-                         f"{MAMMA}_t05.mkv": 300}),
-        search=_mamma_search(), fetch_details=_details(6480))
+        run=_fake_probe({f"{MAMMA}.mkv": 6662, f"{MAMMA}_t21.mkv": 6251, f"{MAMMA}_t05.mkv": 300}),
+        search=_mamma_search(),
+        fetch_details=_details(6480),
+    )
 
     assert [f for f in findings if f.check == "ratio"] == [
-        Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  1.03", "green",
-                f"{MAMMA}.mkv", 1.03, 0.01),
-        Finding("movies/" + MAMMA, "ratio", f"extras/{MAMMA}_t21.mkv  0.96",
-                "green", f"extras/{MAMMA}_t21.mkv", 0.96, 0.04),
+        Finding(
+            "movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  1.03", "green", f"{MAMMA}.mkv", 1.03, 0.01
+        ),
+        Finding(
+            "movies/" + MAMMA,
+            "ratio",
+            f"extras/{MAMMA}_t21.mkv  0.96",
+            "green",
+            f"extras/{MAMMA}_t21.mkv",
+            0.96,
+            0.04,
+        ),
     ]
     assert sorted(f.detail for f in findings if f.check == "staging name") == [
-        f"extras/{MAMMA}_t05.mkv", f"extras/{MAMMA}_t21.mkv"]
+        f"extras/{MAMMA}_t05.mkv",
+        f"extras/{MAMMA}_t21.mkv",
+    ]
     assert not [f for f in findings if f.check in ("unidentified", "duplicate id")]
     assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == [
-        "movies", f"movies/{MAMMA}", f"movies/{MAMMA}/{MAMMA}.mkv",
-        f"movies/{MAMMA}/extras", f"movies/{MAMMA}/extras/{MAMMA}_t05.mkv",
-        f"movies/{MAMMA}/extras/{MAMMA}_t21.mkv", "tv"]
+        "movies",
+        f"movies/{MAMMA}",
+        f"movies/{MAMMA}/{MAMMA}.mkv",
+        f"movies/{MAMMA}/extras",
+        f"movies/{MAMMA}/extras/{MAMMA}_t05.mkv",
+        f"movies/{MAMMA}/extras/{MAMMA}_t21.mkv",
+        "tv",
+    ]
 
 
 def test_validate_movie_no_doc_main_is_biggest_root_mkv(tmp_path):
@@ -642,17 +917,22 @@ def test_validate_movie_no_doc_main_is_biggest_root_mkv(tmp_path):
     (folder / "aaa.mkv").write_bytes(b"x" * 10)
     (folder / "bbb.mkv").write_bytes(b"x" * 1000)
 
-    findings = validate_library(root,
-                                run=_fake_probe({"aaa.mkv": 100, "bbb.mkv": 6300}),
-                                search=lambda k, q, y: TMDBPick("Two Files", "2001",
-                                                             "en", "movie", "5"),
-                                fetch_details=_details(6000))
+    findings = validate_library(
+        root,
+        run=_fake_probe({"aaa.mkv": 100, "bbb.mkv": 6300}),
+        search=lambda k, q, y: TMDBPick("Two Files", "2001", "en", "movie", "5"),
+        fetch_details=_details(6000),
+    )
 
-    assert findings == [Finding("movies/Two Files (2001)", "ratio", "bbb.mkv  1.05",
-                                "yellow", "bbb.mkv", 1.05, 0.01)]
+    assert findings == [
+        Finding(
+            "movies/Two Files (2001)", "ratio", "bbb.mkv  1.05", "yellow", "bbb.mkv", 1.05, 0.01
+        )
+    ]
 
 
 # Movies: unresolvable identity is a row, never an error
+
 
 def test_validate_movie_no_year_is_unidentified_row(tmp_path):
     """No validation.json and no (Year): the search has nothing to run — an
@@ -662,20 +942,24 @@ def test_validate_movie_no_year_is_unidentified_row(tmp_path):
 
     findings = validate_library(root, run=_fake_probe({}), search=_no_search)
 
-    assert findings == [Finding("movies/Det fulle DK", "unidentified",
-                                "no validation.json and no (Year) in the folder name")]
+    assert findings == [
+        Finding(
+            "movies/Det fulle DK",
+            "unidentified",
+            "no validation.json and no (Year) in the folder name",
+        )
+    ]
 
 
 def test_validate_movie_search_no_match_is_unidentified_row(tmp_path):
     root = _library(tmp_path)
     (root / "movies" / MAMMA).mkdir()
 
-    findings = validate_library(
-        root, run=_fake_probe({}),
-        search=lambda k, q, y: None)
+    findings = validate_library(root, run=_fake_probe({}), search=lambda k, q, y: None)
 
-    assert findings == [Finding("movies/" + MAMMA, "unidentified",
-                                'TMDB search: no match for "Mamma Mia!" (2008)')]
+    assert findings == [
+        Finding("movies/" + MAMMA, "unidentified", 'TMDB search: no match for "Mamma Mia!" (2008)')
+    ]
 
 
 def test_validate_movie_search_failure_warns_once_and_unidentifies(tmp_path, capsys):
@@ -689,8 +973,9 @@ def test_validate_movie_search_failure_warns_once_and_unidentifies(tmp_path, cap
 
     findings = validate_library(root, run=_fake_probe({}), search=down)
 
-    assert findings == [Finding("movies/" + MAMMA, "unidentified",
-                                'TMDB search failed for "Mamma Mia!"')]
+    assert findings == [
+        Finding("movies/" + MAMMA, "unidentified", 'TMDB search failed for "Mamma Mia!"')
+    ]
     assert "warn  TMDB search failed" in capsys.readouterr().err
 
 
@@ -703,11 +988,13 @@ def test_validate_movie_details_fetch_failure_unidentifies(tmp_path, capsys):
     def down(type_, id_):
         raise RuntimeError("TMDB request failed: timeout")
 
-    findings = validate_library(root, run=_fake_probe({}),
-                                search=_mamma_search(), fetch_details=down)
+    findings = validate_library(
+        root, run=_fake_probe({}), search=_mamma_search(), fetch_details=down
+    )
 
-    assert findings == [Finding("movies/" + MAMMA, "unidentified",
-                                "TMDB details fetch failed for id 471")]
+    assert findings == [
+        Finding("movies/" + MAMMA, "unidentified", "TMDB details fetch failed for id 471")
+    ]
     assert "TMDB details fetch failed" in capsys.readouterr().err
 
 
@@ -722,19 +1009,26 @@ def test_validate_probe_failure_is_unreadable_row_not_a_crash(tmp_path):
     (folder / "extras" / f"{MAMMA}_t09.mkv").touch()
     write_validation(folder / VALIDATION_FILENAME, _mamma_doc())
 
-    findings = validate_library(root,
-                                run=_fake_probe({f"{MAMMA}_t09.mkv": 300}),
-                                search=_no_search)
+    findings = validate_library(root, run=_fake_probe({f"{MAMMA}_t09.mkv": 300}), search=_no_search)
 
     assert findings == [
-        Finding("movies/" + MAMMA, "unreadable", f"{MAMMA}.mkv: duration unreadable",
-                path=f"{MAMMA}.mkv"),
-        Finding("movies/" + MAMMA, "staging name", f"extras/{MAMMA}_t09.mkv",
-                path=f"extras/{MAMMA}_t09.mkv"),
+        Finding(
+            "movies/" + MAMMA,
+            "unreadable",
+            f"{MAMMA}.mkv: duration unreadable",
+            path=f"{MAMMA}.mkv",
+        ),
+        Finding(
+            "movies/" + MAMMA,
+            "staging name",
+            f"extras/{MAMMA}_t09.mkv",
+            path=f"extras/{MAMMA}_t09.mkv",
+        ),
     ]
 
 
 # TV: doc-based and season-list-based checks
+
 
 def _show_tree(tmp_path):
     show = tmp_path / "library" / "tv" / "Show (2019)"
@@ -744,16 +1038,25 @@ def _show_tree(tmp_path):
 
 
 def _show_doc():
-    return tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [1, 2],
-                       [tv_row(1, "Show (2019) - S02E01.mkv", 3, 2600, 2580),
-                        tv_row(2, "Show (2019) - S02E02.mkv", 4, 2601, 2580)])
+    return tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "SHOW_S2",
+        "a1b2c3d4",
+        [1, 2],
+        [
+            tv_row(1, "Show (2019) - S02E01.mkv", 3, 2600, 2580),
+            tv_row(2, "Show (2019) - S02E02.mkv", 4, 2601, 2580),
+        ],
+    )
 
 
 def test_validate_tv_doc_fallback_flags_missing_episode(tmp_path, capsys):
     """Doc-based missing episodes: the season fetch fails (one warning), the
     doc's episode rows stand in as the expected set, and the present episode
     grades against its doc runtime."""
-    show, season = _show_tree(tmp_path)
+    _show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E01.mkv").touch()
     write_validation(season / VALIDATION_FILENAME, _show_doc())
 
@@ -763,14 +1066,21 @@ def test_validate_tv_doc_fallback_flags_missing_episode(tmp_path, capsys):
     findings = validate_library(
         tmp_path / "library",
         run=_fake_probe({"Show (2019) - S02E01.mkv": 2600}),
-        search=_no_search, season_list=down)
+        search=_no_search,
+        season_list=down,
+    )
 
     assert findings == [
-        Finding("tv/Show (2019)", "ratio",
-                "Season 02/Show (2019) - S02E01.mkv  1.01", "green",
-                "Season 02/Show (2019) - S02E01.mkv", 1.01, 0.03),
-        Finding("tv/Show (2019)", "missing episodes",
-                "Season 02 missing E02 (validation.json)"),
+        Finding(
+            "tv/Show (2019)",
+            "ratio",
+            "Season 02/Show (2019) - S02E01.mkv  1.01",
+            "green",
+            "Season 02/Show (2019) - S02E01.mkv",
+            1.01,
+            0.03,
+        ),
+        Finding("tv/Show (2019)", "missing episodes", "Season 02 missing E02 (validation.json)"),
     ]
     assert "TMDB season fetch failed for Show (2019) Season 02" in capsys.readouterr().err
 
@@ -779,7 +1089,7 @@ def test_validate_tv_season_list_preferred_for_missing(tmp_path):
     """When the season list fetches, missing episodes grade against it — a
     doc folder that only ever held part of the season still reports the gap,
     with runs collapsed (E03, E05-E06)."""
-    show, season = _show_tree(tmp_path)
+    _show, season = _show_tree(tmp_path)
     for ep in (1, 2, 4):
         (season / f"Show (2019) - S02E{ep:02d}.mkv").touch()
     write_validation(season / VALIDATION_FILENAME, _show_doc())
@@ -791,13 +1101,21 @@ def test_validate_tv_season_list_preferred_for_missing(tmp_path):
     findings = validate_library(
         tmp_path / "library",
         run=_fake_probe({f"Show (2019) - S02E{e:02d}.mkv": 2600 for e in (1, 2, 4)}),
-        search=_no_search, season_list=season_list)
+        search=_no_search,
+        season_list=season_list,
+    )
 
     missing = [f for f in findings if f.check == "missing episodes"]
-    assert missing == [Finding("tv/Show (2019)", "missing episodes",
-                               "Season 02 missing E03, E05-E06 (TMDB season list)")]
+    assert missing == [
+        Finding(
+            "tv/Show (2019)",
+            "missing episodes",
+            "Season 02 missing E03, E05-E06 (TMDB season list)",
+        )
+    ]
     assert [f.detail for f in findings if f.check == "ratio"] == [
-        f"Season 02/Show (2019) - S02E0{e}.mkv  1.01" for e in (1, 2, 4)]
+        f"Season 02/Show (2019) - S02E0{e}.mkv  1.01" for e in (1, 2, 4)
+    ]
 
 
 def test_validate_tv_specials_folder_is_season_0(tmp_path):
@@ -808,10 +1126,18 @@ def test_validate_tv_specials_folder_is_season_0(tmp_path):
     specials = show / "Specials"
     specials.mkdir(parents=True)
     (specials / "Show (2010) - S00E01.mkv").touch()
-    write_validation(specials / VALIDATION_FILENAME,
-                     tv_document("456", "Show (2010)", 0, "SHOW_S0", "a1b2c3d4", [1],
-                                 [tv_row(1, "Show (2010) - S00E01.mkv", 3,
-                                         2580, 2580)]))
+    write_validation(
+        specials / VALIDATION_FILENAME,
+        tv_document(
+            "456",
+            "Show (2010)",
+            0,
+            "SHOW_S0",
+            "a1b2c3d4",
+            [1],
+            [tv_row(1, "Show (2010) - S00E01.mkv", 3, 2580, 2580)],
+        ),
+    )
 
     def season_list(tv_id, n):
         assert (tv_id, n) == ("456", 0)
@@ -820,14 +1146,21 @@ def test_validate_tv_specials_folder_is_season_0(tmp_path):
     findings = validate_library(
         tmp_path / "library",
         run=_fake_probe({"Show (2010) - S00E01.mkv": 2580}),
-        search=_no_search, season_list=season_list)
+        search=_no_search,
+        season_list=season_list,
+    )
 
     assert findings == [
-        Finding("tv/Show (2010)", "ratio",
-                "Specials/Show (2010) - S00E01.mkv  1.00", "green",
-                "Specials/Show (2010) - S00E01.mkv", 1.00, 0.04),
-        Finding("tv/Show (2010)", "missing episodes",
-                "Season 00 missing E02 (TMDB season list)"),
+        Finding(
+            "tv/Show (2010)",
+            "ratio",
+            "Specials/Show (2010) - S00E01.mkv  1.00",
+            "green",
+            "Specials/Show (2010) - S00E01.mkv",
+            1.00,
+            0.04,
+        ),
+        Finding("tv/Show (2010)", "missing episodes", "Season 00 missing E02 (TMDB season list)"),
     ]
 
 
@@ -835,12 +1168,20 @@ def test_validate_tv_double_episode_grades_sum_and_is_never_missing(tmp_path):
     """A double (`S02E05-E06.mkv`, one file, never split) is one ratio row
     graded against the SUM of the range's runtimes, and covers E06 in the
     missing check — no false E06-missing, no 2.0 false yellow."""
-    show, season = _show_tree(tmp_path)
+    _show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E05-E06.mkv").touch()
-    write_validation(season / VALIDATION_FILENAME,
-                     tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [5],
-                                 [tv_row(5, "Show (2019) - S02E05-E06.mkv", 9,
-                                         5160, 2580)]))
+    write_validation(
+        season / VALIDATION_FILENAME,
+        tv_document(
+            "456",
+            "Show (2019)",
+            2,
+            "SHOW_S2",
+            "a1b2c3d4",
+            [5],
+            [tv_row(5, "Show (2019) - S02E05-E06.mkv", 9, 5160, 2580)],
+        ),
+    )
 
     def season_list(tv_id, n):
         assert (tv_id, n) == ("456", 2)
@@ -849,12 +1190,20 @@ def test_validate_tv_double_episode_grades_sum_and_is_never_missing(tmp_path):
     findings = validate_library(
         tmp_path / "library",
         run=_fake_probe({"Show (2019) - S02E05-E06.mkv": 5160}),
-        search=_no_search, season_list=season_list)
+        search=_no_search,
+        season_list=season_list,
+    )
 
     assert findings == [
-        Finding("tv/Show (2019)", "ratio",
-                "Season 02/Show (2019) - S02E05-E06.mkv  E05-E06  1.00",
-                "green", "Season 02/Show (2019) - S02E05-E06.mkv", 1.00, 0.04),
+        Finding(
+            "tv/Show (2019)",
+            "ratio",
+            "Season 02/Show (2019) - S02E05-E06.mkv  E05-E06  1.00",
+            "green",
+            "Season 02/Show (2019) - S02E05-E06.mkv",
+            1.00,
+            0.04,
+        ),
     ]
 
 
@@ -869,26 +1218,54 @@ def test_validate_tv_whole_show_doc_reads_only_its_season(tmp_path):
     (s1 / "Show (2019) - S01E01.mkv").touch()
     (s2 / "Show (2019) - S02E01.mkv").touch()
     doc = merge_tv_document(
-        tv_document("456", "Show (2019)", 1, "S1", "run1", [1],
-                    [tv_row(1, "Show (2019) - S01E01.mkv", 0, 1800, 1800)]),
-        tv_document("456", "Show (2019)", 2, "S2", "run2", [1],
-                    [tv_row(1, "Show (2019) - S02E01.mkv", 0, 2600, 2580)]))
+        tv_document(
+            "456",
+            "Show (2019)",
+            1,
+            "S1",
+            "run1",
+            [1],
+            [tv_row(1, "Show (2019) - S01E01.mkv", 0, 1800, 1800)],
+        ),
+        tv_document(
+            "456",
+            "Show (2019)",
+            2,
+            "S2",
+            "run2",
+            [1],
+            [tv_row(1, "Show (2019) - S02E01.mkv", 0, 2600, 2580)],
+        ),
+    )
     write_validation(s1 / VALIDATION_FILENAME, doc)
     write_validation(s2 / VALIDATION_FILENAME, doc)
 
     findings = validate_library(
         tmp_path / "library",
-        run=_fake_probe({"Show (2019) - S01E01.mkv": 1800,
-                         "Show (2019) - S02E01.mkv": 2600}),
-        search=_no_search, season_list=lambda tv_id, n: [])
+        run=_fake_probe({"Show (2019) - S01E01.mkv": 1800, "Show (2019) - S02E01.mkv": 2600}),
+        search=_no_search,
+        season_list=lambda tv_id, n: [],
+    )
 
     assert findings == [
-        Finding("tv/Show (2019)", "ratio",
-                "Season 01/Show (2019) - S01E01.mkv  1.00",
-                "green", "Season 01/Show (2019) - S01E01.mkv", 1.00, 0.04),
-        Finding("tv/Show (2019)", "ratio",
-                "Season 02/Show (2019) - S02E01.mkv  1.01",
-                "green", "Season 02/Show (2019) - S02E01.mkv", 1.01, 0.03),
+        Finding(
+            "tv/Show (2019)",
+            "ratio",
+            "Season 01/Show (2019) - S01E01.mkv  1.00",
+            "green",
+            "Season 01/Show (2019) - S01E01.mkv",
+            1.00,
+            0.04,
+        ),
+        Finding(
+            "tv/Show (2019)",
+            "ratio",
+            "Season 02/Show (2019) - S02E01.mkv  1.01",
+            "green",
+            "Season 02/Show (2019) - S02E01.mkv",
+            1.01,
+            0.03,
+        ),
     ]
 
 
@@ -911,17 +1288,31 @@ def test_validate_tv_legacy_uses_search_and_season_list(tmp_path):
 
     findings = validate_library(
         tmp_path / "library",
-        run=_fake_probe({"Show (2016) - S01E01.mkv": 1800,
-                         "Show (2016) - S01E02.mkv": 1900}),
-        search=search, season_list=season_list)
+        run=_fake_probe({"Show (2016) - S01E01.mkv": 1800, "Show (2016) - S01E02.mkv": 1900}),
+        search=search,
+        season_list=season_list,
+    )
 
     assert findings == [
-        Finding("tv/Show (2016)", "ratio", "Season 01/Show (2016) - S01E01.mkv  1.00",
-                "green", "Season 01/Show (2016) - S01E01.mkv", 1.00, 0.04),
-        Finding("tv/Show (2016)", "ratio", "Season 01/Show (2016) - S01E02.mkv  1.06",
-                "yellow", "Season 01/Show (2016) - S01E02.mkv", 1.06, 0.02),
-        Finding("tv/Show (2016)", "missing episodes",
-                "Season 01 missing E03 (TMDB season list)"),
+        Finding(
+            "tv/Show (2016)",
+            "ratio",
+            "Season 01/Show (2016) - S01E01.mkv  1.00",
+            "green",
+            "Season 01/Show (2016) - S01E01.mkv",
+            1.00,
+            0.04,
+        ),
+        Finding(
+            "tv/Show (2016)",
+            "ratio",
+            "Season 01/Show (2016) - S01E02.mkv  1.06",
+            "yellow",
+            "Season 01/Show (2016) - S01E02.mkv",
+            1.06,
+            0.02,
+        ),
+        Finding("tv/Show (2016)", "missing episodes", "Season 01 missing E03 (TMDB season list)"),
     ]
 
 
@@ -934,62 +1325,102 @@ def test_validate_tv_unresolved_identity_skips_missing_and_ratio(tmp_path):
     (show / "Season 01" / "Show (2016) - S01E01.mkv").touch()
     (show / "extras" / "Show (2016)_t03.mkv").touch()
 
-    findings = validate_library(tmp_path / "library", run=_fake_probe({}),
-                                search=lambda k, q, y: None,
-                                season_list=_no_season_list)
+    findings = validate_library(
+        tmp_path / "library",
+        run=_fake_probe({}),
+        search=lambda k, q, y: None,
+        season_list=_no_season_list,
+    )
 
     assert findings == [
         Finding("tv/Show (2016)", "unidentified", 'TMDB search: no match for "Show" (2016)'),
-        Finding("tv/Show (2016)", "staging name", "extras/Show (2016)_t03.mkv",
-                path="extras/Show (2016)_t03.mkv"),
+        Finding(
+            "tv/Show (2016)",
+            "staging name",
+            "extras/Show (2016)_t03.mkv",
+            path="extras/Show (2016)_t03.mkv",
+        ),
     ]
 
 
 def test_validate_tv_episode_without_runtime_is_blank(tmp_path):
     """An episode the sources give no runtime for: a blank ratio cell — never
     yellow (TMDB lists it with none; the doc records null)."""
-    show, season = _show_tree(tmp_path)
+    _show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E05.mkv").touch()
-    doc = tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [5],
-                      [tv_row(5, "Show (2019) - S02E05.mkv", None, 2600, None)])
+    doc = tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "SHOW_S2",
+        "a1b2c3d4",
+        [5],
+        [tv_row(5, "Show (2019) - S02E05.mkv", None, 2600, None)],
+    )
     write_validation(season / VALIDATION_FILENAME, doc)
 
     findings = validate_library(
         tmp_path / "library",
         run=_fake_probe({"Show (2019) - S02E05.mkv": 2600}),
-        search=_no_search, season_list=lambda tv_id, n: [])
+        search=_no_search,
+        season_list=lambda tv_id, n: [],
+    )
 
-    assert findings == [Finding("tv/Show (2019)", "ratio",
-                                "Season 02/Show (2019) - S02E05.mkv",
-                                path="Season 02/Show (2019) - S02E05.mkv")]
+    assert findings == [
+        Finding(
+            "tv/Show (2019)",
+            "ratio",
+            "Season 02/Show (2019) - S02E05.mkv",
+            path="Season 02/Show (2019) - S02E05.mkv",
+        )
+    ]
 
 
 def test_validate_tv_unreadable_episode_is_a_row_not_a_crash(tmp_path):
     """An episode file that won't probe: an unreadable row, the season's
     missing-episode check keeps running."""
-    show, season = _show_tree(tmp_path)
+    _show, season = _show_tree(tmp_path)
     (season / "Show (2019) - S02E01.mkv").touch()
     (season / "Show (2019) - S02E02.mkv").touch()
-    doc = tv_document("456", "Show (2019)", 2, "SHOW_S2", "a1b2c3d4", [1],
-                      [tv_row(1, "Show (2019) - S02E01.mkv", 3, 2600, 2580)])
+    doc = tv_document(
+        "456",
+        "Show (2019)",
+        2,
+        "SHOW_S2",
+        "a1b2c3d4",
+        [1],
+        [tv_row(1, "Show (2019) - S02E01.mkv", 3, 2600, 2580)],
+    )
     write_validation(season / VALIDATION_FILENAME, doc)
 
     findings = validate_library(
         tmp_path / "library",
         run=_fake_probe({"Show (2019) - S02E01.mkv": 2600}),
-        search=_no_search, season_list=lambda tv_id, n: [])
+        search=_no_search,
+        season_list=lambda tv_id, n: [],
+    )
 
     assert findings == [
-        Finding("tv/Show (2019)", "ratio",
-                "Season 02/Show (2019) - S02E01.mkv  1.01", "green",
-                "Season 02/Show (2019) - S02E01.mkv", 1.01, 0.03),
-        Finding("tv/Show (2019)", "unreadable",
-                "Season 02/Show (2019) - S02E02.mkv: duration unreadable",
-                path="Season 02/Show (2019) - S02E02.mkv"),
+        Finding(
+            "tv/Show (2019)",
+            "ratio",
+            "Season 02/Show (2019) - S02E01.mkv  1.01",
+            "green",
+            "Season 02/Show (2019) - S02E01.mkv",
+            1.01,
+            0.03,
+        ),
+        Finding(
+            "tv/Show (2019)",
+            "unreadable",
+            "Season 02/Show (2019) - S02E02.mkv: duration unreadable",
+            path="Season 02/Show (2019) - S02E02.mkv",
+        ),
     ]
 
 
 # Duplicate ids across folders
+
 
 def test_validate_duplicate_id_across_folders_flagged_once(tmp_path):
     """One film under two folders — a doc folder and a legacy folder whose
@@ -1007,15 +1438,21 @@ def test_validate_duplicate_id_across_folders_flagged_once(tmp_path):
         assert (kind, query, year) == ("movie", "Mamma Mia 2", "2008")
         return TMDBPick("Mamma Mia!", "2008", "en", "movie", "471")
 
-    findings = validate_library(root, run=_fake_probe({"Mamma Mia 2 (2008).mkv": 6252}),
-                                search=search, fetch_details=_details(6480))
+    findings = validate_library(
+        root,
+        run=_fake_probe({"Mamma Mia 2 (2008).mkv": 6252}),
+        search=search,
+        fetch_details=_details(6480),
+    )
 
     duplicates = [f for f in findings if f.check == "duplicate id"]
-    assert duplicates == [Finding("movies/Mamma Mia 2 (2008)", "duplicate id",
-                                  "tmdb movie 471 also under movies/" + MAMMA)]
+    assert duplicates == [
+        Finding(
+            "movies/Mamma Mia 2 (2008)", "duplicate id", "tmdb movie 471 also under movies/" + MAMMA
+        )
+    ]
     # one legacy ratio row (the re-encode under the second folder) + the dup row
-    assert [f.detail for f in findings if f.check == "ratio"] == [
-        "Mamma Mia 2 (2008).mkv  0.96"]
+    assert [f.detail for f in findings if f.check == "ratio"] == ["Mamma Mia 2 (2008).mkv  0.96"]
 
 
 def test_validate_single_id_never_duplicates(tmp_path):
@@ -1029,6 +1466,7 @@ def test_validate_single_id_never_duplicates(tmp_path):
 
 # The walk, the table, and the entry
 
+
 def test_validate_empty_library_is_no_findings(tmp_path):
     root = _library(tmp_path)
     assert validate_library(root, run=_fake_probe({}), search=_no_search) == []
@@ -1037,17 +1475,23 @@ def test_validate_empty_library_is_no_findings(tmp_path):
 def test_validate_missing_library_roots_read_no_findings(tmp_path):
     """Neither library/movies nor library/tv under the root: nothing walks,
     nothing raises."""
-    assert validate_library(tmp_path / "empty", run=_fake_probe({}),
-                            search=_no_search) == []
+    assert validate_library(tmp_path / "empty", run=_fake_probe({}), search=_no_search) == []
 
 
 def test_print_findings_renders_the_one_table(capsys):
     """Findings render as rows with the Δ column; an empty walk prints the
     clean summary. Short names: the table must also read at 80 columns."""
-    findings = [Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.77", "red",
-                        "Up (2009).mkv", 0.77, -0.15),
-                Finding("movies/Up (2009)", "staging name", "extras/Up (2009)_t21.mkv",
-                        path="extras/Up (2009)_t21.mkv")]
+    findings = [
+        Finding(
+            "movies/Up (2009)", "ratio", "Up (2009).mkv  0.77", "red", "Up (2009).mkv", 0.77, -0.15
+        ),
+        Finding(
+            "movies/Up (2009)",
+            "staging name",
+            "extras/Up (2009)_t21.mkv",
+            path="extras/Up (2009)_t21.mkv",
+        ),
+    ]
     print_findings(findings, Path("/mnt/videos"))
     out = capsys.readouterr().err
     assert "Library validation" in out
@@ -1061,6 +1505,7 @@ def test_print_findings_renders_the_one_table(capsys):
 
 # The severity tiers, the issues view, the action plan, and JSON
 
+
 def test_ratio_severity_tiers_and_band_delta():
     """green inside the band; yellow just outside; red once the overshoot
     exceeds the PAL-vs-NTSC speedup — and delta carries the 0.xx amount."""
@@ -1068,10 +1513,10 @@ def test_ratio_severity_tiers_and_band_delta():
     assert ratio_severity(0.92) == "green" and ratio_severity(1.04) == "green"
     assert ratio_severity(0.90) == "yellow" and ratio_severity(1.05) == "yellow"
     assert ratio_severity(0.87) == "red" and ratio_severity(1.09) == "red"
-    assert band_delta(1.00) == 0.04      # margin inside the norm
+    assert band_delta(1.00) == 0.04  # margin inside the norm
     assert band_delta(0.95) == 0.03
-    assert band_delta(0.90) == -0.02     # short of the norm
-    assert band_delta(1.17) == 0.13      # over the norm
+    assert band_delta(0.90) == -0.02  # short of the norm
+    assert band_delta(1.17) == 0.13  # over the norm
 
 
 def test_validate_movie_just_off_band_ratio_reads_yellow(tmp_path):
@@ -1083,27 +1528,50 @@ def test_validate_movie_just_off_band_ratio_reads_yellow(tmp_path):
     (folder / f"{MAMMA}.mkv").touch()
     write_validation(folder / VALIDATION_FILENAME, _mamma_doc())
 
-    findings = validate_library(root, run=_fake_probe({f"{MAMMA}.mkv": 5900}),
-                                search=_no_search, season_list=_no_season_list)
+    findings = validate_library(
+        root,
+        run=_fake_probe({f"{MAMMA}.mkv": 5900}),
+        search=_no_search,
+        season_list=_no_season_list,
+    )
 
-    assert findings == [Finding("movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  0.91",
-                                "yellow", f"{MAMMA}.mkv", 0.91, -0.01)]
+    assert findings == [
+        Finding(
+            "movies/" + MAMMA, "ratio", f"{MAMMA}.mkv  0.91", "yellow", f"{MAMMA}.mkv", 0.91, -0.01
+        )
+    ]
 
 
 def test_is_issue_off_band_extras_and_every_other_check():
     """Green mains are not issues; graded extras are (the two-candidates
     lead); off-band rows and every non-ratio check are."""
-    green = Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.96", "green",
-                    "A (2000).mkv", 0.96, 0.04)
-    green_extra = Finding("movies/A (2000)", "ratio",
-                          "extras/A (2000)_t01.mkv  0.96", "green",
-                          "extras/A (2000)_t01.mkv", 0.96, 0.04)
-    red = Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.16", "red",
-                  "A (2000).mkv", 0.16, -0.76)
-    tv_green = Finding("tv/S (2019)", "ratio", "Season 01/S - S01E01.mkv  1.00",
-                       "green", "Season 01/S - S01E01.mkv", 1.00, 0.04)
-    staging = Finding("movies/A (2000)", "staging name", "extras/A (2000)_t00.mkv",
-                      path="extras/A (2000)_t00.mkv")
+    green = Finding(
+        "movies/A (2000)", "ratio", "A (2000).mkv  0.96", "green", "A (2000).mkv", 0.96, 0.04
+    )
+    green_extra = Finding(
+        "movies/A (2000)",
+        "ratio",
+        "extras/A (2000)_t01.mkv  0.96",
+        "green",
+        "extras/A (2000)_t01.mkv",
+        0.96,
+        0.04,
+    )
+    red = Finding(
+        "movies/A (2000)", "ratio", "A (2000).mkv  0.16", "red", "A (2000).mkv", 0.16, -0.76
+    )
+    tv_green = Finding(
+        "tv/S (2019)",
+        "ratio",
+        "Season 01/S - S01E01.mkv  1.00",
+        "green",
+        "Season 01/S - S01E01.mkv",
+        1.00,
+        0.04,
+    )
+    staging = Finding(
+        "movies/A (2000)", "staging name", "extras/A (2000)_t00.mkv", path="extras/A (2000)_t00.mkv"
+    )
     assert not is_issue(green) and not is_issue(tv_green)
     assert is_issue(green_extra) and is_issue(red) and is_issue(staging)
 
@@ -1113,11 +1581,17 @@ def test_ungraded_extra_is_not_an_issue_and_renders_as_ungraded(monkeypatch):
     ungraded: not an issue, `·` in the check column, out of the result-line
     count, and the JSON report no longer crashes on it."""
     import io
+
     from rich.console import Console
+
     from skive import ui
 
-    ungraded = Finding("movies/A (2000)", "ratio", "extras/A (2000) - Extra 01.mkv",
-                       path="extras/A (2000) - Extra 01.mkv")
+    ungraded = Finding(
+        "movies/A (2000)",
+        "ratio",
+        "extras/A (2000) - Extra 01.mkv",
+        path="extras/A (2000) - Extra 01.mkv",
+    )
     assert not is_issue(ungraded)
     report = json_report([ungraded], Path("/mnt/videos/library"))
     assert report["findings"][0]["recommendation"] is None
@@ -1125,9 +1599,11 @@ def test_ungraded_extra_is_not_an_issue_and_renders_as_ungraded(monkeypatch):
     assert report["recommendations"] == []
 
     screen = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(file=screen, force_terminal=True,
-                                               theme=ui.THEME, color_system=None,
-                                               width=120))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(file=screen, force_terminal=True, theme=ui.THEME, color_system=None, width=120),
+    )
     print_findings([ungraded], Path("/mnt/videos"))
     out = screen.getvalue()
     assert "· ratio" in out and "! ratio" not in out
@@ -1138,45 +1614,70 @@ def test_recommendations_worst_first_with_action_wording():
     """Red folders lead, staging-only folders trail; the lines name the
     file, the reading, and what to do."""
     findings = [
-        Finding("movies/Ok (2001)", "ratio", "Ok (2001).mkv  0.95", "green",
-                "Ok (2001).mkv", 0.95, 0.03),
-        Finding("movies/Da Vinci (2006)", "staging name", "extras/x_t00.mkv",
-                path="extras/x_t00.mkv"),
-        Finding("movies/Da Vinci (2006)", "staging name", "extras/x_t01.mkv",
-                path="extras/x_t01.mkv"),
-        Finding("movies/Bad (2009)", "ratio", "Bad (2009).mkv  0.16", "red",
-                "Bad (2009).mkv", 0.16, -0.76),
+        Finding(
+            "movies/Ok (2001)", "ratio", "Ok (2001).mkv  0.95", "green", "Ok (2001).mkv", 0.95, 0.03
+        ),
+        Finding(
+            "movies/Da Vinci (2006)", "staging name", "extras/x_t00.mkv", path="extras/x_t00.mkv"
+        ),
+        Finding(
+            "movies/Da Vinci (2006)", "staging name", "extras/x_t01.mkv", path="extras/x_t01.mkv"
+        ),
+        Finding(
+            "movies/Bad (2009)",
+            "ratio",
+            "Bad (2009).mkv  0.16",
+            "red",
+            "Bad (2009).mkv",
+            0.16,
+            -0.76,
+        ),
     ]
     plan = recommendations(findings)
-    assert [e["folder"] for e in plan] == ["movies/Bad (2009)",
-                                           "movies/Da Vinci (2006)"]
+    assert [e["folder"] for e in plan] == ["movies/Bad (2009)", "movies/Da Vinci (2006)"]
     assert plan[0]["priority"] == "red"
     assert "76% short" in plan[0]["actions"][0]
     assert "PAL-vs-NTSC" in plan[0]["actions"][0]
     assert plan[1]["priority"] == "note"
-    assert plan[1]["actions"] == ["2 file(s) still carry `_tNN` staging "
-                                  "labels — run `skive validate --fix` to "
-                                  "rename them"]
+    assert plan[1]["actions"] == [
+        ("2 file(s) still carry `_tNN` staging labels — run `skive validate --fix` to rename them")
+    ]
 
 
 def test_print_issues_collapses_staging_and_prints_the_plan(capsys):
     """The issues view drops green mains, collapses staging names to one row
     per folder, and ends in the action plan."""
     findings = [
-        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
-                "A (2000).mkv", 0.95, 0.03),
-        Finding("movies/A (2000)", "ratio", "extras/A (2000)_t01.mkv  0.96",
-                "green", "extras/A (2000)_t01.mkv", 0.96, 0.04),
-        Finding("movies/A (2000)", "staging name", "extras/A (2000)_t01.mkv",
-                path="extras/A (2000)_t01.mkv"),
-        Finding("movies/A (2000)", "staging name", "extras/A (2000)_t02.mkv",
-                path="extras/A (2000)_t02.mkv"),
+        Finding(
+            "movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green", "A (2000).mkv", 0.95, 0.03
+        ),
+        Finding(
+            "movies/A (2000)",
+            "ratio",
+            "extras/A (2000)_t01.mkv  0.96",
+            "green",
+            "extras/A (2000)_t01.mkv",
+            0.96,
+            0.04,
+        ),
+        Finding(
+            "movies/A (2000)",
+            "staging name",
+            "extras/A (2000)_t01.mkv",
+            path="extras/A (2000)_t01.mkv",
+        ),
+        Finding(
+            "movies/A (2000)",
+            "staging name",
+            "extras/A (2000)_t02.mkv",
+            path="extras/A (2000)_t02.mkv",
+        ),
     ]
     print_issues(findings, Path("/mnt/videos"))
     out = capsys.readouterr().err
     assert "issues only" in out
     assert "2 files" in out and "_tNN names" in out
-    assert "A (2000).mkv  0.95" not in out        # the green main stays out
+    assert "A (2000).mkv  0.95" not in out  # the green main stays out
     assert "action plan" in out
     assert "two-candidates" in out
 
@@ -1188,24 +1689,38 @@ def test_json_report_shape_counts_and_issues_filter():
     """The JSON report carries the band definitions, parsed ratio/delta per
     row, summary counts, and the plan; issues=True drops green mains."""
     findings = [
-        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.77", "red",
-                "A (2000).mkv", 0.77, -0.15),
-        Finding("tv/S (2019)", "ratio", "Season 01/S (2019) - S01E01.mkv  1.00",
-                "green", "Season 01/S (2019) - S01E01.mkv", 1.00, 0.04),
-        Finding("movies/A (2000)", "staging name", "extras/A (2000)_t02.mkv",
-                path="extras/A (2000)_t02.mkv"),
+        Finding(
+            "movies/A (2000)", "ratio", "A (2000).mkv  0.77", "red", "A (2000).mkv", 0.77, -0.15
+        ),
+        Finding(
+            "tv/S (2019)",
+            "ratio",
+            "Season 01/S (2019) - S01E01.mkv  1.00",
+            "green",
+            "Season 01/S (2019) - S01E01.mkv",
+            1.00,
+            0.04,
+        ),
+        Finding(
+            "movies/A (2000)",
+            "staging name",
+            "extras/A (2000)_t02.mkv",
+            path="extras/A (2000)_t02.mkv",
+        ),
     ]
     report = json_report(findings, Path("/mnt/videos/library"))
     assert list(report)[-1] == "recommendations"  # after findings, not buried
-    assert report["ratio_band"] == {"norm": [0.92, 1.04],
-                                    "red_beyond": [0.8783, 1.0817]}
-    assert report["summary"]["ratio"] == {"green": 1, "yellow": 0, "red": 1,
-                                          "blank": 0}
+    assert report["ratio_band"] == {"norm": [0.92, 1.04], "red_beyond": [0.8783, 1.0817]}
+    assert report["summary"]["ratio"] == {"green": 1, "yellow": 0, "red": 1, "blank": 0}
     assert report["summary"]["other"] == {"staging name": 1}
     first = report["findings"][0]
-    assert (first["folder"], first["check"], first["band"],
-            first["ratio"], first["delta"]) == ("movies/A (2000)", "ratio",
-                                                "red", 0.77, -0.15)
+    assert (first["folder"], first["check"], first["band"], first["ratio"], first["delta"]) == (
+        "movies/A (2000)",
+        "ratio",
+        "red",
+        0.77,
+        -0.15,
+    )
     assert "PAL-vs-NTSC" in first["recommendation"]  # per-row, self-contained
     assert report["findings"][1]["recommendation"] is None  # green TV main
     staging_row = report["findings"][2]
@@ -1226,8 +1741,7 @@ def test_staging_name_catches_the_old_e_labels_too(tmp_path):
 
     rows = staging_name_findings(folder, "movies/M (2000)")
 
-    assert sorted(r.path for r in rows) == [
-        "extras/M (2000)_e07.mkv", "extras/M (2000)_t01.mkv"]
+    assert sorted(r.path for r in rows) == ["extras/M (2000)_e07.mkv", "extras/M (2000)_t01.mkv"]
 
 
 def test_fix_staging_names_renames_extras_labels(tmp_path):
@@ -1263,19 +1777,20 @@ def test_fix_staging_names_renames_extras_labels(tmp_path):
 def test_run_validate_fix_applies_then_reports_clean(tmp_path, capsys, monkeypatch):
     """--fix applies before the walk: the renamed file vanishes from the
     findings and the JSON carries the fixed list."""
-    monkeypatch.setattr("skive.validation.search_first",
-                           lambda kind, query, year=None: None)
+    monkeypatch.setattr("skive.validation.search_first", lambda kind, query, year=None: None)
     ex = tmp_path / "library" / "movies" / "Up (2009)" / "extras"
     ex.mkdir(parents=True)
     (ex / "Up (2009)_t01.mkv").write_text("x")
 
-    run_validate(tmp_path, run=_fake_probe({"Up (2009) - Extra 01.mkv": 300}),
-                 json_=True, fix=True)
+    run_validate(tmp_path, run=_fake_probe({"Up (2009) - Extra 01.mkv": 300}), json_=True, fix=True)
 
     report = json.loads(capsys.readouterr().out)
     assert report["fixed"] == [
-        {"from": "movies/Up (2009)/extras/Up (2009)_t01.mkv",
-         "to": "movies/Up (2009)/extras/Up (2009) - Extra 01.mkv"}]
+        {
+            "from": "movies/Up (2009)/extras/Up (2009)_t01.mkv",
+            "to": "movies/Up (2009)/extras/Up (2009) - Extra 01.mkv",
+        }
+    ]
     assert report["summary"]["other"].get("staging name") is None
     assert (ex / "Up (2009) - Extra 01.mkv").exists()
 
@@ -1285,15 +1800,15 @@ def test_validate_result_line_counts_issues_per_folder(capsys):
     once per folder), `ok    no issues` when every row is green, and
     `ok    no findings` for an empty walk — the last line of the report."""
     findings = [
-        Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.77", "red",
-                "Up (2009).mkv", 0.77, -0.15),
-        Finding("movies/Up (2009)", "staging name", "extras/a_t01.mkv",
-                path="extras/a_t01.mkv"),
-        Finding("movies/Up (2009)", "staging name", "extras/a_t02.mkv",
-                path="extras/a_t02.mkv"),
+        Finding(
+            "movies/Up (2009)", "ratio", "Up (2009).mkv  0.77", "red", "Up (2009).mkv", 0.77, -0.15
+        ),
+        Finding("movies/Up (2009)", "staging name", "extras/a_t01.mkv", path="extras/a_t01.mkv"),
+        Finding("movies/Up (2009)", "staging name", "extras/a_t02.mkv", path="extras/a_t02.mkv"),
         Finding("tv/S (2019)", "missing episodes", "Season 01: E03"),
-        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
-                "A (2000).mkv", 0.95, 0.03),
+        Finding(
+            "movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green", "A (2000).mkv", 0.95, 0.03
+        ),
     ]
     print_findings(findings, Path("/mnt/videos"))
     # the full table shows each staging file as its own row: 4 issue rows
@@ -1302,7 +1817,7 @@ def test_validate_result_line_counts_issues_per_folder(capsys):
     print_issues(findings, Path("/mnt/videos"))
     err = capsys.readouterr().err
     assert err.splitlines()[-1] == "warn  3 issues in 2 folders"
-    assert "  movies/Up (2009) — red" in err      # plain plan heading
+    assert "  movies/Up (2009) — red" in err  # plain plan heading
     assert "\x1b" not in err
 
     print_findings(findings[-1:], Path("/mnt/videos"))
@@ -1316,18 +1831,33 @@ def test_validate_plain_check_column_carries_severity_words(capsys):
     """Plain (non-TTY) output keeps the severity per row: the plain event
     word (`fail`, `warn`, `ok`, `info`) leads the check name."""
     findings = [
-        Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.90", "yellow",
-                "Up (2009).mkv", 0.90, -0.02),
+        Finding(
+            "movies/Up (2009)",
+            "ratio",
+            "Up (2009).mkv  0.90",
+            "yellow",
+            "Up (2009).mkv",
+            0.90,
+            -0.02,
+        ),
         Finding("tv/S (2019)", "missing episodes", "Season 01: E03"),
-        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
-                "A (2000).mkv", 0.95, 0.03),
-        Finding("movies/B (2001)", "ratio", "extras/B (2001) - Extra 01.mkv",
-                path="extras/B (2001) - Extra 01.mkv"),
+        Finding(
+            "movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green", "A (2000).mkv", 0.95, 0.03
+        ),
+        Finding(
+            "movies/B (2001)",
+            "ratio",
+            "extras/B (2001) - Extra 01.mkv",
+            path="extras/B (2001) - Extra 01.mkv",
+        ),
     ]
     print_findings(findings, Path("/mnt/videos"))
     err = capsys.readouterr().err
-    rows = {line.split()[0]: line for line in err.splitlines()
-            if line.strip().startswith(("movies/", "tv/"))}
+    rows = {
+        line.split()[0]: line
+        for line in err.splitlines()
+        if line.strip().startswith(("movies/", "tv/"))
+    }
     assert "warn  ratio" in rows["movies/Up"]
     assert "fail  missing episodes" in rows["tv/S"]
     assert "ok    ratio" in rows["movies/A"]
@@ -1340,19 +1870,31 @@ def test_validate_check_column_carries_severity_symbols(monkeypatch):
     an off-norm ratio, `✓` for a green main; the plan entries are `▸`
     headings."""
     import io
+
     from rich.console import Console
+
     from skive import ui
 
     screen = io.StringIO()
-    monkeypatch.setattr(ui, "console", Console(file=screen, force_terminal=True,
-                                               theme=ui.THEME, color_system=None,
-                                               width=120))
+    monkeypatch.setattr(
+        ui,
+        "console",
+        Console(file=screen, force_terminal=True, theme=ui.THEME, color_system=None, width=120),
+    )
     findings = [
-        Finding("movies/Up (2009)", "ratio", "Up (2009).mkv  0.90", "yellow",
-                "Up (2009).mkv", 0.90, -0.02),
+        Finding(
+            "movies/Up (2009)",
+            "ratio",
+            "Up (2009).mkv  0.90",
+            "yellow",
+            "Up (2009).mkv",
+            0.90,
+            -0.02,
+        ),
         Finding("tv/S (2019)", "missing episodes", "Season 01: E03"),
-        Finding("movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green",
-                "A (2000).mkv", 0.95, 0.03),
+        Finding(
+            "movies/A (2000)", "ratio", "A (2000).mkv  0.95", "green", "A (2000).mkv", 0.95, 0.03
+        ),
     ]
     print_findings(findings, Path("/mnt/videos"))
     out = screen.getvalue()
@@ -1368,8 +1910,7 @@ def test_validate_check_column_carries_severity_symbols(monkeypatch):
 def test_run_validate_json_is_the_bare_report_on_stdout(tmp_path, capsys, monkeypatch):
     """--json: exactly json.dumps(report, indent=2) plus a newline on
     stdout, nothing on stderr — the data path is untouched by the look."""
-    monkeypatch.setattr("skive.validation.search_first",
-                           lambda kind, query, year=None: None)
+    monkeypatch.setattr("skive.validation.search_first", lambda kind, query, year=None: None)
     (tmp_path / "library" / "movies").mkdir(parents=True)
 
     run_validate(tmp_path, run=_fake_probe({}), json_=True)
@@ -1383,6 +1924,7 @@ def test_run_validate_json_is_the_bare_report_on_stdout(tmp_path, capsys, monkey
 def test_exactly_one_main_rule():
     """Exactly one main-marked title passes; zero or several come back as the finding."""
     from skive.validation import MAIN_ACTION, exactly_one_main
+
     assert exactly_one_main({21: MAIN_ACTION, 12: "extra"}) is None
     assert exactly_one_main({21: "extra"}) == []
     assert exactly_one_main({21: MAIN_ACTION, 12: MAIN_ACTION}) == [21, 12]
@@ -1391,6 +1933,7 @@ def test_exactly_one_main_rule():
 def test_arbitrate_main_several_carries_ambiguity_note():
     """Several-near arbitration carries a ready-to-render ambiguity fact; others don't."""
     from skive.validation import arbitrate_main
+
     arb = arbitrate_main([(21, 6252, 4_000_000_000), (12, 6662, 19_000_000_000)], 6480)
     assert arb.kind == "several"
     assert arb.note == "2 titles near the runtime"

@@ -77,8 +77,7 @@ def install_interrupt_handler() -> None:
     signal.signal(signal.SIGINT, _sigint_handler)
 
 
-def kill_child_after_grace(proc: subprocess.Popen,
-                           grace: float = INTERRUPT_GRACE_S) -> None:
+def kill_child_after_grace(proc: subprocess.Popen, grace: float = INTERRUPT_GRACE_S) -> None:
     """Interrupt a running tool child: SIGINT it, wait up to grace seconds,
     then kill and reap (CONTEXT.md: Interrupt). A child that already exited —
     or that exits inside the grace window — is only reaped."""
@@ -139,8 +138,9 @@ class RipLog:
         self.name = name  # mutable: callers assign it mid-run (e.g. the title)
         # short UUID minted per invocation; names this run's raw log
         self.run = uuid.uuid4().hex[:8]
-        mount = Path(root) if root is not None else Path(
-            os.environ.get("VIDEOS_MOUNT", "/mnt/videos"))
+        mount = (
+            Path(root) if root is not None else Path(os.environ.get("VIDEOS_MOUNT", "/mnt/videos"))
+        )
         self._run_log = mount / "logs" / "rip.jsonl"
         self._raw_log = mount / "logs" / "raw" / f"{self.run}.jsonl"
         self._script = script
@@ -153,25 +153,31 @@ class RipLog:
         self._keep_raw = False
 
     def _emit(self, now, phase, status, elapsed_s, name=None):
-        _append_jsonl(self._run_log, {
-            "ts": now.isoformat(timespec="seconds"),
-            "run": self.run,
-            "script": self._script,
-            "software": self._software,
-            "name": self.name if name is None else name,
-            "phase": phase,
-            "status": status,
-            "elapsed_s": elapsed_s,
-        })
+        _append_jsonl(
+            self._run_log,
+            {
+                "ts": now.isoformat(timespec="seconds"),
+                "run": self.run,
+                "script": self._script,
+                "software": self._software,
+                "name": self.name if name is None else name,
+                "phase": phase,
+                "status": status,
+                "elapsed_s": elapsed_s,
+            },
+        )
 
     def raw(self, tool, line):
         """One verbatim tool output line into this run's raw log."""
-        _append_jsonl(self._raw_log, {
-            "ts": self._now().isoformat(timespec="seconds"),
-            "run": self.run,
-            "tool": tool,
-            "line": line,
-        })
+        _append_jsonl(
+            self._raw_log,
+            {
+                "ts": self._now().isoformat(timespec="seconds"),
+                "run": self.run,
+                "tool": tool,
+                "line": line,
+            },
+        )
 
     def scan_dump(self, label: str, out: str) -> None:
         """Persist one full scan's verbatim output to <root>/logs/scan/.
@@ -231,8 +237,7 @@ class RipLog:
         name = self._phase_name
         now = self._now()
         self._phase_name = None
-        self._emit(now, name, status,
-                   int((now - self._phase_start).total_seconds()))
+        self._emit(now, name, status, int((now - self._phase_start).total_seconds()))
 
     def note(self, phase, text, echo=True):
         """Log an untimed note line (elapsed_s 0); tees to stderr unless the
@@ -251,8 +256,7 @@ class RipLog:
             return
         self._interrupted = True
         now = self._now()
-        self._emit(now, "total", "interrupted",
-                   int((now - self._start).total_seconds()))
+        self._emit(now, "total", "interrupted", int((now - self._start).total_seconds()))
 
     def keep_raw(self) -> None:
         """Keep this run's raw log even when the caller exits cleanly.
@@ -279,8 +283,7 @@ class RipLog:
         if rc != 0 or self._phases != 1:
             now = self._now()
             status = "ok" if rc == 0 else f"FAIL({rc})"
-            self._emit(now, "total", status,
-                       int((now - self._start).total_seconds()))
+            self._emit(now, "total", status, int((now - self._start).total_seconds()))
         if rc == 0 and not self._keep_raw:
             self._raw_log.unlink(missing_ok=True)
 
@@ -307,11 +310,15 @@ def ensure_share(mnt: str, env_var: str = "") -> None:
         ui.warn(f"{mnt} is not a mountpoint — using it as a local share")
         return
     if env_var and env_var not in os.environ:
-        ui.fail(f"{env_var} is not set in skive's environment, so skive tried "
-                f"the default {mnt}, which does not exist — export it in the "
-                f"shell skive runs from (env | grep {env_var} there; "
-                f"echo ${env_var} shows unexported shell variables too)")
+        ui.fail(
+            f"{env_var} is not set in skive's environment, so skive tried "
+            f"the default {mnt}, which does not exist — export it in the "
+            f"shell skive runs from (env | grep {env_var} there; "
+            f"echo ${env_var} shows unexported shell variables too)"
+        )
         sys.exit(1)
-    ui.fail(f"{mnt} does not exist — mount the share there first, or point "
-            f"VIDEOS_MOUNT/MUSIC_MOUNT at it")
+    ui.fail(
+        f"{mnt} does not exist — mount the share there first, or point "
+        f"VIDEOS_MOUNT/MUSIC_MOUNT at it"
+    )
     sys.exit(1)

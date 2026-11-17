@@ -22,7 +22,9 @@ import sys
 from skive import subs
 
 
-def rename_forced(title: str, root: str, ffprobe: str, run: bool, inventory=subs.inventory) -> list[str]:
+def rename_forced(
+    title: str, root: str, ffprobe: str, run: bool, inventory=subs.inventory
+) -> list[str]:
     lib = os.path.join(root, "library", "movies", title)
     src = os.path.join(root, "lossless", "movies", title, f"{title}_t00.mkv")
     if not os.path.isdir(lib) or not os.path.isfile(src):
@@ -40,9 +42,13 @@ def rename_forced(title: str, root: str, ffprobe: str, run: bool, inventory=subs
             # runner-up with >= 30% of them is the SDH duplicate, less is junk
             sdh = os.path.join(lib, subs.sidecar_name(title, lang, "sdh"))
             n_old, n_new = subs.count_events(old), subs.count_events(new)
-            why = (f"{os.path.basename(old)} ({n_old} cues) vs {os.path.basename(new)} ({n_new})")
-            if len(mine) < 2 or os.path.exists(sdh) or n_old > n_new \
-                    or n_old * subs._SDH_DEN < n_new * subs._SDH_NUM:
+            why = f"{os.path.basename(old)} ({n_old} cues) vs {os.path.basename(new)} ({n_new})"
+            if (
+                len(mine) < 2
+                or os.path.exists(sdh)
+                or n_old > n_new
+                or n_old * subs._SDH_DEN < n_new * subs._SDH_NUM
+            ):
                 out.append(f"skip {why}: review by hand")
                 continue
             new = sdh
