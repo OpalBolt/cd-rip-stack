@@ -7,6 +7,7 @@ at 80 columns and a narrow width, in color and NO_COLOR."""
 
 import asyncio
 import io
+from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -14,7 +15,7 @@ from textual.widgets import DataTable
 from rich.theme import Theme
 
 from skive import ui
-from skive.scan import TitleInfo
+from skive.scan import TitleInfo, _parse_titles
 from skive.selection import (
     COLUMNS, EXTRA_ACTION, INTERRUPT, QUIT, SKIP_ACTION, EpisodeTable,
     SelectionTable, episode_map, graded_rows, parse_episode, prefill,
@@ -77,6 +78,111 @@ def test_prefill_shorts_take_biggest_and_note_it():
 def test_prefill_empty_scan_names_no_main():
     actions, notes = prefill([], 6480)
     assert actions == {} and notes == {}
+
+
+# The replayed Flame & Citron disc: t38 is the sole green clean title
+# (7816/7800 = 1.002); t0 (ratio 0.856, yellow) is clean too; the other 82
+# titles share one segment map — decoy cluster ×82.
+DECOY_TITLES = _parse_titles(
+    (Path(__file__).parent / "fixtures" / "flammencitron-decoys.txt").read_text())
+
+
+def test_prefill_flammencitron_decoy_disc_names_t38_and_notes_the_cluster():
+    """The replayed F&C dump: t38 prefills main (the sole green clean title),
+    every one of the 82 decoy members' notes cells names the cluster."""
+    actions, notes = prefill(DECOY_TITLES, 7800)
+    assert actions[38] == MAIN_ACTION
+    assert sum(1 for a in actions.values() if a == MAIN_ACTION) == 1
+    decoy_notes = [n for n in notes.values() if n.startswith("decoy cluster")]
+    assert len(decoy_notes) == 82
+    assert all(n == "decoy cluster ×82" for n in decoy_notes)
+    assert 38 not in notes  # the main is clean: no decoy fact on its row
+
+
+def test_prefill_skips_bigger_decoys_for_the_clean_candidate():
+    """Decoys with more bytes than the one clean green candidate never
+    become main — neither by arbitration nor by the biggest-bytes fallback."""
+    titles = [TitleInfo(1, 6500, 20_000_000_000, "en", "", False,
+                        decoy_cluster=3),
+              TitleInfo(2, 6400, 19_000_000_000, "en", "", False,
+                        decoy_cluster=3),
+              TitleInfo(3, 6440, 3_000_000_000, "en", "", False)]
+    actions, notes = prefill(titles, 6480)
+    assert actions == {1: SKIP_ACTION, 2: SKIP_ACTION, 3: MAIN_ACTION}
+    assert notes == {1: "decoy cluster ×3", 2: "decoy cluster ×3"}
+
+
+def test_prefill_scrambled_title_is_skipped_and_noted():
+    titles = [TitleInfo(1, 6450, 4_000_000_000, "en", "", True),
+              TitleInfo(2, 6400, 4_000_000_000, "en", "", False)]
+    actions, notes = prefill(titles, 6480)
+    assert actions == {1: SKIP_ACTION, 2: MAIN_ACTION}
+    assert notes == {1: "shuffled map"}
+
+
+def test_prefill_all_decoys_still_names_exactly_one_main():
+    """An all-decoy disc: the biggest title overall still prefills main —
+    the one-main invariant holds, row note and log state the cluster fact."""
+    log = _FakeLog()
+    titles = [TitleInfo(1, 6000, 5_000_000_000, "en", "", False,
+                        decoy_cluster=3),
+              TitleInfo(2, 6500, 6_000_000_000, "en", "", False,
+                        decoy_cluster=3)]
+    actions, notes = prefill(titles, 6480, log)
+    assert actions == {1: SKIP_ACTION, 2: MAIN_ACTION}
+    assert notes == {1: "decoy cluster ×3",
+                     2: "decoy cluster ×3 biggest bytes — "
+                        "every title decoy-clustered"}
+    assert log.notes == [("main", "main=t2 biggest bytes — every title "
+                                  "decoy-clustered — skipped 2 decoys")]
+
+
+def test_prefill_main_log_line_notes_skipped_decoy_count():
+    """The run-log main line gains `— skipped N decoys` when N>0 and stays
+    byte-identical to the old line when none were skipped."""
+    log = _FakeLog()
+    prefill(DECOY_TITLES, 7800, log)
+    assert log.notes == [("main", "main=t38 near the runtime — automatic"
+                                  " — skipped 82 decoys")]
+    clean_log = _FakeLog()
+    prefill(TITLES, 6480, clean_log)
+    assert clean_log.notes == [("main", "main=t12 default (biggest bytes)"
+                                        " — 2 titles near the runtime")]
+
+
+class _FakeLog:
+    """Captures note() calls like the run log's phase notes."""
+
+    def __init__(self):
+        self.notes = []
+
+    def note(self, phase, text, echo=True):
+        self.notes.append((phase, text))
+
+
+def test_m_on_a_decoy_row_moves_the_main_and_enter_accepts_it():
+    """Notes are facts, never gates: `m` on a decoy row moves the main
+    there and Enter still accepts."""
+    _scenario(("m", "enter"), lambda app: assert_eq(app.return_value,
+               dict(app.return_value) | {DECOY_TITLES[0].number: MAIN_ACTION}),
+        titles=DECOY_TITLES, runtime_s=7800)
+
+
+def test_decoy_fact_shows_in_the_table_and_the_accepted_echo(monkeypatch):
+    """The decoy cluster fact is visible in the table's notes cell and in
+    the accepted-table echo under it."""
+    def check(app):
+        # rows in title order: row 0 is t0 (clean), row 1 the first decoy
+        assert_eq("decoy cluster ×82" in str(app.query_one(DataTable)
+                                            .get_row_at(1)[5]), True)
+    _scenario((), check, titles=DECOY_TITLES, runtime_s=7800)
+    out = io.StringIO()
+    con = Console(file=out, width=120, theme=THEME, highlight=False,
+                  emoji=False, force_terminal=False, color_system=None)
+    monkeypatch.setattr(ui, "console", con)
+    print_accepted("Flammen & Citronen", DECOY_TITLES,
+                   {38: MAIN_ACTION}, 7800)
+    assert "decoy cluster ×82" in out.getvalue()
 
 
 def test_prefill_unknown_runtime_prefills_biggest_silently():

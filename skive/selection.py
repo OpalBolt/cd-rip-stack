@@ -72,28 +72,48 @@ def prefill(titles: list[TitleInfo], runtime_s: int | None,
     skips. Several candidates near the runtime prefill biggest with the
     ambiguity named in the main row's notes; zero or unknown prefills
     biggest silently; no candidate at all (shorts, bonus-shaped discs)
-    prefills biggest too so exactly one main always holds. Every outcome
+    prefills biggest too so exactly one main always holds. Decoy-cluster
+    members and scrambled titles never enter the candidate pool — their rows
+    carry the decoy fact in the notes cell — and an all-decoy disc still
+    prefills the biggest title overall as its one main, the fact stated on
+    row and log. Every outcome
     lands in the run log under phase "main".
 
     Returns:
         (actions, notes) — title number -> verb, and the notes cell text by
-        title number (ambiguity facts only)
+        title number (ambiguity and decoy facts only)
     """
     ordered = sorted(titles, key=lambda t: t.number)
     triples = [(t.number, t.seconds, t.size) for t in ordered]
     actions = {n: SKIP_ACTION for n, _s, _size in triples}
     notes: dict[int, str] = {}
+    decoys = [t for t in ordered if t.decoy_cluster or t.scrambled]
+    for t in decoys:
+        notes[t.number] = (f"decoy cluster ×{t.decoy_cluster}"
+                           if t.decoy_cluster else "shuffled map")
+    skip_note = f" — skipped {len(decoys)} decoys" if decoys else ""
 
     if not triples:
         _note(log, "main", "main=none — no candidate main on the disc")
         return actions, notes
 
-    arb = arbitrate_main(main_candidates(triples), runtime_s)
-    if arb.pick is None:
+    clean = [(n, s, size)
+             for t, (n, s, size) in zip(ordered, triples)
+             if not t.decoy_cluster and not t.scrambled]
+    arb = arbitrate_main(main_candidates(clean), runtime_s)
+    if arb.pick is None and not decoys:
         main_number = biggest_title(triples)[0]
         notes[main_number] = "biggest bytes — no candidate main"
         _note(log, "main",
               f"main=t{main_number} biggest bytes — no candidate main on the disc")
+    elif arb.pick is None:
+        main_number = biggest_title(triples)[0]
+        notes[main_number] = (notes.get(main_number, "") + " "
+                              if notes.get(main_number) else "") \
+            + "biggest bytes — every title decoy-clustered"
+        _note(log, "main",
+              f"main=t{main_number} biggest bytes — every title decoy-clustered"
+              + skip_note)
     else:
         main_number = arb.pick[0]
         how = {"sole": "near the runtime — automatic",
@@ -103,7 +123,7 @@ def prefill(titles: list[TitleInfo], runtime_s: int | None,
         _note(log, "main",
               f"main=t{main_number} {how}"
               + (f" — {len(arb.near)} titles near the runtime"
-                 if arb.kind == "several" else ""))
+                 if arb.kind == "several" else "") + skip_note)
         if arb.note is not None:
             notes[main_number] = arb.note
 
