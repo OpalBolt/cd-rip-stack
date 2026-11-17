@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -117,11 +117,17 @@ def prefill(
     ]
     arb = arbitrate_main(main_candidates(clean), runtime_s)
     if arb.pick is None and not decoys:
-        main_number = biggest_title(triples)[0]
+        assert triples  # a disc that reached arbitration has titles
+        biggest = biggest_title(triples)
+        assert biggest is not None  # triples is non-empty
+        main_number = biggest[0]
         notes[main_number] = "biggest bytes — no candidate main"
         _note(log, "main", f"main=t{main_number} biggest bytes — no candidate main on the disc")
     elif arb.pick is None:
-        main_number = biggest_title(clean or triples)[0]
+        assert clean or triples  # a disc that reached arbitration has titles
+        biggest = biggest_title(clean or triples)
+        assert biggest is not None  # non-empty input
+        main_number = biggest[0]
         if clean:
             # Clean sub-floor titles exist (the shorts flavor): the decoy
             # cluster fact would be false on this main's row.
@@ -226,7 +232,13 @@ def print_accepted(
     ui.console.print(table)
 
 
-class _Table(App):
+class _Numbered(Protocol):
+    """The row protocol every table kind satisfies: a numbered row."""
+
+    number: int
+
+
+class _Table[T: _Numbered](App):
     """The shared table shell: rows over the scan, cursor movement, accept,
     quit, interrupt. A verb config subclasses it with its own cells and
     actions; Enter accepts (`action_accept`), `q` exits with QUIT (nothing
@@ -249,16 +261,16 @@ class _Table(App):
     ]
 
     HINT = ""
-    COLUMNS = COLUMNS
+    COLUMNS: ClassVar[tuple[str, ...]] = COLUMNS
     """The row columns; the boundary table overrides with its own set (the
     component is shared, the columns are per-consumer)."""
 
-    def __init__(self, display: str, titles: list[TitleInfo]):
+    def __init__(self, display: str, titles: list[T]):
         super().__init__()
         self.display_name = display
-        self.titles = list(titles)
+        self.titles: list[T] = list(titles)
 
-    def _cells(self, t: TitleInfo) -> tuple:
+    def _cells(self, t: T) -> tuple:
         raise NotImplementedError
 
     def _status_widgets(self) -> list:

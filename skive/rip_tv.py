@@ -287,7 +287,7 @@ def post_rip_validation(
     assignment: dict[int, tuple[int, int]],
     ep_runtimes: dict[int, int],
     run=subprocess.run,
-) -> None:
+) -> list[dict]:
     """The post-rip record (map.md decision 6), run beside the subtitle note:
     probe the season's staged episodes, grade them against their TMDB
     runtimes, report the one summary line, and write validation.json at the

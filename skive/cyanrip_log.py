@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 _OFFSET = re.compile(r"^\s*Offset:\s*([+-]?\d+)\s+samples?\b", re.IGNORECASE | re.MULTILINE)
 # Header lines sit at column 0; per-track metadata lines are indented, so
@@ -179,7 +180,7 @@ def parse_cyanrip_log(text: str) -> dict:
     release_match = _RELEASE_ID.search(text or "")
     album_match = _ALBUM.search(text or "")
     artist_match = _ALBUM_ARTIST.search(text or "")
-    result = {
+    result: dict[str, Any] = {
         "offset": int(offset_match.group(1)) if offset_match else None,
         "release": release_match.group(1) if release_match else None,
         "album": album_match.group(1) if album_match else None,

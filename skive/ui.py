@@ -260,7 +260,7 @@ class RunView:
         self._phase_len = 0  # the label's ` · phase` tail: never truncates
         self._pct: float | None = None
         self._eta: str | None = None
-        self._perf = None  # (text, hot segment strings)
+        self._perf: tuple[str, set[str]] | None = None  # (text, hot segment strings)
         # concurrent-activity lines, keyed; replaced whole (never mutated) so
         # the Live refresher thread can read it without the print lock
         self._bg: dict[str, str | tuple[str, float, str | None]] = {}
@@ -277,8 +277,9 @@ class RunView:
 
         # the Live renders this view (__rich__) at each refresh, so setters
         # only change state; no update call, no lock shared with the refresher
-        self._live = Live(self, console=console, refresh_per_second=4, transient=True)
-        self._live.start()
+        live = Live(self, console=console, refresh_per_second=4, transient=True)
+        live.start()
+        self._live = live
 
     def __rich_console__(self, console, options):
         width = options.max_width
@@ -420,7 +421,7 @@ class RunView:
         self._pct = None if pct is None else float(pct)
         self._eta = eta
 
-    def perf(self, text: str, hot=None) -> None:
+    def perf(self, text: str, hot: set[str] | None = None) -> None:
         """The perf lane (transcode only). No-op in fallback;
         an empty text drops it."""
         if hot is None:
@@ -706,7 +707,7 @@ def run_summary(
             )
     else:
         body = [list(row) for row in rows]
-    keep = range(len(columns))
+    keep: range | list[int] = range(len(columns))
     if styled and body:  # the box drops columns that are `-` for every row
         keep = [c for c in keep if any(str(row[c]) != "-" for row in body)]
     with _print_lock:
@@ -783,9 +784,9 @@ def musicbrainz_miss(info: dict, rerun: str) -> None:
     multiple = info["case"] == "multiple"
     if multiple:
         title = "several MusicBrainz releases"
-        rows = []
+        rows: list[tuple[str, str, str, str]] = []
         for c in info["candidates"]:
-            details = [
+            bits = [
                 c["disambiguation"],
                 c["country"],
                 f"{c['cds']} CDs" if c["cds"] else None,
@@ -795,7 +796,7 @@ def musicbrainz_miss(info: dict, rerun: str) -> None:
                 (
                     str(c["index"]),
                     c["album"],
-                    " · ".join(d for d in details if d),
+                    " · ".join(d for d in bits if d),
                     f"https://musicbrainz.org/release/{c['mbid']}",
                 )
             )
@@ -1058,7 +1059,7 @@ class PerfSampler:
         self._view = view
         self._stat_path = stat_path
         self._hwmon_root = hwmon_root
-        self._prev = None  # (idle, total) of the previous tick
+        self._prev: tuple[int, int] | None = None  # (idle, total) of the previous tick
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 

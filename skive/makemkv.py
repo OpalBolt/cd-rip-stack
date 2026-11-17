@@ -278,7 +278,7 @@ def _run_with_progress(
     def push_status(eta: str = "") -> None:
         """Feed the status panel: line 1 what + drive, line 2 status_block."""
         l1, l2 = status_block(
-            what=what,
+            what=what or "",
             drive=drive,
             phase=phase,
             title_x=cur_title + title_offset,
@@ -294,6 +294,7 @@ def _run_with_progress(
             view.bg("disc", f"{hsize(tot_done)}/{hsize(whole_total)}")
         view.status(l1, l2)
 
+    assert proc.stdout is not None  # PIPE was requested
     try:
         for line in proc.stdout:
             line = line.rstrip()
@@ -310,6 +311,7 @@ def _run_with_progress(
                     if est_total:
                         # ponytail: byte counts are est size × PRGV fraction, not real
                         # file sizes; stat the staged .mkv if precision ever matters.
+                        sizes = sizes or []  # no per-title sizes: cur_size falls to 0
                         cur_size = sizes[cur_title - 1] if 0 < cur_title <= len(sizes) else 0
                         cur_done = int(cur_size * int(parts[0]) / tot)
                         tot_done = disc_offset + int(est_total * int(parts[1]) / tot)

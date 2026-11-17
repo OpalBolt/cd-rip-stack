@@ -214,6 +214,7 @@ class RipLog:
             return 0
         name = self._phase_name
         now = self._now()
+        assert self._phase_start is not None  # a named phase always has its start
         elapsed = int((now - self._phase_start).total_seconds())
         self._phases += 1
         self._phase_name = None
@@ -237,6 +238,7 @@ class RipLog:
         name = self._phase_name
         now = self._now()
         self._phase_name = None
+        assert self._phase_start is not None  # a named phase always has its start
         self._emit(now, name, status, int((now - self._phase_start).total_seconds()))
 
     def note(self, phase, text, echo=True):
@@ -256,6 +258,7 @@ class RipLog:
             return
         self._interrupted = True
         now = self._now()
+        assert self._start is not None  # an interrupted run had opened
         self._emit(now, "total", "interrupted", int((now - self._start).total_seconds()))
 
     def keep_raw(self) -> None:
@@ -283,6 +286,7 @@ class RipLog:
         if rc != 0 or self._phases != 1:
             now = self._now()
             status = "ok" if rc == 0 else f"FAIL({rc})"
+            assert self._start is not None  # a finishing run had opened
             self._emit(now, "total", status, int((now - self._start).total_seconds()))
         if rc == 0 and not self._keep_raw:
             self._raw_log.unlink(missing_ok=True)

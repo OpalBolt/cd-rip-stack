@@ -249,7 +249,7 @@ def run_pass(
         os.makedirs(out_dir, exist_ok=True)
         done: list[tuple[Keep, str, int]] = []  # keep, produced srt, cue count
 
-        def _ocr(k: Keep) -> str:
+        def _ocr(k: Keep) -> str | None:
             label = (
                 f"OCR {k.track.lang} track {k.track.index}{' (forced)' if k.track.forced else ''}"
             )
