@@ -745,6 +745,86 @@ def _preamble_for(tmp_path, pick=MAMMA):
     return pre, log
 
 
+# --- Misflagged anamorphic (CONTEXT.md; ADR 0023): diagnose, warn, remedy --
+
+
+def _probe_run(stream_info, crop):
+    """fake run: ffprobe answers the stream/duration probes, ffmpeg answers
+    cropdetect with one converged crop line in stderr (every probe)."""
+    def fake_run(cmd, **k):
+        if any("sample_aspect_ratio" in a for a in cmd):
+            return Mock(stdout=stream_info)
+        if cmd[0] == "ffprobe":
+            return Mock(stdout="7823.2\n")
+        return Mock(stderr=f"[Parsed_cropdetect] crop={crop}\n")
+    return fake_run
+
+
+def test_aspect_lie_detects_the_lying_pal_flag():
+    """Flame & Citron's shape (ADR 0023): a 720\u00d7576 PAL frame flagged 4:3
+    whose content measures letterboxed scope under a 16:9 frame \u2014 the
+    remedy names the 16:9 display dimensions."""
+    from skive.rip_movie import _aspect_lie
+
+    run = _probe_run("720,576,16:15\n", "720:452:0:62")
+    assert _aspect_lie(Path("F_t38.mkv"), run=run) == (720, 452, 1024, 576)
+
+
+def test_aspect_lie_detects_the_lying_ntsc_flag():
+    """The NTSC twin: 720\u00d7480 flagged 8:9 (4:3), scope content \u2014 remedy
+    names the even 16:9 display width 854."""
+    from skive.rip_movie import _aspect_lie
+
+    run = _probe_run("720,480,8:9\n", "720:366:0:57")
+    assert _aspect_lie(Path("F_t00.mkv"), run=run) == (720, 366, 854, 480)
+
+
+def test_aspect_lie_passes_honest_shapes():
+    """A 16:9 flag, full-frame 4:3 content, an HD frame, and garbage probe
+    output all stay silent \u2014 only the confident lie warns."""
+    from skive.rip_movie import _aspect_lie
+
+    assert _aspect_lie(Path("a.mkv"),
+                       run=_probe_run("720,576,64:45\n", "720:452:0:62")) is None
+    assert _aspect_lie(Path("a.mkv"),
+                       run=_probe_run("720,576,16:15\n", "720:576:0:0")) is None
+    assert _aspect_lie(Path("a.mkv"),
+                       run=_probe_run("1920,1080,1:1\n", "1920:800:0:140")) is None
+    assert _aspect_lie(Path("a.mkv"),
+                       run=_probe_run("", "720:452:0:62")) is None
+
+
+def test_post_rip_validation_warns_the_lie_with_the_paste_command(tmp_path, capsys):
+    """A staged file whose flag lies: one loud warn naming the shape, one
+    paste-able mkvpropedit command, one aspect run-log note \u2014 and the file
+    is never touched (the remedy stays the operator's one command)."""
+    from skive.rip_movie import post_rip_validation
+
+    pre, log = _preamble_for(tmp_path)
+    pre.title_dir.mkdir()
+    mkv = pre.title_dir / "Mamma Mia! (2008)_t21.mkv"
+    mkv.write_bytes(b"x")
+
+    def fake_run(cmd, **k):
+        if any("sample_aspect_ratio" in a for a in cmd):
+            return Mock(stdout="720,576,16:15\n")
+        if cmd[0] == "ffprobe":
+            return Mock(stdout="6249.5\n")
+        return Mock(stderr="[Parsed_cropdetect] crop=720:452:0:62\n")
+
+    post_rip_validation(pre, set(), "t21",
+                        [{"t": 21, "dur_s": 6252, "ratio": None, "band": None}],
+                        run=fake_run)
+
+    err = capsys.readouterr().err
+    assert "Mamma Mia! (2008)_t21.mkv: aspect flag lies \u2014 720\u00d7576 flagged 4:3" in err
+    assert (f"mkvpropedit '{mkv}' --edit track:v1 --set display-width=1024 "
+            "--set display-height=576") in err
+    log.note.assert_any_call(
+        "aspect", "Mamma Mia! (2008)_t21.mkv: misflagged anamorphic \u2014 4:3 flag "
+        "on 720\u00d7452 scope content; remedy: mkvpropedit display 1024\u00d7576")
+
+
 # --- Run view wiring (slice 06: absorption + suspend + run summary) ---------
 
 

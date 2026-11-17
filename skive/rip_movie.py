@@ -63,6 +63,17 @@ forward past collisions). An optional trailing .pN part suffix (multi-part
 movies) may follow the number: the part file's t is its base title's t."""
 
 
+def _staged_mkv_paths(title_dir: Path, preexisting: set[Path]):
+    """This run's staged *_tNN.mkv files — the glob probe_staged and the
+    aspect-lie check share. Files that rested in the folder before the rip
+    started and names without a final _tNN (extras, transcode outputs)
+    stay out. Yields (path, title_number)."""
+    for mkv in title_dir.glob("*_t*.mkv"):
+        m = _FINAL_T.search(mkv.stem)
+        if mkv not in preexisting and m:
+            yield mkv, int(m.group(1))
+
+
 def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
                  run=subprocess.run) -> list[dict]:
     """Probe this run's staged *_tNN.mkv files for the validation record.
@@ -89,21 +100,70 @@ def probe_staged(title_dir: Path, preexisting: set[Path], runtime_s: int | None,
     ffprobe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                    "-of", "csv=p=0"]
     rows = []
-    for mkv in title_dir.glob("*_t*.mkv"):
-        if mkv in preexisting:
-            continue
-        m = _FINAL_T.search(mkv.stem)
-        if not m:
-            continue
+    for mkv, n in _staged_mkv_paths(title_dir, preexisting):
         result = run(ffprobe_cmd + [str(mkv)], capture_output=True, text=True)
         try:
             dur = int(float(result.stdout.strip()))
         except ValueError:
             ui.warn(f"cannot read duration of {mkv.name} — recorded without one")
             dur = None
-        rows.append(movie_row(mkv.name, int(m.group(1)), dur, runtime_s))
+        rows.append(movie_row(mkv.name, n, dur, runtime_s))
     rows.sort(key=lambda r: r["t"])
     return rows
+
+
+_DVD_FRAMES = {(720, 576): 1024, (720, 480): 854}
+"""DVD pixel frames -> the 16:9 display width the remedy sets (even, so
+players and hardware scalers stay happy)."""
+
+
+def _aspect_lie(mkv: Path, run=subprocess.run) -> tuple[int, int, int, int] | None:
+    """The misflagged-anamorphic diagnosis (CONTEXT.md; ADR 0023): a DVD
+    frame flagged 4:3 whose measured content is letterboxed scope — 16:9
+    anamorphic material wearing a lying flag, so players squeeze it thin.
+    Reads the flag, then measures the bars over five cropdetect samples
+    (the crop gate's probe discipline); a confident lie returns (frame_w,
+    active_h, display_w, display_h) for the mkvpropedit remedy, anything
+    honest or unmeasurable returns None — this check never crashes the
+    validation and never touches the file."""
+    info = run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,sample_aspect_ratio",
+                "-of", "csv=p=0", str(mkv)], capture_output=True, text=True)
+    try:
+        w_s, h_s, sar = info.stdout.strip().split(",")
+        w, h = int(w_s), int(h_s)
+        sn, sd = (int(x) for x in sar.split(":"))
+    except ValueError:
+        return None
+    if (w, h) not in _DVD_FRAMES or sd <= 0:
+        return None
+    if abs((w * sn) / (h * sd) - 4 / 3) > 0.02:  # only a 4:3 flag can lie here
+        return None
+    dur = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+               "-of", "csv=p=0", str(mkv)], capture_output=True, text=True)
+    try:
+        length = float(dur.stdout.strip())
+    except ValueError:
+        return None
+    heights = []
+    for frac in (0.1, 0.3, 0.5, 0.7, 0.9):
+        probe = run(["ffmpeg", "-hide_banner", "-ss", str(int(length * frac)),
+                     "-i", str(mkv), "-t", "2",
+                     "-vf", "cropdetect=limit=24:round=2", "-f", "null", "-"],
+                    capture_output=True, text=True)
+        crops = re.findall(r"crop=(\d+):(\d+):\d+:\d+", probe.stderr)
+        if crops:
+            heights.append(int(crops[-1][1]))
+    if len(heights) < 3:
+        return None
+    active_h = sorted(heights)[len(heights) // 2]
+    # Letterboxed content that reads as cinema scope only under a 16:9
+    # anamorphic frame — the lying-flag shape (F&C: 452 of 576 -> 2.26:1,
+    # confidently wrong 1.70:1 under the flag).
+    scope = (h * 16 / 9) / active_h
+    if active_h > 0.88 * h or not 1.95 <= scope <= 2.6:
+        return None
+    return (w, active_h, _DVD_FRAMES[(w, h)], h)
 
 
 def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | None,
@@ -149,6 +209,23 @@ def post_rip_validation(preamble, preexisting: set[Path], chosen_main: str | Non
     summary = f"{len(rows)} files, {green_mains} green main, {yellow} yellow"
     ui.info(f"validation: {summary}")
     log.note("validation", summary)
+
+    # Misflagged anamorphic (CONTEXT.md; ADR 0023): diagnose the lie beside
+    # the validation report, print the exact remedy, never touch the file —
+    # the operator confirms by eye and pastes one command.
+    for mkv, _n in _staged_mkv_paths(title_dir, preexisting):
+        lie = _aspect_lie(mkv, run)
+        if lie is None:
+            continue
+        fw, active_h, dw, dh = lie
+        ui.warn(f"{mkv.name}: aspect flag lies — {fw}\u00d7{dh} flagged 4:3, "
+                f"content ~{fw}\u00d7{active_h} (scope under 16:9) — players "
+                f"squeeze it thin")
+        ui.warn(f"  fix: mkvpropedit '{mkv}' --edit track:v1 "
+                f"--set display-width={dw} --set display-height={dh}")
+        log.note("aspect", f"{mkv.name}: misflagged anamorphic — 4:3 flag on "
+                           f"{fw}\u00d7{active_h} scope content; remedy: "
+                           f"mkvpropedit display {dw}\u00d7{dh}")
 
     doc = movie_document(pick.id, preamble.display, pick.runtime_secs,
                          preamble.label, log.run, main, rows)

@@ -132,7 +132,7 @@ The rule that decides a title's black-bar crop at transcode: sampled detection (
 _Avoid_: autocrop, letterbox removal
 
 **Misflagged anamorphic**:
-A staged title whose aspect flag lies about its content — 16:9 anamorphic material flagged 4:3 (SAR 16:15), so players squeeze it thin. Diagnosed by ffprobe's flag against cropdetect's measured bars; the remedy is a mkvpropedit display-dimension fix on the lossless file, never an encode-time override.
+A staged title whose aspect flag lies about its content — 16:9 anamorphic material flagged 4:3 (SAR 16:15), so players squeeze it thin. Diagnosed by ffprobe's flag against cropdetect's measured bars — the movie rip's post-rip validation runs this over every staged file and prints the exact remedy command as a loud warning; the remedy is a mkvpropedit display-dimension fix on the lossless file, never an encode-time override, and always the operator's one pasted command.
 _Avoid_: aspect bug, wrong AR
 
 **Keep-SAR encode**:
