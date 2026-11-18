@@ -9,8 +9,10 @@ already exist but the strip never happened. Extras trees are never touched
 (ADR 0003). A failed file keeps its tracks and lands on the end-of-run retry
 report (backfill-report.txt in the library root).
 
-Usage:  python scripts/backfill.py [LIBRARY]
+Usage:  python scripts/backfill.py [-j N] [LIBRARY]
         (default /mnt/videos/library, or $VIDEOS/library when VIDEOS is set)
+        -j N processes N files in parallel (OCR is single-core per file);
+        output lines from different files interleave.
 """
 
 import argparse
@@ -19,9 +21,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from skive import subs
+
+
+def _log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def _rmf(path: str) -> None:
@@ -109,7 +117,10 @@ def strip(mkv: str, mkv_exe: str, ffprobe_exe: str) -> tuple[bool, str]:
     intact."""
     tmp = os.path.join(os.path.dirname(mkv), Path(mkv).stem + ".stripped.tmp.mkv")
     before = _type_counts(mkv, ffprobe_exe)
+    _log(f"  strip: mkvmerge --no-subtitles -> {os.path.basename(tmp)}")
+    t0 = time.monotonic()
     rc = subprocess.run([mkv_exe, "-o", tmp, "--no-subtitles", mkv], check=False).returncode
+    _log(f"  strip: mkvmerge rc={rc} in {time.monotonic() - t0:.0f}s; verifying with ffprobe")
     if rc > 1:  # 0 ok, 1 warnings (still usable) -- like transcode's merge
         _rmf(tmp)
         return False, f"mkvmerge failed (rc={rc})"
@@ -137,6 +148,7 @@ def process(path: str, tools: dict[str, str], report: list[str]) -> str:
     stem = Path(path).stem
     video_dir = os.path.dirname(path)
 
+    _log(f"== {name}: inventory (ffprobe)")
     tracks = subs.inventory(path, tools["ffprobe"])
     if not tracks:
         reason = "already done" if _sidecars_beside(video_dir, stem) else "no subtitle streams"
@@ -161,10 +173,18 @@ def process(path: str, tools: dict[str, str], report: list[str]) -> str:
     if not all(_nonempty(os.path.join(video_dir, n)) for n in minimal):
         side_dir = tempfile.mkdtemp(prefix="backfill-side-")
         try:
-            res = subs.run_pass(path, side_dir, stem, tools["seconv"], tools["ffprobe"])
+            # seconv demuxes the whole file with many small reads; over NFS that is
+            # I/O-bound and crawls, so OCR a local copy (honours $TMPDIR)
+            local = os.path.join(side_dir, name)
+            _log(f"  copy: {os.path.getsize(path) / 1e9:.1f} GB -> {side_dir} (local OCR copy)")
+            t0 = time.monotonic()
+            shutil.copyfile(path, local)
+            _log(f"  copy: done in {time.monotonic() - t0:.0f}s")
+            res = subs.run_pass(local, side_dir, stem, tools["seconv"], tools["ffprobe"])
             for n in res.notes:
                 print(n)
             for s in res.sidecars:
+                _log(f"  sidecar: {s} -> {video_dir}")
                 shutil.move(os.path.join(side_dir, s), os.path.join(video_dir, s))
         finally:
             shutil.rmtree(side_dir, ignore_errors=True)
@@ -191,7 +211,18 @@ def process(path: str, tools: dict[str, str], report: list[str]) -> str:
     return "done"
 
 
-def run_backfill(library: str) -> int:
+def _safe_process(path: str, tools: dict[str, str], report: list[str]) -> str:
+    """One unexpected exception must not abort the whole library run."""
+    try:
+        return process(path, tools, report)
+    except Exception as e:  # noqa: BLE001 -- the whole point is to survive anything
+        line = f"FAIL {os.path.basename(path)} (unexpected {type(e).__name__}: {e}) -- retry"
+        print(line)
+        report.append(line)
+        return "fail"
+
+
+def run_backfill(library: str, jobs: int = 1) -> int:
     tools = probe_tools()
     if not tools:
         return 1
@@ -201,8 +232,10 @@ def run_backfill(library: str) -> int:
 
     counts = {"done": 0, "skip": 0, "fail": 0}
     report: list[str] = []
-    for path in walk(library):
-        counts[process(path, tools, report)] += 1
+    # threads suffice: the work is subprocesses (seconv/tesseract are single-core each)
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        for result in pool.map(lambda p: _safe_process(p, tools, report), walk(library)):
+            counts[result] += 1
 
     lines = [
         f"backfill report -- {library}",
@@ -231,11 +264,21 @@ def parse_args(argv=None):
         default=os.path.join(os.environ.get("VIDEOS") or "/mnt/videos", "library"),
         help="library root (default: $VIDEOS/library or /mnt/videos/library)",
     )
+    p.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
+        metavar="N",
+        help="files processed in parallel (default 1); each runs one "
+        "single-core OCR and a local copy of its MKV in $TMPDIR",
+    )
     return p.parse_args(argv)
 
 
 def main(argv=None) -> None:
-    sys.exit(run_backfill(parse_args(argv).library))
+    args = parse_args(argv)
+    sys.exit(run_backfill(args.library, args.jobs))
 
 
 if __name__ == "__main__":

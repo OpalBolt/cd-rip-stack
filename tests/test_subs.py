@@ -257,6 +257,33 @@ def test_run_pass_temp_dir_isolation_and_final_renames(tmp_path, monkeypatch):
     assert not any(n.startswith("FAIL") for n in res.notes)
 
 
+def test_run_pass_two_forced_same_language_ship_one_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setitem(
+        INV,
+        "streams",
+        [
+            {
+                "index": 2,
+                "codec_name": "dvd_subtitle",
+                "disposition": {"forced": 1},
+                "tags": {"language": "eng"},
+            },
+            {
+                "index": 3,
+                "codec_name": "dvd_subtitle",
+                "disposition": {"forced": 1},
+                "tags": {"language": "eng"},
+            },
+        ],
+    )
+    stub_run(monkeypatch, [])
+    out = tmp_path / "out"
+    res = subs.run_pass("x.mkv", str(out), "Movie (2001)", "seconv.exe", "ffprobe.exe")
+    # one name, the richer track (100 cues) wins; no duplicate for the caller to move twice
+    assert res.sidecars == ["Movie (2001).eng.forced.srt"]
+    assert subs.count_events(out / "Movie (2001).eng.forced.srt") == 100
+
+
 def test_run_pass_failed_conversion_is_partial_success(tmp_path, monkeypatch):
     dirs = []
     stub_run(monkeypatch, dirs, fail_track=5)

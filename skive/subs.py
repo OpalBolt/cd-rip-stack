@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -258,9 +259,11 @@ def run_pass(
                 v.bg(label, "")
             else:
                 ui.step(label + "...", verbose=verbose > 0)
+            t0 = time.monotonic()
             try:
                 return convert(mkv, k.track, seconv_exe, tmp_root, log=log, verbose=verbose)
             finally:
+                ui.step(f"OCR track {k.track.index} finished in {time.monotonic() - t0:.0f}s")
                 if v is not None and v.tty:
                     v.bg_clear(label)
 
@@ -288,11 +291,14 @@ def run_pass(
                 continue
             done.append((k, srt, n))
 
-        # forced keeps keep their flag; full tracks settle per language
+        # forced keeps keep their flag; several forced tracks of one language share
+        # a sidecar name, so the one with the most cues wins (full tracks settle below)
         full_src = {k.track.index: srt for k, srt, _n in done if not k.track.forced}
-        finals: list[tuple[Keep, str]] = [
-            (Keep(k.track, "forced"), srt) for k, srt, _n in done if k.track.forced
-        ]
+        best_forced: dict[str, tuple[Keep, str, int]] = {}
+        for k, srt, n in done:
+            if k.track.forced and n > best_forced.get(k.track.lang, (k, srt, -1))[2]:
+                best_forced[k.track.lang] = (Keep(k.track, "forced"), srt, n)
+        finals: list[tuple[Keep, str]] = [(k, srt) for k, srt, _n in best_forced.values()]
         by_lang: dict[str, list[tuple[Track, int]]] = {}
         for k, _srt, n in done:
             if not k.track.forced:
