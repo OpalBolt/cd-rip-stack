@@ -239,10 +239,9 @@ def test_looks_real():
     assert not looks_real("ABC")  # all caps, short
 
 
-def test_rename_staged():
-    """Test rename_staged renames junk files."""
-    stage = Path("/tmp/test_rename")
-    stage.mkdir(exist_ok=True)
+def test_rename_staged(tmp_path):
+    """Test rename_staged renames junk files, preserving the title number."""
+    stage = tmp_path
 
     # Create a junk-labeled file
     (stage / "B1_t0.mkv").touch()
@@ -250,7 +249,7 @@ def test_rename_staged():
     rename_staged("Movie (2020)", stage, suffix="t")
 
     assert not (stage / "B1_t0.mkv").exists()
-    assert (stage / "Movie (2020)_t01.mkv").exists()
+    assert (stage / "Movie (2020)_t00.mkv").exists()
 
 
 def test_rename_staged_preexisting():
@@ -272,36 +271,33 @@ def test_rename_staged_preexisting():
     assert (stage / "Movie (2020) - Extra 01.mkv").exists()
 
 
-def test_rename_staged_part():
+def test_rename_staged_part(tmp_path):
     """Test rename_staged with part suffix."""
-    stage = Path("/tmp/test_rename_part")
-    stage.mkdir(exist_ok=True)
+    stage = tmp_path
 
     (stage / "B1_t0.mkv").touch()
 
     rename_staged("Movie (2020)", stage, suffix="t", part=1)
 
-    assert (stage / "Movie (2020)_t01.p1.mkv").exists()
+    assert (stage / "Movie (2020)_t00.p1.mkv").exists()
 
 
-def test_rename_staged_roll():
+def test_rename_staged_roll(tmp_path):
     """Test rename_staged rolls past existing."""
-    stage = Path("/tmp/test_roll")
-    stage.mkdir(exist_ok=True)
+    stage = tmp_path
 
-    (stage / "Movie (2020)_t01.mkv").touch()
+    (stage / "Movie (2020)_t00.mkv").touch()
     (stage / "B1_t0.mkv").touch()
 
     rename_staged("Movie (2020)", stage, suffix="t")
 
-    assert (stage / "Movie (2020)_t02.mkv").exists()
+    assert (stage / "Movie (2020)_t01.mkv").exists()
     assert not (stage / "B1_t0.mkv").exists()
 
 
-def test_rename_staged_skip_real():
+def test_rename_staged_skip_real(tmp_path):
     """Test rename_staged skips already-named and real-looking files."""
-    stage = Path("/tmp/test_skip")
-    stage.mkdir(exist_ok=True)
+    stage = tmp_path
 
     (stage / "Movie (2020)_t01.mkv").touch()  # already this display
     (stage / "Another Movie (2021)_t02.mkv").touch()  # looks real
@@ -312,7 +308,7 @@ def test_rename_staged_skip_real():
     assert (stage / "Movie (2020)_t01.mkv").exists()
     assert (stage / "Another Movie (2021)_t02.mkv").exists()
     assert not (stage / "B1_t0.mkv").exists()
-    assert (stage / "Movie (2020)_t02.mkv").exists()
+    assert (stage / "Movie (2020)_t00.mkv").exists()
 
 
 def test_rename_staged_extras():

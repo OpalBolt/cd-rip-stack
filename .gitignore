@@ -21,6 +21,8 @@ whipper/
 
 # scratch logs from manual makemkvcon / rip debugging
 *.log
+# ...except committed test fixtures
+!tests/fixtures/cyanrip/*.log
 
 # Task files
 tasks
