@@ -11,7 +11,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual.widgets import Static
@@ -299,7 +299,7 @@ class BoundaryTable(_Table["_EpisodeRow"]):
 
     COLUMNS = ("episode", "runtime", "chapter start", "notes")
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Any]] = [
         Binding("backspace", "backspace", show=False),
         *[Binding(d, f"type('{d}')", show=False) for d in "0123456789"],
     ]
@@ -449,9 +449,11 @@ def run_boundary_table(
     or INTERRUPT (the caller re-raises KeyboardInterrupt once Textual has
     restored the terminal, so split_combined's handler sweeps and keeps the
     combined file)."""
-    return BoundaryTable(
+    result = BoundaryTable(
         display, season, lo, hi, [s for s, _ in spans], chapter_starts, duration_s, ep_runtimes
     ).run()
+    assert isinstance(result, (list, str))  # the app returns its table's outcome
+    return result
 
 
 def fix_rejection(

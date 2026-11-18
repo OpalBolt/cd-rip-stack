@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -252,7 +252,7 @@ class _Table[T: _Numbered](App):
     #hint { height: auto; color: $text-muted; }
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Any]] = [
         Binding("up,k", "move(-1)", show=False, priority=True),
         Binding("down,j", "move(1)", show=False, priority=True),
         Binding("enter", "accept", "accept", priority=True),
@@ -287,11 +287,11 @@ class _Table[T: _Numbered](App):
         table = self.query_one(DataTable)
         table.add_columns(*self.COLUMNS)
         self._col_keys = list(table.columns.keys())
-        self._row_keys: dict[int, object] = {}
+        self._row_keys: dict[int, Any] = {}
         for t in self.titles:
             self._row_keys[t.number] = table.add_row(*self._cells(t), key=str(t.number))
 
-    def _cursor_title(self) -> TitleInfo:
+    def _cursor_title(self) -> T:
         return self.titles[self.query_one(DataTable).cursor_row]
 
     def _refresh_row(self, number: int) -> None:
@@ -325,7 +325,7 @@ class SelectionTable(_Table):
     row, whose action can only be moved with `m`. Enter accepts and returns
     the title→action map."""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Any]] = [
         Binding("m", "main", "main"),
         Binding("e", "verb('extra')", "extra"),
         Binding("s", "verb('skip')", "skip"),
@@ -374,7 +374,9 @@ def run_selection_table(
     QUIT (the caller exits 1 with nothing ripped) or INTERRUPT (the caller
     re-raises KeyboardInterrupt — exit 130 — once Textual has restored the
     terminal)."""
-    return SelectionTable(display, titles, runtime_s, log).run()
+    result = SelectionTable(display, titles, runtime_s, log).run()
+    assert isinstance(result, (dict, str))  # the app returns its table's outcome
+    return result
 
 
 # --- TV: the episode map and its table ---------------------------------------
@@ -568,7 +570,7 @@ class ConfirmClear(ModalScreen[bool]):
     #files { height: auto; max-height: 14; }
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Any]] = [
         Binding("y", "answer(True)", "delete"),
         Binding("n,escape", "answer(False)", "keep"),
     ]
@@ -606,7 +608,7 @@ class EpisodeTable(_Table):
     any row is red (clash / staged claim / past the season's end) and when
     nothing would rip. An unfilled episode only warns."""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Any]] = [
         Binding("e", "verb('extra')", "extra"),
         Binding("s", "verb('skip')", "skip"),
         Binding("space", "mark", "mark"),
@@ -804,7 +806,9 @@ def run_episode_table(
         clear_staging: Deletes the listed files and returns the refreshed
             set of staged episode numbers
     """
-    return EpisodeTable(display, emap, list_staging, clear_staging).run()
+    result = EpisodeTable(display, emap, list_staging, clear_staging).run()
+    assert isinstance(result, (dict, str))  # the app returns its table's outcome
+    return result
 
 
 # --- CD: the track table ------------------------------------------------------
@@ -871,7 +875,7 @@ class CdTable(_Table):
     or j/k move; `s` skips a known-bad track, `r` restores it; Enter accepts
     and returns the track→action map; `q` quits with nothing ripped."""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[Any]] = [
         Binding("s", "verb('skip')", "skip"),
         Binding("r", "verb('rip')", "restore"),
     ]
@@ -908,4 +912,6 @@ def run_cd_table(
     """Run the CD track table and return the accepted track→action map,
     QUIT (the caller exits 1 with nothing ripped) or INTERRUPT (see
     run_selection_table)."""
-    return CdTable(display, tracks, mb_durations).run()
+    result = CdTable(display, tracks, mb_durations).run()
+    assert isinstance(result, (dict, str))  # the app returns its table's outcome
+    return result

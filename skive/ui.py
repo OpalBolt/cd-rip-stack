@@ -31,6 +31,7 @@ from pathlib import Path
 
 from rich.box import ROUNDED, SIMPLE_HEAD, Box
 from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
 from rich.progress_bar import ProgressBar
 from rich.table import Table
@@ -265,7 +266,7 @@ class RunView:
         # the Live refresher thread can read it without the print lock
         self._bg: dict[str, str | tuple[str, float, str | None]] = {}
         self._replay: list[str] = []  # TTY-only warn/fail replay buffer
-        self._live = None
+        self._live: Live | None = None
         if self.tty and live:
             self._start_live()
             if perf:
@@ -273,7 +274,6 @@ class RunView:
                 self._sampler.start()
 
     def _start_live(self) -> None:
-        from rich.live import Live
 
         # the Live renders this view (__rich__) at each refresh, so setters
         # only change state; no update call, no lock shared with the refresher
@@ -328,14 +328,14 @@ class RunView:
                 else:
                     ready = " \u2713 ready"
                     if str(entry).endswith(ready):
-                        title = Text(f"{k} ")
-                        name = Text(str(entry)[: -len(ready)], style="dim")
-                        name.truncate(
-                            max(width - title.cell_len - len(ready), 1), overflow="ellipsis"
+                        lane = Text(f"{k} ")
+                        trimmed = Text(str(entry)[: -len(ready)], style="dim")
+                        trimmed.truncate(
+                            max(width - lane.cell_len - len(ready), 1), overflow="ellipsis"
                         )
-                        title.append_text(name)
-                        title.append(ready, style="dim")
-                        lanes.append(title)
+                        lane.append_text(trimmed)
+                        lane.append(ready, style="dim")
+                        lanes.append(lane)
                     else:
                         lanes.append(
                             Text(f"{k} {entry}", style="dim", no_wrap=True, overflow="ellipsis")
@@ -388,7 +388,7 @@ class RunView:
         cells: list = [label]
         if bar:
             row.add_column(no_wrap=True, width=bar)
-            cells.append(ProgressBar(total=100, completed=pct, width=bar))
+            cells.append(ProgressBar(total=100, completed=pct or 0.0, width=bar))
         for s in right:
             row.add_column(no_wrap=True, width=len(s))
             cells.append(Text(s))

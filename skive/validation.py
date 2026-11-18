@@ -1339,12 +1339,12 @@ def recommendations(findings: list[Finding]) -> list[dict]:
     return plan
 
 
-def _band_style(band: str | None) -> str | None:
+def _band_style(band: str | None) -> str:
     """The rich style for a band: red reads bold — the alarm tier."""
-    return {"green": "ok", "yellow": "warn", "red": "hot"}.get(band) if band else None
+    return {"green": "ok", "yellow": "warn", "red": "hot"}.get(band, "") if band else ""
 
 
-def _delta_cell(f: Finding) -> object:
+def _delta_cell(f: Finding) -> Text | str:
     """The Δ cell: the signed 0.xx amount outside the norm (− short, +
     over), or the plain margin when inside it; empty on rows with no grade.
     Compact by design — the worded phrasing lives in the action plan."""
@@ -1379,7 +1379,7 @@ def _collapse_staging(issues: list[Finding]) -> list[Finding]:
     return collapsed
 
 
-def _check_cell(f: Finding) -> object:
+def _check_cell(f: Finding) -> Text | str:
     """The check cell: on a terminal led by its severity symbol — `✗` an
     issue (every non-ratio check, a red ratio), `!` off-norm (a yellow ratio,
     a graded extra), `✓` a green main, `·` an ungraded row; plain, the

@@ -616,14 +616,14 @@ def test_suspend_stops_the_live_and_starts_a_fresh_one(monkeypatch):
 
     started = []
 
-    class _NewLive:  # rich.live.Live stub; suspend() imports it lazily
+    class _NewLive:  # rich.live.Live stub; ui imports it at module level
         def __init__(self, panels, console=None, **kw):
             pass
 
         def start(self):
             started.append(self)
 
-    monkeypatch.setattr("rich.live.Live", _NewLive)
+    monkeypatch.setattr("skive.ui.Live", _NewLive)
     view._live = _OldLive()
     view._console = None  # the seam view never built one; the stub ignores it
     with view.suspend():
