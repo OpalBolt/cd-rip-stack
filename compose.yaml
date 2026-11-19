@@ -1,0 +1,9 @@
+# The skive box. Devices, share bind-mounts and host-UID mapping are
+# slice 05's lane; this file stays minimal until then.
+services:
+  skive:
+    build: .
+    image: skive-box
+    env_file:
+      - path: .env
+        required: false
