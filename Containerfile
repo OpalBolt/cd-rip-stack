@@ -22,6 +22,7 @@ RUN dnf install -y \
       makemkv flac rsync \
       gstreamer1-plugins-good \
       gobject-introspection-devel gstreamer1-devel cairo-devel \
+      cairo-gobject-devel \
       gcc pkgconf-pkg-config python3-devel \
       uv \
     && dnf clean all
