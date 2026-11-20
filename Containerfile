@@ -22,7 +22,7 @@ RUN dnf install -y \
       makemkv flac rsync \
       gstreamer1-plugins-good \
       gobject-introspection-devel gstreamer1-devel cairo-devel \
-      gcc pkgconf-pkg-config \
+      gcc pkgconf-pkg-config python3-devel \
       uv \
     && dnf clean all
 
@@ -47,7 +47,9 @@ RUN mkdir -p /opt/seconv-5.3.0 \
 
 # Bake skive (not editable, not bind-mounted). --with pygobject builds gi
 # into the tool env so beets' replaygain runs on the same interpreter.
+# pycairo's meson can't see uv's standalone pythons (no pkg-config/sysconfig
+# metadata), so the tool env rides the distro interpreter + python3-devel.
 COPY . /src
 RUN cd /src \
-    && uv tool install . --with pygobject --force \
+    && uv tool install --python-preference only-system . --with pygobject --force \
     && rm -rf /src
