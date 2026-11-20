@@ -611,7 +611,7 @@ def _encode_vaapi(
         ui.fail(
             "hardware path needs ffmpeg and a VCN with HEVC "
             f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
-            "(scripts/setup-transcode.sh installs both)"
+            "(the skive box image bakes both — rebuild it: podman compose build)"
         )
         return False
     vf = "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
@@ -1504,8 +1504,9 @@ def run_transcode(args) -> int:
         elif args.encoder == "vaapi":
             ui.fail(
                 "-e vaapi but this box has no VA-API HEVC encode "
-                "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
-                "missing (scripts/setup-transcode.sh); use -e auto or -e x265"
+                "entrypoint (vainfo) -- no VCN (BC-250) or the image's freeworld "
+                "driver is missing (rebuild the image: podman compose build); "
+                "use -e auto or -e x265"
             )
             return 1
         else:

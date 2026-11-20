@@ -6,51 +6,42 @@ under `library/` (trees: [nas-layout](nas-layout.md)).
 
 ## The box
 
-There is one transcode box: the Ryzen AI 7 350 laptop's `transcode`
-distrobox — the BC-250 no longer transcodes (ADR 0010 records the path and
-its 2026-11 hardware revision). The BC-250's story is history that explains
-why the laptop's VCN matters: the PS5-derived Cyan Skillfish board's VCN
-block is factory-unprovisioned and eFused off, so no tool ever got hardware
-encode there — and the community `bc250-vaapi` shim stays rejected (its
-H.264 is libx264 on the CPU in a costume, its HEVC a CBR streaming encoder
-shaped for game streaming, not quality-based archival — ADR 0010). The
-laptop's VCN does encode: `-e auto` (the default) resolves to `hevc_vaapi`
-on it. Hardware encode goes through ffmpeg VAAPI, not HandBrake — HandBrake
-on Linux has no VAAPI encoder.
+`skive transcode` runs in the skive box (CONTEXT.md): the one container
+every machine runs, one image built by `podman compose build` from the
+repo's Containerfile, entered only through `./skive` ([setup](setup.md));
+all skive runs happen inside it. The hardware history still explains the
+encoder story: the BC-250 no longer transcodes (ADR 0010 records the path
+and its 2026-11 hardware revision) — the PS5-derived Cyan Skillfish
+board's VCN block is factory-unprovisioned and eFused off, so no tool ever
+got hardware encode there, and the community `bc250-vaapi` shim stays
+rejected (its H.264 is libx264 on the CPU in a costume, its HEVC a CBR
+streaming encoder shaped for game streaming, not quality-based archival —
+ADR 0010). The laptop's VCN does encode: `-e auto` (the default) resolves
+to `hevc_vaapi` on it. Hardware encode goes through ffmpeg VAAPI, not
+HandBrake — HandBrake on Linux has no VAAPI encoder.
 
-Running it needs two things on the laptop: a `fedora:43`-era image
-(gfx1152/Radeon 860M needs Mesa 25.0+ for VCN encode) and the
-`mesa-va-drivers-freeworld` swap that `scripts/setup-transcode.sh`
-performs (Fedora strips H.264/H.265 from its Mesa for patents; without
-the freeworld build vainfo lists only JPEG/VP9/AV1 and there is no HEVC
-encode entrypoint).
-The box carries every tool: RPM Fusion's HandBrakeCLI and MakeMKV,
-mkvtoolnix, ffmpeg, tesseract with eng+dan language data, seconv (pinned
-at v5.3.0 in the script), cyanrip, and skive itself (editable install via
-uv) — it is a universal box: it rips (drives arrive with distrobox's
-default `/dev` share), transcodes, tags, and syncs. The shares bind-mount at
-`/mnt/videos` and `/mnt/music`; all skive runs happen inside the box.
+Every tool is baked into the image: RPM Fusion's HandBrakeCLI and MakeMKV,
+mkvtoolnix, ffmpeg, vainfo, tesseract with eng+dan language data, seconv
+(pinned at v5.3.0 in the Containerfile), cyanrip, and skive itself — the
+box rips, transcodes, tags, and syncs. The image also carries the
+`mesa-va-drivers-freeworld` swap (Fedora strips H.264/H.265 from its Mesa
+for patents; without the freeworld build vainfo lists only JPEG/VP9/AV1
+and there is no HEVC encode entrypoint), and Fedora 43's Mesa is new
+enough for the laptop's VCN (gfx1152/Radeon 860M needs Mesa 25.0+ for VCN
+encode).
 
-```bash
-git clone <this repo> && cd cd-rip-stack
-distrobox create -n transcode --image fedora:43 \
-  --volume /mnt/videos:/mnt/videos --volume /mnt/music:/mnt/music
-distrobox enter transcode
-bash ~/git/cd-rip-stack/scripts/setup-transcode.sh   # once, inside the box
-```
+The shares bind-mount into the box at the same path as on the host;
+`VIDEOS_MOUNT`/`MUSIC_MOUNT` in `.env` name different roots (see
+[setup](setup.md)). A BD rip needs a MakeMKV key: `MAKEMKV_KEY` in `.env`
+(written into MakeMKV's settings at startup) or an `app_Key` in the box's
+`~/.MakeMKV/settings.conf`; the rip-time scan re-warns with fix
+instructions when it is missing (ADR 0016).
 
-A box that works local paths instead of the shares needs no `--volume` —
-just exported `VIDEOS_MOUNT`/`MUSIC_MOUNT` (see [setup](setup.md)). A BD
-rip needs a MakeMKV `app_Key` in `~/.MakeMKV/settings.conf`; the setup
-script notes its absence and the rip-time scan re-warns with fix
-instructions (ADR 0016).
-
-The script is idempotent — a `git pull` plus a re-run heals a broken box.
-Updating skive is just `git pull` inside `~/git/cd-rip-stack`; the editable
-install picks changes up. Bumping seconv means editing the pinned version
-in `scripts/setup-transcode.sh`. No mise here — mise.toml belongs to the
-rip box only. The box uses the same env vars as the ripping machine — see
-[setup](setup.md). Runs are invoked by hand; nothing schedules them.
+Updating and healing are the same motion — `git pull`, `podman compose
+build`, `./skive doctor`: a broken box is rebuilt, not repaired. Bumping
+seconv means editing the pinned version in the Containerfile. The box uses
+the same env vars as the ripping machine — see [setup](setup.md). Runs are
+invoked by hand; nothing schedules them.
 
 ## Running a batch
 

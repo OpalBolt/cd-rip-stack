@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-off encoder benchmark: x265 medium (baseline) vs fast vs superfast,
 # plus VCN hardware HEVC via ffmpeg VAAPI (full hw pipeline: VCN decode+encode).
-# Usage: bash scripts/bench.sh /path/to/staged-title_t00.mkv   (run inside the transcode distrobox)
+# Usage: bash scripts/bench.sh /path/to/staged-title_t00.mkv   (run inside the skive box — ./skive opens a shell)
 # Cuts a 5-min 1080p sample from the middle of the title and encodes it with
 # each encoder; progress streams live. SVT-AV1 is absent because the 2020 Chromecast with
 # Google TV cannot hardware-decode AV1 (jellyfin-androidtv#4838), so HEVC is
@@ -65,7 +65,7 @@ run x265-superfast --encoder-preset superfast
 # CQP 24/28 bracket the x265 RF-22 output size — compare speed at matching size,
 # then eyeball quality in $work (ADR 0010's streaming-encoder caveat applies).
 if ! command -v vainfo >/dev/null 2>&1; then
-  echo "-- vainfo missing — re-run scripts/setup-transcode.sh inside the box"
+  echo "-- vainfo missing — rebuild the skive box image (podman compose build)"
 else
   # ask the render node directly; wayland/x11 display probing inside
   # containers can fail after the driver loads and leave the entrypoint
@@ -91,7 +91,7 @@ else
     sed -n '1,40p' <<<"$va" | sed 's/^/   | /'
     echo "   | on the BC-250 this skip is expected (VCN eFused off); JPEG/VP9/AV1"
     echo "   | but no H264/HEVC anywhere = Fedora's patent-stripped mesa — the"
-    echo "   | mesa-va-drivers-freeworld swap in setup-transcode.sh fixes it"
+    echo "   | image's mesa-va-drivers-freeworld fixes it — rebuild (podman compose build)"
   fi
 fi
 echo "--"

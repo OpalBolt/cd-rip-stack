@@ -4,57 +4,54 @@ Once per ripping machine — the Linux box with the disc drive. After this page,
 you can run any command; workflows live on the [video](video.md) and
 [music](music.md) pages, the share trees on [nas-layout](nas-layout.md).
 
-## Dependencies
+## The skive box
 
-Python 3.13 and uv. With mise, the tool versions are pinned in `mise.toml`:
+skive runs in one container — the skive box (CONTEXT.md): a Fedora image
+built from this repo's Containerfile with every tool baked in — makemkv,
+cyanrip, ffmpeg, mkvtoolnix, tesseract with eng+dan data, seconv, rsync,
+skive itself, and the beets stack with the GStreamer bits its replaygain
+plugin needs. The host installs none of them. `./skive <cmd>` runs any
+skive command in the box; bare `./skive` opens a shell in it.
 
-```bash
-mise run install      # tools + skive on PATH (editable, from this repo)
-mise run update       # ff-pull and refresh the install
-```
-
-That installs `skive` on your PATH from this repo (re-run `mise run update`
-after pulling) and brings `seconv` — Subtitle Edit's headless converter, the
-subtitle-pass engine — plus `ffmpeg` (with `ffprobe`). Without mise, install
-uv by its own means and run `uv tool install --editable .` yourself.
-
-By hand, on Arch (`yay` works in place of `paru`):
+Host prep, once per machine:
 
 ```bash
-sudo pacman -S --needed flac mkvtoolnix-cli rsync tesseract tesseract-data-eng tesseract-data-dan
-paru -S --needed makemkv cyanrip
+# install podman and a compose provider (docker compose works too)
+echo sg | sudo tee /etc/modules-load.d/sg.conf   # MakeMKV talks to /dev/sg*; survive reboot
+sudo usermod -aG cdrom "$USER"                   # then log in again
+# mount both shares at /mnt/videos and /mnt/music — skive never mounts
 ```
 
-(The universal distrobox gets the same stack from
-`scripts/setup-transcode.sh` — on Fedora, MakeMKV comes from RPM Fusion
-nonfree; see [transcode](transcode.md).)
+Then, from the clone:
 
-- `makemkv` — needs a MakeMKV key in `~/.MakeMKV/settings.conf` as
-  `app_Key = "..."`; the free beta key rotates every 30 days — an expired key
-  refuses BD rips with the fix instructions (ADR 0016), DVD and CD rips are
-  unaffected
-- `cyanrip` — CD rips (AccurateRip verification)
-- `flac` — provides `metaflac`
-- `mkvtoolnix` — provides `mkvmerge`
-- `tesseract` with the `eng` and `dan` language data — subtitle-pass OCR;
-  `tesseract --list-langs` must show both
-- `rsync` — for `sync-sd`
+```bash
+cp .env.example .env     # fill the keys (TMDB_API_KEY; MAKEMKV_KEY for BD rips)
+podman compose build
+./skive doctor           # repeat until the whole table is green
+```
 
-The beets stack (beets, beetcamp, the replaygain plugin) arrives with the
-venv from `mise run install`. replaygain needs a GStreamer/GI stack on this
-box, or beets fails at start-up.
+A stale or broken box heals the same way it was made: `git pull`, then
+`podman compose build`.
+
+Dev machines only — a user machine never needs mise or host packages.
+mise (`mise run install`, `mise run update`) pins this repo's own toolchain
+and puts an editable skive on your PATH with seconv and ffmpeg beside it;
+the Arch by-hand equivalent is `pacman -S --needed flac mkvtoolnix-cli
+rsync tesseract tesseract-data-eng tesseract-data-dan` plus `paru -S
+--needed makemkv cyanrip`. That path exists for hacking on skive outside
+the box.
 
 ## Environment variables
 
-Keys come from the process environment — skive never reads a `.env` file.
-Export them in your shell profile or `mise env`; `.env.example` records
-the key. `source .env` reaches skive only when the lines carry `export` —
-`echo $VAR` also shows unexported shell variables, so check with
-`env | grep VAR` in the shell skive runs from.
+Keys come from the process environment — skive itself never reads a
+`.env`. Compose does: every `./skive` invocation reads `.env` beside the
+repo and passes the vars into the box (`.env.example` records them all).
+Inside a `./skive` shell, `env | grep VAR` shows what skive sees.
 
 | Variable | Meaning |
 |---|---|
 | `TMDB_API_KEY` | TMDB API key, for movie/TV naming on `rip movie` / `rip tv` |
+| `MAKEMKV_KEY` | MakeMKV key, written into MakeMKV's settings at startup — env wins; unset keeps the remind-only path (the free beta key rotates every 30 days; an expired key refuses BD rips with fix instructions, ADR 0016 — DVD and CD rips are unaffected) |
 | `VIDEOS_MOUNT` / `MUSIC_MOUNT` | override the share mountpoints (default `/mnt/videos` / `/mnt/music`) |
 | `RIP_MINLENGTH` | title-scan minimum length in seconds (default `120`) |
 
@@ -90,6 +87,9 @@ MakeMKV enumerates drives through `/dev/sg*` (SCSI-generic), not `/dev/sr*`:
 - Drives seen but not openable: add yourself to the `cdrom` group and log in
   again.
 - Unmount the disc before you rip.
+
+`./skive doctor` carries these same remedies in its drive rows' detail
+cells.
 
 Video rips name the drive with `-d N`, which becomes makemkvcon's `disc:N`.
 Two discs can rip at once without colliding: makemkvcon rips each title into
