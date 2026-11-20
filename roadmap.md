@@ -15,3 +15,9 @@ Deferred work, with the reason each item waits.
 - **Delete the retired Windows module**: remove `windows/` (`transcode.py`,
   `subs.py`) and its test `tests/test_windows_transcode.py`. Retired per
   ADR 0010; kept only until the docs remake landed.
+
+## Box
+
+- **Browser-for-a-CLI**: a ttyd-style terminal attached at the `./skive`
+  wrapper, so the box is reachable from any browser. The wrapper seam already
+  exists and nothing needs the browser yet.

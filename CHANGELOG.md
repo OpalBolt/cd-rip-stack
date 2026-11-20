@@ -7,6 +7,17 @@ dated heading.
 
 ## Unreleased
 
+- feat: the skive box — one Fedora container (Containerfile + compose)
+  driven through a `./skive` wrapper replaces the distrobox setup script
+  and the Arch host install path; clone, build, `./skive doctor` is now the
+  one setup path on any machine.
+- feat: a `MAKEMKV_KEY` declared in the environment self-heals at startup —
+  skive writes it into MakeMKV's settings.conf (idempotently; the env key
+  always wins), so key rotation is a one-line `.env` edit. With no env key,
+  the remind-only behavior stands.
+- feat: `skive doctor` checks the machine in one green table — drives, share
+  mounts, MakeMKV key, tesseract languages, encode capability — and exits
+  nonzero when a prerequisite is missing; it checks, never fixes.
 - fix: a disc with several forced subtitle tracks in one language (e.g. two
   English forced tracks) shipped duplicate sidecars with the same name; now
   the track with the most cues wins and only one sidecar is written.
