@@ -1,9 +1,14 @@
 # The skive box. Devices, share bind-mounts and host-UID mapping are
-# slice 05's lane; this file stays minimal until then.
+# slice 05's lane; this file stays minimal until then. Values come from
+# `.env` via compose's automatic substitution; a missing `.env` just leaves
+# the defaults below in place.
 services:
   skive:
     build: .
     image: skive-box
-    env_file:
-      - path: .env
-        required: false
+    environment:
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - MAKEMKV_KEY=${MAKEMKV_KEY:-}
+      - VIDEOS_MOUNT=${VIDEOS_MOUNT:-/mnt/videos}
+      - MUSIC_MOUNT=${MUSIC_MOUNT:-/mnt/music}
+      - RIP_MINLENGTH=${RIP_MINLENGTH:-120}

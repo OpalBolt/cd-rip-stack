@@ -25,7 +25,8 @@ RUN dnf install -y \
       uv \
     && dnf clean all
 
-# seconv, pinned (matches mise.toml on the dev machine).
+# seconv, pinned (matches scripts/setup-transcode.sh SECONV_VER; mise.toml
+# pins latest for the dev machine).
 RUN mkdir -p /opt/seconv-5.3.0 \
     && curl -fsSL \
       "https://github.com/SubtitleEdit/subtitleedit/releases/download/v5.3.0/SeConv-Linux-x64.tar.gz" \
