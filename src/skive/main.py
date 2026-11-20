@@ -246,6 +246,10 @@ def main() -> None:
     args = build_parser().parse_args()
     set_verbosity(args.verbose)  # clamps -vvv and beyond to 2
     install_interrupt_handler()  # CONTEXT.md Interrupt: SIGINT -> clean exit path
+    from skive.scan import materialize_makemkv_key
+
+    materialize_makemkv_key()  # MAKEMKV_KEY env -> settings.conf; silent, env wins
+
     try:
         args.func(args)
     except KeyboardInterrupt:
