@@ -437,6 +437,19 @@ def test_key_env_unset_file_untouched(tmp_path, monkeypatch):
     assert settings.read_text() == 'app_Key = "T_OLD"\n'
 
 
+def test_key_env_unwritable_warns_not_crashes(tmp_path, monkeypatch, capsys):
+    """Parent path is a regular file: one warn naming the file, False, no
+    traceback — the remind-only expiry branch stays the graceful path."""
+    monkeypatch.setenv("MAKEMKV_KEY", "T_GOLD")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("in the way\n")
+    assert materialize_makemkv_key(blocker / "settings.conf") is False
+    err = capsys.readouterr().err
+    assert "could not update MakeMKV key file" in err
+    assert "remind-only fallback still applies" in err
+    assert blocker.read_text() == "in the way\n"
+
+
 def test_key_env_empty_string_is_unset(tmp_path, monkeypatch):
     """Empty env key behaves like unset: no write."""
     monkeypatch.setenv("MAKEMKV_KEY", "")

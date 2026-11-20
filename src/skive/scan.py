@@ -466,10 +466,10 @@ def _parse_titles(out: str) -> list[TitleInfo]:
 def materialize_makemkv_key(settings: Path | None = None) -> bool:
     """Write MAKEMKV_KEY from the environment into MakeMKV's settings.conf.
 
-    ADR 0016, updated: a key declared in the environment is written here —
-    env always wins over the file — while an undeclared key stays remind-only
-    (the expiry branch in scan_disc). Idempotent: no write when the file's
-    app_Key already equals the env key.
+    ADR 0016's never-fetch rule stands; the env-declared write here — env
+    always wins over the file — is the supersession ADR 0025 records. An
+    undeclared key stays remind-only (the expiry branch in scan_disc).
+    Idempotent: no write when the file's app_Key already equals the env key.
 
     Args:
         settings: settings.conf path (default ~/.MakeMKV/settings.conf); the
@@ -482,17 +482,27 @@ def materialize_makemkv_key(settings: Path | None = None) -> bool:
     if not key:
         return False
     path = settings if settings is not None else Path.home() / ".MakeMKV" / "settings.conf"
-    text = path.read_text() if path.is_file() else ""
-    if re.search(rf'^app_Key\s*=\s*"{re.escape(key)}"\s*$', text, re.MULTILINE):
-        return False
-    if re.search(r"^app_Key\s*=", text, re.MULTILINE):
-        text = re.sub(r"^app_Key\s*=.*$", f'app_Key = "{key}"', text, count=1, flags=re.MULTILINE)
-    else:
-        text = (
-            (text.rstrip("\n") + "\n" + f'app_Key = "{key}"\n') if text else f'app_Key = "{key}"\n'
+    try:
+        text = path.read_text() if path.is_file() else ""
+        if re.search(rf'^app_Key\s*=\s*"{re.escape(key)}"\s*$', text, re.MULTILINE):
+            return False
+        if re.search(r"^app_Key\s*=", text, re.MULTILINE):
+            text = re.sub(
+                r"^app_Key\s*=.*$", f'app_Key = "{key}"', text, count=1, flags=re.MULTILINE
+            )
+        else:
+            text = (
+                (text.rstrip("\n") + "\n" + f'app_Key = "{key}"\n')
+                if text
+                else f'app_Key = "{key}"\n'
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    except OSError as e:
+        ui.warn(
+            f"could not update MakeMKV key file {path}: {e} — remind-only fallback still applies"
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+        return False
     return True
 
 
