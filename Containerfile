@@ -50,7 +50,11 @@ RUN mkdir -p /opt/seconv-5.3.0 \
 # into the tool env so beets' replaygain runs on the same interpreter.
 # pycairo's meson can't see uv's standalone pythons (no pkg-config/sysconfig
 # metadata), so the tool env rides the distro interpreter + python3-devel.
+# Tool env under /opt with the executable on PATH: compose run execs bare
+# `skive` (fedora's PATH skips /root/.local/bin), and a SKIVE_UID-run box
+# cannot traverse the 0700 /root that uv's default location lives under.
 COPY . /src
 RUN cd /src \
-    && uv tool install --python-preference only-system . --with pygobject --force \
+    && UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+       uv tool install --python-preference only-system . --with pygobject --force \
     && rm -rf /src
