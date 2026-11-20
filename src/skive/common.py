@@ -292,6 +292,30 @@ class RipLog:
             self._raw_log.unlink(missing_ok=True)
 
 
+def share_status(mnt: str, env_var: str = "") -> tuple[str, str]:
+    """The share root's status as (kind, msg): ok mountpoint, warn local
+    dir, fail missing or not set. The decision half of ensure_share — it
+    exits and prints, this only decides, so doctor's rows can reuse it."""
+    path = Path(mnt).resolve()
+    if path.is_mount():
+        return "ok", f"{mnt} is a mountpoint"
+    if path.is_dir():
+        return "warn", f"{mnt} is a local directory, not a mountpoint"
+    if env_var and env_var not in os.environ:
+        msg = (
+            f"{env_var} is not set in skive's environment, so skive tried "
+            f"the default {mnt}, which does not exist — export it in the "
+            f"shell skive runs from (env | grep {env_var} there; "
+            f"echo ${env_var} shows unexported shell variables too)"
+        )
+        return "fail", msg
+    msg = (
+        f"{mnt} does not exist — mount the share there first, or point "
+        f"VIDEOS_MOUNT/MUSIC_MOUNT at it"
+    )
+    return "fail", msg
+
+
 def ensure_share(mnt: str, env_var: str = "") -> None:
     """Verify the share root — a mountpoint passes, a local dir warns.
 
@@ -307,22 +331,12 @@ def ensure_share(mnt: str, env_var: str = "") -> None:
     Raises:
         SystemExit: If the path does not exist
     """
-    path = Path(mnt).resolve()
-    if path.is_mount():
+    # spill: share check reused by doctor
+    kind, msg = share_status(mnt, env_var)
+    if kind == "ok":
         return
-    if path.is_dir():
+    if kind == "warn":
         ui.warn(f"{mnt} is not a mountpoint — using it as a local share")
         return
-    if env_var and env_var not in os.environ:
-        ui.fail(
-            f"{env_var} is not set in skive's environment, so skive tried "
-            f"the default {mnt}, which does not exist — export it in the "
-            f"shell skive runs from (env | grep {env_var} there; "
-            f"echo ${env_var} shows unexported shell variables too)"
-        )
-        sys.exit(1)
-    ui.fail(
-        f"{mnt} does not exist — mount the share there first, or point "
-        f"VIDEOS_MOUNT/MUSIC_MOUNT at it"
-    )
+    ui.fail(msg)
     sys.exit(1)

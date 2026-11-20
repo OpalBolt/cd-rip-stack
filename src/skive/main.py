@@ -56,6 +56,12 @@ def cmd_search(args):
     run_search(args)
 
 
+def cmd_doctor(args):
+    from skive.doctor import run_doctor
+
+    sys.exit(run_doctor())
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The skive argument parser: -v/-vv live on the TOP level so they apply
     to every subcommand (skive -v rip movie, not skive rip movie -v)."""
@@ -238,6 +244,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search_parser.add_argument("query", help="title substring, case-insensitive")
     search_parser.set_defaults(func=cmd_search)
+
+    # doctor — the green table: read-only machine readiness
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="check this machine's ripping readiness (read-only)"
+    )
+    doctor_parser.set_defaults(func=cmd_doctor)
 
     return parser
 
