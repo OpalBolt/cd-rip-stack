@@ -4,7 +4,8 @@
 # spill: setup-transcode.sh deleted by the retire-old-world slice; header cited it
 FROM fedora:43
 
-# RPM Fusion first: HandBrake lives in free, MakeMKV/cyanrip in nonfree.
+# RPM Fusion first: HandBrake lives in free, MakeMKV in nonfree.
+# (cyanrip is in neither — see the source build below.)
 RUN dnf install -y \
       "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
       "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
@@ -18,11 +19,22 @@ RUN dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld \
 RUN dnf install -y \
       mkvtoolnix ffmpeg libva-utils tesseract \
       tesseract-langpack-eng tesseract-langpack-dan libicu git \
-      makemkv cyanrip flac rsync \
+      makemkv flac rsync \
       gstreamer1-plugins-good \
       gobject-introspection-devel gstreamer1-devel cairo-devel \
       gcc pkgconf-pkg-config \
       uv \
+    && dnf clean all
+
+# cyanrip isn't packaged for Fedora 43 or RPM Fusion; build from source, pinned.
+RUN dnf install -y meson ninja-build ffmpeg-devel libcdio-paranoia-devel \
+      libmusicbrainz5-devel libcurl-devel \
+    && git clone --depth 1 --branch v0.9.3.1 https://github.com/cyanreg/cyanrip /tmp/cyanrip \
+    && cd /tmp/cyanrip \
+    && meson setup build --prefix=/usr/local \
+    && ninja -C build install \
+    && ldconfig \
+    && rm -rf /tmp/cyanrip \
     && dnf clean all
 
 # seconv, pinned at v5.3.0 (mise.toml pins latest for the dev machine).
