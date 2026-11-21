@@ -6,10 +6,13 @@ FROM fedora:43
 
 # RPM Fusion first: HandBrake lives in free, MakeMKV in nonfree.
 # (cyanrip is in neither — see the source build below.)
+# F43's HandBrake package IS the CLI (HandBrakeCLI; the GUI is HandBrake-gui).
+# handbrake-cli matches nothing — that's the Arch name; HandBrake-cli is only
+# a compat Provides alias on the real package.
 RUN dnf install -y \
       "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
       "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
-    && dnf install -y handbrake-cli || dnf install -y HandBrake-cli
+    && dnf install -y HandBrake
 
 # Fedora's mesa-va-drivers is patent-stripped (no H.264/H.265 encode);
 # swap in RPM Fusion's freeworld build for VA-API hardware encode.
