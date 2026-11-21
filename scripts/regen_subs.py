@@ -6,7 +6,7 @@ For each library movie whose lossless source has kept subtitle tracks but whose
 library folder lacks the matching sidecars, run the subtitle pass on the source
 into a temp dir and copy ONLY the missing sidecars beside the encode. Never
 touches the video or validation.json. Dry-run by default (ffprobe/mkvmerge
-only, no OCR); --run does the OCR -- run it on the transcode box.
+only, no OCR); --run does the OCR -- run it inside the skive box.
 
 Usage:  python scripts/regen_subs.py [--run] [--jobs N] [--root /mnt/videos] [TITLE ...]
         (no TITLE = scan every movie in the library)

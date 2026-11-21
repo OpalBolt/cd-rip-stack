@@ -7,9 +7,9 @@
 # Google TV cannot hardware-decode AV1 (jellyfin-androidtv#4838), so HEVC is
 # the only codec this library can commit to.
 set -euo pipefail
-# pin the container's tools: the host's mise shims (~/.local) bleed into the
-# box through the shared home and shadow /usr/bin — mise's ffmpeg does not
-# see the freeworld VA-API driver (no HEVC/H264 encode entrypoints)
+# pin the container's tools: nothing earlier on PATH may shadow /usr/bin
+# with a non-freeworld ffmpeg -- it cannot see the freeworld VA-API driver
+# (no HEVC/H264 encode entrypoints)
 export PATH="/usr/bin:$PATH"
 src="$1"; work="$(mktemp -d /tmp/bench-XXXX)"
 sample="$work/sample.mkv"

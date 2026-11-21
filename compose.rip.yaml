@@ -1,7 +1,8 @@
-# Optical drive nodes — rip boxes only. The ./skive wrapper appends this file
+# Optical drive nodes — machines with optical drives only. The ./skive
+# wrapper appends this file
 # (-f compose.rip.yaml) when /dev/sr* exists on the host: a device compose
 # lists must exist at container create (the daemon stats it), so drive-less
-# boxes like the transcode box must run without it. Compose appends these to
+# boxes must run without it. Compose appends these to
 # the base file's devices (/dev/dri).
 services:
   skive:

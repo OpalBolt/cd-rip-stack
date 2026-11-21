@@ -1,8 +1,9 @@
 # Setup
 
-Once per ripping machine — the Linux box with the disc drive. After this page,
-you can run any command; workflows live on the [video](video.md) and
-[music](music.md) pages, the share trees on [nas-layout](nas-layout.md).
+Once per machine — with a disc drive or without, ripping and encoding
+alike. After this page, you can run any command; workflows live on the
+[video](video.md) and [music](music.md) pages, the share trees on
+[nas-layout](nas-layout.md).
 
 ## The skive box
 
@@ -13,7 +14,8 @@ skive itself, and the beets stack with the GStreamer bits its replaygain
 plugin needs. The host installs none of them. `./skive <cmd>` runs any
 skive command in the box; bare `./skive` opens a shell in it.
 
-Host prep, once per machine:
+Host prep, once per machine (the sg module and the cdrom group matter only
+where discs go in — a drive-less box skips both):
 
 ```bash
 # install podman and a compose provider (docker compose works too)

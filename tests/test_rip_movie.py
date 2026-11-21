@@ -777,7 +777,7 @@ def _movie_flow(monkeypatch, titles, pick=MAMMA, table_actions=None, root=None):
     rip = Mock(return_value=0)
 
     # Off the real NAS mount: completing runs stage a 1-byte .mkv that must
-    # never reach the transcode box's rip/ tree.
+    # never reach the rip/ staging tree on another machine.
     monkeypatch.setenv("VIDEOS_MOUNT", str(root) if root else tempfile.mkdtemp())
 
     monkeypatch.setattr(rip_common, "RipLog", Mock(return_value=log))

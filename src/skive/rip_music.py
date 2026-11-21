@@ -51,7 +51,7 @@ def rip_music(args) -> None:
     # Validate offset
     if args.offset is None:
         ui.fail("usage: skive rip music [-d N] <offset> [cyanrip_flags...]")
-        ui.fail("  offset       drive sample offset (see drive table in README)")
+        ui.fail("  offset       drive sample offset (see Drives in docs/setup.md)")
         ui.fail("  -d N         drive number, same as rip movie/tv (default 0)")
         ui.fail("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)")
         sys.exit(2)

@@ -1,6 +1,6 @@
 # cd-rip-stack
 
-Rip CDs to AccurateRip-verified FLAC. Rip DVDs and Blu-rays to lossless MKV, then transcode to 1080p H.265 for Jellyfin. Two machines share one NAS mount: the rip box (Linux) rips; the transcode box encodes. `rip/` stages lossless MKVs, `library/` holds the encodes.
+Rip CDs to AccurateRip-verified FLAC. Rip DVDs and Blu-rays to lossless MKV, then transcode to 1080p H.265 for Jellyfin. Machines share one NAS mount and each runs the skive box — rip, transcode, tag and sync all happen inside it. `rip/` stages lossless MKVs, `library/` holds the encodes.
 
 ## Language
 
@@ -29,7 +29,7 @@ The one disc read for every video rip: `makemkvcon info` (ADR 0021, replacing th
 _Avoid_: fast scan, full scan, quick scan, deep scan, pre-scan
 
 **MakeMKV key**:
-The `app_Key` activation string in `~/.MakeMKV/settings.conf` on the rip box. The free beta key rotates roughly monthly (forum.makemkv.com topic t=1053); a purchased key is permanent. An expired key blocks BD ripping only — DVDs stay free, CDs never touch MakeMKV.
+The `app_Key` activation string in `~/.MakeMKV/settings.conf` inside the skive box (`MAKEMKV_KEY` in `.env` is how it gets there). The free beta key rotates roughly monthly (forum.makemkv.com topic t=1053); a purchased key is permanent. An expired key blocks BD ripping only — DVDs stay free, CDs never touch MakeMKV.
 _Avoid_: license, registration, serial
 
 **Eligible title**:
@@ -108,7 +108,7 @@ The validation.json `extras` key (`include`, `quality`) that decides a movie's e
 _Avoid_: extras flag, keep flag
 
 **Session cap**:
-One `skive transcode` run by default encodes every staged main feature — unlimited is the default (`-n N` takes a deliberate slice; the rest stays in staging, deferred loudly with a count). Stated once with a deliberately vague estimate (2–10 min per main on the transcode box) — never per title. A main already encoded in the library never counts against the cap.
+One `skive transcode` run by default encodes every staged main feature — unlimited is the default (`-n N` takes a deliberate slice; the rest stays in staging, deferred loudly with a count). Stated once with a deliberately vague estimate (2–10 min per main on the skive box) — never per title. A main already encoded in the library never counts against the cap.
 _Avoid_: batch size, throttle
 
 **Already-in-library skip**:
@@ -120,7 +120,7 @@ A staged file still wearing a MakeMKV-chosen name — the bare drive pattern (`B
 _Avoid_: label, code
 
 **Transcode box**:
-The machine that runs `skive transcode` over the NAS mount — the Ryzen AI 7 350 laptop in its distrobox, the only transcode box: the BC-250 no longer transcodes. Encodes via ffmpeg `hevc_vaapi` on the laptop's VCN hardware (`-e auto`'s resolution; ADR 0010 records the path and its 2026-11 hardware revision). The box is self-contained and universal — every tool, rip and transcode both (ffmpeg, mkvmerge, tesseract, seconv, makemkvcon, cyanrip, and skive itself), lives in the container, built by the repo's `scripts/setup-transcode.sh`; mise stays a rip-box tool.
+Retired name for the skive box, from the era when one laptop ran `skive transcode` in a hand-built container of its own; the skive box replaced it, and run logs plus ADRs still say the old name. The laptop's VCN hardware still sets the encoder story (`-e auto` resolves to `hevc_vaapi` there; ADR 0010 records the path and its 2026-11 hardware revision). Say skive box.
 _Avoid_: encoder box, GPU box, BC-250
 
 **Prefetch**:
@@ -274,7 +274,7 @@ The per-track rip budget in `rip music`: a track may not rip and encode longer t
 _Avoid_: timeout, watchdog, kill counter
 
 **Run log**:
-The durable event record both machines append to over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. A transcode run logs one timed line per part — `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the part's numbers in `status` (`5744 MB at 64 MB/s`), so copy slippage and encode slippage are separable trends; a phase that dies mid-run closes with `FAIL` and its elapsed. Replaces the old 8-column text `rip.log`.
+The durable event record every run appends over NFS: `logs/rip.jsonl` on the videos share for video runs, on the music share for music runs (`rip music`, `tag` — a `tag` run also logs one `filed`/`left` line per album) — one JSON object per line (`ts, run, script, software, name, phase, status, elapsed_s`). A `rip music` run logs `name` as `-` until cyanrip reports the disc's identity, then carries `Album artist - Album` from cyanrip's header on every later line; a failed run keeps `-`. A transcode run logs one timed line per part — `copy`, `merge`, `subs`, `encode` — each with its own `elapsed_s` and the part's numbers in `status` (`5744 MB at 64 MB/s`), so copy slippage and encode slippage are separable trends; a phase that dies mid-run closes with `FAIL` and its elapsed. Replaces the old 8-column text `rip.log`.
 _Avoid_: verification log, event log
 
 **Raw log**:
@@ -287,3 +287,9 @@ _Avoid_: scan log, issue log
 **Interrupt**:
 What Ctrl+C means everywhere: the child tool is signalled (up to 5 s, then killed), the in-flight partial file is deleted — no partial rip is ever left hanging — completed renamed titles are kept, `rip.jsonl` records `status=interrupted`, and the process exits 130. A second Ctrl+C exits instantly without cleanup; the next run's junk purge sweeps what's left.
 _Avoid_: cancel, abort
+
+### The box
+
+**Skive box**:
+The one podman/docker container every machine runs: a Fedora image carrying every tool and a baked skive, configured entirely by `compose.yaml` + `.env`, entered through a small wrapper script. Shares and drives arrive from the host — the box never mounts.
+_Avoid_: transcode box, universal box, environment

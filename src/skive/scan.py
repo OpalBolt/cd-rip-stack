@@ -530,7 +530,9 @@ def scan_disc(
             # an undeclared key stays remind-only.
             ui.fail("MakeMKV key expired — BD ripping needs a valid app_Key")
             ui.info("free key: https://forum.makemkv.com/forum/viewtopic.php?t=1053")
-            ui.info('write app_Key = "…" into ~/.MakeMKV/settings.conf on the rip box, then re-run')
+            ui.info(
+                'set MAKEMKV_KEY in .env, or write app_Key = "…" into ~/.MakeMKV/settings.conf inside the box, then re-run'
+            )
             ui.info("DVD and CD rips are unaffected")
             if log is not None:
                 log.note("scan", "makemkv key expired — update app_Key (forum t=1053)", echo=False)

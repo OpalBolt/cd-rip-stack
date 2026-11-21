@@ -16,7 +16,7 @@ board's VCN block is factory-unprovisioned and eFused off, so no tool ever
 got hardware encode there, and the community `bc250-vaapi` shim stays
 rejected (its H.264 is libx264 on the CPU in a costume, its HEVC a CBR
 streaming encoder shaped for game streaming, not quality-based archival —
-ADR 0010). The laptop's VCN does encode: `-e auto` (the default) resolves
+ADR 0010). A VCN-capable GPU does encode: `-e auto` (the default) resolves
 to `hevc_vaapi` on it. Hardware encode goes through ffmpeg VAAPI, not
 HandBrake — HandBrake on Linux has no VAAPI encoder.
 
@@ -27,7 +27,7 @@ box rips, transcodes, tags, and syncs. The image also carries the
 `mesa-va-drivers-freeworld` swap (Fedora strips H.264/H.265 from its Mesa
 for patents; without the freeworld build vainfo lists only JPEG/VP9/AV1
 and there is no HEVC encode entrypoint), and Fedora 43's Mesa is new
-enough for the laptop's VCN (gfx1152/Radeon 860M needs Mesa 25.0+ for VCN
+enough for VCN encode (gfx1152/Radeon 860M needs Mesa 25.0+ for VCN
 encode).
 
 The shares bind-mount into the box at the same path as on the host;
@@ -40,7 +40,7 @@ instructions when it is missing (ADR 0016).
 Updating and healing are the same motion — `git pull`, `podman compose
 build`, `./skive doctor`: a broken box is rebuilt, not repaired. Bumping
 seconv means editing the pinned version in the Containerfile. The box uses
-the same env vars as the ripping machine — see [setup](setup.md). Runs are
+the same env vars as every machine — see [setup](setup.md). Runs are
 invoked by hand; nothing schedules them.
 
 ## Running a batch
@@ -87,8 +87,8 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
 - **TV** — every episode encodes: `library/tv/<Show (Year)>/Season NN/
   <Show (Year)> - S01E02.mkv` (season 00 → `Specials/`), plus the subtitle
   pass. TV extras file under the show's `extras/` with tracks embedded.
-- **Encode** — `-e auto` (default) picks per box: VCN hardware on the
-  laptop (`ffmpeg hevc_vaapi` CQP 24, audio and subtitles stream-copied,
+- **Encode** — `-e auto` (default) picks per box: VCN hardware when the
+  box has it (`ffmpeg hevc_vaapi` CQP 24, audio and subtitles stream-copied,
   bwdif deinterlaces interlaced frames only, width cropped to VCN's
   64-pixel alignment — the hardware's own padding bleeds a stretched
   right edge on 720-wide DVDs; ~181 fps at 1080p, a feature encodes in

@@ -35,7 +35,7 @@ services:
       # /dev/dri exists on every box we transcode on (VCN/iGPU). The optical
       # nodes live in compose.rip.yaml instead: compose has no optional-device
       # flag, and the daemon stats every listed device at container create —
-      # drive-less boxes (the transcode box) must run without that file.
+      # drive-less boxes must run without that file.
       - /dev/dri:/dev/dri
 volumes:
   skive-home:

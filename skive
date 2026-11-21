@@ -10,7 +10,7 @@ else
   engine=(docker compose)
 fi
 
-# Optical nodes exist only on the rip box; a device compose lists must
+# Optical nodes exist only on machines with drives; a device compose lists must
 # exist at container create, so drive-less boxes run without the rip
 # override (they would die on `stat /dev/sr0`).
 files=(-f compose.yaml)

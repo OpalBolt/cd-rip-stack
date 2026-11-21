@@ -2,12 +2,14 @@
 
 Rip CDs, DVDs, and Blu-rays to MKV and FLAC.
 
-A two-box, hand-driven pipeline: a ripping machine pulls discs to lossless
-MKV and FLAC on two NFS shares and files music into a beets-managed library;
-a transcode machine drains video staging into a Jellyfin-ready H.265 library with
-SRT sidecars. Eight commands below; each docs page is one job.
+A hand-driven pipeline that runs on any machine with a disc drive or a
+GPU: every machine runs the skive box, one container with every tool
+baked in, over two NFS shares. Discs land as lossless MKV and FLAC
+staging (music files into a beets-managed library); `skive transcode`
+drains video staging into a Jellyfin-ready H.265 library with SRT
+sidecars. Eight commands below; each docs page is one job.
 
-## Quickstart — the ripping machine
+## Quickstart
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
@@ -92,6 +94,6 @@ One page per job:
 
 ## Development
 
-Tests: `uv run pytest` (1035 passing). How skive decides things and the
+Tests: `uv run pytest`. How skive decides things and the
 glossary: [CONTEXT.md](CONTEXT.md). Deferred work: [roadmap.md](roadmap.md).
 Decisions: [docs/adr/](docs/adr/).

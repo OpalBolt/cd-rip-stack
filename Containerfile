@@ -1,7 +1,5 @@
 # The skive box — Fedora 43 with the full rip/transcode toolchain and a
-# baked skive. Package list proven on real hardware (translated from the
-# setup script this image replaced).
-# spill: setup-transcode.sh deleted by the retire-old-world slice; header cited it
+# baked skive. Package list proven on real hardware.
 FROM fedora:43
 
 # RPM Fusion first: HandBrake lives in free, MakeMKV in nonfree.
@@ -42,7 +40,6 @@ RUN dnf install -y meson ninja-build ffmpeg-devel libcdio-paranoia-devel \
     && dnf clean all
 
 # seconv, pinned at v5.3.0 (mise.toml pins latest for the dev machine).
-# spill: version previously cross-referenced the deleted setup-transcode.sh
 RUN mkdir -p /opt/seconv-5.3.0 \
     && curl -fsSL \
       "https://github.com/SubtitleEdit/subtitleedit/releases/download/v5.3.0/SeConv-Linux-x64.tar.gz" \

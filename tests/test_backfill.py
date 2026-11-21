@@ -144,7 +144,7 @@ def test_missing_tool_exits_before_touching_library(tmp_path, monkeypatch, capsy
     rc = backfill.run_backfill(str(tmp_path / "lib"))
     assert rc == 1
     err = capsys.readouterr().err
-    assert "seconv" in err and "Non-Python prerequisites" in err
+    assert "seconv" in err and "skive box" in err
     # only the tesseract language check may run; no library file is ever probed
     assert [cmd for _e, cmd in calls if cmd[0].endswith("ffprobe")] == []
     assert not any(str(tmp_path) in str(cmd) for cmd in calls)

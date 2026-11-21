@@ -14,7 +14,11 @@ Deferred work, with the reason each item waits.
 
 - **Delete the retired Windows module**: remove `windows/` (`transcode.py`,
   `subs.py`) and its test `tests/test_windows_transcode.py`. Retired per
-  ADR 0010; kept only until the docs remake landed.
+  ADR 0010; kept only until the docs remake landed. Blast radius beyond
+  the module: `scripts/migrate_layout.py` and `scripts/backfill_years.py`
+  import `windows/transcode.py` at runtime, and their tests pin those old
+  name contracts — the slice decides whether the one-shot scripts go with
+  it or move to `src/skive` contracts.
 
 ## Box
 

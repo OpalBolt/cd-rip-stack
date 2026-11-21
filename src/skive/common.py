@@ -122,7 +122,7 @@ class RipLog:
 
     Run log  <root>/logs/rip.jsonl — one
     {ts, run, script, software, name, phase, status, elapsed_s} object per
-    line, appended by both machines over NFS. status carries "started",
+    line, appended by every run over NFS. status carries "started",
     "ok", "FAIL(rc)", "interrupted", or note text.
     Raw log  <root>/logs/raw/<run>.jsonl — one {ts, run, tool, line} object
     per tool output line; finish(0) deletes it, failure or interrupt keeps it.

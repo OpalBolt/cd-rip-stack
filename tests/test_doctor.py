@@ -36,7 +36,7 @@ class Run:
 
 
 def green_env(tmp_path, monkeypatch):
-    """Everything a machine needs: a device node, both shares mounted, the
+    """Everything a box needs: a device node, both shares mounted, the
     key in the environment, a MAKEMKV_INFO replay dump."""
     (tmp_path / "sr0").touch()
     for env, default in (("VIDEOS_MOUNT", "videos"), ("MUSIC_MOUNT", "music")):
@@ -48,15 +48,15 @@ def green_env(tmp_path, monkeypatch):
     monkeypatch.setenv("MAKEMKV_INFO", f"cat {dump}")
 
 
-def test_green_machine_exit_0(tmp_path, monkeypatch, capsys):
+def test_green_box_exit_0(tmp_path, monkeypatch, capsys):
     green_env(tmp_path, monkeypatch)
     rc = doctor.run_doctor(dev=str(tmp_path), run=Run(), settings=tmp_path / "none.conf")
     assert rc == 0
-    assert "machine ready" in capsys.readouterr().err
+    assert "box ready" in capsys.readouterr().err
 
 
 def test_driveless_box_skips_rip_checks_exit_0(tmp_path, monkeypatch, capsys):
-    """The transcode box has no optical nodes: drive, enumeration, and key
+    """A drive-less box has no optical nodes: drive, enumeration, and key
     checks skip as warns — the box never rips, so they are not missing
     prerequisites."""
     green_env(tmp_path, monkeypatch)
@@ -66,9 +66,9 @@ def test_driveless_box_skips_rip_checks_exit_0(tmp_path, monkeypatch, capsys):
     rc = doctor.run_doctor(dev=str(nodev), run=Run(), settings=tmp_path / "none.conf")
     err = capsys.readouterr().err
     assert rc == 0
-    assert "machine ready — with warnings" in err
+    assert "box ready — with warnings" in err
     assert "skipped" in err  # the rip-only rows say so
-    assert "sg module" in err  # ...but keep the rip-box remedies in the detail
+    assert "sg module" in err  # ...but keep the drive remedies in the detail
 
 
 def test_tesseract_missing_dan_exit_1(tmp_path, monkeypatch, capsys):
@@ -101,7 +101,7 @@ def test_vainfo_absent_warns_but_exit_0(tmp_path, monkeypatch, capsys):
     green_env(tmp_path, monkeypatch)
     rc = doctor.run_doctor(dev=str(tmp_path), run=Run(vainfo=None), settings=tmp_path / "n.conf")
     assert rc == 0
-    assert "machine ready — with warnings" in capsys.readouterr().err
+    assert "box ready — with warnings" in capsys.readouterr().err
 
 
 def test_piped_render_is_plain_tagged_lines(tmp_path, monkeypatch, capsys):

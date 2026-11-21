@@ -174,19 +174,20 @@ class Item:
 
 
 def _find_on_path(exe: str) -> str | None:
-    """Everything resolves on PATH inside the distrobox (Linux tool names, no
+    """Everything resolves on PATH inside the skive box (Linux tool names, no
     .exe, no %ProgramFiles% fallback)."""
     found = shutil.which(exe)
     if not found:
-        ui.fail(f"{exe} not found on PATH -- see README (transcode box: Install)")
+        ui.fail(f"{exe} not found on PATH -- the box image is stale; see README (setup)")
     return found
 
 
 def _find_tool(exe: str) -> str | None:
-    """/usr/bin first for the hardware path's tools: the host's mise shims
-    bleed into the box through the shared home, and mise's ffmpeg/vainfo see
-    a different (patent-stripped) VA-API driver than the container's RPM
-    Fusion builds (bench.sh hit this as "no usable encoding entrypoint")."""
+    """/usr/bin first for the hardware path's tools, so nothing earlier on
+    PATH can shadow the container's RPM Fusion builds with a binary that
+    sees a different (patent-stripped) VA-API driver (bench.sh hit this as
+    "no usable encoding entrypoint" in the distrobox era, when host mise
+    shims bled in through a shared home)."""
     if os.path.exists(os.path.join("/usr/bin", exe)):
         return os.path.join("/usr/bin", exe)
     return shutil.which(exe)
@@ -1459,7 +1460,7 @@ def run_transcode(args) -> int:
     if not os.path.isdir(vid):
         ui.fail(
             f"{vid} is not reachable. The videos share isn't "
-            f"mounted -- mount it at {vid} (see README: transcode box), or set VIDEOS_MOUNT."
+            f"mounted -- mount it at {vid} (see README: setup), or set VIDEOS_MOUNT."
         )
         return 1
     keep = args.keep
@@ -1504,7 +1505,7 @@ def run_transcode(args) -> int:
         elif args.encoder == "vaapi":
             ui.fail(
                 "-e vaapi but this box has no VA-API HEVC encode "
-                "entrypoint (vainfo) -- no VCN (BC-250) or the image's freeworld "
+                "entrypoint (vainfo) -- no VCN or the image's freeworld "
                 "driver is missing (rebuild the image: podman compose build); "
                 "use -e auto or -e x265"
             )
@@ -1616,7 +1617,7 @@ def run_transcode(args) -> int:
     }
 
     # the very vague session estimate (CONTEXT.md: Session cap): ~2–10
-    # min per main on the transcode box (VCN via vaapi), stated once,
+    # min per main on a VCN box (vaapi), stated once,
     # never per title
     deferred = 0
     if args.limit:

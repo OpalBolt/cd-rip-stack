@@ -1,11 +1,10 @@
-"""skive doctor — the green table: this machine's readiness.
+"""skive doctor — the green table: the box's readiness.
 
 Seven read-only checks, one table, one result line: optical device nodes,
 makemkvcon drive enumeration (through scan's MAKEMKV_INFO replay seam),
 the two share roots (common.share_status), the MakeMKV key, tesseract's
-languages, and VA-API encode entrypoints (informational — the laptop has
-them, CPU boxes do not). A box with no optical nodes never rips (the
-transcode box), so the drive, enumeration, and key checks report a skip
+languages, and VA-API encode entrypoints (informational — VCN hardware
+has them, CPU-only boxes do not). A drive-less box never rips, so the drive, enumeration, and key checks report a skip
 there instead of failing. Doctor fixes nothing. Exit 1 only when a
 prerequisite is missing; a warn (local share, missing vainfo) never fails
 the run.
@@ -34,7 +33,7 @@ def check_devices(dev: str = "/dev") -> tuple[str, str]:
         return "ok", f"{len(nodes)} nodes: {' '.join(nodes)}"
     return "warn", (
         "no /dev/sr* or /dev/sg* — drive-less box (rip checks skipped); "
-        "on a rip box: load the sg module, join the cdrom group"
+        "on a box with drives: load the sg module, join the cdrom group"
     )
 
 
@@ -131,10 +130,10 @@ def run_doctor(dev: str = "/dev", run=subprocess.run, settings: Path | None = No
     _render(rows)
     fails = sum(1 for _, kind, _ in rows if kind == "fail")
     if fails:
-        ui.fail(f"{fails} prerequisite(s) missing — machine not ready")
+        ui.fail(f"{fails} prerequisite(s) missing — box not ready")
         return 1
     if any(kind == "warn" for _, kind, _ in rows):
-        ui.ok("machine ready — with warnings")
+        ui.ok("box ready — with warnings")
     else:
-        ui.ok("machine ready")
+        ui.ok("box ready")
     return 0

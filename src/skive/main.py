@@ -245,9 +245,9 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("query", help="title substring, case-insensitive")
     search_parser.set_defaults(func=cmd_search)
 
-    # doctor — the green table: read-only machine readiness
+    # doctor — the green table: read-only box readiness
     doctor_parser = subparsers.add_parser(
-        "doctor", help="check this machine's ripping readiness (read-only)"
+        "doctor", help="check the box's ripping readiness (read-only)"
     )
     doctor_parser.set_defaults(func=cmd_doctor)
 
