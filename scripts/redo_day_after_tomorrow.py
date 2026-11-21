@@ -9,7 +9,7 @@ layout as the current library encode: video + 4 audio, zero subtitle
 tracks (the existing .eng.srt/.dan.srt sidecars and validation.json stay
 beside it untouched).
 
-Run INSIDE the laptop transcode box (needs /dev/dri/renderD128 with HEVC
+Run INSIDE the skive box on a VCN machine (needs /dev/dri/renderD128 with HEVC
 encode). Fully reversible until you clean up: the old encode is kept as
 "<title>.pre-crop.mkv" beside the new one, the lossless source is never
 touched, and nothing moves until the new file passes verification.
@@ -39,10 +39,10 @@ def die(msg: str) -> None:
 
 
 def find_tool(exe: str) -> str:
-    """/usr/bin first: the host's mise shims bleed into the box through the
-    shared home, and mise's ffmpeg/vainfo see a mismatched (non-freeworld)
-    VA-API driver -- device creation dies on an undefined symbol (skive's
-    _find_tool and bench.sh's PATH pin exist for exactly this)."""
+    """/usr/bin first: pin the container's RPM Fusion tools so nothing on
+    PATH can shadow them with a non-freeworld VA-API driver -- device
+    creation dies on an undefined symbol (skive's _find_tool and bench.sh's
+    PATH pin exist for exactly this)."""
     if os.path.exists(f"/usr/bin/{exe}"):
         return f"/usr/bin/{exe}"
     found = shutil.which(exe)
@@ -121,10 +121,10 @@ def main() -> int:
         if not os.path.isfile(side):
             die(f"sidecar missing (would be orphaned): {side}")
     if not os.path.exists("/dev/dri/renderD128"):
-        die("no /dev/dri/renderD128 -- run inside the laptop transcode box")
+        die("no /dev/dri/renderD128 -- run inside the skive box on a VCN machine")
     vcn = vcn_probe(vain)
     if vcn is None:
-        die("vainfo shows no HEVC encode -- run inside the laptop transcode box")
+        die("vainfo shows no HEVC encode -- run inside the skive box on a VCN machine")
     doc = probe(ffp, SRC)
     src_audio = [s["codec_name"] for s in doc["streams"] if s["codec_type"] == "audio"]
     if len(src_audio) != 4:

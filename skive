@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# ./skive — the only door into the skive box (podman compose; docker works too).
+# With args it runs the container's skive; with no args it opens a shell inside.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if command -v podman >/dev/null 2>&1; then
+  engine=(podman compose)
+else
+  engine=(docker compose)
+fi
+
+# Optical nodes exist only on machines with drives; a device compose lists must
+# exist at container create, so drive-less boxes run without the rip
+# override (they would die on `stat /dev/sr0`).
+files=(-f compose.yaml)
+if compgen -G '/dev/sr*' >/dev/null; then
+  files+=(-f compose.rip.yaml)
+fi
+
+if [ "$#" -gt 0 ]; then
+  exec "${engine[@]}" "${files[@]}" run --rm skive skive "$@"
+else
+  exec "${engine[@]}" "${files[@]}" run --rm skive bash
+fi

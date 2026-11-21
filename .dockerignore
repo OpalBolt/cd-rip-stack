@@ -1,0 +1,10 @@
+# Keep secrets (.env) and heavy dirs out of the build context — the
+# Containerfile's `COPY . /src` must never bake them into a layer.
+.env
+.git
+.venv
+.scratch
+windows/
+tests/
+docs/
+dist/

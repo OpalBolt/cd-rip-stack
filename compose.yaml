@@ -1,0 +1,41 @@
+# The skive box. Values come from `.env` via compose's automatic
+# substitution; a missing `.env` just leaves the defaults in place.
+services:
+  skive:
+    build: 
+      context: .
+      dockerfile: Containerfile
+    image: skive-box
+    # Rootless podman already maps container-root to the invoking host user,
+    # so 0 is the podman-correct default. Rootful docker users export their
+    # uid:gid here (SKIVE_UID/SKIVE_GID in .env) to keep library files
+    # host-owned instead of root-owned.
+    user: "${SKIVE_UID:-0}:${SKIVE_GID:-0}"
+    environment:
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - MAKEMKV_KEY=${MAKEMKV_KEY:-}
+      - VIDEOS_MOUNT=${VIDEOS_MOUNT:-/mnt/videos}
+      - MUSIC_MOUNT=${MUSIC_MOUNT:-/mnt/music}
+      - RIP_MINLENGTH=${RIP_MINLENGTH:-120}
+      # Path.home() and makemkvcon both follow HOME; the named volume below
+      # keeps ~/.MakeMKV/settings.conf across restarts.
+      - HOME=/var/skive-home
+    volumes:
+      # Shares land at the same path inside the box as on the host: operator
+      # and skive agree on one path per share. Local-dir targets on a dev
+      # box produce skive's local-share warn — expected.
+      - type: bind
+        source: ${VIDEOS_MOUNT:-/mnt/videos}
+        target: ${VIDEOS_MOUNT:-/mnt/videos}
+      - type: bind
+        source: ${MUSIC_MOUNT:-/mnt/music}
+        target: ${MUSIC_MOUNT:-/mnt/music}
+      - skive-home:/var/skive-home
+    devices:
+      # /dev/dri exists on every box we transcode on (VCN/iGPU). The optical
+      # nodes live in compose.rip.yaml instead: compose has no optional-device
+      # flag, and the daemon stats every listed device at container create —
+      # drive-less boxes must run without that file.
+      - /dev/dri:/dev/dri
+volumes:
+  skive-home:

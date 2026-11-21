@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import skive.tag  # spill: src-layout move — mirror tag.py's Path(__file__) resolution
 from skive.tag import tag as tag_cmd
 
 
@@ -103,8 +104,8 @@ def test_beets_child_gets_repo_on_pythonpath(tmp_path, monkeypatch):
     with patch("skive.tag.ensure_share"):
         tag_cmd(FakeArgs(), run=fake_run)
 
-    repo_root = str(Path(__file__).parent.parent.resolve())
-    assert repo_root in captured["env"]["PYTHONPATH"].split(os.pathsep)
+    pkg_parent = str(Path(skive.tag.__file__).parent.parent.resolve())
+    assert pkg_parent in captured["env"]["PYTHONPATH"].split(os.pathsep)
 
 
 def test_music_mount_env_override():

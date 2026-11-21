@@ -13,7 +13,6 @@ from skive.makemkv import (
     _run_with_progress,
     build_selection,
     inject_profile,
-    looks_real,
     purge_junk,
     rename_staged,
     rip_titles,
@@ -229,16 +228,6 @@ def test_purge_junk():
     assert (stage / "Real Title_t00.mkv").exists()
 
 
-def test_looks_real():
-    """Test looks_real heuristic."""
-    assert looks_real("A Real Title")
-    assert looks_real("A Real Title (2020)")
-    assert not looks_real("B1")  # junk label
-    assert not looks_real("C2")
-    assert not looks_real("SHORT")
-    assert not looks_real("ABC")  # all caps, short
-
-
 def test_rename_staged(tmp_path):
     """Test rename_staged renames junk files, preserving the title number."""
     stage = tmp_path
@@ -250,6 +239,20 @@ def test_rename_staged(tmp_path):
 
     assert not (stage / "B1_t0.mkv").exists()
     assert (stage / "Movie (2020)_t00.mkv").exists()
+
+
+def test_rename_staged_label_without_year(tmp_path):
+    """A real-looking disc label with no (YYYY) tail is renamed (regression:
+    the X-Men discs' volume labels sneaked past the old looks-real heuristic,
+    and transcode then skipped the files as junk)."""
+    stage = tmp_path
+
+    (stage / "X-Men- Apocalypse_t00.mkv").touch()
+
+    rename_staged("X-Men Apocalypse (2016)", stage, suffix="t")
+
+    assert not (stage / "X-Men- Apocalypse_t00.mkv").exists()
+    assert (stage / "X-Men Apocalypse (2016)_t00.mkv").exists()
 
 
 def test_rename_staged_preexisting():
@@ -300,7 +303,7 @@ def test_rename_staged_skip_real(tmp_path):
     stage = tmp_path
 
     (stage / "Movie (2020)_t01.mkv").touch()  # already this display
-    (stage / "Another Movie (2021)_t02.mkv").touch()  # looks real
+    (stage / "Another Movie (2021)_t02.mkv").touch()  # already promoted (year tail)
     (stage / "B1_t0.mkv").touch()  # junk
 
     rename_staged("Movie (2020)", stage, suffix="t")

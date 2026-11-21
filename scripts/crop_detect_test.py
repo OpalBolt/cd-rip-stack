@@ -17,7 +17,7 @@ Usage:
   mise exec -- python3 scripts/crop_detect_test.py 'Movie (Year).mkv' [more ...]
   python3 scripts/crop_detect_test.py --self-check   # gate logic only, no ffmpeg
 
-Needs ffmpeg + ffprobe on PATH (rip box: prefix with `mise exec --`).
+Needs ffmpeg + ffprobe on PATH (a dev machine gets them from mise).
 """
 
 from __future__ import annotations

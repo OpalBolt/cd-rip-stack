@@ -56,6 +56,12 @@ def cmd_search(args):
     run_search(args)
 
 
+def cmd_doctor(args):
+    from skive.doctor import run_doctor
+
+    sys.exit(run_doctor())
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The skive argument parser: -v/-vv live on the TOP level so they apply
     to every subcommand (skive -v rip movie, not skive rip movie -v)."""
@@ -71,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # rip subcommand
+    # doctor — the green table: read-only box readiness
     rip_parser = subparsers.add_parser("rip", help="rip")
     rip_subparsers = rip_parser.add_subparsers(dest="rip_type", required=True)
 
@@ -102,7 +108,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rip_movie_parser.set_defaults(func=cmd_rip_movie)
 
-    # rip tv
     rip_tv_parser = rip_subparsers.add_parser("tv", help="rip TV show")
     rip_tv_parser.add_argument(
         "--tmdbid", metavar="tv:N|URL", help="TMDB TV ID or URL (skip prompt)"
@@ -126,7 +131,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rip_tv_parser.set_defaults(func=cmd_rip_tv)
 
-    # rip music
     rip_music_parser = rip_subparsers.add_parser("music", help="rip CD")
     rip_music_parser.add_argument(
         "-d",
@@ -144,7 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rip_music_parser.set_defaults(func=cmd_rip_music)
 
-    # tag
     tag_parser = subparsers.add_parser("tag", help="tag and file music")
     tag_parser.add_argument(
         "source",
@@ -154,16 +157,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tag_parser.set_defaults(func=cmd_tag)
 
-    # sync-sd
     sync_sd_parser = subparsers.add_parser("sync-sd", help="sync music library to SD card")
     sync_sd_parser.add_argument(
         "mountpoint", nargs="?", help="card mountpoint (skip auto-detection)"
     )
     sync_sd_parser.set_defaults(func=cmd_sync_sd)
 
-    # transcode — batch re-encode rip/ staging into the library (movies;
-    # flags mirror the frozen windows/transcode.py one-for-one; global
-    # -v/-vv live on the top level)
+    # transcode — flags mirror the frozen windows/transcode.py one-for-one;
+    # -v/-vv live on the top level so they apply to every subcommand
     transcode_parser = subparsers.add_parser(
         "transcode", help="transcode staged lossless MKVs into the Jellyfin library"
     )
@@ -239,6 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("query", help="title substring, case-insensitive")
     search_parser.set_defaults(func=cmd_search)
 
+    # doctor — the green table: read-only box readiness
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="check the box's ripping readiness (read-only)"
+    )
+    doctor_parser.set_defaults(func=cmd_doctor)
+
     return parser
 
 
@@ -246,6 +253,10 @@ def main() -> None:
     args = build_parser().parse_args()
     set_verbosity(args.verbose)  # clamps -vvv and beyond to 2
     install_interrupt_handler()  # CONTEXT.md Interrupt: SIGINT -> clean exit path
+    from skive.scan import materialize_makemkv_key
+
+    materialize_makemkv_key()  # MAKEMKV_KEY env -> settings.conf; silent, env wins
+
     try:
         args.func(args)
     except KeyboardInterrupt:

@@ -62,7 +62,10 @@ def probe_tools() -> dict[str, str]:
         for lang in lack:
             missing.append(f"  tesseract --list-langs missing {lang} (tesseract-data-{lang})")
     if missing:
-        print('missing tools -- see README ("Non-Python prerequisites"):', file=sys.stderr)
+        print(
+            "missing tools -- every one is baked in the skive box (docs/setup.md); a dev machine gets them from mise:",
+            file=sys.stderr,
+        )
         print("\n".join(missing), file=sys.stderr)
         return {}
     return paths

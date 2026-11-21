@@ -75,10 +75,6 @@ def staged_eps(show_dir: Path, display: str, season: int) -> set[int]:
         show_dir: The show's title folder under rip/tv (CONTEXT.md: Staging) —
             episodes rest directly in it after promotion
         display: Display name (Show (Year))
-        season: Season number
-
-    Returns:
-        Set of episode numbers already staged
     """
     staged = set()
     season_str = f"{season:02d}"
@@ -111,16 +107,6 @@ def episode_target(show_dir: Path, display: str, season: int, lo: int, hi: int) 
     """Target path for an episode assignment: single or double episode name.
 
     Existence is the caller's concern (never clobber).
-
-    Args:
-        show_dir: The show's title folder under rip/tv
-        display: Show name
-        season: Season number
-        lo: First episode number of the assignment
-        hi: Last episode number of the assignment
-
-    Returns:
-        The target .mkv path
     """
     season_str = f"{season:02d}"
     if lo == hi:
@@ -137,10 +123,8 @@ def rename_tv(
     Never clobbers existing targets.
 
     Args:
-        display: Show name
         show_dir: The show's title folder under rip/tv — the promoted files
             renamed here rest directly in it
-        season: Season number
         assignment: title -> (lo, hi) mapping
 
     Returns:
@@ -149,7 +133,6 @@ def rename_tv(
     renamed: dict[Path, int] = {}
     for mkv in show_dir.glob("*.mkv"):
         base = mkv.stem
-        # Extract _tNN
         m = re.search(r"_t(\d+)$", base)
         if not m:
             continue
@@ -171,7 +154,6 @@ def rename_tv(
         else:
             target = episode_target(show_dir, display, season, lo, hi)
 
-        # Check for clobber
         if target.exists():
             ui.warn(f"{target.name} already exists — {base}.mkv left alone")
             continue
@@ -203,7 +185,6 @@ def chapter_split_hook(
 
     Args:
         preamble: The run's Preamble — title_dir, display, log
-        season: Season number the disc belongs to
         titles_info: The floored (title, secs, bytes) list
         playalls: Title numbers disqualified as play-alls
         assignment: Final title -> (lo, hi) episode map (the accepted table)
@@ -247,7 +228,6 @@ def probe_episodes(
     Args:
         show_dir: The show's title folder — episodes rest here after promotion
         display: Show name (Show (Year))
-        season: Season number the disc belongs to
         assignment: This run's title -> (lo, hi) episode map
         ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
         run: subprocess.run callable for monkeypatching
@@ -306,7 +286,6 @@ def post_rip_validation(
     Args:
         preamble: The run's Preamble — show folder, log, pick, display,
             volume label
-        season: Season number the disc belongs to
         assignment: This run's title -> (lo, hi) episode map
         ep_runtimes: TMDB runtime seconds per episode (0 = unknown)
         run: subprocess.run callable for monkeypatching
@@ -455,14 +434,7 @@ def _interrupted(
 
 
 def rip_tv(args) -> None:
-    """Main TV rip orchestration.
-
-    Args:
-        args: argparse.Namespace from cmd_rip_tv
-
-    Raises:
-        SystemExit: On any error, user abort, or interrupt (exit 130)
-    """
+    """Main TV rip orchestration."""
     preamble = None
     preexisting: set[Path] = set()  # files that predate the run: not its items
     inflight: str | None = None  # the title being ripped, for the interrupt summary
@@ -501,7 +473,7 @@ def rip_tv(args) -> None:
 
             return on_start
 
-        # Season prompt (ui.ask suspends the view while it asks)
+        # ui.ask suspends the view while it asks
         try:
             season = int(ui.ask("Season", choices="0 = specials", default="1").strip())
         except ValueError:
@@ -553,7 +525,6 @@ def rip_tv(args) -> None:
             ui.fail("no eligible titles on this disc")
             sys.exit(1)
 
-        # Fetch season from TMDB
         if not pick.id or pick.id == "-":
             ui.fail(
                 "the TMDB pick carries no id — cannot fetch episodes. re-pick or use --tmdbid tv:N."
@@ -566,11 +537,9 @@ def rip_tv(args) -> None:
             ui.fail(f"TMDB season fetch failed: {e}")
             sys.exit(1)
 
-        # Build episodes dict
         ep_names = {ep: name for ep, name, _ in episodes}
         ep_runtimes = {ep: rt for ep, _, rt in episodes}
 
-        # Get staged episodes
         staged = staged_eps(show_dir, display, season)
 
         def list_staging() -> list[Path]:
@@ -630,7 +599,6 @@ def rip_tv(args) -> None:
             f"disc {preamble.disc} · {preamble.device}",
         )
 
-        # Selection string + profile injection
         keep = preamble.keep
         sub_langs = {
             l for t in titles_full if t.number in assignment for l in t.subtitles.split(",") if l
@@ -653,7 +621,6 @@ def rip_tv(args) -> None:
         attempted: list[int] = []  # titles this run ripped, in rip order
         renamed: dict[Path, int] | None = None  # full-scan renames: target -> title
         try:
-            # Rip phase
             log.phase("rip")
             # Skipped titles — prefilled play-alls and sub-floor fragments the
             # operator left alone, or any title restated `s` — are never
@@ -694,7 +661,6 @@ def rip_tv(args) -> None:
             # the show; a collision leaves the file in d{disc}/ with a note.
             promote_staged(stage_tv)
 
-            # Rename per the map
             _phase_status("rename", f"{display} S{season:02d}")
             renamed = rename_tv(display, show_dir, season, assignment)
 
@@ -706,7 +672,6 @@ def rip_tv(args) -> None:
             _phase_status("split", f"{display} S{season:02d}")
             chapter_split_hook(preamble, season, titles_info, playalls, assignment, ep_runtimes)
 
-            # Subtitle note
             note = subtitle_note(show_dir)
             ui.info(note)
             log.note("subtitle", note)
@@ -774,7 +739,6 @@ def rip_tv(args) -> None:
         # Close the view before the summary prints (its Live redraw would
         # garble them); the outer close is idempotent.
         view.close()
-        # The run summary: this run's episodes and extras × duration × size × result.
         rows = _summary_rows(
             show_dir,
             display,
