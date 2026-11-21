@@ -554,24 +554,6 @@ def purge_junk(stage_dirs: list[Path], quiet: bool = False) -> None:
                 mkv.unlink()
 
 
-def looks_real(name: str) -> bool:
-    """Heuristic: does a name look like a real title?
-
-    Args:
-        name: File name without extension
-
-    Returns:
-        True if it looks like a real title (len>3, has space, not ^[A-Z][0-9]+, not short all-caps)
-    """
-    if len(name) <= 3:
-        return False
-    if re.match(r"^[A-Z][0-9]+$", name):
-        return False
-    if " " not in name:
-        return False
-    return not (re.match(r"^[^a-z]*$", name) and len(name) <= 16)
-
-
 def rename_staged(
     display: str,
     stage_dir: Path,
@@ -582,7 +564,8 @@ def rename_staged(
     """Rename junk-labeled .mkv files.
 
     Titles become <display>_tNN[.pN].mkv; extras become <display> - Extra NN[.pN].mkv.
-    Files already matching display or looking real are untouched.
+    Files already promoted — this display, or any name with a (YYYY) tail, the
+    promoted shape transcode's junk guard accepts — are untouched.
     Rolls numbers forward past existing files (never clobber).
 
     Args:
@@ -604,10 +587,13 @@ def rename_staged(
         title_num = int(m.group(1))
         cur = base[: m.start()]
 
-        # Skip if already this display; extras (-E) rename everything else —
-        # bonus discs label files from the disc name ("... Bonus Disc_t00"),
-        # which looks real but must still become "<display> - Extra NN".
-        if cur == display or (suffix != "e" and looks_real(cur)):
+        # Skip what is already promoted: this display, or any name with a
+        # (YYYY) tail — the shape transcode's junk guard accepts. A bare disc
+        # label ("X-Men- Apocalypse") has no tail and is renamed even though
+        # it looks real. Extras (-E) rename everything else — bonus discs
+        # label files from the disc name ("... Bonus Disc_t00"), which can
+        # carry a year and must still become "<display> - Extra NN".
+        if cur == display or (suffix != "e" and re.search(r"\(\d{4}\)$", cur)):
             continue
 
         # Build target name

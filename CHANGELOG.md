@@ -7,6 +7,11 @@ dated heading.
 
 ## Unreleased
 
+- fix: real-looking disc labels without a year ("X-Men- Apocalypse") no
+  longer dodge the staged-file rename — `rename_staged` now skips only
+  promoted names (this display or any `(YYYY)` tail, the shape transcode's
+  junk guard accepts) instead of the old looks-real heuristic, so such
+  discs land in transcode's queue instead of its junk-skip lines
 - fix: the box starts on drive-less machines (the transcode box) — optical
   device nodes moved to `compose.rip.yaml`, which the `./skive` wrapper adds
   only when `/dev/sr*` exists on the host (a device compose lists must exist
