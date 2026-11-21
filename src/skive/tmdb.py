@@ -235,7 +235,6 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
                 ui.info("skipped — re-run to search again")
                 continue
 
-        # URL-encode the query
         q_enc = urllib.parse.quote(query)
         url = f"https://api.themoviedb.org/3/search/{kind}?api_key={api_key}&query={q_enc}"
 
@@ -251,8 +250,7 @@ def search_loop(kind: str, prefill: str = "") -> TMDBPick:
             query = None
             continue
 
-        # Show top 5 in the shared table look; only the pick number is styled
-        top = results[:5]
+        top = results[:5]  # the pick number is the only styled column
         table = ui.table(
             "#",
             "Title",
@@ -394,6 +392,5 @@ def fetch_season(tv_id: str, season: int) -> list[tuple[int, str, int]]:
         if ep_num is not None:
             episodes.append((ep_num, name, runtime))
 
-    # Sort by episode_number
     episodes.sort(key=lambda x: x[0])
     return episodes

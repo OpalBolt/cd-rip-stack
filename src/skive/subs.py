@@ -234,7 +234,6 @@ def run_pass(
     tracks = inventory(mkv, ffprobe_exe, log=log, verbose=verbose)
     keeps, skip_notes = decide(tracks)
     notes += skip_notes
-    # spill: step lines live in the run view's live box (console-frames slice 01)
     ui.step(
         f"subtitle pass: {len(tracks)} subtitle track(s), {len(keeps)} kept: "
         f"{os.path.basename(mkv)}",

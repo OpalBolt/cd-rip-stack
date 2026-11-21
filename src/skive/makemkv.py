@@ -117,9 +117,6 @@ def inject_profile(selection: str) -> Path:
     The file carries XML-escaped literals (& -> &amp;); both sides are escaped
     the same way so the replace always hits (byte-identity contract).
 
-    Args:
-        selection: The selection string to inject
-
     Returns:
         Path to the temporary profile file
     """
@@ -434,7 +431,6 @@ def rip_titles(
     worst_rc = 0
     by_num = {t.number: t for t in infos or []}
     if titles is None:
-        # Rip all in one call
         cmd = [
             "makemkvcon",
             "mkv",
@@ -580,7 +576,6 @@ def rename_staged(
         if preexisting and mkv in preexisting:
             continue
         base = mkv.stem
-        # Extract _tNN suffix
         m = re.search(r"_t(\d+)$", base)
         if not m:
             continue
@@ -596,7 +591,6 @@ def rename_staged(
         if cur == display or (suffix != "e" and re.search(r"\(\d{4}\)$", cur)):
             continue
 
-        # Build target name
         part_suffix = f".p{part}" if part is not None else ""
         if suffix == "e":
             stem, sep = f"{display} - Extra", " "

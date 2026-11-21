@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # rip subcommand
+    # doctor — the green table: read-only box readiness
     rip_parser = subparsers.add_parser("rip", help="rip")
     rip_subparsers = rip_parser.add_subparsers(dest="rip_type", required=True)
 
@@ -108,7 +108,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rip_movie_parser.set_defaults(func=cmd_rip_movie)
 
-    # rip tv
     rip_tv_parser = rip_subparsers.add_parser("tv", help="rip TV show")
     rip_tv_parser.add_argument(
         "--tmdbid", metavar="tv:N|URL", help="TMDB TV ID or URL (skip prompt)"
@@ -132,7 +131,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rip_tv_parser.set_defaults(func=cmd_rip_tv)
 
-    # rip music
     rip_music_parser = rip_subparsers.add_parser("music", help="rip CD")
     rip_music_parser.add_argument(
         "-d",
@@ -150,7 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rip_music_parser.set_defaults(func=cmd_rip_music)
 
-    # tag
     tag_parser = subparsers.add_parser("tag", help="tag and file music")
     tag_parser.add_argument(
         "source",
@@ -160,16 +157,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tag_parser.set_defaults(func=cmd_tag)
 
-    # sync-sd
     sync_sd_parser = subparsers.add_parser("sync-sd", help="sync music library to SD card")
     sync_sd_parser.add_argument(
         "mountpoint", nargs="?", help="card mountpoint (skip auto-detection)"
     )
     sync_sd_parser.set_defaults(func=cmd_sync_sd)
 
-    # transcode — batch re-encode rip/ staging into the library (movies;
-    # flags mirror the frozen windows/transcode.py one-for-one; global
-    # -v/-vv live on the top level)
+    # transcode — flags mirror the frozen windows/transcode.py one-for-one;
+    # -v/-vv live on the top level so they apply to every subcommand
     transcode_parser = subparsers.add_parser(
         "transcode", help="transcode staged lossless MKVs into the Jellyfin library"
     )

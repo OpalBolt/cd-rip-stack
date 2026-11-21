@@ -214,7 +214,6 @@ def _info(minlength: int | None, run=subprocess.run, disc: int = 0) -> str:
     """One `makemkvcon -r info` run (honoring MAKEMKV_INFO); minlength=None omits the flag."""
     override = os.environ.get("MAKEMKV_INFO")
     if override:
-        # Replay captured dump via the command in override
         return run(override, shell=True, capture_output=True, text=True).stdout
     cmd = ["makemkvcon", "-r", "info"]
     if minlength is not None:
@@ -566,7 +565,6 @@ def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str, str]:
     """
     override = os.environ.get("MAKEMKV_INFO")
     if override:
-        # Replay captured dump via the command in override
         out = subprocess.run(
             override, shell=True, capture_output=True, text=True, check=False
         ).stdout

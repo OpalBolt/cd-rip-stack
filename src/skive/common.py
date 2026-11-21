@@ -331,7 +331,6 @@ def ensure_share(mnt: str, env_var: str = "") -> None:
     Raises:
         SystemExit: If the path does not exist
     """
-    # spill: share check reused by doctor
     kind, msg = share_status(mnt, env_var)
     if kind == "ok":
         return
