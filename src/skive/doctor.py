@@ -1,10 +1,12 @@
-"""skive doctor — the green table: this machine's ripping readiness.
+"""skive doctor — the green table: this machine's readiness.
 
 Seven read-only checks, one table, one result line: optical device nodes,
 makemkvcon drive enumeration (through scan's MAKEMKV_INFO replay seam),
 the two share roots (common.share_status), the MakeMKV key, tesseract's
 languages, and VA-API encode entrypoints (informational — the laptop has
-them, CPU boxes do not). Doctor fixes nothing. Exit 1 only when a
+them, CPU boxes do not). A box with no optical nodes never rips (the
+transcode box), so the drive, enumeration, and key checks report a skip
+there instead of failing. Doctor fixes nothing. Exit 1 only when a
 prerequisite is missing; a warn (local share, missing vainfo) never fails
 the run.
 """
@@ -25,11 +27,15 @@ SHARES = (
 
 
 def check_devices(dev: str = "/dev") -> tuple[str, str]:
-    """Optical device nodes: any /dev/sr* or /dev/sg*."""
+    """Optical device nodes: any /dev/sr* or /dev/sg*. Their absence means
+    a drive-less box (ripping happens elsewhere) — a warn, not a fail."""
     nodes = sorted(p.name for pat in ("sr*", "sg*") for p in Path(dev).glob(pat))
     if nodes:
         return "ok", f"{len(nodes)} nodes: {' '.join(nodes)}"
-    return "fail", "no /dev/sr* or /dev/sg* — load the sg module, join the cdrom group"
+    return "warn", (
+        "no /dev/sr* or /dev/sg* — drive-less box (rip checks skipped); "
+        "on a rip box: load the sg module, join the cdrom group"
+    )
 
 
 def check_drives(run=subprocess.run) -> tuple[str, str]:
@@ -105,13 +111,20 @@ def run_doctor(dev: str = "/dev", run=subprocess.run, settings: Path | None = No
     code: 0 when no prerequisite is missing, 1 otherwise. Read-only."""
     rows: list[tuple[str, str, str]] = [
         ("optical devices", *check_devices(dev)),
-        ("makemkvcon drives", *check_drives(run)),
+    ]
+    # drives and key are rip prerequisites — only a box with optical nodes
+    # can rip, so a drive-less box skips both instead of failing them
+    if rows[0][1] == "ok":
+        rows += [
+            ("makemkvcon drives", *check_drives(run)),
+            ("makemkv key", *check_key(settings)),
+        ]
+    rows += [
         # the shares read the same env override the rip commands use
         *(
             (name, *share_status(os.environ.get(env, default), env))
             for name, env, default in SHARES
         ),
-        ("makemkv key", *check_key(settings)),
         ("tesseract langs", *check_tesseract(run)),
         ("vaapi encode", *check_vainfo(run)),
     ]

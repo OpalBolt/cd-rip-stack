@@ -7,6 +7,11 @@ dated heading.
 
 ## Unreleased
 
+- fix: the box starts on drive-less machines (the transcode box) — optical
+  device nodes moved to `compose.rip.yaml`, which the `./skive` wrapper adds
+  only when `/dev/sr*` exists on the host (a device compose lists must exist
+  at container create), and `skive doctor` skips the drive, makemkvcon, and
+  key checks as warns on a box with no optical nodes instead of failing them
 - feat: the skive box — one Fedora container (Containerfile + compose)
   driven through a `./skive` wrapper replaces the distrobox setup script
   and the Arch host install path; clone, build, `./skive doctor` is now the

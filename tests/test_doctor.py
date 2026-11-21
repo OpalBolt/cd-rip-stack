@@ -55,15 +55,20 @@ def test_green_machine_exit_0(tmp_path, monkeypatch, capsys):
     assert "machine ready" in capsys.readouterr().err
 
 
-def test_missing_devices_exit_1(tmp_path, monkeypatch, capsys):
+def test_driveless_box_skips_rip_checks_exit_0(tmp_path, monkeypatch, capsys):
+    """The transcode box has no optical nodes: drive, enumeration, and key
+    checks skip as warns — the box never rips, so they are not missing
+    prerequisites."""
     green_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("MAKEMKV_KEY", raising=False)  # key unchecked too
     nodev = tmp_path / "nodev"
     nodev.mkdir()
     rc = doctor.run_doctor(dev=str(nodev), run=Run(), settings=tmp_path / "none.conf")
-    assert rc == 1
     err = capsys.readouterr().err
-    assert "prerequisite(s) missing" in err
-    assert "sg module" in err  # the detail names the remedies
+    assert rc == 0
+    assert "machine ready — with warnings" in err
+    assert "skipped" in err  # the rip-only rows say so
+    assert "sg module" in err  # ...but keep the rip-box remedies in the detail
 
 
 def test_tesseract_missing_dan_exit_1(tmp_path, monkeypatch, capsys):
@@ -109,5 +114,5 @@ def test_piped_render_is_plain_tagged_lines(tmp_path, monkeypatch, capsys):
     doctor.run_doctor(dev=str(nodev), run=Run(vainfo=None), settings=tmp_path / "n.conf")
     err = capsys.readouterr().err
     assert "│" not in err and "╭" not in err
-    assert "fail  optical devices:" in err  # ✗ rows are failures, not info
+    assert "warn  optical devices:" in err  # drive-less: warn rows, not fail
     assert "warn  vaapi encode:" in err

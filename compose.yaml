@@ -32,15 +32,10 @@ services:
         target: ${MUSIC_MOUNT:-/mnt/music}
       - skive-home:/var/skive-home
     devices:
-      # Compose has no globs — explicit nodes for the two-drive reality.
-      # Devices resolve at run time only; `compose config` parses on
-      # drive-less boxes without them existing.
-      - /dev/sr0:/dev/sr0
-      - /dev/sr1:/dev/sr1
-      - /dev/sg0:/dev/sg0
-      - /dev/sg1:/dev/sg1
-      - /dev/sg2:/dev/sg2
-      - /dev/sg3:/dev/sg3
+      # /dev/dri exists on every box we transcode on (VCN/iGPU). The optical
+      # nodes live in compose.rip.yaml instead: compose has no optional-device
+      # flag, and the daemon stats every listed device at container create —
+      # drive-less boxes (the transcode box) must run without that file.
       - /dev/dri:/dev/dri
 volumes:
   skive-home:
