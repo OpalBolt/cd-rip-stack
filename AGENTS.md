@@ -13,6 +13,9 @@ transcodes into Jellyfin/beets libraries. uv + mise tooling, editable install.
 
 ## Artifacts
 - Specs, tickets, planning maps: `.scratch/` (local, untracked)
+- `.scratch/INDEX.md` lists every effort with a status (open, done, dropped). Add a
+  line when you start one; when its PR merges, mark it done, move the folder to
+  `.scratch/done/`, and delete its `orch/` working files
 - PR texts: `.scratch/prs/<branch-with-dashes>.md`, title on the first line
 
 ## Boundaries
