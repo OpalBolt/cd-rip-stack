@@ -36,6 +36,9 @@ dated heading.
   and subtitles stream-copied, lossless audio transcoded to ac3; any
   failure leaves the original untouched); the music library's FLAC is by
   design and never in scope.
+- build: `FEDORA_VERSION` build arg (default 43) picks the box image's Fedora
+  release, so a box whose hardware the newest ffmpeg/libva no longer serves
+  builds an older stack: `FEDORA_VERSION=41 podman compose build`.
 - build: `scripts/info-bundle.sh` — run on any box to gather its encode
   capability into `info-bundle.txt`: VA-API entrypoints, drivers, ffmpeg
   encoders and a 10 s 1080p bench per candidate backend, so the encoder

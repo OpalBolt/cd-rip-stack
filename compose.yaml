@@ -5,6 +5,8 @@ services:
     build: 
       context: .
       dockerfile: Containerfile
+      args:
+        FEDORA_VERSION: ${FEDORA_VERSION:-43}
     image: skive-box
     # Rootless podman already maps container-root to the invoking host user,
     # so 0 is the podman-correct default. Rootful docker users export their

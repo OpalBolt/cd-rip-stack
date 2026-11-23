@@ -1,6 +1,11 @@
 # The skive box — Fedora 43 with the full rip/transcode toolchain and a
 # baked skive. Package list proven on real hardware.
-FROM fedora:43
+# Older Fedora ships an older ffmpeg and libva: build with
+# `FEDORA_VERSION=41 podman compose build` for hardware the
+# newest stack no longer serves. Untested below 43 — RPM Fusion and
+# MakeMKV availability per release is not checked.
+ARG FEDORA_VERSION=43
+FROM fedora:${FEDORA_VERSION}
 
 # RPM Fusion first: HandBrake lives in free, MakeMKV in nonfree.
 # (cyanrip is in neither — see the source build below.)
