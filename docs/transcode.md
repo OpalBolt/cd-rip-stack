@@ -91,17 +91,23 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
   <Show (Year)> - S01E02.mkv` (season 00 → `Specials/`), plus the subtitle
   pass. TV extras file under the show's `extras/` with tracks embedded.
 - **Encode** — `-e auto` (default) resolves once per run from vainfo:
-  HEVC hardware → `ffmpeg hevc_vaapi` CQP 28, audio and subtitles
-  stream-copied, bwdif deinterlaces interlaced frames only, width cropped
+  HEVC hardware → `ffmpeg hevc_vaapi` CQP 28, subtitles stream-copied,
+  bwdif deinterlaces interlaced frames only, width cropped
   to VCN's 64-pixel alignment — the hardware's own padding bleeds a
   stretched right edge on 720-wide DVDs; ~181 fps at 1080p, a feature
   encodes in ~16 minutes. H.264-only hardware → `ffmpeg h264_vaapi` QP 28,
   the same picture policy minus the alignment crop (that padding quirk is
-  VCN-specific). Neither → x265 fast. `-e x265`
+  VCN-specific). Audio on both rungs is lossy-only: lossy tracks copy,
+  lossless tracks drop when a lossy track survives, an all-lossless title
+  transcodes to ac3 with channels kept — every track is ffprobe-classified
+  before the encode, and an unreadable probe refuses the item rather than
+  guess. Neither → x265 fast. `-e x265`
   keeps the software baseline: HandBrake at native resolution, never
   upscaled (the probed height picks the preset: 480p/576p DVD — those also
-  get detelecine+decomb — 720p, 1080p, 4K; audio `--aencoder copy` with
-  ac3 fallback). `-e vaapi` demands hardware (either rung) and fails fast
+  get detelecine+decomb — 720p, 1080p, 4K; audio `--aencoder copy` behind
+  a lossy-only copy-mask with the ac3 fallback — HandBrake's approximation
+  of the rungs' lossy-only rule). `-e vaapi` demands hardware (either
+  rung) and fails fast
   without it.
 
 ### The inline subtitle pass

@@ -90,3 +90,33 @@ the Ryzen AI 7 350 laptop's `transcode` distrobox is the only transcode box
 (`hevc_vaapi`, `-e auto`; the box story lives in docs/transcode.md). This
 ADR's original decision text above stays as history. The crop policy that
 now rides every encode is ADR 0011 (black-bar crop gate).
+
+## Amendment (2026-11-23): the encoder ladder — three rungs, QP 28, lossy-only audio
+
+A third transcode box joins the laptop: a ThinkPad W530 (Ivy Bridge i7,
+HD 4000 iGPU) probes as H.264-only VA-API hardware, so `-e auto` widens
+from an HEVC-or-nothing switch into a three-rung capability ladder. The
+W530's K1000M stays out — dead on the 470 legacy driver; the info-bundle
+data rejects it, not opinion. The box image carries the i965 VA driver
+because the modern Intel driver never loads on Gen7; on that silicon i965
+is the only route to an encode entrypoint.
+
+`-e auto` resolves once per run from a per-profile vainfo probe: HEVC
+entrypoints → `hevc_vaapi`; H.264-only → `h264_vaapi`; neither → CPU
+x265 fast, unchanged. `-e vaapi` demands either hardware rung and refuses
+the x265 fallback. The H.264 rung keeps the crop gate (ADR 0011) and
+bwdif but not the 64-px alignment crop — that padding quirk is VCN's.
+
+Decisions:
+
+- QP 28 on both hardware rungs is a per-rung calibration that happens to
+  be unified — explicitly not an equivalence claim; QP numbers do not
+  transfer between encoders. The CQP 24 era ends.
+- The 2026-11-05 bullet "MKV muxes every codec the rips carry" is
+  reversed: video-library audio is lossy-only on every backend. Lossy
+  tracks copy; lossless tracks drop when a lossy track survives; an
+  all-lossless title transcodes every track to ac3, channels kept. The
+  HandBrake paths approximate the rule with a lossy-only copy-mask plus
+  the ac3 fallback. `scripts/audit_lossless_audio.py` brings the existing
+  library into compliance by audio-only remux. The music library's FLAC
+  is by design and untouched.
