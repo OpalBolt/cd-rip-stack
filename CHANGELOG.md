@@ -7,6 +7,10 @@ dated heading.
 
 ## Unreleased
 
+- build: `scripts/info-bundle.sh` — run on any box to gather its encode
+  capability into `info-bundle.txt`: VA-API entrypoints, drivers, ffmpeg
+  encoders and a 10 s 1080p bench per candidate backend, so the encoder
+  choice for a box rests on measurements
 - feat: `skive doctor` validates the TMDB key against the API's
   validate-key endpoint — a rejected key (401) fails the table while an
   unreachable API only warns; `require_online` now says "rejected"
