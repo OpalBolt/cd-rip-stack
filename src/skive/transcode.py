@@ -82,8 +82,10 @@ _TV_ROOTS = ("TV", "tv")  # rip/TV (legacy ps1 staging) and rip/tv (SPEC layout)
 # one comma-joined argument: stays a single argv entry
 # pcm has no HandBrake passthru: the Fedora build rejects the whole job with
 # "Invalid audio codec in autopassthru copy mask (copy:pcm)" -- and still
-# exits 0 (the Conan failure). LPCM audio takes the ac3 fallback instead.
-_COPY_MASK = "aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac"
+# exits 0 (the Conan failure). No lossless audio lands in the video library:
+# truehd/dtshd/flac/alac stay off the mask and take the ac3 fallback by
+# design; plain DTS core is lossy and copies.
+_COPY_MASK = "aac,ac3,eac3,dts,mp2,mp3,opus,vorbis"
 # encode-progress parse for the run view's footer bar (TTY only)
 _RX_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _RX_ETA = re.compile(r"ETA\s+(\S+)")
@@ -254,6 +256,61 @@ def _stream_sig(src: str, ffprobe_exe: str) -> list[tuple[str, str, str]] | None
         ]
     except (ValueError, AttributeError):
         return None
+
+
+def _probe_audio(src: str, ffprobe_exe: str) -> list[tuple[str, str, int | None]] | None:
+    """(codec_name, profile, channels) per audio stream, in order; None if
+    unreadable. A separate probe -- _stream_sig's 3-tuples feed the merge
+    guard and stay untouched."""
+    try:
+        r = subprocess.run(
+            [
+                ffprobe_exe,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,codec_name,profile,channels",
+                "-of",
+                "json",
+                src,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:  # unresolvable exe: fail closed, never guess the audio
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        streams = json.loads(r.stdout).get("streams", [])
+    except (ValueError, AttributeError):
+        return None
+    return [
+        (s.get("codec_name") or "", s.get("profile") or "", s.get("channels"))
+        for s in streams
+        if s.get("codec_type") == "audio"
+    ]
+
+
+def _is_lossless(codec: str, profile: str) -> bool:
+    """Per-track audio classification: every PCM variant, FLAC, ALAC, TrueHD,
+    MLP -- and DTS only when the stream profile says DTS-HD MA (plain DTS
+    core is lossy and copies; the profile, not the codec name, decides)."""
+    if codec.startswith("pcm"):
+        return True
+    if codec in ("flac", "alac", "truehd", "mlp"):
+        return True
+    return codec == "dts" and "DTS-HD MA" in profile
+
+
+def _audio_actions(streams: list[tuple[str, str, int | None]]) -> list[str]:
+    """copy/drop/ac3 per audio stream, in order: lossy copies; lossless drops
+    while a lossy track survives; an all-lossless title keeps every track by
+    transcoding to ac3 (channels preserved -- no -ac filter rides along)."""
+    if streams and all(_is_lossless(c, p) for c, p, _ch in streams):
+        return ["ac3"] * len(streams)
+    return ["drop" if _is_lossless(c, p) else "copy" for c, p, _ch in streams]
 
 
 def _split_mismatch(parts: list[Item], ffprobe_exe: str) -> str:
@@ -607,11 +664,15 @@ def _encode_vaapi(
     log: common.RipLog | None = None,
     crop: tuple[int, int, int, int] | None = None,
     codec: str = "hevc_vaapi",
+    ffprobe_exe: str = "",
 ) -> bool:
     """Hardware re-encode via ffmpeg VAAPI (HandBrake has no VAAPI encoder on
     Linux): hevc_vaapi CQP 28 or h264_vaapi QP 28 -- the codec name is the
     only thing that differs between the rungs, so it parameterizes the pass.
-    Audio and subtitles stream-copied, bwdif deinterlaces only frames marked
+    Audio runs the lossy-only policy per track (_audio_actions: lossy copies,
+    lossless drops while a lossy track survives, an all-lossless title
+    transcodes every track to ac3); subtitles stream-copied, bwdif
+    deinterlaces only frames marked
     interlaced (progressive passes untouched -- the DVD detelecine/decomb
     equivalent). Only the HEVC rung crops the width to VCN's 64-pixel
     alignment -- the hardware's own padding bleeds a stretched right edge
@@ -629,6 +690,16 @@ def _encode_vaapi(
             "hardware path needs ffmpeg and a VA-API encode "
             f"entrypoint (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
             "(the skive box image bakes both — rebuild it: podman compose build)"
+        )
+        return False
+    audio = _probe_audio(src, ffprobe_exe)
+    if audio is None:
+        # fail the encode rather than run blind: a silent best-guess could
+        # ship a video with no sound (or lossless audio) unnoticed
+        _encode_why = "audio probe failed"
+        ui.fail(
+            "audio probe failed -- the hardware path classifies every audio "
+            "track before encoding (lossy-only policy); refusing to guess"
         )
         return False
     vf = "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
@@ -650,14 +721,18 @@ def _encode_vaapi(
         src,
         "-map",
         "0:v:0",
-        "-map",
-        "0:a?",
     ]
+    actions = _audio_actions(audio)
+    for i, action in enumerate(actions):
+        if action == "copy":
+            cmd += ["-map", f"0:a:{i}"]
+    if "ac3" in actions:  # all-lossless title: every track transcodes
+        cmd += ["-map", "0:a?"]
     if not no_subs:
         cmd += ["-map", "0:s?"]
     cmd += [
         "-c:a",
-        "copy",
+        "ac3" if "ac3" in actions else "copy",
         "-c:s",
         "copy",
         "-vf",
@@ -751,7 +826,13 @@ def _encode(
     global _encode_why
     if encoder in ("hevc-vaapi", "h264-vaapi"):  # hardware rungs: ffmpeg, never HandBrakeCLI
         return _encode_vaapi(
-            src, out, no_subs=no_subs, log=log, crop=crop, codec=encoder.replace("-", "_")
+            src,
+            out,
+            no_subs=no_subs,
+            log=log,
+            crop=crop,
+            codec=encoder.replace("-", "_"),
+            ffprobe_exe=ffprobe_exe,
         )
     if encoder == "x265-fast":  # auto's CPU fallback; an item's own marker
         speed = speed or "fast"  # speed (extras superfast) still wins

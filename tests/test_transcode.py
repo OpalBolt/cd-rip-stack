@@ -151,6 +151,20 @@ case "$*" in
     fi
     exit 0 ;;
 esac
+# audio classification (json, profile/channels show-entries): a content
+# marker picks the layout -- AUDIO-MIX (lossy + truehd + DTS-HD MA),
+# AUDIO-ALLLOSSLESS (pcm + flac); anything else is one lossy ac3 track
+case "$*" in
+  *profile,channels*)
+    if grep -q AUDIO-MIX "$in" 2>/dev/null; then
+      printf '%s\\n' '{"streams":[{"codec_type":"audio","codec_name":"ac3","profile":"AC-3","channels":2},{"codec_type":"audio","codec_name":"truehd","channels":6},{"codec_type":"audio","codec_name":"dts","profile":"DTS-HD MA","channels":8}]}'
+    elif grep -q AUDIO-ALLLOSSLESS "$in" 2>/dev/null; then
+      printf '%s\\n' '{"streams":[{"codec_type":"audio","codec_name":"pcm_s16le","channels":2},{"codec_type":"audio","codec_name":"flac","channels":6}]}'
+    else
+      printf '%s\\n' '{"streams":[{"codec_type":"audio","codec_name":"ac3","channels":2}]}'
+    fi
+    exit 0 ;;
+esac
 if [ "$fmt" != "json" ]; then
   if grep -q 2160 "$in" 2>/dev/null; then echo 2160
   elif grep -q 576 "$in" 2>/dev/null; then echo 576
@@ -916,7 +930,7 @@ def test_x265_default_arg_list(env):
     assert re.search(
         r"ARGS: -i .+? -o .+? --preset H\.265 MKV 1080p30 "
         r"--all-audio --aencoder copy "
-        r"--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac "
+        r"--audio-copy-mask aac,ac3,eac3,dts,mp2,mp3,opus,vorbis "
         r"--audio-fallback ac3 --subtitle-lang-list zzz --all-subtitles --subtitle-burned=none$",
         line,
     )
@@ -1098,7 +1112,7 @@ def test_vaapi_flags(env):
         "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
         "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload"
     ) in ff
-    assert "-map 0:a? -c:a copy" in ff
+    assert "-map 0:a:0 -c:a copy" in ff  # the lone (lossy) ac3 track, mapped by index
     assert "-map 0:s?" not in ff  # features encode subless (sidecars carry subs)
     assert "-low_power" not in ff  # classic entrypoint needs no low_power
 
@@ -1114,6 +1128,81 @@ def test_vaapi_low_power_entrypoint(env, monkeypatch):
 
     assert rc == 0
     assert "-low_power 1" in (env / "ffmpeg-calls.log").read_text()
+
+
+# -- lossy-only audio (every encode backend) --------------------------------------
+
+
+def test_audio_lossless_classifier():
+    """(codec, profile) -> lossless: every PCM variant plus FLAC/ALAC/TrueHD/
+    MLP; DTS decides on the stream profile -- plain core is lossy and copies,
+    DTS-HD MA does not."""
+    for codec in ("pcm_s16le", "pcm_s24le", "pcm_bluray", "pcm_dvd"):
+        assert transcode._is_lossless(codec, ""), codec
+    for codec in ("flac", "alac", "truehd", "mlp"):
+        assert transcode._is_lossless(codec, ""), codec
+    assert transcode._is_lossless("dts", "DTS-HD MA")
+    for codec in ("ac3", "eac3", "aac", "mp2", "mp3", "opus", "vorbis"):
+        assert not transcode._is_lossless(codec, ""), codec
+    assert not transcode._is_lossless("dts", "DTS")  # plain core: lossy
+    assert not transcode._is_lossless("dts", "")  # profile absent: core
+
+
+def test_audio_actions_per_title():
+    """Title-level verdicts: lossy copies; lossless drops while a lossy track
+    survives; an all-lossless title keeps every track as ac3 instead."""
+    mix = [("ac3", "AC-3", 2), ("truehd", "", 6), ("dts", "DTS-HD MA", 8)]
+    assert transcode._audio_actions(mix) == ["copy", "drop", "drop"]
+    all_lossless = [("pcm_s16le", "", 2), ("flac", "", 6)]
+    assert transcode._audio_actions(all_lossless) == ["ac3", "ac3"]
+    assert transcode._audio_actions([]) == []
+
+
+def _encode_lines(env) -> list[str]:
+    """The ffmpeg log's encode calls only (cropdetect probes carry -vf, no
+    -c:v)."""
+    return [l for l in (env / "ffmpeg-calls.log").read_text().splitlines() if "-c:v " in l]
+
+
+def test_vaapi_drops_lossless_audio_when_lossy_present(env, monkeypatch):
+    """The drop case on BOTH hardware rungs: a title mixing lossy and lossless
+    tracks maps only the lossy one (per-track -map 0:a:N); the truehd and
+    DTS-HD MA tracks never enter the argv, and the feature encode stays
+    subless as before."""
+    vid = env / "vid"
+    _mk_main(vid, "Mix A (2001)", "AUDIO-MIX")
+    assert transcode.run_transcode(Args(encoder="vaapi")) == 0
+    monkeypatch.setenv("VAINFO_PROFILES", "h264")
+    _mk_main(vid, "Mix B (2001)", "AUDIO-MIX")
+    assert transcode.run_transcode(Args(encoder="vaapi")) == 0
+
+    encodes = _encode_lines(env)
+    assert "-c:v hevc_vaapi" in encodes[0] and "-c:v h264_vaapi" in encodes[1]
+    for line in encodes:
+        assert "-map 0:a:0 -c:a copy" in line
+        assert "0:a:1" not in line and "0:a:2" not in line
+        assert "-c:a ac3" not in line
+        assert "-map 0:s?" not in line  # subtitle handling unchanged
+
+
+def test_vaapi_all_lossless_title_transcodes_to_ac3(env, monkeypatch):
+    """The all-lossless case on BOTH hardware rungs: no lossy track survives,
+    so every audio track transcodes to ac3 (channels ride per stream, no -ac
+    filter) rather than shipping the title silent."""
+    vid = env / "vid"
+    _mk_main(vid, "Pcm A (2001)", "AUDIO-ALLLOSSLESS")
+    assert transcode.run_transcode(Args(encoder="vaapi")) == 0
+    monkeypatch.setenv("VAINFO_PROFILES", "h264")
+    _mk_main(vid, "Pcm B (2001)", "AUDIO-ALLLOSSLESS")
+    assert transcode.run_transcode(Args(encoder="vaapi")) == 0
+
+    encodes = _encode_lines(env)
+    assert "-c:v hevc_vaapi" in encodes[0] and "-c:v h264_vaapi" in encodes[1]
+    for line in encodes:
+        assert "-map 0:a? -c:a ac3" in line
+        assert "-c:a copy" not in line
+        assert "-ac " not in line  # channels preserved per stream
+        assert "-map 0:s?" not in line  # subtitle handling unchanged
 
 
 # -- black-bar crop detection (the crop gate, ported from the trial oracle) ------
@@ -1376,6 +1465,7 @@ def test_encode_vaapi_footer_progress_from_ffmpeg_time(tmp_path, monkeypatch):
     monkeypatch.setattr(
         transcode, "_va_probe", lambda: {"hevc": True, "h264": False, "low_power": False}
     )
+    monkeypatch.setattr(transcode, "_probe_audio", lambda src, exe: [("ac3", "AC-3", 2)])
     monkeypatch.setattr(transcode.subprocess, "Popen", lambda *a, **k: FakeProc())
     view = ui.RunView(tty=True, live=False)
     ui.set_view(view)
@@ -1449,7 +1539,7 @@ def test_legacy_eNN_extras_still_file(env):
 
 _ARGV_TAIL = (
     "--preset H.265 MKV 1080p30 --all-audio --aencoder copy "
-    "--audio-copy-mask aac,ac3,eac3,truehd,dts,dtshd,mp2,mp3,opus,vorbis,flac,alac "
+    "--audio-copy-mask aac,ac3,eac3,dts,mp2,mp3,opus,vorbis "
     "--audio-fallback ac3 "
 )
 
