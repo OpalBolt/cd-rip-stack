@@ -7,6 +7,27 @@ dated heading.
 
 ## Unreleased
 
+- fix: real-looking disc labels without a year ("X-Men- Apocalypse") no
+  longer dodge the staged-file rename — `rename_staged` now skips only
+  promoted names (this display or any `(YYYY)` tail, the shape transcode's
+  junk guard accepts) instead of the old looks-real heuristic, so such
+  discs land in transcode's queue instead of its junk-skip lines
+- fix: the box starts on drive-less machines (the transcode box) — optical
+  device nodes moved to `compose.rip.yaml`, which the `./skive` wrapper adds
+  only when `/dev/sr*` exists on the host (a device compose lists must exist
+  at container create), and `skive doctor` skips the drive, makemkvcon, and
+  key checks as warns on a box with no optical nodes instead of failing them
+- feat: the skive box — one Fedora container (Containerfile + compose)
+  driven through a `./skive` wrapper replaces the distrobox setup script
+  and the Arch host install path; clone, build, `./skive doctor` is now the
+  one setup path on any machine.
+- feat: a `MAKEMKV_KEY` declared in the environment self-heals at startup —
+  skive writes it into MakeMKV's settings.conf (idempotently; the env key
+  always wins), so key rotation is a one-line `.env` edit. With no env key,
+  the remind-only behavior stands.
+- feat: `skive doctor` checks the machine in one green table — drives, share
+  mounts, MakeMKV key, tesseract languages, encode capability — and exits
+  nonzero when a prerequisite is missing; it checks, never fixes.
 - fix: a disc with several forced subtitle tracks in one language (e.g. two
   English forced tracks) shipped duplicate sidecars with the same name; now
   the track with the most cues wins and only one sidecar is written.

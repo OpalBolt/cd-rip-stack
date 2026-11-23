@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from skive.scan import drive_media, is_recordable, iso2b, scan_disc
+from skive.scan import drive_media, is_recordable, iso2b, materialize_makemkv_key, scan_disc
 
 
 def test_iso2b_mapping():
@@ -383,3 +383,76 @@ def test_scan_disc_clusters_identical_segment_maps():
     #     [(t.number,t.decoy_cluster,t.scrambled) for t in ts if t.number==38])"
     #   Expected output: "82 [(38, 0, False)]" — 82 titles at cluster size 82,
     #   t38 clean.
+
+
+# --- materialize_makemkv_key: MAKEMKV_KEY env -> MakeMKV settings.conf ----
+
+
+def test_key_env_missing_dir_and_file_created(tmp_path, monkeypatch):
+    """Env key set, no ~/.MakeMKV yet: dir + file created carrying the key."""
+    monkeypatch.setenv("MAKEMKV_KEY", "T_GOLD")
+    settings = tmp_path / ".MakeMKV" / "settings.conf"
+    assert materialize_makemkv_key(settings) is True
+    assert settings.read_text() == 'app_Key = "T_GOLD"\n'
+
+
+def test_key_env_idempotent_no_rewrite(tmp_path, monkeypatch):
+    """Second run with the same key writes nothing (mtime pinned as proof)."""
+    monkeypatch.setenv("MAKEMKV_KEY", "T_GOLD")
+    settings = tmp_path / ".MakeMKV" / "settings.conf"
+    settings.parent.mkdir()
+    settings.write_text('appdata_dir = "/keep"\napp_Key = "T_GOLD"\n')
+    os.utime(settings, (1_000_000, 1_000_000))
+    assert materialize_makemkv_key(settings) is False
+    assert settings.stat().st_mtime == 1_000_000
+    assert settings.read_text() == 'appdata_dir = "/keep"\napp_Key = "T_GOLD"\n'
+
+
+def test_key_env_changed_env_wins_other_lines_kept(tmp_path, monkeypatch):
+    """Changed env key replaces the line; every other line stays verbatim."""
+    monkeypatch.setenv("MAKEMKV_KEY", "T_NEW")
+    settings = tmp_path / "settings.conf"
+    settings.write_text('app_Key = "T_OLD"\nappdata_dir = "/keep"\n')
+    assert materialize_makemkv_key(settings) is True
+    assert settings.read_text() == 'app_Key = "T_NEW"\nappdata_dir = "/keep"\n'
+
+
+def test_key_env_absent_line_appended(tmp_path, monkeypatch):
+    """File exists without app_Key: the key line is appended."""
+    monkeypatch.setenv("MAKEMKV_KEY", "T_GOLD")
+    settings = tmp_path / "settings.conf"
+    settings.write_text('appdata_dir = "/keep"')
+    assert materialize_makemkv_key(settings) is True
+    assert settings.read_text() == 'appdata_dir = "/keep"\napp_Key = "T_GOLD"\n'
+
+
+def test_key_env_unset_file_untouched(tmp_path, monkeypatch):
+    """No env key: nothing touched, byte-identical — the remind-only path."""
+    monkeypatch.delenv("MAKEMKV_KEY", raising=False)
+    settings = tmp_path / "settings.conf"
+    settings.write_text('app_Key = "T_OLD"\n')
+    os.utime(settings, (1_000_000, 1_000_000))
+    assert materialize_makemkv_key(settings) is False
+    assert settings.stat().st_mtime == 1_000_000
+    assert settings.read_text() == 'app_Key = "T_OLD"\n'
+
+
+def test_key_env_unwritable_warns_not_crashes(tmp_path, monkeypatch, capsys):
+    """Parent path is a regular file: one warn naming the file, False, no
+    traceback — the remind-only expiry branch stays the graceful path."""
+    monkeypatch.setenv("MAKEMKV_KEY", "T_GOLD")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("in the way\n")
+    assert materialize_makemkv_key(blocker / "settings.conf") is False
+    err = capsys.readouterr().err
+    assert "could not update MakeMKV key file" in err
+    assert "remind-only fallback still applies" in err
+    assert blocker.read_text() == "in the way\n"
+
+
+def test_key_env_empty_string_is_unset(tmp_path, monkeypatch):
+    """Empty env key behaves like unset: no write."""
+    monkeypatch.setenv("MAKEMKV_KEY", "")
+    settings = tmp_path / "settings.conf"
+    assert materialize_makemkv_key(settings) is False
+    assert not settings.exists()

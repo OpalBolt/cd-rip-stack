@@ -174,19 +174,20 @@ class Item:
 
 
 def _find_on_path(exe: str) -> str | None:
-    """Everything resolves on PATH inside the distrobox (Linux tool names, no
+    """Everything resolves on PATH inside the skive box (Linux tool names, no
     .exe, no %ProgramFiles% fallback)."""
     found = shutil.which(exe)
     if not found:
-        ui.fail(f"{exe} not found on PATH -- see README (transcode box: Install)")
+        ui.fail(f"{exe} not found on PATH -- the box image is stale; see README (setup)")
     return found
 
 
 def _find_tool(exe: str) -> str | None:
-    """/usr/bin first for the hardware path's tools: the host's mise shims
-    bleed into the box through the shared home, and mise's ffmpeg/vainfo see
-    a different (patent-stripped) VA-API driver than the container's RPM
-    Fusion builds (bench.sh hit this as "no usable encoding entrypoint")."""
+    """/usr/bin first for the hardware path's tools, so nothing earlier on
+    PATH can shadow the container's RPM Fusion builds with a binary that
+    sees a different (patent-stripped) VA-API driver (bench.sh hit this as
+    "no usable encoding entrypoint" in the distrobox era, when host mise
+    shims bled in through a shared home)."""
     if os.path.exists(os.path.join("/usr/bin", exe)):
         return os.path.join("/usr/bin", exe)
     return shutil.which(exe)
@@ -611,7 +612,7 @@ def _encode_vaapi(
         ui.fail(
             "hardware path needs ffmpeg and a VCN with HEVC "
             f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
-            "(scripts/setup-transcode.sh installs both)"
+            "(the skive box image bakes both — rebuild it: podman compose build)"
         )
         return False
     vf = "bwdif=mode=send_frame:parity=auto:deint=interlaced,"
@@ -663,8 +664,6 @@ def _encode_vaapi(
         for line in proc.stdout:
             stripped = line.rstrip()
             if stripped.startswith("frame=") and "fps=" in stripped:
-                # progress \r updates: throttle, never hidden-replay, raw-log
-                # only what actually printed; the TTY footer takes every one
                 _footer_progress(stripped, duration_s)
                 if verbose >= 2:
                     _progress_line("ffmpeg", stripped)
@@ -776,8 +775,6 @@ def _encode(
         for line in proc.stdout:
             stripped = line.rstrip()
             if "Encoding:" in stripped and "%" in stripped:
-                # progress \\r updates: throttle, never hidden-replay, raw-log
-                # only what actually printed; the TTY footer takes every one
                 _footer_progress(stripped)
                 if verbose >= 2:
                     _progress_line("handbrake", stripped)
@@ -982,9 +979,6 @@ def _copy2(
             done += len(buf)
             pct = done * 100 // total
             if pct >= last + 10 or pct == 100:
-                # on a TTY progress never enters the scroll: a sequential
-                # copy moves the footer bar, a prefetch its background
-                # entry; fallback prints byte-identical
                 v = ui.view()
                 line = f"{pct}%  ({done // mb}/{total // mb} MB)"
                 if bg is not None:
@@ -1173,7 +1167,7 @@ def _record_encode(
         write_validation(Path(doc_path), doc)
     except OSError:
         return
-    try:  # the doc's final copy lands beside the encode — simple overwrite
+    try:
         shutil.copyfile(doc_path, os.path.join(os.path.dirname(dest), VALIDATION_FILENAME))
     except OSError:
         pass
@@ -1459,7 +1453,7 @@ def run_transcode(args) -> int:
     if not os.path.isdir(vid):
         ui.fail(
             f"{vid} is not reachable. The videos share isn't "
-            f"mounted -- mount it at {vid} (see README: transcode box), or set VIDEOS_MOUNT."
+            f"mounted -- mount it at {vid} (see README: setup), or set VIDEOS_MOUNT."
         )
         return 1
     keep = args.keep
@@ -1504,8 +1498,9 @@ def run_transcode(args) -> int:
         elif args.encoder == "vaapi":
             ui.fail(
                 "-e vaapi but this box has no VA-API HEVC encode "
-                "entrypoint (vainfo) -- no VCN (BC-250) or the freeworld driver is "
-                "missing (scripts/setup-transcode.sh); use -e auto or -e x265"
+                "entrypoint (vainfo) -- no VCN or the image's freeworld "
+                "driver is missing (rebuild the image: podman compose build); "
+                "use -e auto or -e x265"
             )
             return 1
         else:
@@ -1615,7 +1610,7 @@ def run_transcode(args) -> int:
     }
 
     # the very vague session estimate (CONTEXT.md: Session cap): ~2–10
-    # min per main on the transcode box (VCN via vaapi), stated once,
+    # min per main on a VCN box (vaapi), stated once,
     # never per title
     deferred = 0
     if args.limit:
@@ -1726,7 +1721,7 @@ def run_transcode(args) -> int:
         if side_dir is not None:
             _ship_sidecars(side_dir, dest_dir, res)
         if episode:
-            _copy_show_doc(i.path, dest_dir)  # the doc travels beside its encodes
+            _copy_show_doc(i.path, dest_dir)
         if res is None or res.ok:
             if _archive(i.path, i, lossless_root, keep):
                 parked += 1
@@ -1739,8 +1734,6 @@ def run_transcode(args) -> int:
         nonlocal parked, failed
         mb = _move_to_share(local_out, dest)
         _ship_sidecars(side_dir, dest_dir, res)
-        # the doc that picked this main gets the encode appended
-        # (append-once) and a library copy beside the encode
         if i.movie in doc_path:
             _record_encode(doc_path[i.movie], dest, i.num, ffprobe_exe, crop=crop)
         # nothing is deleted until its sidecars are verified: the
@@ -2101,11 +2094,7 @@ def run_transcode(args) -> int:
             log.name = i.movie
             safe = common.sanitize(i.movie)
 
-            # -- TV: no main feature, no merge. Every staged episode encodes
-            # -- (a double stays one file), episodes -> Season NN (00 =
-            # -- Specials) with the inline subtitle pass and the show doc
-            # -- copied beside the encodes, TV extras -> the show's extras/
-            # -- with embedded subs kept and no pass.
+            # -- TV arm.
             if i.is_tv:
                 show_dir = os.path.join(lib_dir, "tv", safe)
                 episode = i.sfx == "S"
@@ -2119,10 +2108,6 @@ def run_transcode(args) -> int:
                     dest_dir = os.path.join(show_dir, "extras")
                     dest = os.path.join(dest_dir, _extra_name(dest_dir, safe, i.num, ext))
                 if episode and os.path.exists(dest):
-                    # already encoded in the library: never re-encode; the
-                    # staged source parks in lossless/ (deletes when
-                    # lossless already holds it). The frame opened for this
-                    # unit closes with the skip as its result.
                     _skip_lib_dup([i], dest)
                     current = None
                     v = ui.view()
@@ -2153,8 +2138,7 @@ def run_transcode(args) -> int:
                     # this item's temp BEFORE the pass runs, so an interrupt
                     # mid-pass drops it too (CONTEXT.md: Interrupt); the
                     # sidecar base name carries the episode label, not the
-                    # bare show name. On vaapi the pass overlaps detect+encode
-                    # (joined right after the encode).
+                    # bare show name.
                     side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                     inflight_side = side_dir
                     subs_join, inflight_subs = _subs_begin(
@@ -2207,10 +2191,7 @@ def run_transcode(args) -> int:
                     _item_done(i.name, parts, False, f"encode ({_encode_why})")
                 continue
 
-            # -- recorded main with no staged title: loud skip, never a
-            # silent bytes fallback. This movie's _t titles stay in staging
-            # for a human (encoding the byte-winner would be the Mamma Mia
-            # failure mode).
+            # -- recorded main with no staged title.
             if i.sfx == "t" and i.movie in rec_missing:
                 if i.movie not in missing_warned:
                     missing_warned.add(i.movie)
@@ -2222,13 +2203,8 @@ def run_transcode(args) -> int:
                     log.note("validation", msg)
                 continue
 
-            # -- main feature: merge its .pN parts (if any), encode as one
-            # -- movie.
+            # -- main feature.
             if i.sfx == "t" and i.movie in main_num and main_num[i.movie][0] == i.num:
-                # already encoded in the library: never re-encode; the
-                # staged sources park in lossless/ (delete when lossless
-                # already holds them) and unmarked extras ride this disposal
-                # -- the skip never burns a session-cap slot
                 if i.movie in lib_dup:
                     siblings = sorted(
                         (
@@ -2357,13 +2333,10 @@ def run_transcode(args) -> int:
                     cleanup.append(local_src)
                     _pf_start(unit_of[i.path], log)
 
-                # the inline subtitle pass runs on the merged (or single) local
-                # copy, never per part (the main encodes zero-track meanwhile);
-                # sequential encoders run it BEFORE the encode, vaapi overlaps
-                # it with detect+encode (the GPU encode leaves the CPU idle)
-                # and joins right after; the sidecar dir is this item's temp
-                # from creation, so an interrupt mid-pass drops it too
-                # (CONTEXT.md: Interrupt)
+                # the pass runs on the merged (or single) local copy, never
+                # per part (the main encodes zero-track meanwhile); the
+                # sidecar dir is this item's temp from creation, so an
+                # interrupt mid-pass drops it too (CONTEXT.md: Interrupt)
                 side_dir = tempfile.mkdtemp(dir=tmp_dir, prefix="subs-")
                 inflight_side = side_dir
                 subs_join, inflight_subs = _subs_begin(
@@ -2439,15 +2412,7 @@ def run_transcode(args) -> int:
                     )
                 continue
 
-            # -- extras (non-main _t title, or an extras-disc title): the
-            # ` - Extra NN` form, number rolled forward past taken names —
-            # no staging label ever reaches the library. Every embedded track
-            # stays: no subtitle pass, no zero-subs trick. The extras marker
-            # (CONTEXT.md: Extras marker) gates the whole branch: unmarked
-            # extras never encode — they ride the main's disposal (delete, or
-            # -k park) once it ships; a folder whose movie has no staged main
-            # rides alone here. Marked extras encode at quality superfast
-            # (default) or full (the main's preset).
+            # -- extras (non-main _t title, or an extras-disc title).
             mark = extras_mark.get(i.movie, {"include": False, "quality": "superfast"})
             if not mark["include"]:
                 handled.add(i.path)

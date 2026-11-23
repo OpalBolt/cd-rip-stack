@@ -2,23 +2,28 @@
 
 Rip CDs, DVDs, and Blu-rays to MKV and FLAC.
 
-A two-box, hand-driven pipeline: a ripping machine pulls discs to lossless
-MKV and FLAC on two NFS shares and files music into a beets-managed library;
-a transcode box drains video staging into a Jellyfin-ready H.265 library with
-SRT sidecars. Eight commands below; each docs page is one job.
+A hand-driven pipeline that runs on any machine with a disc drive or a
+GPU: every machine runs the skive box, one container with every tool
+baked in, over two NFS shares. Discs land as lossless MKV and FLAC
+staging (music files into a beets-managed library); `skive transcode`
+drains video staging into a Jellyfin-ready H.265 library with SRT
+sidecars. Eight commands below; each docs page is one job.
 
-## Quickstart — the ripping machine
+## Quickstart
 
 ```bash
 git clone <this repo> && cd cd-rip-stack
-mise run install    # skive on PATH, editable from this repo (or: uv tool install --editable .)
-export TMDB_API_KEY=...
-# mount the shares at /mnt/videos and /mnt/music — skive never mounts for you
-skive rip movie     # insert the disc, pick from TMDB, set the table
+cp .env.example .env    # fill TMDB_API_KEY
+podman compose build    # the skive box — every tool baked in
+./skive doctor          # green table before the first disc (host prep: setup docs)
+./skive rip movie       # insert the disc, pick from TMDB, set the table
 ```
 
-Env keys, dependencies, drives and logs: [setup](docs/setup.md). The
-universal distrobox build — [transcode](docs/transcode.md).
+`./skive <cmd>` runs any skive command in the box; bare `./skive` opens a
+shell. The shares must already be mounted at `/mnt/videos` and
+`/mnt/music` — skive never mounts for you. Host prep, env keys, drives
+and logs: [setup](docs/setup.md). The box and `skive transcode` —
+[transcode](docs/transcode.md).
 
 ## Commands
 
@@ -74,14 +79,13 @@ table](docs/video.md#the-selection-table), not at a prompt. The
 
 One page per job:
 
-- [setup](docs/setup.md) — once per ripping machine: dependencies, env vars,
-  share mounts, drives, logs.
+- [setup](docs/setup.md) — once per machine: the skive box (host prep,
+  build, doctor), env vars, share mounts, drives, logs.
 - [nas-layout](docs/nas-layout.md) — the two share trees: staging, libraries,
   mirrors, logs.
 - [video](docs/video.md) — `rip movie` / `rip tv` end to end: TMDB picks,
   episode ranges, play-all-only discs.
-- [transcode](docs/transcode.md) — the universal distrobox (rip + encode)
-  and `skive transcode`:
+- [transcode](docs/transcode.md) — the skive box and `skive transcode`:
   subtitle pass, crop gate, quarantine, retry.
 - [music](docs/music.md) — `rip music`, `tag`, `sync-sd`: CD to library to
   SD card.
@@ -90,6 +94,6 @@ One page per job:
 
 ## Development
 
-Tests: `uv run pytest` (1035 passing). How skive decides things and the
+Tests: `uv run pytest`. How skive decides things and the
 glossary: [CONTEXT.md](CONTEXT.md). Deferred work: [roadmap.md](roadmap.md).
 Decisions: [docs/adr/](docs/adr/).

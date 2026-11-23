@@ -98,7 +98,7 @@ skive tag cd                   # files only cd (or bandcamp / other)
 ```
 
 The share mounts, empty sources are skipped, and each source gets its own
-beets import. Filing **moves** (`move: yes` in `config/beets-config.yaml`):
+beets import. Filing **moves** (`move: yes` in `src/config/beets-config.yaml`):
 anything still in `rip/` is unfiled and offered again next run, an album
 skipped at the beets prompt stays in `rip/`, duplicate albums prompt (keep
 both / remove / merge), and after each source the run log marks every staged
@@ -115,7 +115,7 @@ the symbols become `ok` and `warn`.
 
 Each filed album ends with a `validation.json` provenance record: source,
 release identity, track list, and per disc the tag run, date and mode. The
-local plugin (`beetsplug/skive_album.py`) merges into any record already in
+local plugin (`src/beetsplug/skive_album.py`) merges into any record already in
 the destination — filing disc 2 keeps disc 1's AccurateRip proof — and
 carries the cyanrip `.log`/`.cue` sidecars into the album folder, suffixed
 ` CD<n>` for multi-disc albums. The beets DB (`/mnt/music/music.db`) and
@@ -126,8 +126,8 @@ config dir.
 Two gotchas, both hit at the keyboard:
 
 - **Do not hand-run `beet import`.** It files albums, but the album plugin
-  does not load — only `skive tag` starts the beets child with the repo on
-  `PYTHONPATH` — so a hand-run import writes no provenance record and leaves
+  does not load — only `skive tag` starts the beets child with the package
+  root on `PYTHONPATH` — so a hand-run import writes no provenance record and leaves
   the `.log`/`.cue` sidecars behind. Use `skive tag`.
 - **replaygain needs a GStreamer/GI stack** on this box or beets fails at
   start-up. The install is on [setup](setup.md).
@@ -166,7 +166,7 @@ One-time steps for a library that predates this pipeline. Run from the repo.
 Seed the beets DB so the first `skive tag` knows what is already filed:
 
 ```bash
-uv run beet -c config/beets-config.yaml import -A -C -M /mnt/music/library
+uv run beet -c src/config/beets-config.yaml import -A -C -M /mnt/music/library
 ```
 
 `-A` adds as-is (no autotagging), `-C` no copy, `-M` no move. `-M` matters:

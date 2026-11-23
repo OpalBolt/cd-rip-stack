@@ -40,18 +40,10 @@ from skive.validation import (
 
 
 def rip_music(args) -> None:
-    """Main music rip orchestration.
-
-    Args:
-        args: argparse.Namespace from cmd_rip_music
-
-    Raises:
-        SystemExit: On any error or user abort
-    """
-    # Validate offset
+    """Main music rip orchestration."""
     if args.offset is None:
         ui.fail("usage: skive rip music [-d N] <offset> [cyanrip_flags...]")
-        ui.fail("  offset       drive sample offset (see drive table in README)")
+        ui.fail("  offset       drive sample offset (see Drives in docs/setup.md)")
         ui.fail("  -d N         drive number, same as rip movie/tv (default 0)")
         ui.fail("  cyanrip_flags passed through to cyanrip (e.g. -N, -R x)")
         sys.exit(2)
@@ -78,15 +70,12 @@ def rip_music(args) -> None:
         i += 1
     args.cyanrip_flags = kept
 
-    # Environment
     music_mnt = os.environ.get("MUSIC_MOUNT", "/mnt/music")
 
-    # Staging dir on the share
     ensure_share(music_mnt, "MUSIC_MOUNT")
     rip_dir = Path(music_mnt) / "rip" / "cd"
     rip_dir.mkdir(parents=True, exist_ok=True)
 
-    # RipLog
     # Same -d N as rip movie/tv: makemkv's disc index resolved to a real device
     # by the DRV line (a bare /dev/srN guess can point at the OTHER drive).
     _, _, device = sniff_disc(disc=args.disc)
@@ -106,7 +95,6 @@ def rip_music(args) -> None:
         # log is unlinked on rc==0 and kept otherwise (sync_sd pattern).
         rc = 0
         try:
-            # Online gate: skip if -N in cyanrip_flags
             flags = args.cyanrip_flags or []
             skip_online = "-N" in flags
 
@@ -747,7 +735,7 @@ def _cyanrip_run(
                     emit_opener()  # before any track work begins
                 if progress:
                     number = int(progress.group(1))
-                    pct = float(progress.group(2))  # cyanrip's own track percent
+                    pct = float(progress.group(2))
                     eta = progress.group(3)
                     outcomes.setdefault(number, "interrupted")  # in flight
                     track_t0.setdefault(number, time.monotonic())
@@ -870,17 +858,14 @@ def _newest_flac_album(rip_dir: Path) -> tuple[str, str]:
     if not flacs:
         return "-", "-"
 
-    # Find newest by mtime
     newest = max(flacs, key=lambda f: f.stat().st_mtime)
 
-    # Relative folder to rip_dir ('.' if directly in rip_dir)
     try:
         rel_path = newest.parent.relative_to(rip_dir)
         rel_folder = str(rel_path)
     except ValueError:
         rel_folder = "."
 
-    # Run metaflac to get ALBUM and ARTIST
     album = _metaflac_tag(newest, "ALBUM")
     artist = _metaflac_tag(newest, "ARTIST")
 
@@ -901,7 +886,6 @@ def _metaflac_tag(flac: Path, tag: str) -> str:
             text=True,
             check=False,
         )
-        # Output format: TAG=value\n
         for line in result.stdout.strip().splitlines():
             if "=" in line:
                 return line.split("=", 1)[1].strip()

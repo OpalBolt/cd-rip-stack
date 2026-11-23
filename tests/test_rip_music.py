@@ -877,11 +877,16 @@ def test_miss_rerun_command_keeps_drive_and_drops_separator(capsys, monkeypatch)
 
 
 def test_repo_sweep_no_local_paths():
-    """Test no ~/media/audio paths in skive/, config/, windows/ (not lib, not README)."""
-    excluded = {".git", ".venv", "uv.lock", "tests/__pycache__", "skive/__pycache__"}
+    """No ~/media/audio paths in the source trees (not lib, not README)."""
+    excluded = {".git", ".venv", "uv.lock", "__pycache__"}
     repo_root = Path(__file__).parent.parent
 
-    for root_dir in [repo_root / "skive", repo_root / "config", repo_root / "windows"]:
+    for root_dir in [
+        repo_root / "src" / "skive",
+        repo_root / "src" / "config",
+        repo_root / "src" / "beetsplug",
+        repo_root / "windows",
+    ]:
         if not root_dir.exists():
             continue
         for py_file in root_dir.rglob("*.py"):

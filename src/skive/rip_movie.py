@@ -334,14 +334,7 @@ def _quit_nothing_ripped() -> None:
 
 
 def rip_movie(args) -> None:
-    """Main movie rip orchestration.
-
-    Args:
-        args: argparse.Namespace from cmd_rip_movie
-
-    Raises:
-        SystemExit: On any error, user abort, or interrupt (exit 130)
-    """
+    """Main movie rip orchestration."""
     preamble = None
     run_preexisting: set[Path] = set()
     view = ui.view() or ui.RunView()  # a test may pre-set a tty/live view
@@ -421,7 +414,6 @@ def rip_movie(args) -> None:
             if estimated:
                 view.bg("disc", f"{hsize(0)}/{hsize(estimated)}")
 
-        # Build selection string
         keep = preamble.keep
         sub_langs = {l for t in infos for l in t.subtitles.split(",") if l}
         audio_langs = strip_audio_counts([l for t in infos for l in t.audio.split(",")])
@@ -433,12 +425,10 @@ def rip_movie(args) -> None:
             f"widened={','.join(sorted(widened)) or 'none'} keep-all={'yes' if args.keep_all else 'no'}",
         )
 
-        # Inject profile
         profile_path = inject_profile(sel)
         rc = 1  # every exit path must reach log.finish: raw log is unlinked only on rc==0
         summary_rows: list[tuple] = []
         try:
-            # Rip phase
             run_preexisting = set(title_dir.glob("*.mkv"))
             preexisting = run_preexisting
             log.phase("rip")
@@ -468,7 +458,6 @@ def rip_movie(args) -> None:
             # (the old -i shape), never the -E extras suffix.
             rename_staged(display, title_dir, suffix="t", part=args.part, preexisting=preexisting)
 
-            # Subtitle note
             note = subtitle_note(title_dir)
             ui.info(note)
             log.note("subtitle", note)
@@ -542,14 +531,12 @@ def rip_movie(args) -> None:
             # view before printing the interrupt summary.
             _interrupted(log, [title_dir, stage_movie], view, preexisting=run_preexisting)
         finally:
-            # Clean up temp profile
             profile_path.unlink(missing_ok=True)
             log.finish(rc)
         # Close the view before the summary prints (its Live redraw would
         # garble them); replay works after close, and the outer close is
         # idempotent.
         view.close()
-        # The run summary: per-title rows × duration × size × result.
         for r in probed:
             f = title_dir / r["file"]
             try:

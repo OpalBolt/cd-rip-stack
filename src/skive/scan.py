@@ -214,7 +214,6 @@ def _info(minlength: int | None, run=subprocess.run, disc: int = 0) -> str:
     """One `makemkvcon -r info` run (honoring MAKEMKV_INFO); minlength=None omits the flag."""
     override = os.environ.get("MAKEMKV_INFO")
     if override:
-        # Replay captured dump via the command in override
         return run(override, shell=True, capture_output=True, text=True).stdout
     cmd = ["makemkvcon", "-r", "info"]
     if minlength is not None:
@@ -463,6 +462,49 @@ def _parse_titles(out: str) -> list[TitleInfo]:
     return result
 
 
+def materialize_makemkv_key(settings: Path | None = None) -> bool:
+    """Write MAKEMKV_KEY from the environment into MakeMKV's settings.conf.
+
+    ADR 0016's never-fetch rule stands; the env-declared write here — env
+    always wins over the file — is the supersession ADR 0025 records. An
+    undeclared key stays remind-only (the expiry branch in scan_disc).
+    Idempotent: no write when the file's app_Key already equals the env key.
+
+    Args:
+        settings: settings.conf path (default ~/.MakeMKV/settings.conf); the
+            test seam.
+
+    Returns:
+        True when a write happened, False when there was nothing to do.
+    """
+    key = os.environ.get("MAKEMKV_KEY")
+    if not key:
+        return False
+    path = settings if settings is not None else Path.home() / ".MakeMKV" / "settings.conf"
+    try:
+        text = path.read_text() if path.is_file() else ""
+        if re.search(rf'^app_Key\s*=\s*"{re.escape(key)}"\s*$', text, re.MULTILINE):
+            return False
+        if re.search(r"^app_Key\s*=", text, re.MULTILINE):
+            text = re.sub(
+                r"^app_Key\s*=.*$", f'app_Key = "{key}"', text, count=1, flags=re.MULTILINE
+            )
+        else:
+            text = (
+                (text.rstrip("\n") + "\n" + f'app_Key = "{key}"\n')
+                if text
+                else f'app_Key = "{key}"\n'
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    except OSError as e:
+        ui.warn(
+            f"could not update MakeMKV key file {path}: {e} — remind-only fallback still applies"
+        )
+        return False
+    return True
+
+
 def scan_disc(
     minlength: int, run=subprocess.run, disc: int = 0, log: RipLog | None = None
 ) -> tuple[str, str, list[TitleInfo]]:
@@ -482,10 +524,14 @@ def scan_disc(
         dump = Path(tempfile.gettempdir()) / "skive-scan-failed.txt"
         dump.write_text(out)
         if "Evaluation period has expired" in out or "shareware functionality unavailable" in out:
-            # ADR 0016: remind, never fetch or write the key ourselves.
+            # ADR 0016: never fetch the key ourselves. A key declared in
+            # MAKEMKV_KEY was written at startup (materialize_makemkv_key);
+            # an undeclared key stays remind-only.
             ui.fail("MakeMKV key expired — BD ripping needs a valid app_Key")
             ui.info("free key: https://forum.makemkv.com/forum/viewtopic.php?t=1053")
-            ui.info('write app_Key = "…" into ~/.MakeMKV/settings.conf on the rip box, then re-run')
+            ui.info(
+                'set MAKEMKV_KEY in .env, or write app_Key = "…" into ~/.MakeMKV/settings.conf inside the box, then re-run'
+            )
             ui.info("DVD and CD rips are unaffected")
             if log is not None:
                 log.note("scan", "makemkv key expired — update app_Key (forum t=1053)", echo=False)
@@ -519,7 +565,6 @@ def sniff_disc(run=subprocess.Popen, disc: int = 0) -> tuple[str, str, str]:
     """
     override = os.environ.get("MAKEMKV_INFO")
     if override:
-        # Replay captured dump via the command in override
         out = subprocess.run(
             override, shell=True, capture_output=True, text=True, check=False
         ).stdout
