@@ -16,7 +16,7 @@ The music library never enters: its FLAC is by design, so never point this
 at the music tree. Extras trees are never touched (ADR 0003's discipline).
 
 Usage:  python scripts/audit_lossless_audio.py [--fix] [LIBRARY]
-        (default /mnt/videos/library, or $VIDEOS/library when VIDEOS is set)
+        (default $VIDEOS_MOUNT/library, else /mnt/videos/library)
 """
 
 import argparse
@@ -186,8 +186,8 @@ def parse_args(argv=None):
         "library",
         nargs="?",
         metavar="LIBRARY",
-        default=os.path.join(os.environ.get("VIDEOS") or "/mnt/videos", "library"),
-        help="library root (default: $VIDEOS/library or /mnt/videos/library)",
+        default=os.path.join(os.environ.get("VIDEOS_MOUNT", "/mnt/videos"), "library"),
+        help="video library root (default: $VIDEOS_MOUNT/library, else /mnt/videos/library)",
     )
     return p.parse_args(argv)
 
