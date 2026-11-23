@@ -7,13 +7,23 @@ from skive import doctor
 # one DRV: line per drive makemkvcon sees (empty-drive rows count too)
 REPLAY = 'DRV:0,1,999,12,"DVD-ROM","LABEL","/dev/sr0"\nDRV:1,0,999,0,"","",""\n'
 TESSERACT_OK = "List of available languages (2):\neng\ndan\n"
-VAINFO_OK = "VAEntrypointVLD\nVAEntrypointEncSlice\n"
+VAINFO_OK = (
+    "VAProfileH264Main : VAEntrypointVLD\n"
+    "VAProfileH264Main : VAEntrypointEncSlice\n"
+    "VAProfileHEVCMain : VAEntrypointVLD\n"
+    "VAProfileHEVCMain : VAEntrypointEncSlice\n"
+)
 
 
 class Proc:
     def __init__(self, stdout=""):
         self.stdout = stdout
         self.stderr = ""
+
+
+def vainfo_run(out):
+    """A run seam for check_vainfo alone: any call answers with `out`."""
+    return lambda *args, **kwargs: Proc(out)
 
 
 class Run:
@@ -97,6 +107,21 @@ def test_key_from_settings_file(tmp_path, monkeypatch, capsys):
     settings.write_text('app_Key = "T_file"\n')
     rc = doctor.run_doctor(dev=str(tmp_path), run=Run(), settings=settings)
     assert rc == 0
+
+
+def test_vainfo_encode_profiles():
+    """The vaapi row names the encode profiles the box exposes — its
+    ladder rung — and decode-only (VLD) entrypoints never count."""
+    hevc = "VAProfileHEVCMain : VAEntrypointVLD\nVAProfileHEVCMain : VAEntrypointEncSlice\n"
+    h264 = "VAProfileH264Main : VAEntrypointVLD\nVAProfileH264Main : VAEntrypointEncSlice\n"
+    vld = "VAProfileHEVCMain : VAEntrypointVLD\nVAProfileH264Main : VAEntrypointVLD\n"
+    for out, kind, detail in (
+        (hevc + h264, "ok", "VA-API encode: HEVC + H.264"),
+        (h264, "ok", "VA-API encode: H.264 only"),
+        (hevc, "ok", "VA-API encode: HEVC only"),
+        (vld, "warn", "no VA-API encode entrypoints — software encode only (CPU box)"),
+    ):
+        assert doctor.check_vainfo(run=vainfo_run(out)) == (kind, detail)
 
 
 def test_vainfo_absent_warns_but_exit_0(tmp_path, monkeypatch, capsys):
