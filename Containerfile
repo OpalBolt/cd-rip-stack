@@ -17,6 +17,10 @@ RUN dnf install -y \
 RUN dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld \
     || dnf install -y mesa-va-drivers-freeworld
 
+# The modern intel-media-driver never loads on Ivy Bridge (Gen7); i965 takes
+# over, and renderD128 is the Intel node on that machine (the W530).
+RUN dnf install -y libva-intel-driver
+
 RUN dnf install -y \
       mkvtoolnix ffmpeg libva-utils tesseract \
       tesseract-langpack-eng tesseract-langpack-dan libicu git \
