@@ -14,6 +14,7 @@ from skive.tmdb import (
     require_online,
     search_first,
     search_loop,
+    validate_key,
 )
 
 # The answer line every ui.ask reads (prompt chrome still prints to stderr)
@@ -109,6 +110,61 @@ def test_require_online_no_key():
             assert False, "Should have exited"
         except SystemExit:
             pass
+
+
+def test_validate_key_ok_hits_authentication_endpoint():
+    """A valid key returns ok — probed on the validate-key endpoint."""
+    with patch("skive.tmdb._http_get_json", return_value={"success": True}) as mock_http:
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            assert validate_key() == ("ok", "key valid")
+    assert "/3/authentication?api_key=testkey" in mock_http.call_args[0][0]
+
+
+@patch("os.environ", {})
+def test_validate_key_absent():
+    """No key in the env is a fail — every rip's metadata pick needs it."""
+    assert validate_key() == ("fail", "no $TMDB_API_KEY in env — set it in .env")
+
+
+def test_validate_key_rejected():
+    """A 401 from TMDB is a rejected key, not a network problem."""
+    err = RuntimeError("TMDB request failed: HTTP 401")
+    with patch("skive.tmdb._http_get_json", side_effect=err):
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            assert validate_key() == ("fail", "TMDB answered 401 — invalid or revoked key")
+
+
+def test_validate_key_unreachable_warns():
+    """Transport trouble proves nothing about the key — warn, not fail."""
+    err = RuntimeError("TMDB request failed: timed out")
+    with patch("skive.tmdb._http_get_json", side_effect=err):
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            assert validate_key() == ("warn", "TMDB unreachable: TMDB request failed: timed out")
+
+
+def test_require_online_401_says_rejected_not_unreachable(capsys):
+    """The quotes-in-.env bug read as a network outage before the 401 had
+    its own wording."""
+    err = RuntimeError("TMDB request failed: HTTP 401")
+    with patch("skive.tmdb._http_get_json", side_effect=err):
+        with patch.dict(os.environ, {"TMDB_API_KEY": "testkey"}, clear=False):
+            with patch("sys.exit", side_effect=SystemExit):
+                try:
+                    require_online()
+                except SystemExit:
+                    pass
+    out = capsys.readouterr().err
+    assert "401" in out
+    assert "unreachable" not in out
+
+
+def test_http_get_json_httperror_reports_code():
+    """HTTPError carries its status code into the message callers match on."""
+    with patch(
+        "urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 401, "nope", None, None)
+    ):
+        with pytest.raises(RuntimeError, match="HTTP 401"):
+            _http_get_json("http://example.com")
 
 
 def test_fetch_by_id_success():
