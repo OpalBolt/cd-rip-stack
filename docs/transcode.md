@@ -16,9 +16,12 @@ board's VCN block is factory-unprovisioned and eFused off, so no tool ever
 got hardware encode there, and the community `bc250-vaapi` shim stays
 rejected (its H.264 is libx264 on the CPU in a costume, its HEVC a CBR
 streaming encoder shaped for game streaming, not quality-based archival —
-ADR 0010). A VCN-capable GPU does encode: `-e auto` (the default) resolves
-to `hevc_vaapi` on it. Hardware encode goes through ffmpeg VAAPI, not
-HandBrake — HandBrake on Linux has no VAAPI encoder.
+ADR 0010). A GPU with a working VA-API encode block does encode: `-e auto`
+(the default) resolves once per run from a vainfo probe — `hevc_vaapi`
+where the hardware encodes HEVC, `h264_vaapi` where it only encodes H.264
+(an i965-class box still runs at full iGPU speed). Hardware encode goes
+through ffmpeg VAAPI, not HandBrake — HandBrake on Linux has no VAAPI
+encoder.
 
 Every tool is baked into the image: RPM Fusion's HandBrakeCLI and MakeMKV,
 mkvtoolnix, ffmpeg, vainfo, tesseract with eng+dan language data, seconv
@@ -26,7 +29,7 @@ mkvtoolnix, ffmpeg, vainfo, tesseract with eng+dan language data, seconv
 box rips, transcodes, tags, and syncs. The image also carries the
 `mesa-va-drivers-freeworld` swap (Fedora strips H.264/H.265 from its Mesa
 for patents; without the freeworld build vainfo lists only JPEG/VP9/AV1
-and there is no HEVC encode entrypoint), and Fedora 43's Mesa is new
+and there is no HEVC or H.264 encode entrypoint), and Fedora 43's Mesa is new
 enough for VCN encode (gfx1152/Radeon 860M needs Mesa 25.0+ for VCN
 encode).
 
@@ -87,16 +90,19 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
 - **TV** — every episode encodes: `library/tv/<Show (Year)>/Season NN/
   <Show (Year)> - S01E02.mkv` (season 00 → `Specials/`), plus the subtitle
   pass. TV extras file under the show's `extras/` with tracks embedded.
-- **Encode** — `-e auto` (default) picks per box: VCN hardware when the
-  box has it (`ffmpeg hevc_vaapi` CQP 24, audio and subtitles stream-copied,
-  bwdif deinterlaces interlaced frames only, width cropped to VCN's
-  64-pixel alignment — the hardware's own padding bleeds a stretched
-  right edge on 720-wide DVDs; ~181 fps at 1080p, a feature encodes in
-  ~16 minutes), x265 fast otherwise. `-e x265` keeps the software
-  baseline: HandBrake at native resolution, never upscaled (the probed
-  height picks the preset: 480p/576p DVD — those also get
-  detelecine+decomb — 720p, 1080p, 4K; audio `--aencoder copy` with ac3
-  fallback). `-e vaapi` demands hardware and fails fast without it.
+- **Encode** — `-e auto` (default) resolves once per run from vainfo:
+  HEVC hardware → `ffmpeg hevc_vaapi` CQP 28, audio and subtitles
+  stream-copied, bwdif deinterlaces interlaced frames only, width cropped
+  to VCN's 64-pixel alignment — the hardware's own padding bleeds a
+  stretched right edge on 720-wide DVDs; ~181 fps at 1080p, a feature
+  encodes in ~16 minutes. H.264-only hardware → `ffmpeg h264_vaapi` QP 28,
+  the same picture policy minus the alignment crop (that padding quirk is
+  VCN-specific). Neither → x265 fast. `-e x265`
+  keeps the software baseline: HandBrake at native resolution, never
+  upscaled (the probed height picks the preset: 480p/576p DVD — those also
+  get detelecine+decomb — 720p, 1080p, 4K; audio `--aencoder copy` with
+  ac3 fallback). `-e vaapi` demands hardware (either rung) and fails fast
+  without it.
 
 ### The inline subtitle pass
 
@@ -107,9 +113,9 @@ SRT sidecars beside the encode: `<base>.<eng|dan>[.forced|.sdh].srt`.
 Per language, the full track with the most OCR'd cues wins; a runner-up
 holding ≥30% of that count ships as the SDH duplicate; weaker dupes are
 dropped. Forced tracks always ship, flagged `.forced`. On software
-encoders the pass runs before the encode; on `vaapi` it overlaps the
-encode (the GPU leaves the CPU idle for OCR) and settles right after it,
-before anything ships. The encode itself
+encoders the pass runs before the encode; on hardware (`-e vaapi`, either
+rung) it overlaps the encode (the GPU leaves the CPU idle for OCR) and
+settles right after it, before anything ships. The encode itself
 selects zero subtitle tracks via a language list no track can match.
 A failed pass still ships the (subless) encode, but the source quarantines
 below — rerun it with `--retry` to get the sidecars.

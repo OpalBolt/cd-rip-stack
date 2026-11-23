@@ -193,11 +193,14 @@ def _find_tool(exe: str) -> str | None:
     return shutil.which(exe)
 
 
-def _vcn_probe() -> dict | None:
-    """The box's VCN HEVC encode capability: {"low_power": bool} when live,
-    None otherwise. --display drm skips wayland/x11 probing, which can die
-    inside containers after the driver loads; the entrypoints are matched
-    end-anchored so classic EncSlice does not read as LP."""
+def _va_probe() -> dict | None:
+    """The box's VA-API encode capability: {"hevc": bool, "h264": bool,
+    "low_power": bool} when any encode entrypoint exists, None otherwise.
+    --display drm skips wayland/x11 probing, which can die inside containers
+    after the driver loads; the entrypoints are matched end-anchored so a
+    classic EncSlice does not read as LP (low_power keeps the HEVC-family
+    semantics: only when the classic HEVC entrypoint is absent -- i965-class
+    hardware exposes classic entrypoints, so no LP flag there)."""
     exe = _find_tool("vainfo")
     if not exe:
         return None
@@ -207,15 +210,17 @@ def _vcn_probe() -> dict | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if "VAEntrypointEncSlice" not in out.stdout:
+
+    def _has(profile: str, lp: bool = False) -> bool:
+        ep = "VAEntrypointEncSliceLP" if lp else "VAEntrypointEncSlice"
+        return bool(
+            re.search(rf"^ *VAProfile{profile}[^:\n]*:[ \t]*{ep}[ \t]*$", out.stdout, re.MULTILINE)
+        )
+
+    hevc, hevc_lp, h264 = _has("HEVC"), _has("HEVC", lp=True), _has("H264")
+    if not (hevc or hevc_lp or h264):
         return None
-    classic = re.search(
-        r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSlice[ \t]*$", out.stdout, re.MULTILINE
-    )
-    lp = re.search(
-        r"^ *VAProfileHEVC[^:\n]*:[ \t]*VAEntrypointEncSliceLP[ \t]*$", out.stdout, re.MULTILINE
-    )
-    return {"low_power": bool(lp and not classic)}
+    return {"hevc": hevc or hevc_lp, "h264": h264, "low_power": hevc_lp and not hevc}
 
 
 def _stream_sig(src: str, ffprobe_exe: str) -> list[tuple[str, str, str]] | None:
@@ -587,31 +592,42 @@ def _preset(height: int) -> str:
     return "H.265 MKV 2160p60 4K"
 
 
+def _enc_fail_prefix(encoder: str) -> str:
+    """The FAILED-note label for the resolved rung: hardware failures name
+    the rung and the -e pin that skips it (never a silent rung-down)."""
+    if encoder in ("hevc-vaapi", "h264-vaapi"):
+        return f"FAILED {encoder.replace('-', '_')} -- pin with -e x265"
+    return "FAILED handbrake"
+
+
 def _encode_vaapi(
     src: str,
     out: str,
     no_subs: bool = False,
     log: common.RipLog | None = None,
     crop: tuple[int, int, int, int] | None = None,
+    codec: str = "hevc_vaapi",
 ) -> bool:
-    """Full-VCN re-encode via ffmpeg VAAPI (HandBrake has no VAAPI encoder on
-    Linux): hevc_vaapi CQP 24, audio and subtitles stream-copied, bwdif
-    deinterlaces only frames marked interlaced (progressive passes untouched
-    -- the DVD detelecine/decomb equivalent), and the width is cropped to
-    VCN's 64-pixel alignment because the hardware's own padding bleeds a
-    stretched right edge (720-wide DVDs pad to 768); height padding rides
-    the conformance window and is left alone. Process/log discipline mirrors
-    _encode: every line raw-logged as "ffmpeg", frame= progress throttled to
-    one a minute, hidden lines replayed on failure, rc==0 alone is not
-    success (the output must exist)."""
+    """Hardware re-encode via ffmpeg VAAPI (HandBrake has no VAAPI encoder on
+    Linux): hevc_vaapi CQP 28 or h264_vaapi QP 28 -- the codec name is the
+    only thing that differs between the rungs, so it parameterizes the pass.
+    Audio and subtitles stream-copied, bwdif deinterlaces only frames marked
+    interlaced (progressive passes untouched -- the DVD detelecine/decomb
+    equivalent). Only the HEVC rung crops the width to VCN's 64-pixel
+    alignment -- the hardware's own padding bleeds a stretched right edge
+    (720-wide DVDs pad to 768); an H.264-only box has no such quirk, and
+    height padding rides the conformance window and is left alone.
+    Process/log discipline mirrors _encode: every line raw-logged as "ffmpeg",
+    frame= progress throttled to one a minute, hidden lines replayed on
+    failure, rc==0 alone is not success (the output must exist)."""
     global _encode_why
     ff = _find_tool("ffmpeg")
-    vcn = _vcn_probe()
-    if not ff or not vcn:
+    va = _va_probe()
+    if not ff or not va:
         _encode_why = f"{'ffmpeg' if not ff else 'vainfo'} missing"
         ui.fail(
-            "hardware path needs ffmpeg and a VCN with HEVC "
-            f"encode (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
+            "hardware path needs ffmpeg and a VA-API encode "
+            f"entrypoint (vainfo) -- {'ffmpeg' if not ff else 'vainfo'} is missing "
             "(the skive box image bakes both — rebuild it: podman compose build)"
         )
         return False
@@ -619,7 +635,9 @@ def _encode_vaapi(
     if crop:  # the detected bar crop rides BEFORE the 64-px alignment crop
         l, t, r, b = crop
         vf += f"crop=iw-{l}-{r}:ih-{t}-{b}:{l}:{t},"
-    vf += "crop=floor(iw/64)*64:ih,format=nv12|p010,hwupload"
+    if codec == "hevc_vaapi":
+        vf += "crop=floor(iw/64)*64:ih,"
+    vf += "format=nv12|p010,hwupload"
     cmd = [
         ff,
         "-hide_banner",
@@ -645,13 +663,13 @@ def _encode_vaapi(
         "-vf",
         vf,
         "-c:v",
-        "hevc_vaapi",
+        codec,
         "-rc_mode",
         "CQP",
         "-global_quality",
-        "24",
+        "28",
     ]
-    if vcn["low_power"]:
+    if codec == "hevc_vaapi" and va["low_power"]:
         cmd += ["-low_power", "1"]
     cmd.append(out)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -717,7 +735,7 @@ def _encode(
     crop: tuple[int, int, int, int] | None = None,
 ) -> bool:
     """HandBrake pass-through re-encode at native resolution (the x265 paths;
-    the vaapi path dispatches to _encode_vaapi before any of this). no_subs
+    the hardware rungs dispatch to _encode_vaapi before any of this). no_subs
     selects zero subtitle tracks (features and TV
     episodes, the language-list trick); extras keep pass-through (embedded
     subs stay). Every HandBrake output line is
@@ -731,8 +749,10 @@ def _encode(
     because a rejected job init (bad argv) exits 0 writing nothing (the
     Conan FATAL)."""
     global _encode_why
-    if encoder == "vaapi":  # hardware path: ffmpeg, never HandBrakeCLI
-        return _encode_vaapi(src, out, no_subs=no_subs, log=log, crop=crop)
+    if encoder in ("hevc-vaapi", "h264-vaapi"):  # hardware rungs: ffmpeg, never HandBrakeCLI
+        return _encode_vaapi(
+            src, out, no_subs=no_subs, log=log, crop=crop, codec=encoder.replace("-", "_")
+        )
     if encoder == "x265-fast":  # auto's CPU fallback; an item's own marker
         speed = speed or "fast"  # speed (extras superfast) still wins
     height = _probe_height(src, ffprobe_exe)
@@ -1257,7 +1277,7 @@ def _subs_begin(
 ):
     """Start the subtitle pass. Sequential (software encoders: x265 already
     saturates every core, overlap buys nothing): the 'subs' phase runs now,
-    exactly as before. Concurrent (vaapi: the GPU encode leaves the CPU
+    exactly as before. Concurrent (either hardware rung: the GPU encode leaves the CPU
     idle, so OCR overlaps detect+encode): subs.run_pass runs in a daemon
     thread — from the thread it writes only log.raw (append-per-line, safe
     for concurrent writers) and lock-guarded ui lines (the prefetch thread's
@@ -1485,29 +1505,35 @@ def run_transcode(args) -> int:
     encoder_line = args.encoder  # the opener's encoder; notes print under it, never above
     encoder_note = ""  # plain's pre-frame `encode:` announcement of the resolved encoder
     if args.encoder in ("auto", "vaapi"):
-        vcn = _vcn_probe()
-        if vcn:
-            args.encoder = "vaapi"
-            encoder_line = "VCN hevc_vaapi CQP 24" + (
-                " (low-power entrypoint)" if vcn["low_power"] else ""
-            )
-            encoder_note = "VCN hardware hevc_vaapi CQP 24" + (
-                " (low-power entrypoint)" if vcn["low_power"] else ""
-            )
+        va = _va_probe()
+        if va and va["hevc"]:
+            args.encoder = "hevc-vaapi"
+            lp = " (low-power entrypoint)" if va["low_power"] else ""
+            encoder_line = "hevc_vaapi CQP 28" + lp
+            encoder_note = "hardware hevc_vaapi CQP 28" + lp
+            log.note("encode", encoder_note, echo=False)
+        elif va and va["h264"]:
+            args.encoder = "h264-vaapi"
+            encoder_line = "h264_vaapi QP 28"
+            encoder_note = "hardware h264_vaapi QP 28"
             log.note("encode", encoder_note, echo=False)
         elif args.encoder == "vaapi":
             ui.fail(
-                "-e vaapi but this box has no VA-API HEVC encode "
-                "entrypoint (vainfo) -- no VCN or the image's freeworld "
-                "driver is missing (rebuild the image: podman compose build); "
+                "-e vaapi but this box has no VA-API HEVC or H.264 encode "
+                "entrypoint (vainfo) -- the image's freeworld drivers are "
+                "missing (rebuild the image: podman compose build); "
                 "use -e auto or -e x265"
             )
             return 1
         else:
             args.encoder = "x265-fast"
-            encoder_line = "x265 fast preset (no VCN -- auto fell back)"
-            encoder_note = "no VCN (vainfo) -- auto fell back to x265 (fast preset)"
+            encoder_line = "x265 fast preset (no VA-API hardware -- auto fell back)"
+            encoder_note = (
+                "no VA-API encode entrypoint (vainfo) -- auto fell back to x265 (fast preset)"
+            )
             log.note("encode", encoder_note, echo=False)
+    # the temp output's suffix is honest per rung (shipped names never carry one)
+    out_sfx = ".h264.mkv" if args.encoder == "h264-vaapi" else ".h265.mkv"
     skipped: list[str] = []
     items, want_hit = _scan(input_dir, args.prefixes, skipped)
     # run warnings print under the opener (and replay), never above it
@@ -1610,7 +1636,7 @@ def run_transcode(args) -> int:
     }
 
     # the very vague session estimate (CONTEXT.md: Session cap): ~2–10
-    # min per main on a VCN box (vaapi), stated once,
+    # min per main on a hardware-encode box, stated once,
     # never per title
     deferred = 0
     if args.limit:
@@ -2149,9 +2175,9 @@ def run_transcode(args) -> int:
                         ffprobe_exe,
                         log,
                         parts,
-                        concurrent=args.encoder == "vaapi",
+                        concurrent=args.encoder in ("hevc-vaapi", "h264-vaapi"),
                     )
-                local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
+                local_out = os.path.join(tmp_dir, i.base + out_sfx)
                 inflight = cleanup + [local_out]
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
                 enc_ok = _encode_part(
@@ -2185,7 +2211,10 @@ def run_transcode(args) -> int:
                         shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
                         _rmf(p)
-                    log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
+                    log.note(
+                        "encode",
+                        f"{_enc_fail_prefix(args.encoder)}: {i.name} -- source left in place",
+                    )
                     handled.add(i.path)
                     failed = 1
                     _item_done(i.name, parts, False, f"encode ({_encode_why})")
@@ -2347,9 +2376,9 @@ def run_transcode(args) -> int:
                     ffprobe_exe,
                     log,
                     parts,
-                    concurrent=args.encoder == "vaapi",
+                    concurrent=args.encoder in ("hevc-vaapi", "h264-vaapi"),
                 )
-                local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}.h265.mkv")
+                local_out = os.path.join(tmp_dir, f"{safe}_t{i.num_str}{out_sfx}")
                 inflight = cleanup + [local_out]
                 crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
                 enc_ok = _encode_part(
@@ -2392,7 +2421,10 @@ def run_transcode(args) -> int:
                     shutil.rmtree(side_dir, ignore_errors=True)
                     for p in cleanup + [local_out]:
                         _rmf(p)
-                    log.note("encode", f"FAILED handbrake: {i.name} -- sources left in place")
+                    log.note(
+                        "encode",
+                        f"{_enc_fail_prefix(args.encoder)}: {i.name} -- sources left in place",
+                    )
                     if args.retry:
                         # unlike the sub-pass/guard arms this arm never moves
                         # the source — only a --retry leaves it resting in its
@@ -2437,7 +2469,7 @@ def run_transcode(args) -> int:
                 _copy_in(i.path, local_src, log, parts)
             _pf_start(unit_of[i.path], log)
             cleanup.append(local_src)
-            local_out = os.path.join(tmp_dir, i.base + ".h265.mkv")
+            local_out = os.path.join(tmp_dir, i.base + out_sfx)
             inflight = cleanup + [local_out]
             crop = _detect_part(local_src, ffprobe_exe, log, parts)[0]
             if _encode_part(
@@ -2459,7 +2491,10 @@ def run_transcode(args) -> int:
             else:
                 for p in cleanup + [local_out]:
                     _rmf(p)
-                log.note("encode", f"FAILED handbrake: {i.name} -- source left in place")
+                log.note(
+                    "encode",
+                    f"{_enc_fail_prefix(args.encoder)}: {i.name} -- source left in place",
+                )
                 handled.add(i.path)
                 failed = 1
                 _item_done(i.name, parts, False, f"encode ({_encode_why})")
@@ -2475,7 +2510,7 @@ def run_transcode(args) -> int:
             _rmf(p)
     except KeyboardInterrupt:
         # CONTEXT.md Interrupt: drop this item's partial temp output (the local
-        # copy, the unshipped sidecar dir, and .h265 encode live in the work
+        # copy, the unshipped sidecar dir, and the encode temp live in the work
         # dir), leave the SOURCE in staging — sources only move on success —
         # record status=interrupted; the summary below marks the in-flight
         # item interrupted, then exit 130.
