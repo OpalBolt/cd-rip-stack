@@ -45,6 +45,10 @@ def _http_get_json(url: str, timeout: int = 15) -> dict:
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status}")
             return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # code-based message: callers distinguish a 401 (bad key) from transport
+        # trouble without parsing "HTTP Error 401: Unauthorized" prose
+        raise RuntimeError(f"TMDB request failed: HTTP {e.code}") from e
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError) as e:
         message = str(e)
         if api_key := os.environ.get("TMDB_API_KEY"):
@@ -52,19 +56,30 @@ def _http_get_json(url: str, timeout: int = 15) -> dict:
         raise RuntimeError(f"TMDB request failed: {message}") from e
 
 
-def require_online() -> None:
-    """Probe TMDB API; exit if offline."""
+def validate_key(timeout: int = 5) -> tuple[str, str]:
+    """The TMDB key against the validate-key endpoint
+    (developer.themoviedb.org/reference/authentication-validate-key) —
+    doctor's row and require_online's probe share it. Returns (kind, detail):
+    ok | fail (absent or rejected — every rip's metadata pick needs it) |
+    warn (unreachable — cannot tell, not proof it is broken)."""
     try:
         api_key = _api_key()
     except ValueError:
-        ui.fail("no $TMDB_API_KEY in env — set it and re-run.")
-        sys.exit(1)
-
-    url = f"https://api.themoviedb.org/3/configuration?api_key={api_key}"
+        return "fail", "no $TMDB_API_KEY in env — set it in .env"
     try:
-        _http_get_json(url, timeout=5)
+        _http_get_json(f"https://api.themoviedb.org/3/authentication?api_key={api_key}", timeout)
     except RuntimeError as e:
-        ui.fail(f"TMDB is unreachable ({e})")
+        if str(e).startswith("TMDB request failed: HTTP 401"):
+            return "fail", "TMDB answered 401 — invalid or revoked key"
+        return "warn", f"TMDB unreachable: {e}"
+    return "ok", "key valid"
+
+
+def require_online() -> None:
+    """Exit unless the TMDB key validates."""
+    kind, detail = validate_key()
+    if kind != "ok":
+        ui.fail(detail)
         sys.exit(1)
 
 

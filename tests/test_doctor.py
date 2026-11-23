@@ -46,6 +46,8 @@ def green_env(tmp_path, monkeypatch):
     dump = tmp_path / "dump.txt"
     dump.write_text(REPLAY)
     monkeypatch.setenv("MAKEMKV_INFO", f"cat {dump}")
+    # the tmdb key check stops at the doctor seam — no network in tests
+    monkeypatch.setattr("skive.doctor.validate_key", lambda timeout=5: ("ok", "key valid"))
 
 
 def test_green_box_exit_0(tmp_path, monkeypatch, capsys):
@@ -100,6 +102,30 @@ def test_key_from_settings_file(tmp_path, monkeypatch, capsys):
 def test_vainfo_absent_warns_but_exit_0(tmp_path, monkeypatch, capsys):
     green_env(tmp_path, monkeypatch)
     rc = doctor.run_doctor(dev=str(tmp_path), run=Run(vainfo=None), settings=tmp_path / "n.conf")
+    assert rc == 0
+    assert "box ready — with warnings" in capsys.readouterr().err
+
+
+def test_tmdb_key_rejected_exit_1(tmp_path, monkeypatch, capsys):
+    """A key TMDB rejects is a missing prerequisite — the .env quotes bug
+    looked like a network problem before the 401 had its own message."""
+    green_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "skive.doctor.validate_key",
+        lambda timeout=5: ("fail", "TMDB answered 401 — invalid or revoked key"),
+    )
+    rc = doctor.run_doctor(dev=str(tmp_path), run=Run(), settings=tmp_path / "n.conf")
+    assert rc == 1
+    assert "401" in capsys.readouterr().err
+
+
+def test_tmdb_unreachable_warns_but_exit_0(tmp_path, monkeypatch, capsys):
+    """An unreachable API proves nothing about the key — warn, not fail."""
+    green_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "skive.doctor.validate_key", lambda timeout=5: ("warn", "TMDB unreachable: timed out")
+    )
+    rc = doctor.run_doctor(dev=str(tmp_path), run=Run(), settings=tmp_path / "n.conf")
     assert rc == 0
     assert "box ready — with warnings" in capsys.readouterr().err
 

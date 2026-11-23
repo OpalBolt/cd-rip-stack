@@ -1,13 +1,15 @@
 """skive doctor — the green table: the box's readiness.
 
-Seven read-only checks, one table, one result line: optical device nodes,
+Eight read-only checks, one table, one result line: optical device nodes,
 makemkvcon drive enumeration (through scan's MAKEMKV_INFO replay seam),
-the two share roots (common.share_status), the MakeMKV key, tesseract's
-languages, and VA-API encode entrypoints (informational — VCN hardware
-has them, CPU-only boxes do not). A drive-less box never rips, so the drive, enumeration, and key checks report a skip
-there instead of failing. Doctor fixes nothing. Exit 1 only when a
-prerequisite is missing; a warn (local share, missing vainfo) never fails
-the run.
+the two share roots (common.share_status), the MakeMKV key, the TMDB key
+(validated against the API's validate-key endpoint — a bad key fails, an
+unreachable API only warns), tesseract's languages, and VA-API encode
+entrypoints (informational — VCN hardware has them, CPU-only boxes do
+not). A drive-less box never rips, so the drive, enumeration, and key
+checks report a skip there instead of failing. Doctor fixes nothing.
+Exit 1 only when a prerequisite is missing; a warn (local share, missing
+vainfo, offline TMDB) never fails the run.
 """
 
 import os
@@ -18,6 +20,7 @@ from pathlib import Path
 from skive import ui
 from skive.common import share_status
 from skive.scan import _info
+from skive.tmdb import validate_key
 
 SHARES = (
     ("videos share", "VIDEOS_MOUNT", "/mnt/videos"),
@@ -126,6 +129,9 @@ def run_doctor(dev: str = "/dev", run=subprocess.run, settings: Path | None = No
         ),
         ("tesseract langs", *check_tesseract(run)),
         ("vaapi encode", *check_vainfo(run)),
+        # every rip's metadata pick and every validation walk need TMDB, so
+        # the key is checked on every box — not only drive-ful ones
+        ("tmdb key", *validate_key()),
     ]
     _render(rows)
     fails = sum(1 for _, kind, _ in rows if kind == "fail")
