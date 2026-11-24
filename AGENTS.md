@@ -20,6 +20,8 @@ transcodes into Jellyfin/beets libraries. uv + mise tooling, editable install.
 
 ## Boundaries
 
+`main` takes no direct pushes: changes reach it only through a merged PR.
+
 ### ✅ Always
 - Land every change through a PR: branch, verify (tests + lint), write the PR
   text to `.scratch/prs/`, then ask the operator to run `scripts/open-pr.sh`
