@@ -27,16 +27,16 @@ and logs: [setup](docs/setup.md). The box and `skive transcode` —
 
 ## Commands
 
-| Command | One-liner (`--help`) | Docs |
-|---|---|---|
-| `skive rip movie` | rip movie | [video](docs/video.md) |
-| `skive rip tv` | rip TV show | [video](docs/video.md) |
-| `skive rip music` | rip CD | [music](docs/music.md) |
-| `skive tag` | tag and file music | [music](docs/music.md) |
-| `skive sync-sd` | sync music library to SD card | [music](docs/music.md) |
-| `skive transcode` | transcode staged lossless MKVs into the Jellyfin library | [transcode](docs/transcode.md) |
-| `skive validate` | report library findings (read-only, never changes anything) | [tools](docs/tools.md) |
-| `skive search` | search selected on-disk roots for an already-ripped title | [tools](docs/tools.md) |
+| Command           | One-liner (`--help`)                                        | Docs                           |
+| ----------------- | ----------------------------------------------------------- | ------------------------------ |
+| `skive rip movie` | rip movie                                                   | [video](docs/video.md)         |
+| `skive rip tv`    | rip TV show                                                 | [video](docs/video.md)         |
+| `skive rip music` | rip CD                                                      | [music](docs/music.md)         |
+| `skive tag`       | tag and file music                                          | [music](docs/music.md)         |
+| `skive sync-sd`   | sync music library to SD card                               | [music](docs/music.md)         |
+| `skive transcode` | transcode staged lossless MKVs into the Jellyfin library    | [transcode](docs/transcode.md) |
+| `skive validate`  | report library findings (read-only, never changes anything) | [tools](docs/tools.md)         |
+| `skive search`    | search selected on-disk roots for an already-ripped title   | [tools](docs/tools.md)         |
 
 ## The console
 

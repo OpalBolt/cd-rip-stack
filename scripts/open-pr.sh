@@ -12,20 +12,20 @@ branch="${1:-$(git branch --show-current)}"
 body=".scratch/prs/${branch//\//-}.md"
 
 if [ ! -f "$body" ]; then
-    echo "no PR text found at $body" >&2
-    exit 1
+	echo "no PR text found at $body" >&2
+	exit 1
 fi
 
 git push -u origin "$branch"
 
 title=$(head -1 "$body")
 tmp=$(mktemp)
-tail -n +2 "$body" > "$tmp"
+tail -n +2 "$body" >"$tmp"
 
 if gh pr view "$branch" --json url >/dev/null 2>&1; then
-    gh pr edit "$branch" --title "$title" --body-file "$tmp"
+	gh pr edit "$branch" --title "$title" --body-file "$tmp"
 else
-    gh pr create --base main --head "$branch" --title "$title" --body-file "$tmp"
+	gh pr create --base main --head "$branch" --title "$title" --body-file "$tmp"
 fi
 rm -f "$tmp"
 echo

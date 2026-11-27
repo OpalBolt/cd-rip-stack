@@ -82,10 +82,10 @@ skive transcode -w /var/tmp/video-work   # workdir override (default: ~/.cache/s
   or one still mismatched after alignment — quarantines whole, unmerged
   (the merge guard). Ships
   `library/movies/<Movie (Year)>/<Movie (Year)>.mkv`. Extras never merge;
-  they file as ` - Extra NN` under the movie's `extras/`, embedded
+  they file as `<Movie (Year)> - Extra NN` under the movie's `extras/`, embedded
   subtitles kept, no subtitle pass.
 - **TV** — every episode encodes: `library/tv/<Show (Year)>/Season NN/
-  <Show (Year)> - S01E02.mkv` (season 00 → `Specials/`), plus the subtitle
+<Show (Year)> - S01E02.mkv` (season 00 → `Specials/`), plus the subtitle
   pass. TV extras file under the show's `extras/` with tracks embedded.
 - **Encode** — `-e auto` (default) picks per box: VCN hardware when the
   box has it (`ffmpeg hevc_vaapi` CQP 24, audio and subtitles stream-copied,

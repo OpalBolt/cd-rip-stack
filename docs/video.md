@@ -116,9 +116,9 @@ Verbs per medium:
 - **movie** — `m` main (exactly one always holds; `m` moves it), `e` extra,
   `s` skip.
 - **TV** — digits type an episode at the cursor (`3`, or `3-4` for a
-double) and Enter sets it; `Space` marks rows, and one typed number fills
-the marked rows in table order; `e` extra, `s` skip; `c` clear staged —
-lists the show's staged files and, on `y`, deletes them (mis-file remedy).
+  double) and Enter sets it; `Space` marks rows, and one typed number fills
+  the marked rows in table order; `e` extra, `s` skip; `c` clear staged —
+  lists the show's staged files and, on `y`, deletes them (mis-file remedy).
 - **CD** — `s` skip a track, `r` restore; every track prefills rip.
 
 Keys, every medium: `↑`/`↓` or `j`/`k` move the cursor; `Enter` accepts;
