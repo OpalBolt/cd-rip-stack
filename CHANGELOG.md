@@ -7,6 +7,38 @@ dated heading.
 
 ## Unreleased
 
+- feat: `-e auto` resolves a three-rung encoder ladder from a per-profile
+  vainfo probe (once per run): HEVC entrypoints → `ffmpeg hevc_vaapi` CQP
+  28, H.264-only → `ffmpeg h264_vaapi` QP 28 — a new rung that keeps the
+  crop gate and bwdif but drops VCN's 64-px alignment crop — and neither →
+  CPU x265 fast unchanged; `-e vaapi` accepts either hardware rung and
+  fails fast on a box with none. QP 28 replaces CQP 24 on every hardware
+  rung: a per-rung calibration that happens to be unified, not an
+  equivalence claim (QP numbers do not transfer between encoders).
+- feat: `skive doctor`'s VA-API row reports encode profiles — HEVC +
+  H.264, HEVC only, H.264 only, or none, with decode-only (VLD)
+  entrypoints never counted — so a box's rung in the `-e auto` ladder
+  reads straight off the table.
+- build: the box image installs the i965 VA driver (`libva-intel-driver`)
+  beside the freeworld Mesa swap — the modern Intel driver never loads on
+  Ivy Bridge (Gen7), so the W530's HD 4000 iGPU gets its H.264 encode
+  entrypoint from i965.
+- feat: video-library audio is lossy-only on every backend — lossy tracks
+  copy, lossless tracks (PCM, FLAC, ALAC, TrueHD, DTS-HD MA) drop when a
+  lossy track survives, and an all-lossless title transcodes every track
+  to ac3 with channels kept; the hardware rungs ffprobe-classify each
+  track before encoding and refuse the item on an unreadable probe, while
+  the HandBrake paths approximate the rule with a lossy-only
+  `--audio-copy-mask` plus the ac3 fallback.
+- feat: `scripts/audit_lossless_audio.py` audits the existing library
+  against the lossy-only audio rule — a dry run by default, `--fix`
+  remuxes each offending file audio-only through a verified temp (video
+  and subtitles stream-copied, lossless audio transcoded to ac3; any
+  failure leaves the original untouched); the music library's FLAC is by
+  design and never in scope.
+- build: `FEDORA_VERSION` build arg (default 43) picks the box image's Fedora
+  release, so a box whose hardware the newest ffmpeg/libva no longer serves
+  builds an older stack: `FEDORA_VERSION=41 podman compose build`.
 - build: `scripts/info-bundle.sh` — run on any box to gather its encode
   capability into `info-bundle.txt`: VA-API entrypoints, drivers, ffmpeg
   encoders and a 10 s 1080p bench per candidate backend, so the encoder

@@ -1,6 +1,11 @@
 # The skive box — Fedora 43 with the full rip/transcode toolchain and a
 # baked skive. Package list proven on real hardware.
-FROM fedora:43
+# Older Fedora ships an older ffmpeg and libva: build with
+# `FEDORA_VERSION=41 podman compose build` for hardware the
+# newest stack no longer serves. Untested below 43 — RPM Fusion and
+# MakeMKV availability per release is not checked.
+ARG FEDORA_VERSION=43
+FROM fedora:${FEDORA_VERSION}
 
 # RPM Fusion first: HandBrake lives in free, MakeMKV in nonfree.
 # (cyanrip is in neither — see the source build below.)
@@ -16,6 +21,10 @@ RUN dnf install -y \
 # swap in RPM Fusion's freeworld build for VA-API hardware encode.
 RUN dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld \
     || dnf install -y mesa-va-drivers-freeworld
+
+# The modern intel-media-driver never loads on Ivy Bridge (Gen7); i965 takes
+# over, and renderD128 is the Intel node on that machine (the W530).
+RUN dnf install -y libva-intel-driver
 
 RUN dnf install -y \
       mkvtoolnix ffmpeg libva-utils tesseract \

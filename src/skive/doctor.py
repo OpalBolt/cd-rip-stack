@@ -82,15 +82,24 @@ def check_tesseract(run=subprocess.run) -> tuple[str, str]:
 
 
 def check_vainfo(run=subprocess.run) -> tuple[str, str]:
-    """VA-API encode entrypoints — informational, never a fail: CPU boxes
-    have none and encode in software."""
+    """VA-API encode profiles — HEVC, H.264, both, or neither — so the
+    box's ladder rung shows before any run. Informational, never a fail:
+    CPU boxes have none and encode in software. Decode-only (VLD)
+    entrypoints never count as encode capability."""
     try:
         proc = run(["vainfo"], capture_output=True, text=True)
         out = proc.stdout + proc.stderr  # vainfo prints its profile list to stderr
     except OSError:
         return "warn", "vainfo not found — software encode only (CPU box)"
-    if "VAEntrypointEncSlice" in out:
-        return "ok", "VA-API encode entrypoints present"
+    lines = out.splitlines()
+    hevc = any("VAEntrypointEncSlice" in line and "VAProfileHEVC" in line for line in lines)
+    h264 = any("VAEntrypointEncSlice" in line and "VAProfileH264" in line for line in lines)
+    if hevc and h264:
+        return "ok", "VA-API encode: HEVC + H.264"
+    if hevc:
+        return "ok", "VA-API encode: HEVC only"
+    if h264:
+        return "ok", "VA-API encode: H.264 only"
     return "warn", "no VA-API encode entrypoints — software encode only (CPU box)"
 
 

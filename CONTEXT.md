@@ -139,6 +139,14 @@ _Avoid_: aspect bug, wrong AR
 The encode aspect policy: an encode inherits its source's sample aspect ratio (a 720×452 crop of PAL 16:9 encodes at SAR 64:45, displaying ~2.35:1) — never baked to square pixels, never upscaled; players do the display math.
 _Avoid_: square pixels, bake aspect
 
+**Encoder backend**:
+The encode path a transcode run resolves to per box — the tool and hardware behind the encode (`hevc_vaapi`, `h264_vaapi`, `x265`), distinct from the codec it emits (H.265/H.264) and its rate control (CQP level). `-e auto` walks the capability ladder once per run — HEVC entrypoints → `hevc_vaapi` CQP 28, H.264-only entrypoints → `h264_vaapi` QP 28, neither → CPU `x265` fast — and the resolved rung is recorded in the run opener. QP 28 is unified across hardware rungs: quality eyeballed as fine, ~40% smaller encodes than CQP 24.
+_Avoid_: codec (for the backend), codex
+
+**Lossy-only audio**:
+The video library's audio rule, applied per track at transcode on every backend: a lossy track copies through; a lossless track drops when the title keeps at least one lossy track, and transcodes to ac3 when none does. The music library's FLAC is untouched — video only.
+_Avoid_: no-PCM, audio passthrough
+
 **Staging**:
 Finished lossless rips waiting for their next step. Video stages under `/mnt/videos/rip/<type>/<Name (Year)>/d<disc>/` — one folder per title, `d<disc>` is the ripping drive so parallel drives never collide on junk labels; promotion moves finished files up into the `<Name (Year)>` folder. The `<type>` level (`movies` or `tv`) is what tells transcode a file is TV. Music stages under `/mnt/music/rip/<music source>/<album>/` — one folder per album, the source level tells `tag` how to file it; `tag` moves it into the library, so an album still in `rip/` is not yet filed. A mid-rip file still wears its junk label.
 

@@ -185,9 +185,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--encoder",
         choices=["auto", "x265", "vaapi"],
         default="auto",
-        help="video encoder: auto (default) uses the box's VCN hardware (hevc_vaapi CQP 24) "
-        "and falls back to x265 fast without it; x265 is the software baseline; "
-        "vaapi requires VCN and fails fast without it",
+        help="video encoder: auto (default) resolves once per run from vainfo -- hevc_vaapi "
+        "CQP 28, h264_vaapi QP 28 on H.264-only hardware, x265 fast otherwise; "
+        "x265 is the software baseline; vaapi demands hardware (either rung) and "
+        "fails fast without it",
     )
     transcode_parser.add_argument(
         "-w", "--workdir", metavar="DIR", help="local temp work dir (default: ~/.cache/skive)"
