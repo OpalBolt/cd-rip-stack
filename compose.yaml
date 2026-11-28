@@ -2,7 +2,7 @@
 # substitution; a missing `.env` just leaves the defaults in place.
 services:
   skive:
-    build: 
+    build:
       context: .
       dockerfile: Containerfile
     image: skive-box

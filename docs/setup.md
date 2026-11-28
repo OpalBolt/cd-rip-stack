@@ -50,12 +50,12 @@ Keys come from the process environment — skive itself never reads a
 repo and passes the vars into the box (`.env.example` records them all).
 Inside a `./skive` shell, `env | grep VAR` shows what skive sees.
 
-| Variable | Meaning |
-|---|---|
-| `TMDB_API_KEY` | TMDB API key, for movie/TV naming on `rip movie` / `rip tv` |
-| `MAKEMKV_KEY` | MakeMKV key, written into MakeMKV's settings at startup — env wins; unset keeps the remind-only path (the free beta key rotates every 30 days; an expired key refuses BD rips with fix instructions, ADR 0016 — DVD and CD rips are unaffected) |
-| `VIDEOS_MOUNT` / `MUSIC_MOUNT` | override the share mountpoints (default `/mnt/videos` / `/mnt/music`) |
-| `RIP_MINLENGTH` | title-scan minimum length in seconds (default `120`) |
+| Variable                       | Meaning                                                                                                                                                                                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TMDB_API_KEY`                 | TMDB API key, for movie/TV naming on `rip movie` / `rip tv`                                                                                                                                                                                     |
+| `MAKEMKV_KEY`                  | MakeMKV key, written into MakeMKV's settings at startup — env wins; unset keeps the remind-only path (the free beta key rotates every 30 days; an expired key refuses BD rips with fix instructions, ADR 0016 — DVD and CD rips are unaffected) |
+| `VIDEOS_MOUNT` / `MUSIC_MOUNT` | override the share mountpoints (default `/mnt/videos` / `/mnt/music`)                                                                                                                                                                           |
+| `RIP_MINLENGTH`                | title-scan minimum length in seconds (default `120`)                                                                                                                                                                                            |
 
 Three names the code reads that are never operator config: `MAKEMKV_INFO`
 overrides the makemkv info binary (test seam — also how scan dumps replay,
@@ -119,7 +119,7 @@ Logs live on the share each command works on: video commands (`rip movie`,
   fails, and kept by `tag` when an album is left in `rip/` — so one failure's
   full tool output sits next to its run-log lines.
 - `scan/<run>_<volume-label>.txt` — scan dumps: the verbatim `makemkvcon
-  info` output of every full disc scan, never deleted. A scan is the one
+info` output of every full disc scan, never deleted. A scan is the one
   moment the disc's whole structure is in hand; questions surface later, when
   the disc may already be out of the drive. Replay a dump through the
   scanner with `MAKEMKV_INFO="cat <dump>"`.

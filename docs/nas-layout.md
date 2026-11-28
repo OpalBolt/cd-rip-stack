@@ -94,7 +94,7 @@ lossless source is never destroyed before its encode is proven.
 - `issues/` — a transcode or subtitle-pass failure quarantines the lossless
   source here together with that run's `rip.jsonl` lines and raw log, so
   everything about one failure sits in one folder. `skive transcode
-  --retry` walks `issues/` instead of `rip/`; the source leaves only on
+--retry` walks `issues/` instead of `rip/`; the source leaves only on
   success.
 
 The `logs/` files are explained on [setup](setup.md). Vocabulary and the

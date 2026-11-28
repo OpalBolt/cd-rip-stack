@@ -118,7 +118,7 @@ release identity, track list, and per disc the tag run, date and mode. The
 local plugin (`src/beetsplug/skive_album.py`) merges into any record already in
 the destination — filing disc 2 keeps disc 1's AccurateRip proof — and
 carries the cyanrip `.log`/`.cue` sidecars into the album folder, suffixed
-` CD<n>` for multi-disc albums. The beets DB (`/mnt/music/music.db`) and
+`<Album> CD<n>` for multi-disc albums. The beets DB (`/mnt/music/music.db`) and
 import log (`/mnt/music/logs/import.log`) live on the share; the config is
 passed with `-c`, so nothing depends on your cwd or a per-machine beets
 config dir.

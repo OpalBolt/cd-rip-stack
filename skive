@@ -5,9 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if command -v podman >/dev/null 2>&1; then
-  engine=(podman compose)
+	engine=(podman compose)
 else
-  engine=(docker compose)
+	engine=(docker compose)
 fi
 
 # Optical nodes exist only on machines with drives; a device compose lists must
@@ -17,23 +17,23 @@ fi
 # host actually has rather than a checked-in list that names them all.
 files=(-f compose.yaml)
 if compgen -G '/dev/sr*' >/dev/null; then
-  rip_yaml=$(mktemp /tmp/skive-rip-devices.XXXXXX.yaml)
-  trap 'rm -f "$rip_yaml"' EXIT
-  {
-    echo "services:"
-    echo "  skive:"
-    echo "    devices:"
-    for node in /dev/sr* /dev/sg*; do
-      if [ -e "$node" ]; then
-        echo "      - $node:$node"
-      fi
-    done
-  } >"$rip_yaml"
-  files+=(-f "$rip_yaml")
+	rip_yaml=$(mktemp /tmp/skive-rip-devices.XXXXXX.yaml)
+	trap 'rm -f "$rip_yaml"' EXIT
+	{
+		echo "services:"
+		echo "  skive:"
+		echo "    devices:"
+		for node in /dev/sr* /dev/sg*; do
+			if [ -e "$node" ]; then
+				echo "      - $node:$node"
+			fi
+		done
+	} >"$rip_yaml"
+	files+=(-f "$rip_yaml")
 fi
 
 if [ "$#" -gt 0 ]; then
-  "${engine[@]}" "${files[@]}" run --rm skive skive "$@"
+	"${engine[@]}" "${files[@]}" run --rm skive skive "$@"
 else
-  "${engine[@]}" "${files[@]}" run --rm skive bash
+	"${engine[@]}" "${files[@]}" run --rm skive bash
 fi
